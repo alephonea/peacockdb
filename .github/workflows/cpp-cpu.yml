@@ -1,0 +1,43 @@
+name: C++ CPU Tests
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  cpp-cpu:
+    runs-on: ubuntu-latest
+    container:
+      image: rapidsai/base:25.10a-cuda12-py3.12
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install cmake and ninja
+        run: |
+          CMAKE_VERSION=4.2.3
+          curl -fsSL "https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-x86_64.tar.gz" \
+            | tar -xz -C /usr/local --strip-components=1
+          NINJA_VERSION=1.12.1
+          curl -fsSL "https://github.com/ninja-build/ninja/releases/download/v${NINJA_VERSION}/ninja-linux.zip" \
+            -o /tmp/ninja-linux.zip
+          unzip -o /tmp/ninja-linux.zip -d /usr/local/bin
+          rm /tmp/ninja-linux.zip
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Configure
+        run: ./build.sh --configure --cudf_ROOT=/opt/conda
+
+      - name: Build
+        run: ./build.sh --build
+
+      - name: Install
+        run: ./build.sh --install
+
+      - name: Run CPU tests
+        run: ctest --test-dir cpp/build -L cpu --output-on-failure

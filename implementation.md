@@ -2100,3 +2100,75 @@ For each function category, test GPU vs CPU equivalence:
 | **M14** | Disk-overflow hash join (Grace hash join) for build sides exceeding GPU+host memory |
 | **M15** | Disk-overflow aggregation and external sort |
 | **M16** | TPC-H Q1 and Q6 pass correctness tests (both executors) |
+| **M17** | Distribution: Docker image published, tarball release with graceful driver mismatch detection |
+
+---
+
+## Phase 11: Distribution
+
+### 11.1 The CUDA Driver Compatibility Problem
+
+`libcuda.so` (the GPU driver) is supplied by the host OS and **cannot be bundled** with the application. Every other CUDA library (`libcudart.so`, `libcudf.so`, `librmm.so`, etc.) can be distributed, but the driver must match or exceed the CUDA toolkit version the libraries were compiled against.
+
+CUDA uses a forward-compatibility model: a driver is guaranteed to support all toolkit versions up to and including the version it shipped with. A driver that is **too old** will refuse to run code compiled against a newer toolkit, producing a cryptic `CUDA_ERROR_INVALID_PTX` or `cudaErrorInsufficientDriver` at runtime.
+
+### 11.2 Docker Image (primary distribution for the server)
+
+Docker + `nvidia-container-toolkit` is the standard deployment model for GPU workloads. The host only needs a compatible NVIDIA driver; the CUDA runtime and all libraries live inside the image.
+
+```dockerfile
+FROM nvcr.io/nvidia/cuda:12.6-base-ubuntu22.04
+COPY lib/  /opt/peacockdb/lib/
+COPY bin/  /opt/peacockdb/bin/
+ENV LD_LIBRARY_PATH=/opt/peacockdb/lib
+ENTRYPOINT ["/opt/peacockdb/bin/peacockdb"]
+```
+
+- Pin the base image to the exact CUDA toolkit version used to build cuDF.
+- Publish to a container registry (GitHub Container Registry or Docker Hub) as part of CI on merge to `master`.
+- Clients connect over a network socket and need no CUDA at all.
+
+### 11.3 Tarball Release (power users, bare-metal)
+
+A relocatable tarball bundles all `.so` dependencies except `libcuda.so`:
+
+```
+peacockdb-<version>-linux-x86_64.tar.gz
+  bin/peacockdb
+  lib/libpeacock_gpu.so
+      libcudf.so
+      librmm.so
+      libcudart.so   ← redistributable, from CUDA toolkit
+      ...            ← all transitive deps collected via ldd
+```
+
+**RPATH** in `libpeacock_gpu.so` and the `peacockdb` binary must be set to `$ORIGIN/../lib` so the dynamic linker finds the bundled libraries without requiring `LD_LIBRARY_PATH`.
+
+**Graceful driver mismatch detection**: at startup, before any CUDA call, check driver compatibility explicitly and print a clear error if the driver is too old:
+
+```rust
+// In peacockdb/src/main.rs, before initializing the GPU executor:
+let (driver_ver, runtime_ver) = peacock_cuda_versions(); // thin FFI to cudaDriverGetVersion / cudaRuntimeGetVersion
+if driver_ver < runtime_ver {
+    eprintln!(
+        "error: CUDA driver version {} is too old for this build (requires >= {}).\n\
+         Please update your NVIDIA driver.",
+        format_cuda_ver(driver_ver),
+        format_cuda_ver(runtime_ver)
+    );
+    std::process::exit(1);
+}
+```
+
+This turns a cryptic PTX error deep in cuDF into an actionable message at the very first line of output.
+
+**Packaging script** (`scripts/make-tarball.sh`): collect all shared library dependencies with `ldd`, copy them into `lib/`, patch RPATHs with `patchelf`, and produce the tarball. Run as a CI step after the cmake install step.
+
+### 11.4 CLI Client
+
+The query client (`peacockdb-client`) has no CUDA dependency — it is a pure Rust binary that speaks the wire protocol. Distribute it as a single statically linked binary (build with `--target x86_64-unknown-linux-musl`) available via:
+
+```
+curl -L https://github.com/.../releases/latest/download/peacockdb-client-linux-x86_64 -o peacockdb-client
+chmod +x peacockdb-client
+```

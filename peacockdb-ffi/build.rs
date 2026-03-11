@@ -10,7 +10,14 @@ fn main() {
 
     let cpp_dir = workspace_root.join("cpp");
 
-    let install_dir = cmake::Config::new(&cpp_dir).build();
+    let num_jobs = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4);
+
+    let install_dir = cmake::Config::new(&cpp_dir)
+        .build_arg("--parallel")
+        .build_arg(num_jobs.to_string())
+        .build();
 
     // Tell rustc where to find libpeacock_gpu.so.
     println!(
