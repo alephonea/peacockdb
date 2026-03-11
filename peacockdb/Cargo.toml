@@ -1,0 +1,11 @@
+[package]
+name = "peacockdb"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+cpu-only = ["peacockdb-ffi/cpu-only"]
+
+[dependencies]
+peacockdb-core = { path = "../peacockdb-core" }
+peacockdb-ffi = { path = "../peacockdb-ffi" }

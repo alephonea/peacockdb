@@ -6,7 +6,7 @@ GPU-accelerated analytical database using Apache DataFusion as the SQL frontend 
 
 ## Phase 1: Project Scaffolding & Build System
 
-### 1.1 Rust Project Setup
+### 1.1 DONE Rust Project Setup
 - Initialize a Cargo workspace with the following crates:
   - `peacockdb` — the main binary crate (CLI entrypoint)
   - `peacockdb-core` — core library: plan translation, GPU executor orchestration

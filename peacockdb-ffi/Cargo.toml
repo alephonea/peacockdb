@@ -1,0 +1,13 @@
+[package]
+name = "peacockdb-ffi"
+version = "0.1.0"
+edition = "2024"
+build = "build.rs"
+
+[features]
+cpu-only = []
+
+[build-dependencies]
+cmake = "0.1"
+
+[dependencies]

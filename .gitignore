@@ -1,0 +1,16 @@
+# Rust
+target/
+
+# CMake / C++ build artifacts
+cpp/build/
+cpp/install/
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store

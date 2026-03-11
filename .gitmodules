@@ -1,0 +1,3 @@
+[submodule "third_party/cudf"]
+	path = third_party/cudf
+	url = https://github.com/rapidsai/cudf

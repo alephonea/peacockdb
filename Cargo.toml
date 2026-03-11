@@ -1,0 +1,7 @@
+[workspace]
+members = [
+  "peacockdb",
+  "peacockdb-core",
+  "peacockdb-ffi",
+]
+resolver = "2"
