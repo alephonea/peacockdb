@@ -25,7 +25,8 @@ jobs:
           NINJA_VERSION=1.12.1
           curl -fsSL "https://github.com/ninja-build/ninja/releases/download/v${NINJA_VERSION}/ninja-linux.zip" \
             -o /tmp/ninja-linux.zip
-          unzip -o /tmp/ninja-linux.zip -d "$HOME/.local/bin"
+          python3 -c "import zipfile; zipfile.ZipFile('/tmp/ninja-linux.zip').extractall('$HOME/.local/bin')"
+          chmod +x "$HOME/.local/bin/ninja"
           rm /tmp/ninja-linux.zip
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
