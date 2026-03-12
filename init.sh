@@ -14,6 +14,7 @@ apt update
 apt install -y \
     curl \
     unzip \
+    patchelf \
     libssl-dev \
     zlib1g-dev \
     libboost-dev \

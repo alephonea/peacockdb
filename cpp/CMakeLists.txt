@@ -14,6 +14,7 @@ include(rapids-cuda)
 include(rapids-export)
 include(rapids-find)
 
+rapids_cpm_init()
 rapids_cuda_init_architectures(peacock_gpu)
 
 project(peacock_gpu LANGUAGES CXX CUDA)
@@ -81,14 +82,20 @@ install(DIRECTORY include/ DESTINATION include)
 # libpeacock_gpu.so, excluding system libs and the host GPU driver.
 install(CODE "
   file(GET_RUNTIME_DEPENDENCIES
-    LIBRARIES      \"\$<TARGET_FILE:peacock_gpu>\"
+    LIBRARIES
+      \"\$<TARGET_FILE:peacock_gpu>\"
+      \"\$<TARGET_FILE:cudf::cudf>\"
     RESOLVED_DEPENDENCIES_VAR   resolved
     UNRESOLVED_DEPENDENCIES_VAR unresolved
+    DIRECTORIES    \"\$<TARGET_FILE_DIR:cudf::cudf>\"
     PRE_EXCLUDE_REGEXES  \"libcuda\\\\.so\" \"libnvidia\"
     POST_EXCLUDE_REGEXES \"^/lib/\" \"^/usr/lib/\" \"^/lib64/\"
   )
   foreach(dep IN LISTS resolved)
     file(INSTALL \"\${dep}\" DESTINATION \"\${CMAKE_INSTALL_PREFIX}/lib\")
+    get_filename_component(dep_name \"\${dep}\" NAME)
+    execute_process(COMMAND patchelf --set-rpath \"\$ORIGIN\"
+      \"\${CMAKE_INSTALL_PREFIX}/lib/\${dep_name}\")
   endforeach()
   if(unresolved)
     message(WARNING \"Unresolved runtime dependencies: \${unresolved}\")

@@ -20,11 +20,11 @@ jobs:
         run: |
           CMAKE_VERSION=4.2.3
           curl -fsSL "https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-x86_64.tar.gz" \
-            | tar -xz -C /usr/local --strip-components=1
+            | sudo tar -xz -C /usr/local --strip-components=1
           NINJA_VERSION=1.12.1
           curl -fsSL "https://github.com/ninja-build/ninja/releases/download/v${NINJA_VERSION}/ninja-linux.zip" \
             -o /tmp/ninja-linux.zip
-          unzip -o /tmp/ninja-linux.zip -d /usr/local/bin
+          sudo unzip -o /tmp/ninja-linux.zip -d /usr/local/bin
           rm /tmp/ninja-linux.zip
 
       - name: Install Rust toolchain
