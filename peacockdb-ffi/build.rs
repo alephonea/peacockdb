@@ -1,6 +1,6 @@
 fn main() {
     // In cpu-only mode the C++ library is not built or linked.
-    if cfg!(feature = "cpu-only") {
+    if cfg!(feature = "rust-only") {
         return;
     }
 

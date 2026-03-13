@@ -47,3 +47,43 @@ pub async fn create_context_with_tables(data_dir: &Path) -> Result<SessionContex
 
     Ok(ctx)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use datafusion::arrow::array::Int64Array;
+    use std::path::PathBuf;
+
+    fn testdata_dir() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../testdata/tpchsf1")
+    }
+
+    async fn count(ctx: &SessionContext, query: &str) -> i64 {
+        let batches = ctx.sql(query).await.unwrap().collect().await.unwrap();
+        batches[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .unwrap()
+            .value(0)
+    }
+
+    #[tokio::test]
+    async fn test_nation_row_count() {
+        let ctx = create_context_with_tables(&testdata_dir()).await.unwrap();
+        assert_eq!(count(&ctx, "SELECT count(*) FROM nation").await, 25);
+    }
+
+    #[tokio::test]
+    async fn test_region_nation_join() {
+        let ctx = create_context_with_tables(&testdata_dir()).await.unwrap();
+        // Every nation belongs to exactly one region; joined count equals nation count.
+        let n = count(
+            &ctx,
+            "SELECT count(*) FROM nation JOIN region ON nation.n_regionkey = region.r_regionkey",
+        )
+        .await;
+        assert_eq!(n, 25);
+    }
+}

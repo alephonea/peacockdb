@@ -1,9 +1,9 @@
 // Raw FFI bindings to libpeacock_gpu.
 //
-// In cpu-only mode none of these symbols are linked; callers must gate
-// usage behind `#[cfg(not(feature = "cpu-only"))]`.
+// In rust-only mode none of these symbols are linked; callers must gate
+// usage behind `#[cfg(not(feature = "rust-only"))]`.
 
-#[cfg(not(feature = "cpu-only"))]
+#[cfg(not(feature = "rust-only"))]
 pub mod raw {
     use std::ffi::c_char;
 
@@ -35,14 +35,14 @@ pub mod raw {
     }
 }
 
-#[cfg(not(feature = "cpu-only"))]
+#[cfg(not(feature = "rust-only"))]
 pub fn version() -> &'static str {
     let ptr = unsafe { raw::peacock_gpu_version() };
     let cstr = unsafe { std::ffi::CStr::from_ptr(ptr) };
     cstr.to_str().expect("version string is valid UTF-8")
 }
 
-#[cfg(feature = "cpu-only")]
+#[cfg(feature = "rust-only")]
 pub fn version() -> &'static str {
     "0.1.0-cpu"
 }

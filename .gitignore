@@ -6,6 +6,8 @@ cpp/build/
 cpp/install/
 
 # Editor / IDE
+compile_commands.json
+.cache
 .vscode/
 .idea/
 *.swp

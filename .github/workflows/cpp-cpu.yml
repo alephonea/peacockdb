@@ -47,3 +47,6 @@ jobs:
 
       - name: Run CPU tests
         run: ctest --test-dir cpp/build -L cpu --output-on-failure
+
+      - name: Run Rust tests
+        run: cargo test -p peacockdb-core

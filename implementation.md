@@ -50,17 +50,17 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Build (CPU-only, no CUDA)
-        run: cargo build --workspace --features cpu-only
-        # cpu-only feature flag compiles peacockdb-core and peacockdb
+        run: cargo build --workspace --features rust-only
+        # rust-only feature flag compiles peacockdb-core and peacockdb
         # without peacockdb-ffi / C++ / CUDA dependencies
 
       - name: Run CPU tests
-        run: cargo test --workspace --features cpu-only
+        run: cargo test --workspace --features rust-only
         # Tests the plan IR round-trip, CPU executor, expression evaluation,
         # all scalar functions via DataFusion's built-in implementations
 ```
 
-This runs on every push and PR. The `cpu-only` Cargo feature excludes `peacockdb-ffi` from compilation, so no CUDA toolkit or libcudf is needed. All tests use `CpuExecutor` (Phase 8).
+This runs on every push and PR. The `rust-only` Cargo feature excludes `peacockdb-ffi` from compilation, so no CUDA toolkit or libcudf is needed. All tests use `CpuExecutor` (Phase 8).
 
 #### 1.4.2 Tier 2: Verda GPU Instances (GPU Tests)
 

@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-cpu-only = ["peacockdb-ffi/cpu-only"]
+rust-only = ["peacockdb-ffi/rust-only"]
 
 [dependencies]
 peacockdb-core = { path = "../peacockdb-core" }

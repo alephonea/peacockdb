@@ -5,7 +5,7 @@ edition = "2024"
 build = "build.rs"
 
 [features]
-cpu-only = []
+rust-only = []
 
 [build-dependencies]
 cmake = "0.1"
