@@ -23,13 +23,15 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_BUILD_RPATH_USE_ORIGIN ON)
-set(CMAKE_INSTALL_RPATH "$ORIGIN/../lib")
+if(NOT USE_HOST_LIBCUDF)
+  set(CMAKE_INSTALL_RPATH "$ORIGIN/../lib")
+endif()
 
 # ---------------------------------------------------------------------------
 # cuDF
 # ---------------------------------------------------------------------------
 if(USE_HOST_LIBCUDF)
-  find_package(cudf REQUIRED)
+  find_package(cudf REQUIRED CONFIG)
   message(STATUS "Using host cudf: ${cudf_VERSION}")
 else()
   message(STATUS "Building cudf from submodule")
@@ -80,24 +82,36 @@ install(DIRECTORY include/ DESTINATION include)
 
 # Collect and install all transitive shared library dependencies of
 # libpeacock_gpu.so, excluding system libs and the host GPU driver.
+# Skipped when using host cudf — the run host is expected to provide it.
+if(NOT USE_HOST_LIBCUDF)
 install(CODE "
   file(GET_RUNTIME_DEPENDENCIES
     LIBRARIES
       \"\$<TARGET_FILE:peacock_gpu>\"
       \"\$<TARGET_FILE:cudf::cudf>\"
+      \"\$<TARGET_FILE:nvcomp::nvcomp>\"
     RESOLVED_DEPENDENCIES_VAR   resolved
     UNRESOLVED_DEPENDENCIES_VAR unresolved
-    DIRECTORIES    \"\$<TARGET_FILE_DIR:cudf::cudf>\"
-    PRE_EXCLUDE_REGEXES  \"libcuda\\\\.so\" \"libnvidia\"
+    DIRECTORIES
+      \"\$<TARGET_FILE_DIR:cudf::cudf>\"
+      \"\$<TARGET_FILE_DIR:nvcomp::nvcomp>\"
+    PRE_EXCLUDE_REGEXES  \"libcuda\\\\.so\" \"libcudart\\\\.so\" \"libnvidia\"
     POST_EXCLUDE_REGEXES \"^/lib/\" \"^/usr/lib/\" \"^/lib64/\"
   )
   foreach(dep IN LISTS resolved)
-    file(INSTALL \"\${dep}\" DESTINATION \"\${CMAKE_INSTALL_PREFIX}/lib\")
+    file(INSTALL \"\${dep}\" DESTINATION \"\${CMAKE_INSTALL_PREFIX}/lib\" FOLLOW_SYMLINK_CHAIN)
     get_filename_component(dep_name \"\${dep}\" NAME)
-    execute_process(COMMAND patchelf --set-rpath \"\$ORIGIN\"
-      \"\${CMAKE_INSTALL_PREFIX}/lib/\${dep_name}\")
+    set(dep_installed \"\${CMAKE_INSTALL_PREFIX}/lib/\${dep_name}\")
+    execute_process(COMMAND patchelf --set-rpath \"\$ORIGIN\" \"\${dep_installed}\")
+    execute_process(
+      COMMAND patchelf --print-soname \"\${dep_installed}\"
+      OUTPUT_VARIABLE dep_soname OUTPUT_STRIP_TRAILING_WHITESPACE)
+    if(dep_soname AND NOT dep_soname STREQUAL dep_name)
+      file(CREATE_LINK \"\${dep_name}\" \"\${CMAKE_INSTALL_PREFIX}/lib/\${dep_soname}\" SYMBOLIC)
+    endif()
   endforeach()
   if(unresolved)
     message(WARNING \"Unresolved runtime dependencies: \${unresolved}\")
   endif()
 ")
+endif()

@@ -10,14 +10,14 @@ fn main() {
 
     let cpp_dir = workspace_root.join("cpp");
 
-    let num_jobs = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(4);
-
-    let install_dir = cmake::Config::new(&cpp_dir)
-        .build_arg("--parallel")
-        .build_arg(num_jobs.to_string())
-        .build();
+    let mut cfg = cmake::Config::new(&cpp_dir);
+    if let Ok(cudf_root) = std::env::var("CUDF_ROOT") {
+        cfg.define("USE_HOST_LIBCUDF", "ON");
+        cfg.define("cudf_ROOT", &cudf_root);
+        cfg.define("CMAKE_PREFIX_PATH", &cudf_root);
+    }
+    println!("cargo:rerun-if-env-changed=CUDF_ROOT");
+    let install_dir = cfg.build();
 
     // Tell rustc where to find libpeacock_gpu.so.
     println!(
