@@ -1,0 +1,13 @@
+GpuSortExec
+  GpuProjectExec
+    CoalesceBatchesExec: target_batch_size=15790320
+      GpuHashJoinExec
+        GpuScanExec: batch_size=15790320
+        GpuScanExec: batch_size=15790320
+--- memory ---
+GpuSortExec: row_width=64, subtree_max_row_bytes=136
+  GpuProjectExec: row_width=64, subtree_max_row_bytes=136
+    CoalesceBatchesExec: row_width=64, subtree_max_row_bytes=136
+      GpuHashJoinExec: row_width=64, subtree_max_row_bytes=136
+        GpuScanExec: row_width=36, subtree_max_row_bytes=36
+        GpuScanExec: row_width=36, subtree_max_row_bytes=36

@@ -37,13 +37,13 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Configure
-        run: ./build.sh --configure --cudf_ROOT=/opt/conda
+        run: ./scripts/build.sh --configure --cudf_ROOT=/opt/conda
 
       - name: Build
-        run: ./build.sh --build
+        run: ./scripts/build.sh --build
 
       - name: Install
-        run: ./build.sh --install
+        run: ./scripts/build.sh --install
 
       - name: Run CPU tests
         run: ctest --test-dir cpp/build -L cpu --output-on-failure

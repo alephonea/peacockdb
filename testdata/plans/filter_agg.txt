@@ -1,0 +1,15 @@
+GpuAggregateExec
+  CoalescePartitionsExec
+    GpuAggregateExec
+      GpuProjectExec
+        CoalesceBatchesExec: target_batch_size=67108864
+          GpuFilterExec
+            GpuScanExec: batch_size=67108864
+--- memory ---
+GpuAggregateExec: row_width=8, subtree_max_row_bytes=32
+  CoalescePartitionsExec: row_width=8, subtree_max_row_bytes=32
+    GpuAggregateExec: row_width=8, subtree_max_row_bytes=32
+      GpuProjectExec: row_width=1, subtree_max_row_bytes=32
+        CoalesceBatchesExec: row_width=16, subtree_max_row_bytes=32
+          GpuFilterExec: row_width=16, subtree_max_row_bytes=32
+            GpuScanExec: row_width=16, subtree_max_row_bytes=16

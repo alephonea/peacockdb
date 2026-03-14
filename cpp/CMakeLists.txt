@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.30.4 FATAL_ERROR)
 
-option(USE_HOST_LIBCUDF "Use cuDF installed on the host instead of building from submodule" OFF)
+option(CUDF_BUILD_FROM_SOURCE "Build cuDF from the vendored submodule instead of using a host installation" OFF)
 
 set(CUDF_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/cudf/cpp")
 
@@ -23,22 +23,29 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_BUILD_RPATH_USE_ORIGIN ON)
-if(NOT USE_HOST_LIBCUDF)
+if(CUDF_BUILD_FROM_SOURCE)
   set(CMAKE_INSTALL_RPATH "$ORIGIN/../lib")
 endif()
 
 # ---------------------------------------------------------------------------
 # cuDF
 # ---------------------------------------------------------------------------
-if(USE_HOST_LIBCUDF)
-  find_package(cudf REQUIRED CONFIG)
-  message(STATUS "Using host cudf: ${cudf_VERSION}")
-else()
+if(CUDF_BUILD_FROM_SOURCE)
   message(STATUS "Building cudf from submodule")
   set(BUILD_TESTS OFF CACHE BOOL "" FORCE)
   set(BUILD_BENCHMARKS OFF CACHE BOOL "" FORCE)
   set(CUDF_BUILD_TESTUTIL OFF CACHE BOOL "" FORCE)
   add_subdirectory("${CUDF_SOURCE_DIR}" cudf-build EXCLUDE_FROM_ALL)
+else()
+  if(NOT DEFINED cudf_ROOT AND NOT DEFINED ENV{cudf_ROOT}
+     AND NOT DEFINED CMAKE_PREFIX_PATH AND NOT DEFINED ENV{CMAKE_PREFIX_PATH})
+    message(FATAL_ERROR
+      "cudf_ROOT is not set. Either:\n"
+      "  - Set -Dcudf_ROOT=<path> or the cudf_ROOT environment variable to a cudf installation, or\n"
+      "  - Set -DCUDF_BUILD_FROM_SOURCE=ON to build cudf from the vendored submodule.")
+  endif()
+  find_package(cudf REQUIRED CONFIG)
+  message(STATUS "Using host cudf: ${cudf_VERSION}")
 endif()
 
 # ---------------------------------------------------------------------------
@@ -80,10 +87,15 @@ install(TARGETS peacock_gpu LIBRARY DESTINATION lib)
 install(TARGETS peacock_gpu_tests peacock_cpu_tests RUNTIME DESTINATION bin)
 install(DIRECTORY include/ DESTINATION include)
 
+# Ensure installed test binaries can find libpeacock_gpu.so in ../lib.
+set_target_properties(peacock_cpu_tests peacock_gpu_tests PROPERTIES
+  INSTALL_RPATH "$ORIGIN/../lib"
+)
+
 # Collect and install all transitive shared library dependencies of
 # libpeacock_gpu.so, excluding system libs and the host GPU driver.
 # Skipped when using host cudf — the run host is expected to provide it.
-if(NOT USE_HOST_LIBCUDF)
+if(CUDF_BUILD_FROM_SOURCE)
 install(CODE "
   file(GET_RUNTIME_DEPENDENCIES
     LIBRARIES

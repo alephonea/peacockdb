@@ -2172,3 +2172,62 @@ The query client (`peacockdb-client`) has no CUDA dependency — it is a pure Ru
 curl -L https://github.com/.../releases/latest/download/peacockdb-client-linux-x86_64 -o peacockdb-client
 chmod +x peacockdb-client
 ```
+
+## Phase 12: Common Table Expression (CTE) Materialization
+
+### 12.1 Problem
+
+DataFusion physical plans are strictly trees, not DAGs. The `ExecutionPlan` trait implements `DynTreeNode`, and all traversal methods (`transform_up`, `transform_down`) assume unique parent-child relationships with no visited-node tracking. When a CTE is referenced multiple times, DataFusion inlines (duplicates) the subplan at each reference site. This means:
+
+- The same data is scanned and computed N times for N references.
+- On GPU, each copy allocates its own device memory, doubling (or worse) the memory footprint.
+- Non-deterministic CTEs can produce different results at each reference (upstream issue [#10337](https://github.com/apache/datafusion/issues/10337)).
+
+No DataFusion-based production system (InfluxDB 3, Ballista, Comet) has solved this. The issue is open upstream with no linked PR.
+
+### 12.2 Prior Art
+
+**DuckDB** (v1.5, 2025) implements **Common Subplan Elimination**:
+- Automatically detects reused subtrees in the logical plan, including multi-reference CTEs.
+- Materializes the shared subplan once and replaces references with scans over the materialized result.
+- Supports fuzzy matching where similar (not identical) CTEs have their superset computed once.
+- Reports up to 80% speedup on TPC-DS/TPC-H queries that fit the pattern.
+
+**Databend** (own engine, not DataFusion-based) supports explicit `MATERIALIZED` CTEs:
+- User annotates `WITH t AS MATERIALIZED (...)` to force single-evaluation.
+- Results are buffered in memory (recently refactored to spill to temp tables for large results).
+- Automatic materialization heuristics are under development.
+
+### 12.3 Design: `MaterializeCteExec`
+
+Introduce a custom `ExecutionPlan` node that computes its input once and replays the result for all consumers.
+
+```
+MaterializeCteExec          ← replaces each inlined copy
+  └── (on first call) executes the shared subplan, buffers RecordBatches
+  └── (on subsequent calls) replays from buffer
+```
+
+**Detection** (logical plan phase):
+1. After DataFusion produces the `LogicalPlan`, walk the tree and hash each subtree.
+2. Identify subtrees that appear more than once (identical structure and expressions).
+3. Replace all but the first occurrence with a `LogicalPlan::Extension` referencing a shared CTE id.
+
+**Execution** (physical plan phase):
+1. The first reference becomes a `MaterializeCteExec` wrapping the real subplan. On `execute()`, it runs the subplan, collects all `RecordBatch`es into a shared `Arc<Mutex<Vec<RecordBatch>>>` buffer, and streams them out.
+2. Subsequent references become `MaterializeCteReaderExec` nodes that wait for the buffer to be populated, then stream from it.
+3. Synchronization: use a `tokio::sync::watch` channel — the writer signals completion, readers await it.
+
+**Memory considerations for GPU**:
+- The materialized batches live in CPU memory (Arrow `RecordBatch`). Each GPU consumer transfers them to device memory independently, which is the same cost as a `ParquetExec` scan.
+- If the CTE result is small (e.g., dimension table), this is a clear win — one scan instead of N.
+- If the CTE result is large, spilling to a temp Parquet file (like Databend's approach) avoids OOM on the host side.
+- The `analyze_memory` function must learn to treat `MaterializeCteReaderExec` as a leaf with `row_width` derived from the CTE's output schema, and exclude the shared subplan's memory from the reader's `subtree_max_row_bytes` (it is accounted for once under the writer).
+
+### 12.4 Scope and Priority
+
+This is a **future optimization**. Most analytical queries do not reference the same CTE multiple times, and the current tree-based model is correct — each duplicated subtree genuinely allocates its own memory, and `analyze_memory` accounts for it properly. Prioritize this when:
+
+- Users report performance issues on multi-reference CTE queries.
+- TPC-DS benchmarking reveals queries where duplicated subplans dominate execution time (e.g., Q23, Q59).
+- GPU memory pressure from duplicated large intermediate results becomes a bottleneck.
