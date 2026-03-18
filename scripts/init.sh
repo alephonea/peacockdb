@@ -2,6 +2,12 @@
 
 # Startup script to run on a fresh Ubuntu VM as root.
 
+if [ -z "$USER" ]; then
+  USER="build"
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 useradd -m -s /bin/bash $USER
 echo "$USER ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
 mkdir -p /home/$USER/.ssh
@@ -37,3 +43,5 @@ curl -fsSL "https://github.com/ninja-build/ninja/releases/download/v${NINJA_VERS
 unzip -o /tmp/ninja-linux.zip -d /usr/local/bin
 rm /tmp/ninja-linux.zip
 chmod +x /usr/local/bin/ninja
+
+"$SCRIPT_DIR/conda-install-cudf.sh" --user "$USER"
