@@ -11,19 +11,18 @@ use datafusion::error::Result;
 
 use gpu_rule::{GpuExecutionRule, GpuMemoryBudgetRule};
 
-const DEFAULT_GPU_MEMORY_BUDGET: usize = 2 * 1024 * 1024 * 1024; // 2 GiB
-
 /// Scans `data_dir` for `.parquet` files and registers each as a table in a new
 /// `SessionContext`. The table name is the file stem (e.g. `orders.parquet` → `orders`).
-pub async fn create_context_with_tables(data_dir: &Path) -> Result<SessionContext> {
-    create_context_with_tables_and_budget(data_dir, DEFAULT_GPU_MEMORY_BUDGET).await
-}
-
-pub async fn create_context_with_tables_and_budget(
+pub async fn create_context_with_tables(
     data_dir: &Path,
+    target_partitions: usize,
     gpu_memory_budget: usize,
 ) -> Result<SessionContext> {
-    let state = SessionStateBuilder::new_from_existing(SessionContext::new().state())
+    let base = SessionContext::new();
+    let mut config = base.state().config().clone();
+    config.options_mut().execution.target_partitions = target_partitions;
+    let state = SessionStateBuilder::new_from_existing(base.state())
+        .with_config(config)
         .with_physical_optimizer_rule(Arc::new(GpuExecutionRule))
         .with_physical_optimizer_rule(Arc::new(GpuMemoryBudgetRule::new(gpu_memory_budget)))
         .build();
@@ -92,6 +91,13 @@ mod tests {
 
     use datafusion::physical_plan::display::DisplayableExecutionPlan;
 
+    const TEST_TARGET_PARTITIONS: usize = 8;
+    const TEST_GPU_MEMORY_BUDGET: usize = 2 * 1024 * 1024 * 1024; // 2 GiB
+
+    fn test_ctx(data_dir: &Path) -> impl std::future::Future<Output = Result<SessionContext>> {
+        create_context_with_tables(data_dir, TEST_TARGET_PARTITIONS, TEST_GPU_MEMORY_BUDGET)
+    }
+
     fn plans_dir() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../testdata/plans")
     }
@@ -158,13 +164,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_nation_row_count() {
-        let ctx = create_context_with_tables(&testdata_dir()).await.unwrap();
+        let ctx = test_ctx(&testdata_dir()).await.unwrap();
         assert_eq!(count(&ctx, "SELECT count(*) FROM nation").await, 25);
     }
 
     #[tokio::test]
     async fn test_region_nation_join() {
-        let ctx = create_context_with_tables(&testdata_dir()).await.unwrap();
+        let ctx = test_ctx(&testdata_dir()).await.unwrap();
         let n = count(
             &ctx,
             "SELECT count(*) FROM nation JOIN region ON nation.n_regionkey = region.r_regionkey",
@@ -179,7 +185,7 @@ mod tests {
     /// Expected GPU nodes: GpuAggregateExec (partial + final), GpuFilterExec
     #[tokio::test]
     async fn test_gpu_nodes_filter_agg() {
-        let ctx = create_context_with_tables(&testdata_dir()).await.unwrap();
+        let ctx = test_ctx(&testdata_dir()).await.unwrap();
         let query = "SELECT count(*) FROM customer WHERE c_acctbal > 0";
 
         let plan = ctx.sql(query).await.unwrap().create_physical_plan().await.unwrap();
@@ -193,7 +199,7 @@ mod tests {
     /// Expected GPU nodes: GpuSortExec, GpuHashJoinExec
     #[tokio::test]
     async fn test_gpu_nodes_join_sort() {
-        let ctx = create_context_with_tables(&testdata_dir()).await.unwrap();
+        let ctx = test_ctx(&testdata_dir()).await.unwrap();
         let query = "
             SELECT n.n_name, r.r_name
             FROM nation n JOIN region r ON n.n_regionkey = r.r_regionkey
@@ -212,7 +218,7 @@ mod tests {
     /// Expected GPU nodes: GpuSortExec, GpuAggregateExec, GpuHashJoinExec
     #[tokio::test]
     async fn test_gpu_nodes_group_join_sort() {
-        let ctx = create_context_with_tables(&testdata_dir()).await.unwrap();
+        let ctx = test_ctx(&testdata_dir()).await.unwrap();
         let query = "
             SELECT r.r_name, count(*) AS nation_count
             FROM nation n JOIN region r ON n.n_regionkey = r.r_regionkey
@@ -252,7 +258,7 @@ mod tests {
     async fn test_memory_budget_reduces_batch_size() {
         // 10 KiB budget → should force a very small batch size.
         let ctx =
-            create_context_with_tables_and_budget(&testdata_dir(), 10 * 1024).await.unwrap();
+            create_context_with_tables(&testdata_dir(), TEST_TARGET_PARTITIONS, 10 * 1024).await.unwrap();
         let query = "
             SELECT n.n_name, r.r_name
             FROM nation n JOIN region r ON n.n_regionkey = r.r_regionkey

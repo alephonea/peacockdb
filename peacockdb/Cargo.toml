@@ -12,4 +12,5 @@ peacockdb-ffi = { path = "../peacockdb-ffi" }
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 anyhow = "1"
+num_cpus = "1"
 datafusion = "44"
