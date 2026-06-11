@@ -428,8 +428,8 @@ gpu_result_test_tpcds!(test_gpu_tpcds_q17, "q17");
 // --- Bucket F: projection / scalar-expr gaps ---
 gpu_result_test_tpcds!(test_gpu_tpcds_q41, "q41"); // Boolean AST literal
 gpu_result_test_tpcds!(test_gpu_tpcds_q84, "q84"); // scalar fn: concat
-// q99: scalar fn lower executes but result diverges from CPU (see Bucket I/H).
-// gpu_result_test_tpcds!(test_gpu_tpcds_q99, "q99");
+// q99: lower() + days-bucket; fixed with the Bucket H cuDF SQL-semantics fixes.
+gpu_result_test_tpcds!(test_gpu_tpcds_q99, "q99");
 
 // --- Bucket I: set operations (result divergence) ---
 // q87: EXCEPT (×2) of DISTINCT sets feeding count(*) — diverges.
@@ -437,22 +437,25 @@ gpu_result_test_tpcds!(test_gpu_tpcds_q84, "q84"); // scalar fn: concat
 
 // --- Bucket G: FlatBuffer verification failed (large plans → raised verifier max_depth) ---
 gpu_result_test_tpcds!(test_gpu_tpcds_q8, "q8");
-// q64: large plan verifies/executes but result diverges from CPU (Bucket H).
-// gpu_result_test_tpcds!(test_gpu_tpcds_q64, "q64");
+// q64: large plan; fixed with the Bucket H cuDF SQL-semantics fixes.
+gpu_result_test_tpcds!(test_gpu_tpcds_q64, "q64");
 
-// --- Bucket H: result divergence (executes, wrong result) ---
-// gpu_result_test_tpcds!(test_gpu_tpcds_q4, "q4");
-// gpu_result_test_tpcds!(test_gpu_tpcds_q6, "q6");
-// gpu_result_test_tpcds!(test_gpu_tpcds_q7, "q7");
-// gpu_result_test_tpcds!(test_gpu_tpcds_q11, "q11");
-// gpu_result_test_tpcds!(test_gpu_tpcds_q15, "q15");
-// gpu_result_test_tpcds!(test_gpu_tpcds_q21, "q21");
-// gpu_result_test_tpcds!(test_gpu_tpcds_q26, "q26");
-// gpu_result_test_tpcds!(test_gpu_tpcds_q50, "q50");
-// gpu_result_test_tpcds!(test_gpu_tpcds_q62, "q62");
-// gpu_result_test_tpcds!(test_gpu_tpcds_q74, "q74");
-// gpu_result_test_tpcds!(test_gpu_tpcds_q79, "q79");
-// gpu_result_test_tpcds!(test_gpu_tpcds_q81, "q81");
+// --- Bucket H: result divergence — fixed by four cuDF SQL-semantics fixes in
+// plan_executor.cpp (issue #29): NULL_LOGICAL_AND/OR (3-valued logic),
+// groupby null_policy::INCLUDE (NULL is its own group), and join
+// null_equality::UNEQUAL (NULL keys don't match). ---
+gpu_result_test_tpcds!(test_gpu_tpcds_q4, "q4");
+gpu_result_test_tpcds!(test_gpu_tpcds_q6, "q6");
+gpu_result_test_tpcds!(test_gpu_tpcds_q7, "q7");
+gpu_result_test_tpcds!(test_gpu_tpcds_q11, "q11");
+gpu_result_test_tpcds!(test_gpu_tpcds_q15, "q15");
+gpu_result_test_tpcds!(test_gpu_tpcds_q21, "q21");
+gpu_result_test_tpcds!(test_gpu_tpcds_q26, "q26");
+gpu_result_test_tpcds!(test_gpu_tpcds_q50, "q50");
+gpu_result_test_tpcds!(test_gpu_tpcds_q62, "q62");
+gpu_result_test_tpcds!(test_gpu_tpcds_q74, "q74");
+gpu_result_test_tpcds!(test_gpu_tpcds_q79, "q79");
+gpu_result_test_tpcds!(test_gpu_tpcds_q81, "q81");
 
 // --- Does not physical-plan (also skipped in the plan tests, not a GPU gap) ---
 // q27: ROLLUP ordering rejected by SanityCheckPlan.
