@@ -42,6 +42,7 @@
 #include <cudf/strings/contains.hpp>
 #include <cudf/strings/slice.hpp>
 #include <cudf/unary.hpp>
+#include <cudf/round.hpp>
 #include <cudf/scalar/scalar_factories.hpp>
 #include <cudf/sorting.hpp>
 #include <cudf/stream_compaction.hpp>
@@ -773,6 +774,30 @@ static std::unique_ptr<cudf::column> build_column_scalar_fn(
       throw std::runtime_error("abs expects 1 arg");
     auto col = build_column(args->Get(0), table);
     return cudf::unary_operation(col->view(), cudf::unary_operator::ABS);
+  }
+
+  // round(x [, places]) — DataFusion's round coerces its argument to FLOAT64 and
+  // rounds half away from zero (Rust f64::round), which is cuDF's
+  // rounding_method::HALF_UP. cudf::round has no DECIMAL128 overload (and our
+  // scan widens every decimal to DECIMAL128), so evaluate in FLOAT64 — that also
+  // matches the FLOAT64 result the peacock CPU oracle produces for `round`.
+  // The optional second argument (decimal places) is an integer literal.
+  if (name == "round") {
+    if (args->size() < 1 || args->size() > 2)
+      throw std::runtime_error("round expects 1 or 2 args");
+    auto col = build_column(args->Get(0), table);
+    int32_t places = 0;
+    if (args->size() == 2) {
+      auto* e = args->Get(1);
+      if (e->node_type() != fb::ExprNode_LiteralExpr)
+        throw std::runtime_error("round: decimal places must be a literal");
+      places = static_cast<int32_t>(e->node_as_LiteralExpr()->value()->int_val());
+    }
+    auto fcol = col->type().id() == cudf::type_id::FLOAT64
+                    ? std::move(col)
+                    : cudf::cast(col->view(),
+                                 cudf::data_type{cudf::type_id::FLOAT64});
+    return cudf::round(fcol->view(), places, cudf::rounding_method::HALF_UP);
   }
 
   // lower(s) — lowercase a string column.
@@ -1526,6 +1551,14 @@ static TableResult execute_hash_join(const fb::GpuHashJoin* join) {
     semi_pred = &build_expr(join->filter(), semi_ctx, join->filter_columns());
   }
 
+  // NOTE: semi/anti (and the mark join below) intentionally stay at
+  // null_equality::EQUAL, unlike the equi-joins in execute_hash_join which use
+  // UNEQUAL. Their NULL behavior is the SQL NOT IN/EXISTS three-valued-logic
+  // trap (`x NOT IN (..., NULL)` is NULL/false for every x), which neither
+  // EQUAL nor UNEQUAL implements on its own — a blind flip would be wrong for
+  // anti-join. No corpus query exercises a nullable semi/anti/mark key today;
+  // the dedicated semantics + golden are tracked in issue #59 before any change.
+  //
   // cuDF replaced free `left_{semi,anti}_join` with `filtered_join` (build the
   // hash table from one side, then probe). For Left{Semi,Anti} the right side
   // is the filter; for Right{Semi,Anti} we swap.
@@ -1637,6 +1670,8 @@ static TableResult execute_hash_join(const fb::GpuHashJoin* join) {
   // matched left-row indices with a (mixed) left semi-join and scatter `true`
   // into an all-false boolean column.
   if (jt == fb::JoinType_LeftMark) {
+    // null_equality::EQUAL kept on purpose here too — see the semi/anti note
+    // above (nullable mark-key semantics tracked in issue #59).
     std::unique_ptr<rmm::device_uvector<cudf::size_type>> matched;
     if (join->filter()) {
       if (!join->filter_columns())

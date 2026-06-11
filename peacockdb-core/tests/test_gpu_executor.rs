@@ -342,11 +342,9 @@ gpu_result_test_tpcds!(test_gpu_tpcds_q97, "q97");
 // --- Bucket C: window functions (GpuWindow node) ---
 // Whole-partition aggregate windows now execute on GPU via cudf::grouped_rolling_window.
 gpu_result_test_tpcds!(test_gpu_tpcds_q12, "q12");
-// q20: window output is correct (99/100 rows byte-identical to CPU); the single
-// differing row is the LIMIT-100 boundary, where a NULL i_class row and a
-// non-null row swap across the top-N cutoff. A sort/top-N NULL-ordering effect,
-// not a window-node bug. Re-enable once the LIMIT/sort tiebreak is reconciled.
-// gpu_result_test_tpcds!(test_gpu_tpcds_q20, "q20");
+// q20: the LIMIT-100 top-N NULL-ordering tiebreak is now reconciled by GpuSort
+// honoring per-column null_precedence (issue #42).
+gpu_result_test_tpcds!(test_gpu_tpcds_q20, "q20");
 // q98: same whole-partition-sum pattern as q12; only fails under GPU memory
 // pressure (OOM during init when the shared H200 is occupied). Verify on a free
 // GPU before enabling.
@@ -369,10 +367,9 @@ gpu_result_test_tpcds!(test_gpu_tpcds_q89, "q89");
 // LeftMark join (now supported):
 gpu_result_test_tpcds!(test_gpu_tpcds_q10, "q10");
 gpu_result_test_tpcds!(test_gpu_tpcds_q45, "q45");
-// q35: LeftMark join works, but the final ORDER BY ca_state NULLS FIRST is not
-// honored on GPU (nulls sort last instead of first) — GpuSort null-ordering
-// blocker, not a join issue (issue #42).
-// gpu_result_test_tpcds!(test_gpu_tpcds_q35, "q35");
+// q35: final ORDER BY ca_state NULLS FIRST now honored (GpuSort threads
+// per-column null_precedence from SortExpr.nulls_first) — issue #42.
+gpu_result_test_tpcds!(test_gpu_tpcds_q35, "q35");
 // NestedLoopJoinExec (now supported, incl. Inner + Left):
 // q9: NestedLoopJoin works (executes past the join), but blocked by a downstream
 // GpuAggregate cuDF failure ("Reduction operators other than min/max are not
@@ -383,9 +380,8 @@ gpu_result_test_tpcds!(test_gpu_tpcds_q45, "q45");
 // cast type must be fixed-width" — a cast to a non-fixed-width/string type) —
 // distinct blocker, not a join issue (issue #45).
 // gpu_result_test_tpcds!(test_gpu_tpcds_q24, "q24");
-// q54: NestedLoopJoin works, but blocked by the unsupported scalar function
-// `round` in GpuProject (issue #43).
-// gpu_result_test_tpcds!(test_gpu_tpcds_q54, "q54");
+// q54: scalar fn `round` now implemented in the GpuProject column path (#43).
+gpu_result_test_tpcds!(test_gpu_tpcds_q54, "q54");
 // CrossJoinExec (now supported):
 gpu_result_test_tpcds!(test_gpu_tpcds_q88, "q88");
 gpu_result_test_tpcds!(test_gpu_tpcds_q90, "q90");
@@ -396,8 +392,11 @@ gpu_result_test_tpcds!(test_gpu_tpcds_q90, "q90");
 // Right join (now supported):
 gpu_result_test_tpcds!(test_gpu_tpcds_q40, "q40");
 gpu_result_test_tpcds!(test_gpu_tpcds_q93, "q93");
-// q78: Right join works, but blocked by an unsupported scalar function in the
-// column path (round) in GpuProject — not a join issue (issue #43).
+// q78: scalar fn `round` now executes (q54 confirms round is correct), but q78's
+// result still diverges. The divergence is NOT the rounding — it is upstream:
+// q78 is a 3-CTE anti-join (LEFT JOIN ... WHERE *_order_number IS NULL) feeding
+// two more LEFT JOINs and a `ORDER BY ... DESC ... LIMIT 100` top-N over the
+// rounded ratio. Left disabled — tracked in issue #60; #43 (round) itself is done.
 // gpu_result_test_tpcds!(test_gpu_tpcds_q78, "q78");
 
 // --- Bucket E: aggregate gaps ---
