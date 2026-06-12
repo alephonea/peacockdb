@@ -262,7 +262,7 @@ cpu_result_test!(test_cpu_tpch_q11, "q11");
 cpu_result_test!(test_cpu_tpch_q12, "q12");
 cpu_result_test!(test_cpu_tpch_q13, "q13");
 cpu_result_test!(test_cpu_tpch_q14, "q14");
-// cpu_result_test!(test_cpu_tpch_q15, "q15");  // q15 uses a view; skip like test_queries.rs
+cpu_result_test!(test_cpu_tpch_q15, "q15");  // view inlined as a CTE (see q15.sql)
 cpu_result_test!(test_cpu_tpch_q16, "q16");
 cpu_result_test!(test_cpu_tpch_q17, "q17");
 cpu_result_test!(test_cpu_tpch_q18, "q18");

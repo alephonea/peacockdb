@@ -996,6 +996,20 @@ static std::unique_ptr<cudf::column> build_column(
       auto* cast = expr->node_as_CastExprNode();
       auto inner = build_column(cast->expr(), table);
       auto target_id = fb_to_type_id(cast->target_type());
+      // String->string cast is a no-op: cuDF represents every Arrow string
+      // variant (Utf8 / Utf8View / LargeUtf8 / Dictionary<Utf8>) as the single
+      // STRING type, so DataFusion's coercion of two char keys to a common
+      // string type (e.g. q24's `s_zip = ca_zip` join) has nothing to convert.
+      // cudf::cast has no STRING overload and would otherwise throw "Unary cast
+      // type must be fixed-width" (#45). Same precedent as execute_union, where
+      // STRING/EMPTY columns are left untouched. A genuine non-string -> STRING
+      // conversion isn't producible by cudf::cast; reject it clearly.
+      if (target_id == cudf::type_id::STRING) {
+        if (inner->type().id() == cudf::type_id::STRING)
+          return inner;
+        throw std::runtime_error(
+            "cast to STRING from a non-string type not supported in column path");
+      }
       // Decimal types need a scale. Arrow/DataFusion scale counts fractional
       // digits (positive); cuDF's fixed_point scale is the base-10 exponent
       // (negated). Other types use the default (scale 0).
