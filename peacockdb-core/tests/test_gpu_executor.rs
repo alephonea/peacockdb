@@ -281,13 +281,9 @@ gpu_result_test_tpcds!(test_gpu_tpcds_q95, "q95");
 // line as its bucket is addressed.
 // =====================================================================
 
-// q5: the Bucket A union-concatenate blocker is now fixed (the executor casts
-// each branch to the union's declared output type via GpuUnion.output_schema).
-// But q5 then hits a SECOND, separate blocker — its final GROUP BY ROLLUP
-// (channel, id) needs grouping-sets aggregation, which the GPU path does not
-// implement yet (same gap that parks q14/q18/q22/q36/q67/q70/q80/q86). Re-enable
-// once grouping-sets lands.
-// gpu_result_test_tpcds!(test_gpu_tpcds_q5, "q5");
+// q5: GROUP BY ROLLUP(channel, id) — now executes via grouping-sets support in
+// execute_aggregate (issue #40).
+gpu_result_test_tpcds!(test_gpu_tpcds_q5, "q5");
 
 // --- Bucket C: window functions (BoundedWindowAggExec) ---
 // gpu_result_test_tpcds!(test_gpu_tpcds_q49, "q49");
@@ -299,16 +295,17 @@ gpu_result_test_tpcds!(test_gpu_tpcds_q23, "q23");
 // drops rows; cross join cannot drop rows) — distinct correctness blocker, not
 // the join (issue #47).
 // gpu_result_test_tpcds!(test_gpu_tpcds_q77, "q77");
-// q28: CrossJoin works, but blocked by a downstream GpuAggregate cuDF failure
-// ("Reduction operators other than min/max are not supported for non-arithmetic
-// types") — distinct blocker, not a join issue (issue #44).
+// q28: the #44 decimal-reduce blocker is gone (global avg over decimal works
+// now), but q28 executes and DIVERGES: it uses count(DISTINCT ss_list_price)
+// alongside non-distinct avg/count in the same aggregate, and make_agg ignores
+// the DISTINCT flag (counts all rows). Mixed distinct + non-distinct aggregates
+// in one group-by — parked under #62 (execute_aggregate now throws on the
+// distinct flag rather than silently miscomputing).
 // gpu_result_test_tpcds!(test_gpu_tpcds_q28, "q28");
-// q14: NestedLoopJoin now supported, but q14 also uses GROUP BY ROLLUP — blocked
-// by the grouping-sets gap (issue #40).
-// gpu_result_test_tpcds!(test_gpu_tpcds_q14, "q14");
-// q80: Right join now supported, but q80 also uses GROUP BY ROLLUP — blocked by
-// the grouping-sets gap (issue #40).
-// gpu_result_test_tpcds!(test_gpu_tpcds_q80, "q80");
+// q14: NestedLoopJoin + GROUP BY ROLLUP — now green via grouping-sets (#40).
+gpu_result_test_tpcds!(test_gpu_tpcds_q14, "q14");
+// q80: Right join + GROUP BY ROLLUP — now green via grouping-sets (#40).
+gpu_result_test_tpcds!(test_gpu_tpcds_q80, "q80");
 
 // --- Bucket E: aggregate gaps ---
 // q2: two blockers. (1) The Partial GpuAggregate sums a CASE over a string
@@ -375,10 +372,10 @@ gpu_result_test_tpcds!(test_gpu_tpcds_q45, "q45");
 // per-column null_precedence from SortExpr.nulls_first) — issue #42.
 gpu_result_test_tpcds!(test_gpu_tpcds_q35, "q35");
 // NestedLoopJoinExec (now supported, incl. Inner + Left):
-// q9: NestedLoopJoin works (executes past the join), but blocked by a downstream
-// GpuAggregate cuDF failure ("Reduction operators other than min/max are not
-// supported for non-arithmetic types") — same blocker as q28, not a join issue
-// (issue #44).
+// q9: the #44 decimal-reduce blocker is gone, but q9 now hits a DIFFERENT one —
+// a GpuProject cuDF failure (copying/copy.cu:367) building its top-level CASE of
+// 15 scalar-subquery comparisons (copy_if_else over a 1-row scalar vs an empty
+// branch). Distinct blocker, not count-distinct; parked under #63.
 // gpu_result_test_tpcds!(test_gpu_tpcds_q9, "q9");
 // q24: string->string key-cast (s_zip = ca_zip) now a no-op in the CastExpr
 // column path (#45).
@@ -421,11 +418,10 @@ gpu_result_test_tpcds!(test_gpu_tpcds_q17, "q17");
 // filter boundary. Re-enable once the GPU harness gains float-tolerant
 // comparison for stddev/variance columns (proposed ticket).
 // gpu_result_test_tpcds!(test_gpu_tpcds_q39, "q39");
-// q18, q22: GROUP BY ROLLUP — the executor ignores the grouping_sets mask, so
-// these need grouping-sets aggregation (issue #40), not an aggregate-function
-// gap. Keep disabled until grouping sets land.
-// gpu_result_test_tpcds!(test_gpu_tpcds_q18, "q18");
-// gpu_result_test_tpcds!(test_gpu_tpcds_q22, "q22");
+// q18, q22: GROUP BY ROLLUP — now green via grouping-sets support in
+// execute_aggregate (issue #40).
+gpu_result_test_tpcds!(test_gpu_tpcds_q18, "q18");
+gpu_result_test_tpcds!(test_gpu_tpcds_q22, "q22");
 
 // --- Bucket F: projection / scalar-expr gaps ---
 gpu_result_test_tpcds!(test_gpu_tpcds_q41, "q41"); // Boolean AST literal
