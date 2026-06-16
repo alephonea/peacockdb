@@ -42,6 +42,7 @@
 #include <cudf/strings/contains.hpp>
 #include <cudf/strings/slice.hpp>
 #include <cudf/unary.hpp>
+#include <cudf/round.hpp>
 #include <cudf/scalar/scalar_factories.hpp>
 #include <cudf/sorting.hpp>
 #include <cudf/stream_compaction.hpp>
@@ -171,8 +172,17 @@ static cudf::ast::ast_operator fb_to_ast_op(fb::BinaryOp op) {
     case fb::BinaryOp_Multiply: return cudf::ast::ast_operator::MUL;
     case fb::BinaryOp_Divide: return cudf::ast::ast_operator::DIV;
     case fb::BinaryOp_Modulo: return cudf::ast::ast_operator::MOD;
-    case fb::BinaryOp_And:    return cudf::ast::ast_operator::LOGICAL_AND;
-    case fb::BinaryOp_Or:     return cudf::ast::ast_operator::LOGICAL_OR;
+    // SQL three-valued logic: `TRUE OR NULL` is TRUE and `FALSE AND NULL` is
+    // FALSE, whereas cuDF's plain LOGICAL_AND/OR propagate the null (so
+    // `TRUE OR NULL` → NULL). For a top-level filter, AND is unaffected (a NULL
+    // mask and a FALSE mask both drop the row), but plain OR silently DROPS rows
+    // a disjunctive predicate should keep — e.g. `p_channel_email = 'N' OR
+    // p_channel_event = 'N'` when one channel is NULL (TPC-DS q7/q15/q26/q79).
+    // NULL_LOGICAL_* match the peacock CPU oracle's SQL semantics and reduce to
+    // LOGICAL_* when both operands are non-null, so non-null predicates (the
+    // whole passing suite) are unchanged.
+    case fb::BinaryOp_And:    return cudf::ast::ast_operator::NULL_LOGICAL_AND;
+    case fb::BinaryOp_Or:     return cudf::ast::ast_operator::NULL_LOGICAL_OR;
     case fb::BinaryOp_BitwiseAnd: return cudf::ast::ast_operator::BITWISE_AND;
     case fb::BinaryOp_BitwiseOr:  return cudf::ast::ast_operator::BITWISE_OR;
     case fb::BinaryOp_BitwiseXor: return cudf::ast::ast_operator::BITWISE_XOR;
@@ -567,8 +577,12 @@ static cudf::binary_operator fb_to_binop(fb::BinaryOp op) {
     case fb::BinaryOp_Multiply: return cudf::binary_operator::MUL;
     case fb::BinaryOp_Divide:   return cudf::binary_operator::DIV;
     case fb::BinaryOp_Modulo:   return cudf::binary_operator::MOD;
-    case fb::BinaryOp_And:      return cudf::binary_operator::LOGICAL_AND;
-    case fb::BinaryOp_Or:       return cudf::binary_operator::LOGICAL_OR;
+    // SQL three-valued logic (see fb_to_ast_op): use the NULL_LOGICAL_* variants
+    // so a disjunction with a NULL operand keeps the row when the other side is
+    // TRUE. This column path handles OR over string comparisons / IN-lists
+    // (e.g. q15's `ca_state IN (...)`, which the AST path can't express).
+    case fb::BinaryOp_And:      return cudf::binary_operator::NULL_LOGICAL_AND;
+    case fb::BinaryOp_Or:       return cudf::binary_operator::NULL_LOGICAL_OR;
     case fb::BinaryOp_BitwiseAnd: return cudf::binary_operator::BITWISE_AND;
     case fb::BinaryOp_BitwiseOr:  return cudf::binary_operator::BITWISE_OR;
     case fb::BinaryOp_BitwiseXor: return cudf::binary_operator::BITWISE_XOR;
@@ -760,6 +774,30 @@ static std::unique_ptr<cudf::column> build_column_scalar_fn(
       throw std::runtime_error("abs expects 1 arg");
     auto col = build_column(args->Get(0), table);
     return cudf::unary_operation(col->view(), cudf::unary_operator::ABS);
+  }
+
+  // round(x [, places]) — DataFusion's round coerces its argument to FLOAT64 and
+  // rounds half away from zero (Rust f64::round), which is cuDF's
+  // rounding_method::HALF_UP. cudf::round has no DECIMAL128 overload (and our
+  // scan widens every decimal to DECIMAL128), so evaluate in FLOAT64 — that also
+  // matches the FLOAT64 result the peacock CPU oracle produces for `round`.
+  // The optional second argument (decimal places) is an integer literal.
+  if (name == "round") {
+    if (args->size() < 1 || args->size() > 2)
+      throw std::runtime_error("round expects 1 or 2 args");
+    auto col = build_column(args->Get(0), table);
+    int32_t places = 0;
+    if (args->size() == 2) {
+      auto* e = args->Get(1);
+      if (e->node_type() != fb::ExprNode_LiteralExpr)
+        throw std::runtime_error("round: decimal places must be a literal");
+      places = static_cast<int32_t>(e->node_as_LiteralExpr()->value()->int_val());
+    }
+    auto fcol = col->type().id() == cudf::type_id::FLOAT64
+                    ? std::move(col)
+                    : cudf::cast(col->view(),
+                                 cudf::data_type{cudf::type_id::FLOAT64});
+    return cudf::round(fcol->view(), places, cudf::rounding_method::HALF_UP);
   }
 
   // lower(s) — lowercase a string column.
@@ -1383,7 +1421,11 @@ static TableResult execute_aggregate(const fb::GpuAggregate* agg) {
   }
 
   cudf::table_view keys_view{key_cols};
-  cudf::groupby::groupby gb{keys_view};
+  // SQL GROUP BY puts NULL keys in their own group; cuDF's groupby defaults to
+  // null_policy::EXCLUDE, which DROPS every row that has a NULL in any grouping
+  // key — silently losing the NULL group (e.g. TPC-DS q15's NULL ca_zip row).
+  // INCLUDE matches the peacock CPU oracle. Non-null keys are unaffected.
+  cudf::groupby::groupby gb{keys_view, cudf::null_policy::INCLUDE};
 
   // Build aggregation requests — one per aggregate function.
   std::vector<cudf::groupby::aggregation_request> requests;
@@ -1509,6 +1551,14 @@ static TableResult execute_hash_join(const fb::GpuHashJoin* join) {
     semi_pred = &build_expr(join->filter(), semi_ctx, join->filter_columns());
   }
 
+  // NOTE: semi/anti (and the mark join below) intentionally stay at
+  // null_equality::EQUAL, unlike the equi-joins in execute_hash_join which use
+  // UNEQUAL. Their NULL behavior is the SQL NOT IN/EXISTS three-valued-logic
+  // trap (`x NOT IN (..., NULL)` is NULL/false for every x), which neither
+  // EQUAL nor UNEQUAL implements on its own — a blind flip would be wrong for
+  // anti-join. No corpus query exercises a nullable semi/anti/mark key today;
+  // the dedicated semantics + golden are tracked in issue #59 before any change.
+  //
   // cuDF replaced free `left_{semi,anti}_join` with `filtered_join` (build the
   // hash table from one side, then probe). For Left{Semi,Anti} the right side
   // is the filter; for Right{Semi,Anti} we swap.
@@ -1620,6 +1670,8 @@ static TableResult execute_hash_join(const fb::GpuHashJoin* join) {
   // matched left-row indices with a (mixed) left semi-join and scatter `true`
   // into an all-false boolean column.
   if (jt == fb::JoinType_LeftMark) {
+    // null_equality::EQUAL kept on purpose here too — see the semi/anti note
+    // above (nullable mark-key semantics tracked in issue #59).
     std::unique_ptr<rmm::device_uvector<cudf::size_type>> matched;
     if (join->filter()) {
       if (!join->filter_columns())
@@ -1672,21 +1724,29 @@ static TableResult execute_hash_join(const fb::GpuHashJoin* join) {
     return {std::move(t), std::move(names)};
   }
 
+  // SQL equi-joins never match on NULL keys (NULL = NULL is unknown, not true),
+  // but cuDF's join APIs default to null_equality::EQUAL, which pairs NULL keys
+  // together and invents rows the SQL oracle excludes — e.g. TPC-DS q50/q6/q81,
+  // where a spurious NULL=NULL match inflates a downstream count/sum by one.
+  // UNEQUAL restores SQL semantics for inner/left/full/right. (Non-null keys —
+  // the whole passing suite — are unaffected.)
+  constexpr auto kJoinNulls = cudf::null_equality::UNEQUAL;
+
   // Execute join — returns index pairs.
   auto [left_indices, right_indices] = [&]() {
     switch (join->join_type()) {
       case fb::JoinType_Inner:
-        return cudf::inner_join(left_keys, right_keys);
+        return cudf::inner_join(left_keys, right_keys, kJoinNulls);
       case fb::JoinType_Left:
-        return cudf::left_join(left_keys, right_keys);
+        return cudf::left_join(left_keys, right_keys, kJoinNulls);
       case fb::JoinType_Full:
-        return cudf::full_join(left_keys, right_keys);
+        return cudf::full_join(left_keys, right_keys, kJoinNulls);
       case fb::JoinType_Right: {
         // cuDF has no right_join; right_join(L,R) == left_join(R,L) with the
         // returned (right_idx, left_idx) pair swapped back to (left_idx,
         // right_idx). Unmatched left rows then carry JoinNoneValue and are
         // NULLIFY-gathered below (see left_policy).
-        auto p = cudf::left_join(right_keys, left_keys);
+        auto p = cudf::left_join(right_keys, left_keys, kJoinNulls);
         return std::make_pair(std::move(p.second), std::move(p.first));
       }
       default:
