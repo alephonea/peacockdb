@@ -812,7 +812,17 @@ static std::unique_ptr<cudf::column> build_column_scalar_fn(
 
 static std::unique_ptr<cudf::column> build_column_case(
     const fb::CaseExprNode* c, cudf::table_view const& table) {
-  // Search-form CASE only (DataFusion always rewrites value-form).
+  // Search-form CASE only. Value-form (`CASE x WHEN v THEN t ... END`) is NOT
+  // rewritten away by DataFusion — it survives to the physical plan and
+  // plan_serializer.rs forwards `case.expr()` as the comparand — so it does
+  // reach here for e.g. TPC-DS q39 (`CASE mean WHEN 0 THEN NULL/0 ELSE
+  // stdev/mean END`). A column-path implementation (comparand + per-branch
+  // `comparand == when` + copy_if_else fold) was attempted but produced
+  // incorrect results on the GPU (every output row came back 0/null — #57), so
+  // it is withheld rather than shipped unverified. q39 is the only value-form
+  // user and is already disabled (stddev ULP, #54); this throw is therefore
+  // unreachable from the enabled suite. Re-implement, with a direct GPU test,
+  // when q39 is enabled (#57).
   if (c->expr())
     throw std::runtime_error("value-form CASE not supported in column path");
   auto* whens = c->when_thens();
@@ -1140,6 +1150,20 @@ static TableResult execute_project(const fb::GpuProject* proj) {
 // GpuAggregate — group-by aggregation
 // ============================================================================
 
+// DataFusion lowers stddev_samp/stddev → "stddev" and stddev_pop → "stddev_pop"
+// (variance variants likewise). cuDF's STD aggregation takes a ddof: sample std
+// uses ddof=1, population std ddof=0.
+static bool is_stddev_name(const std::string& f) {
+  return f == "stddev" || f == "STDDEV" || f == "stddev_samp" ||
+         f == "STDDEV_SAMP" || f == "stddev_pop" || f == "STDDEV_POP";
+}
+static bool is_avg_name(const std::string& f) {
+  return f == "avg" || f == "AVG" || f == "mean" || f == "MEAN";
+}
+static cudf::size_type stddev_ddof(const std::string& f) {
+  return (f == "stddev_pop" || f == "STDDEV_POP") ? 0 : 1;
+}
+
 static std::unique_ptr<cudf::groupby_aggregation> make_agg(
     const std::string& func_name, bool is_final) {
   // In Final mode, count→sum (sum partial counts), others stay the same.
@@ -1167,6 +1191,18 @@ static std::unique_ptr<cudf::groupby_aggregation> make_agg(
     // Decompose AVG into SUM+COUNT to lift this restriction:
     // https://github.com/asymptote-tech/peacockdb/issues/25
     return cudf::make_mean_aggregation<cudf::groupby_aggregation>();
+  }
+  if (is_stddev_name(func_name)) {
+    // Two-phase stddev: the Partial stage computes the real per-group std over
+    // the raw rows; with passthrough repartition that output is one row per key,
+    // so the Final regroup is an identity. cuDF cannot merge partial std states,
+    // so model the Final stage as a singleton-identity (MEAN over the lone
+    // partial row), exactly as AVG does above. The has_singleton_final guard in
+    // execute_aggregate fails loudly if a real multi-row merge ever happens.
+    if (is_final)
+      return cudf::make_mean_aggregation<cudf::groupby_aggregation>();
+    return cudf::make_std_aggregation<cudf::groupby_aggregation>(
+        stddev_ddof(func_name));
   }
   throw std::runtime_error("unsupported aggregate function: " + func_name);
 }
@@ -1269,19 +1305,19 @@ static TableResult execute_aggregate(const fb::GpuAggregate* agg) {
         cudf::column_view values_col = get_values_col(func);
         bool is_count = (name == "count" || name == "COUNT");
 
-        bool is_avg = (name == "avg" || name == "AVG" ||
-                       name == "mean" || name == "MEAN");
-        // Same shortcut/guard as the grouped path: a Final-stage global AVG
-        // reduces over the Partial outputs. With passthrough repartition there
-        // is exactly one partial row, so MEAN-of-one is an identity. More than
-        // one row means a multi-partition merge → silently-wrong mean-of-means
-        // (decompose AVG into SUM+COUNT to lift this:
+        bool is_avg = is_avg_name(name);
+        bool is_std = is_stddev_name(name);
+        // Same shortcut/guard as the grouped path: a Final-stage global AVG (or
+        // STDDEV) reduces over the Partial outputs. With passthrough repartition
+        // there is exactly one partial row, so MEAN/STDDEV-of-one is an identity.
+        // More than one row means a multi-partition merge → silently-wrong
+        // mean-of-means / std-of-stds (decompose AVG into SUM+COUNT to lift this:
         // https://github.com/asymptote-tech/peacockdb/issues/25).
-        if (is_final && is_avg && values_col.size() > 1) {
+        if (is_final && (is_avg || is_std) && values_col.size() > 1) {
           throw std::runtime_error(
-              "Final-stage AVG merged multiple partial rows "
-              "(mean-of-means is wrong); AVG must be decomposed into "
-              "SUM+COUNT before multi-partition GPU repartition is enabled");
+              "Final-stage AVG/STDDEV merged multiple partial rows "
+              "(mean-of-means is wrong); must be decomposed into "
+              "additive state before multi-partition GPU repartition is enabled");
         }
 
         bool is_sum = (name == "sum" || name == "SUM");
@@ -1315,9 +1351,24 @@ static TableResult execute_aggregate(const fb::GpuAggregate* agg) {
             auto [gk, res] = gb1.aggregate(reqs);
             result_col = std::move(res[0].results[0]);
           }
+        } else if (is_std) {
+          // Global stddev. cuDF's compound STD reduction outputs FLOAT64. In the
+          // Final stage the single partial row already holds the real std, so
+          // take it as-is (MEAN-of-one identity); otherwise reduce STD directly.
+          std::unique_ptr<cudf::reduce_aggregation> ragg =
+              is_final ? cudf::make_mean_aggregation<cudf::reduce_aggregation>()
+                       : cudf::make_std_aggregation<cudf::reduce_aggregation>(
+                             stddev_ddof(name));
+          auto scalar_result = cudf::reduce(
+              values_col, *ragg, cudf::data_type{cudf::type_id::FLOAT64});
+          result_col = cudf::make_column_from_scalar(*scalar_result, 1);
         } else {
-          auto scalar_result = cudf::reduce(values_col, *make_reduce_agg(name),
-                                            values_col.type());
+          // avg/mean's compound reduction must output FLOAT64 (cuDF rejects an
+          // integer output type); sum/min/max keep the input type.
+          cudf::data_type out_t =
+              is_avg ? cudf::data_type{cudf::type_id::FLOAT64} : values_col.type();
+          auto scalar_result =
+              cudf::reduce(values_col, *make_reduce_agg(name), out_t);
           result_col = cudf::make_column_from_scalar(*scalar_result, 1);
         }
         out_cols.push_back(std::move(result_col));
@@ -1354,8 +1405,8 @@ static TableResult execute_aggregate(const fb::GpuAggregate* agg) {
       else
         agg_names.push_back(name);
       agg_is_count.push_back(name == "count" || name == "COUNT");
-      if (is_final && (name == "avg" || name == "AVG" ||
-                       name == "mean" || name == "MEAN"))
+      // STDDEV uses the same singleton-identity shortcut as AVG in Final mode.
+      if (is_final && (is_avg_name(name) || is_stddev_name(name)))
         has_avg_final = true;
     }
   }
