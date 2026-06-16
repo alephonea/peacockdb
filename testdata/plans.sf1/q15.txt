@@ -9,7 +9,7 @@ GpuSortPreservingMergeExec: [s_suppkey@0 ASC NULLS LAST]
                 GpuCoalesceBatchesExec: target_batch_size=8388608
                   GpuRepartitionExec: partitioning=Hash([s_suppkey@0], 8), input_partitions=8
                     GpuRepartitionExec: partitioning=RoundRobinBatch(8), input_partitions=1
-                      GpuScanExec: batch_size=8388608
+                      GpuScanExec: table=supplier, projections=[s_suppkey, s_name, s_address, s_phone], batch_size=8388608
                 GpuProjectExec: expr=[l_suppkey@0 as supplier_no, sum(lineitem.l_extendedprice * Int64(1) - lineitem.l_discount)@1 as total_revenue]
                   GpuAggregateExec: group_by=[l_suppkey], aggr=[sum(lineitem.l_extendedprice * Int64(1) - lineitem.l_discount)]
                     GpuCoalesceBatchesExec: target_batch_size=8388608
@@ -17,7 +17,7 @@ GpuSortPreservingMergeExec: [s_suppkey@0 ASC NULLS LAST]
                         GpuAggregateExec: group_by=[l_suppkey], aggr=[sum(lineitem.l_extendedprice * Int64(1) - lineitem.l_discount)]
                           GpuCoalesceBatchesExec: target_batch_size=8388608
                             GpuFilterExec: predicate=l_shipdate@3 >= 1996-01-01 AND l_shipdate@3 < 1996-04-01, projection=[0, 1, 2]
-                              GpuScanExec: batch_size=8388608
+                              GpuScanExec: table=lineitem, projections=[l_suppkey, l_extendedprice, l_discount, l_shipdate], batch_size=8388608
         GpuCoalesceBatchesExec: target_batch_size=8388608
           GpuRepartitionExec: partitioning=Hash([max(revenue0.total_revenue)@0], 8), input_partitions=1
             GpuAggregateExec: group_by=[], aggr=[max(revenue0.total_revenue)]
@@ -30,7 +30,7 @@ GpuSortPreservingMergeExec: [s_suppkey@0 ASC NULLS LAST]
                           GpuAggregateExec: group_by=[l_suppkey], aggr=[sum(lineitem.l_extendedprice * Int64(1) - lineitem.l_discount)]
                             GpuCoalesceBatchesExec: target_batch_size=8388608
                               GpuFilterExec: predicate=l_shipdate@3 >= 1996-01-01 AND l_shipdate@3 < 1996-04-01, projection=[0, 1, 2]
-                                GpuScanExec: batch_size=8388608
+                                GpuScanExec: table=lineitem, projections=[l_suppkey, l_extendedprice, l_discount, l_shipdate], batch_size=8388608
 --- memory ---
 total_estimate_cost=3752
 GpuSortPreservingMergeExec: row_width=120, subtree_max_row_bytes=256, estimate_input_bytes=120, estimate_output_bytes=120, estimate_cost=240

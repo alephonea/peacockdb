@@ -1,0 +1,53 @@
+TOP_N: order_by=[segments.SEGMENT ASC, count_star() ASC, (segments.SEGMENT * 50) ASC], top=100, output_bytes=16, output_rows=1, materialized=16
+  PROJECTION: projections=[SEGMENT, num_customers, segment_base], output_bytes=16, output_rows=1, materialized=0
+    HASH_GROUP_BY: groups=[#0], aggregates=[count_star()], output_bytes=12, output_rows=1, materialized=4
+      PROJECTION: projections=[SEGMENT], output_bytes=4, output_rows=1, materialized=0
+        PROJECTION: projections=[SEGMENT], output_bytes=4, output_rows=1, materialized=0
+          PROJECTION: projections=[revenue], output_bytes=16, output_rows=1, materialized=0
+            HASH_GROUP_BY: groups=[#0], aggregates=[sum(#1)], output_bytes=20, output_rows=1, materialized=2976
+              PROJECTION: projections=[c_customer_sk, ss_ext_sales_price], output_bytes=2976, output_rows=372, materialized=0
+                PROJECTION: projections=[#0, __internal_compress_integral_usmallint(#1, 2450816), __internal_compress_integral_usmallint(#2, 0), __internal_compress_integral_usmallint(#3, 2450816), #4, #5, __internal_compress_integral_usmallint(#6, 1), #7, __internal_compress_string_uinteger(#8), #9, __internal_compress_string_uinteger(#10), #11, __internal_compress_integral_usmallint(#12, 1), #13], output_bytes=26040, output_rows=372, materialized=0
+                  NESTED_LOOP_JOIN: join_type=INNER, conditions=[SUBQUERY >= d_month_seq], output_bytes=38688, output_rows=372, materialized=38692
+                    PROJECTION: projections=[CASE  WHEN ((#1 > 1)) THEN (error('More than one row returned by a subquery used as an expression - scalar subqueries can only return a single row., Use "SET scalar_subquery_error_on_multiple_rows=false" to revert to previous behavior of returning a random row.')) ELSE #0 END], output_bytes=4, output_rows=1, materialized=0
+                      UNGROUPED_AGGREGATE: aggregates=["first"(#0), count_star()], output_bytes=12, output_rows=1, materialized=4
+                        PROJECTION: projections=[#0], output_bytes=4, output_rows=1, materialized=0
+                          PROJECTION: projections=[__internal_decompress_integral_integer(#0, 3)], output_bytes=4, output_rows=1, materialized=0
+                            HASH_GROUP_BY: groups=[#0], output_bytes=2, output_rows=1, materialized=62
+                              PROJECTION: projections=[(d_month_seq + 3)], output_bytes=62, output_rows=31, materialized=0
+                                PROJECTION: projections=[__internal_compress_integral_usmallint(#0, 3)], output_bytes=62, output_rows=31, materialized=0
+                                  PROJECTION: projections=[(d_month_seq + 3)], output_bytes=124, output_rows=31, materialized=0
+                                    TABLE_SCAN: table=date_dim, projections=[d_month_seq], filters="d_year=1998 AND d_moy=12", output_bytes=124, output_rows=31, materialized=292320, bytes_read_est=292196, rows_read=73049
+                    NESTED_LOOP_JOIN: join_type=INNER, conditions=[d_month_seq >= SUBQUERY], output_bytes=51600, output_rows=516, materialized=51604
+                      HASH_JOIN: join_type=INNER, conditions=[d_date_sk = ss_sold_date_sk], output_bytes=49536, output_rows=516, materialized=49536
+                        TABLE_SCAN: table=date_dim, filters="d_date_sk>=2450816 AND d_date_sk<=2452642", output_bytes=2472, output_rows=309, materialized=586864, bytes_read_est=584392, rows_read=73049
+                        HASH_JOIN: join_type=INNER, conditions=[ss_customer_sk = c_customer_sk], output_bytes=45408, output_rows=516, materialized=45408
+                          TABLE_SCAN: table=store_sales, output_bytes=516, output_rows=43, materialized=34565364, bytes_read_est=34564848, rows_read=2880404
+                          HASH_JOIN: join_type=INNER, conditions=[ca_address_sk = c_current_addr_sk], output_bytes=912, output_rows=12, materialized=12712
+                            HASH_JOIN: join_type=INNER, conditions=[ca_county = s_county, ca_state = s_state], output_bytes=14688, output_rows=216, materialized=14688
+                              TABLE_SCAN: table=customer_address, output_bytes=648, output_rows=18, materialized=1800648, bytes_read_est=1800000, rows_read=50000
+                              TABLE_SCAN: table=store, output_bytes=384, output_rows=12, materialized=768, bytes_read_est=384, rows_read=12
+                            PROJECTION: projections=[#0, __internal_decompress_integral_integer(#1, 1)], output_bytes=11800, output_rows=1475, materialized=0
+                              HASH_GROUP_BY: groups=[#0, #1], output_bytes=8850, output_rows=1475, materialized=9786
+                                PROJECTION: projections=[c_customer_sk, c_current_addr_sk], output_bytes=9786, output_rows=1631, materialized=0
+                                  PROJECTION: projections=[#0, __internal_compress_integral_usmallint(#1, 1)], output_bytes=9786, output_rows=1631, materialized=0
+                                    PROJECTION: projections=[c_customer_sk, c_current_addr_sk], output_bytes=13048, output_rows=1631, materialized=0
+                                      HASH_JOIN: join_type=INNER, conditions=[c_customer_sk = customer_sk], output_bytes=45668, output_rows=1631, materialized=45668
+                                        TABLE_SCAN: table=customer, projections=[c_customer_sk, c_current_addr_sk], output_bytes=799152, output_rows=99894, materialized=1599152, bytes_read_est=800000, rows_read=100000
+                                        HASH_JOIN: join_type=INNER, conditions=[item_sk = i_item_sk], output_bytes=32740, output_rows=1637, materialized=32740
+                                          HASH_JOIN: join_type=INNER, conditions=[sold_date_sk = d_date_sk], output_bytes=1178800, output_rows=73675, materialized=1178924
+                                            UNION: output_bytes=0, output_rows=73675, materialized=0
+                                              TABLE_SCAN: table=catalog_sales, projections=[cs_sold_date_sk, cs_bill_customer_sk, cs_item_sk], output_bytes=582888, output_rows=48574, materialized=17881464, bytes_read_est=17298576, rows_read=1441548
+                                              TABLE_SCAN: table=web_sales, projections=[ws_sold_date_sk, ws_bill_customer_sk, ws_item_sk], output_bytes=301212, output_rows=25101, materialized=8933820, bytes_read_est=8632608, rows_read=719384
+                                            FILTER: output_bytes=124, output_rows=31, materialized=0
+                                              TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_moy=12 AND d_year=1998", output_bytes=124, output_rows=31, materialized=292320, bytes_read_est=292196, rows_read=73049
+                                          TABLE_SCAN: table=item, projections=[i_item_sk], filters="i_category='Women' AND i_class='maternity'", output_bytes=1668, output_rows=417, materialized=73668, bytes_read_est=72000, rows_read=18000
+                      PROJECTION: projections=[CASE  WHEN ((#1 > 1)) THEN (error('More than one row returned by a subquery used as an expression - scalar subqueries can only return a single row., Use "SET scalar_subquery_error_on_multiple_rows=false" to revert to previous behavior of returning a random row.')) ELSE #0 END], output_bytes=4, output_rows=1, materialized=0
+                        UNGROUPED_AGGREGATE: aggregates=["first"(#0), count_star()], output_bytes=12, output_rows=1, materialized=4
+                          PROJECTION: projections=[#0], output_bytes=4, output_rows=1, materialized=0
+                            PROJECTION: projections=[__internal_decompress_integral_integer(#0, 1)], output_bytes=4, output_rows=1, materialized=0
+                              HASH_GROUP_BY: groups=[#0], output_bytes=2, output_rows=1, materialized=62
+                                PROJECTION: projections=[(d_month_seq + 1)], output_bytes=62, output_rows=31, materialized=0
+                                  PROJECTION: projections=[__internal_compress_integral_usmallint(#0, 1)], output_bytes=62, output_rows=31, materialized=0
+                                    PROJECTION: projections=[(d_month_seq + 1)], output_bytes=124, output_rows=31, materialized=0
+                                      TABLE_SCAN: table=date_dim, projections=[d_month_seq], filters="d_year=1998 AND d_moy=12", output_bytes=124, output_rows=31, materialized=292320, bytes_read_est=292196, rows_read=73049
+duckdb_cost=67801594

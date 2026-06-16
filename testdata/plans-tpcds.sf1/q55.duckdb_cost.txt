@@ -1,0 +1,11 @@
+TOP_N: order_by=[sum(tpcds.main.store_sales.ss_ext_sales_price) DESC, tpcds.main.item.i_brand_id ASC], top=100, output_bytes=3600, output_rows=100, materialized=3744
+  PROJECTION: projections=[brand_id, brand, ext_price], output_bytes=3744, output_rows=104, materialized=0
+    HASH_GROUP_BY: groups=[#0, #1], aggregates=[sum(#2)], output_bytes=3744, output_rows=104, materialized=41112
+      PROJECTION: projections=[i_brand, i_brand_id, ss_ext_sales_price], output_bytes=41112, output_rows=1713, materialized=0
+        HASH_JOIN: join_type=INNER, conditions=[ss_item_sk = i_item_sk], output_bytes=41112, output_rows=1713, materialized=41112
+          HASH_JOIN: join_type=INNER, conditions=[ss_sold_date_sk = d_date_sk], output_bytes=1031676, output_rows=85973, materialized=1031796
+            TABLE_SCAN: table=store_sales, projections=[ss_sold_date_sk, ss_item_sk, ss_ext_sales_price], output_bytes=1031676, output_rows=85973, materialized=35596524, bytes_read_est=34564848, rows_read=2880404
+            FILTER: output_bytes=120, output_rows=30, materialized=0
+              TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_moy=11 AND d_year=1999", output_bytes=120, output_rows=30, materialized=292316, bytes_read_est=292196, rows_read=73049
+          TABLE_SCAN: table=item, projections=[i_item_sk, i_brand, i_brand_id], filters="i_manager_id=28", output_bytes=8136, output_rows=339, materialized=440136, bytes_read_est=432000, rows_read=18000
+duckdb_cost=37446740

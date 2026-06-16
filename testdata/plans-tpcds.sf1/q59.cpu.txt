@@ -1,38 +1,39 @@
-SortExec: output_bytes=530
-  ProjectionExec: output_bytes=80262
-    CoalesceBatchesExec: output_bytes=93639
-      HashJoinExec: output_bytes=93639
-        ProjectionExec: output_bytes=29294
-          CoalesceBatchesExec: output_bytes=11500
-            HashJoinExec: output_bytes=11500
-              ProjectionExec: output_bytes=8258
-                CoalesceBatchesExec: output_bytes=8258
-                  HashJoinExec: output_bytes=8258
-                    ParquetExec: output_bytes=54
-                    ProjectionExec: output_bytes=16742
-                      AggregateExec: output_bytes=16742
-                        ProjectionExec: output_bytes=23379712
-                          CoalesceBatchesExec: output_bytes=23379712
-                            HashJoinExec: output_bytes=23379756
-                              ParquetExec: output_bytes=611788
-                              ParquetExec: output_bytes=24123385
-              CoalesceBatchesExec: output_bytes=1506
-                FilterExec: output_bytes=1506
-                  ParquetExec: output_bytes=602656
-        ProjectionExec: output_bytes=29020
-          CoalesceBatchesExec: output_bytes=11226
-            HashJoinExec: output_bytes=11226
-              ProjectionExec: output_bytes=8061
-                CoalesceBatchesExec: output_bytes=8061
-                  HashJoinExec: output_bytes=8061
-                    ParquetExec: output_bytes=52
-                    ProjectionExec: output_bytes=16742
-                      AggregateExec: output_bytes=16742
-                        ProjectionExec: output_bytes=23379712
-                          CoalesceBatchesExec: output_bytes=23379712
-                            HashJoinExec: output_bytes=23379756
-                              ParquetExec: output_bytes=611788
-                              ParquetExec: output_bytes=24123385
-              CoalesceBatchesExec: output_bytes=1506
-                FilterExec: output_bytes=1506
-                  ParquetExec: output_bytes=602656
+GpuSortExec: expr=[s_store_name1@0 ASC, s_store_id1@1 ASC, d_week_seq1@2 ASC], fetch=100, output_bytes=14538, output_rows=100
+  GpuProjectExec: expr=[s_store_name1@0 as s_store_name1, s_store_id1@2 as s_store_id1, d_week_seq1@1 as d_week_seq1, sun_sales1@3 / sun_sales2@10 as sun_sales_ratio, mon_sales1@4 / mon_sales2@11 as mon_sales_ratio, tue_sales1@5 / tue_sales2@12 as tue_sales_ratio, wed_sales1@6 / wed_sales2@13 as wed_sales_ratio, thu_sales1@7 / thu_sales2@14 as thu_sales_ratio, fri_sales1@8 / fri_sales2@15 as fri_sales_ratio, sat_sales1@9 / sat_sales2@16 as sat_sales_ratio], output_bytes=2220590, output_rows=15288
+    GpuCoalesceBatchesExec: target_batch_size=3376546, output_bytes=3946223, output_rows=15288
+      GpuHashJoinExec: join_type=Inner, on=[(s_store_id1@2, s_store_id2@1), (CAST(y.d_week_seq1 AS Int64)@10, x.d_week_seq2 - Int64(52)@9)], projection=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 13, 14, 15, 16, 17, 18, 19], output_bytes=3946231, output_rows=15288
+        GpuProjectExec: expr=[s_store_name@9 as s_store_name1, d_week_seq@0 as d_week_seq1, s_store_id@8 as s_store_id1, sun_sales@1 as sun_sales1, mon_sales@2 as mon_sales1, tue_sales@3 as tue_sales1, wed_sales@4 as wed_sales1, thu_sales@5 as thu_sales1, fri_sales@6 as fri_sales1, sat_sales@7 as sat_sales1, CAST(d_week_seq@0 AS Int64) as CAST(y.d_week_seq1 AS Int64)], output_bytes=335902, output_rows=2190
+          GpuCoalesceBatchesExec: target_batch_size=3376546, output_bytes=318108, output_rows=2190
+            GpuHashJoinExec: join_type=Inner, on=[(d_week_seq@0, d_week_seq@0)], projection=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9], output_bytes=318108, output_rows=2190
+              GpuProjectExec: expr=[d_week_seq@2 as d_week_seq, sun_sales@3 as sun_sales, mon_sales@4 as mon_sales, tue_sales@5 as tue_sales, wed_sales@6 as wed_sales, thu_sales@7 as thu_sales, fri_sales@8 as fri_sales, sat_sales@9 as sat_sales, s_store_id@0 as s_store_id, s_store_name@1 as s_store_name], output_bytes=228346, output_rows=1572
+                GpuCoalesceBatchesExec: target_batch_size=3376546, output_bytes=228346, output_rows=1572
+                  GpuHashJoinExec: join_type=Inner, on=[(s_store_sk@0, ss_store_sk@1)], projection=[1, 2, 3, 5, 6, 7, 8, 9, 10, 11], output_bytes=228346, output_rows=1572
+                    GpuScanExec: table=store, projections=[s_store_sk, s_store_id, s_store_name], batch_size=3376546, output_bytes=401, output_rows=12
+                    GpuProjectExec: expr=[d_week_seq@0 as d_week_seq, ss_store_sk@1 as ss_store_sk, sum(CASE WHEN date_dim.d_day_name = Utf8("Sunday") THEN store_sales.ss_sales_price ELSE NULL END)@2 as sun_sales, sum(CASE WHEN date_dim.d_day_name = Utf8("Monday") THEN store_sales.ss_sales_price ELSE NULL END)@3 as mon_sales, sum(CASE WHEN date_dim.d_day_name = Utf8("Tuesday") THEN store_sales.ss_sales_price ELSE NULL END)@4 as tue_sales, sum(CASE WHEN date_dim.d_day_name = Utf8("Wednesday") THEN store_sales.ss_sales_price ELSE NULL END)@5 as wed_sales, sum(CASE WHEN date_dim.d_day_name = Utf8("Thursday") THEN store_sales.ss_sales_price ELSE NULL END)@6 as thu_sales, sum(CASE WHEN date_dim.d_day_name = Utf8("Friday") THEN store_sales.ss_sales_price ELSE NULL END)@7 as fri_sales, sum(CASE WHEN date_dim.d_day_name = Utf8("Saturday") THEN store_sales.ss_sales_price ELSE NULL END)@8 as sat_sales], output_bytes=222150, output_rows=1834
+                      GpuAggregateExec: group_by=[d_week_seq, ss_store_sk], aggr=[sum(CASE WHEN date_dim.d_day_name = Utf8("Sunday") THEN store_sales.ss_sales_price ELSE NULL END), sum(CASE WHEN date_dim.d_day_name = Utf8("Monday") THEN store_sales.ss_sales_price ELSE NULL END), sum(CASE WHEN date_dim.d_day_name = Utf8("Tuesday") THEN store_sales.ss_sales_price ELSE NULL END), sum(CASE WHEN date_dim.d_day_name = Utf8("Wednesday") THEN store_sales.ss_sales_price ELSE NULL END), sum(CASE WHEN date_dim.d_day_name = Utf8("Thursday") THEN store_sales.ss_sales_price ELSE NULL END), sum(CASE WHEN date_dim.d_day_name = Utf8("Friday") THEN store_sales.ss_sales_price ELSE NULL END), sum(CASE WHEN date_dim.d_day_name = Utf8("Saturday") THEN store_sales.ss_sales_price ELSE NULL END)], output_bytes=222150, output_rows=1834
+                        GpuProjectExec: expr=[ss_store_sk@2 as ss_store_sk, ss_sales_price@3 as ss_sales_price, d_week_seq@0 as d_week_seq, d_day_name@1 as d_day_name], output_bytes=98038227, output_rows=2750554
+                          GpuCoalesceBatchesExec: target_batch_size=3376546, output_bytes=98038227, output_rows=2750554
+                            GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ss_sold_date_sk@0)], projection=[1, 2, 4, 5], output_bytes=98039675, output_rows=2750554
+                              GpuScanExec: table=date_dim, projections=[d_date_sk, d_week_seq, d_day_name], batch_size=3376546, output_bytes=1425767, output_rows=73049
+                              GpuScanExec: table=store_sales, projections=[ss_sold_date_sk, ss_store_sk, ss_sales_price], batch_size=3376546, output_bytes=70209849, output_rows=2880404
+              GpuCoalesceBatchesExec: target_batch_size=3376546, output_bytes=1506, output_rows=365
+                GpuFilterExec: predicate=d_month_seq@0 >= 1212 AND d_month_seq@0 <= 1223, projection=[1], output_bytes=1506, output_rows=365
+                  GpuScanExec: table=date_dim, projections=[d_month_seq, d_week_seq], batch_size=3376546, output_bytes=602656, output_rows=73049
+        GpuProjectExec: expr=[d_week_seq@0 as d_week_seq2, s_store_id@8 as s_store_id2, sun_sales@1 as sun_sales2, mon_sales@2 as mon_sales2, tue_sales@3 as tue_sales2, wed_sales@4 as wed_sales2, thu_sales@5 as thu_sales2, fri_sales@6 as fri_sales2, sat_sales@7 as sat_sales2, CAST(d_week_seq@0 AS Int64) - 52 as x.d_week_seq2 - Int64(52)], output_bytes=318104, output_rows=2190
+          GpuCoalesceBatchesExec: target_batch_size=3376546, output_bytes=300310, output_rows=2190
+            GpuHashJoinExec: join_type=Inner, on=[(d_week_seq@0, d_week_seq@0)], projection=[0, 1, 2, 3, 4, 5, 6, 7, 8], output_bytes=300310, output_rows=2190
+              GpuProjectExec: expr=[d_week_seq@1 as d_week_seq, sun_sales@2 as sun_sales, mon_sales@3 as mon_sales, tue_sales@4 as tue_sales, wed_sales@5 as wed_sales, thu_sales@6 as thu_sales, fri_sales@7 as fri_sales, sat_sales@8 as sat_sales, s_store_id@0 as s_store_id], output_bytes=215569, output_rows=1572
+                GpuCoalesceBatchesExec: target_batch_size=3376546, output_bytes=215569, output_rows=1572
+                  GpuHashJoinExec: join_type=Inner, on=[(s_store_sk@0, ss_store_sk@1)], projection=[1, 2, 4, 5, 6, 7, 8, 9, 10], output_bytes=215569, output_rows=1572
+                    GpuScanExec: table=store, projections=[s_store_sk, s_store_id], batch_size=3376546, output_bytes=296, output_rows=12
+                    GpuProjectExec: expr=[d_week_seq@0 as d_week_seq, ss_store_sk@1 as ss_store_sk, sum(CASE WHEN date_dim.d_day_name = Utf8("Sunday") THEN store_sales.ss_sales_price ELSE NULL END)@2 as sun_sales, sum(CASE WHEN date_dim.d_day_name = Utf8("Monday") THEN store_sales.ss_sales_price ELSE NULL END)@3 as mon_sales, sum(CASE WHEN date_dim.d_day_name = Utf8("Tuesday") THEN store_sales.ss_sales_price ELSE NULL END)@4 as tue_sales, sum(CASE WHEN date_dim.d_day_name = Utf8("Wednesday") THEN store_sales.ss_sales_price ELSE NULL END)@5 as wed_sales, sum(CASE WHEN date_dim.d_day_name = Utf8("Thursday") THEN store_sales.ss_sales_price ELSE NULL END)@6 as thu_sales, sum(CASE WHEN date_dim.d_day_name = Utf8("Friday") THEN store_sales.ss_sales_price ELSE NULL END)@7 as fri_sales, sum(CASE WHEN date_dim.d_day_name = Utf8("Saturday") THEN store_sales.ss_sales_price ELSE NULL END)@8 as sat_sales], output_bytes=222150, output_rows=1834
+                      GpuAggregateExec: group_by=[d_week_seq, ss_store_sk], aggr=[sum(CASE WHEN date_dim.d_day_name = Utf8("Sunday") THEN store_sales.ss_sales_price ELSE NULL END), sum(CASE WHEN date_dim.d_day_name = Utf8("Monday") THEN store_sales.ss_sales_price ELSE NULL END), sum(CASE WHEN date_dim.d_day_name = Utf8("Tuesday") THEN store_sales.ss_sales_price ELSE NULL END), sum(CASE WHEN date_dim.d_day_name = Utf8("Wednesday") THEN store_sales.ss_sales_price ELSE NULL END), sum(CASE WHEN date_dim.d_day_name = Utf8("Thursday") THEN store_sales.ss_sales_price ELSE NULL END), sum(CASE WHEN date_dim.d_day_name = Utf8("Friday") THEN store_sales.ss_sales_price ELSE NULL END), sum(CASE WHEN date_dim.d_day_name = Utf8("Saturday") THEN store_sales.ss_sales_price ELSE NULL END)], output_bytes=222150, output_rows=1834
+                        GpuProjectExec: expr=[ss_store_sk@2 as ss_store_sk, ss_sales_price@3 as ss_sales_price, d_week_seq@0 as d_week_seq, d_day_name@1 as d_day_name], output_bytes=98038227, output_rows=2750554
+                          GpuCoalesceBatchesExec: target_batch_size=3376546, output_bytes=98038227, output_rows=2750554
+                            GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ss_sold_date_sk@0)], projection=[1, 2, 4, 5], output_bytes=98039675, output_rows=2750554
+                              GpuScanExec: table=date_dim, projections=[d_date_sk, d_week_seq, d_day_name], batch_size=3376546, output_bytes=1425767, output_rows=73049
+                              GpuScanExec: table=store_sales, projections=[ss_sold_date_sk, ss_store_sk, ss_sales_price], batch_size=3376546, output_bytes=70209849, output_rows=2880404
+              GpuCoalesceBatchesExec: target_batch_size=3376546, output_bytes=1506, output_rows=365
+                GpuFilterExec: predicate=d_month_seq@0 >= 1224 AND d_month_seq@0 <= 1235, projection=[1], output_bytes=1506, output_rows=365
+                  GpuScanExec: table=date_dim, projections=[d_month_seq, d_week_seq], batch_size=3376546, output_bytes=602656, output_rows=73049
+peacockdb_cost=746954292

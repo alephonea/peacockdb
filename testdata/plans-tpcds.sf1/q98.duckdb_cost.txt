@@ -1,0 +1,18 @@
+PROJECTION: projections=[#0, #1, __internal_decompress_string(#2), __internal_decompress_string(#3), #4, #5, #6], output_bytes=231932, output_rows=2521, materialized=0
+  ORDER_BY: order_by=[tpcds.main.item.i_category ASC, tpcds.main.item.i_class ASC, tpcds.main.item.i_item_id ASC, tpcds.main.item.i_item_desc ASC, ((sum(tpcds.main.store_sales.ss_ext_sales_price) * 100.0000) / sum(sum(tpcds.main.store_sales.ss_ext_sales_price)) OVER (PARTITION BY tpcds.main.item.i_class)) ASC], output_bytes=231932, output_rows=2521, materialized=231932
+    PROJECTION: projections=[#0, #1, __internal_compress_string_hugeint(#2), __internal_compress_string_hugeint(#3), #4, #5, #6], output_bytes=231932, output_rows=2521, materialized=0
+      PROJECTION: projections=[i_item_id, i_item_desc, i_category, i_class, i_current_price, itemrevenue, revenueratio], output_bytes=231932, output_rows=2521, materialized=0
+        PROJECTION: projections=[#0, #1, #2, #3, #4, #5, #6], output_bytes=252100, output_rows=2521, materialized=0
+          WINDOW: output_bytes=252100, output_rows=2521, materialized=211764
+            PROJECTION: projections=[#0, #1, __internal_decompress_string(#2), __internal_decompress_string(#3), #4, #5], output_bytes=211764, output_rows=2521, materialized=0
+              HASH_GROUP_BY: groups=[#0, #1, #2, #3, #4], aggregates=[sum(#5)], output_bytes=211764, output_rows=2521, materialized=563184
+                PROJECTION: projections=[i_item_id, i_item_desc, i_category, i_class, i_current_price, ss_ext_sales_price], output_bytes=563184, output_rows=7822, materialized=0
+                  PROJECTION: projections=[#0, __internal_compress_string_hugeint(#1), #2, #3, __internal_compress_string_hugeint(#4), #5], output_bytes=563184, output_rows=7822, materialized=0
+                    HASH_JOIN: join_type=INNER, conditions=[ss_item_sk = i_item_sk], output_bytes=563184, output_rows=7822, materialized=946440
+                      HASH_JOIN: join_type=INNER, conditions=[ss_sold_date_sk = d_date_sk], output_bytes=318516, output_rows=26543, materialized=318640
+                        TABLE_SCAN: table=store_sales, projections=[ss_item_sk, ss_sold_date_sk, ss_ext_sales_price], output_bytes=318516, output_rows=26543, materialized=34883364, bytes_read_est=34564848, rows_read=2880404
+                        FILTER: output_bytes=124, output_rows=31, materialized=0
+                          TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_date>='1999-02-22'::DATE AND d_date<='1999-03-24'::DATE", output_bytes=124, output_rows=31, materialized=292320, bytes_read_est=292196, rows_read=73049
+                      FILTER: output_bytes=383256, output_rows=5323, materialized=0
+                        TABLE_SCAN: table=item, projections=[i_item_sk, i_category, i_item_id, i_item_desc, i_class, i_current_price], filters="optional: i_category IN ('Sports', 'Books', 'Home')", output_bytes=1296000, output_rows=18000, materialized=2592000, bytes_read_est=1296000, rows_read=18000
+duckdb_cost=40039644

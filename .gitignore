@@ -21,3 +21,10 @@ peacockdb-core/src/generated/
 # OS
 .DS_Store
 cufile.log
+
+# DuckDB cost-oracle cache (generated, not committed)
+testdata/*/.duckdb_cache/
+
+# Python bytecode (duckdb_cost.py tests)
+__pycache__/
+*.pyc

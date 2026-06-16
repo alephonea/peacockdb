@@ -1,70 +1,71 @@
-SortExec: output_bytes=26
-  ProjectionExec: output_bytes=430
-    AggregateExec: output_bytes=430
-      CoalescePartitionsExec: output_bytes=430
-        AggregateExec: output_bytes=430
-          GpuUnionExec: output_bytes=918
-            ProjectionExec: output_bytes=400
-              AggregateExec: output_bytes=400
-                CoalesceBatchesExec: output_bytes=1088
-                  HashJoinExec: output_bytes=1088
-                    CoalesceBatchesExec: output_bytes=233
-                      FilterExec: output_bytes=233
-                        ParquetExec: output_bytes=4500
-                    ProjectionExec: output_bytes=5528
-                      CoalesceBatchesExec: output_bytes=5528
-                        HashJoinExec: output_bytes=5528
-                          ParquetExec: output_bytes=76500
-                          CoalesceBatchesExec: output_bytes=93964
-                            HashJoinExec: output_bytes=93964
-                              CoalesceBatchesExec: output_bytes=75265
-                                FilterExec: output_bytes=75265
-                                  ParquetExec: output_bytes=212500
-                              CoalesceBatchesExec: output_bytes=522064
-                                HashJoinExec: output_bytes=522097
-                                  CoalesceBatchesExec: output_bytes=124
-                                    FilterExec: output_bytes=124
-                                      ParquetExec: output_bytes=903984
-                                  ParquetExec: output_bytes=36005052
-            ProjectionExec: output_bytes=314
-              AggregateExec: output_bytes=314
-                CoalesceBatchesExec: output_bytes=556
-                  HashJoinExec: output_bytes=556
-                    CoalesceBatchesExec: output_bytes=233
-                      FilterExec: output_bytes=233
-                        ParquetExec: output_bytes=4500
-                    CoalesceBatchesExec: output_bytes=2888
-                      HashJoinExec: output_bytes=2888
-                        CoalesceBatchesExec: output_bytes=49096
-                          HashJoinExec: output_bytes=49096
-                            CoalesceBatchesExec: output_bytes=75265
-                              FilterExec: output_bytes=75265
-                                ParquetExec: output_bytes=212500
-                            CoalesceBatchesExec: output_bytes=258430
-                              HashJoinExec: output_bytes=258430
-                                CoalesceBatchesExec: output_bytes=124
-                                  FilterExec: output_bytes=124
-                                    ParquetExec: output_bytes=903984
-                                ParquetExec: output_bytes=18019352
-                        ParquetExec: output_bytes=76500
-            ProjectionExec: output_bytes=204
-              AggregateExec: output_bytes=204
-                CoalesceBatchesExec: output_bytes=280
-                  HashJoinExec: output_bytes=280
-                    CoalesceBatchesExec: output_bytes=233
-                      FilterExec: output_bytes=233
-                        ParquetExec: output_bytes=4500
-                    CoalesceBatchesExec: output_bytes=1484
-                      HashJoinExec: output_bytes=1484
-                        CoalesceBatchesExec: output_bytes=25212
-                          HashJoinExec: output_bytes=25212
-                            CoalesceBatchesExec: output_bytes=75265
-                              FilterExec: output_bytes=75265
-                                ParquetExec: output_bytes=212500
-                            CoalesceBatchesExec: output_bytes=130918
-                              HashJoinExec: output_bytes=130927
-                                CoalesceBatchesExec: output_bytes=124
-                                  FilterExec: output_bytes=124
-                                    ParquetExec: output_bytes=903984
-                                ParquetExec: output_bytes=8992300
-                        ParquetExec: output_bytes=76500
+GpuSortExec: expr=[i_item_id@0 ASC NULLS LAST, total_sales@1 ASC NULLS LAST], fetch=100, output_bytes=3630, output_rows=100
+  GpuProjectExec: expr=[i_item_id@0 as i_item_id, sum(tmp1.total_sales)@1 as total_sales], output_bytes=62318, output_rows=1719
+    GpuAggregateExec: group_by=[i_item_id], aggr=[sum(tmp1.total_sales)], output_bytes=62318, output_rows=1719
+      GpuCoalescePartitionsExec, output_bytes=62318, output_rows=1719
+        GpuAggregateExec: group_by=[i_item_id], aggr=[sum(tmp1.total_sales)], output_bytes=62318, output_rows=1719
+          GpuUnionExec, output_bytes=132798, output_rows=3663
+            GpuProjectExec: expr=[i_item_id@0 as i_item_id, sum(store_sales.ss_ext_sales_price)@1 as total_sales], output_bytes=57968, output_rows=1599
+              GpuAggregateExec: group_by=[i_item_id], aggr=[sum(store_sales.ss_ext_sales_price)], output_bytes=57968, output_rows=1599
+                GpuCoalesceBatchesExec: target_batch_size=7456540, output_bytes=157584, output_rows=4347
+                  GpuHashJoinExec: join_type=RightSemi, on=[(i_item_id@0, i_item_id@1)], output_bytes=157584, output_rows=4347
+                    GpuCoalesceBatchesExec: target_batch_size=7456540, output_bytes=37437, output_rows=1860
+                      GpuFilterExec: predicate=i_category@1 = Music, projection=[0], output_bytes=37437, output_rows=1860
+                        GpuScanExec: table=item, projections=[i_item_id, i_category], batch_size=7456540, output_bytes=542357, output_rows=18000
+                    GpuProjectExec: expr=[ss_ext_sales_price@1 as ss_ext_sales_price, i_item_id@0 as i_item_id], output_bytes=801456, output_rows=22109
+                      GpuCoalesceBatchesExec: target_batch_size=7456540, output_bytes=801456, output_rows=22109
+                        GpuHashJoinExec: join_type=Inner, on=[(i_item_sk@0, ss_item_sk@0)], projection=[1, 3], output_bytes=801464, output_rows=22109
+                          GpuScanExec: table=item, projections=[i_item_sk, i_item_id], batch_size=7456540, output_bytes=436504, output_rows=18000
+                          GpuCoalesceBatchesExec: target_batch_size=7456540, output_bytes=447708, output_rows=22109
+                            GpuHashJoinExec: join_type=Inner, on=[(ca_address_sk@0, ss_addr_sk@1)], projection=[1, 3], output_bytes=447708, output_rows=22109
+                              GpuCoalesceBatchesExec: target_batch_size=7456540, output_bytes=75265, output_rows=18246
+                                GpuFilterExec: predicate=ca_gmt_offset@1 = Some(-500),5,2, projection=[0], output_bytes=75265, output_rows=18246
+                                  GpuScanExec: table=customer_address, projections=[ca_address_sk, ca_gmt_offset], batch_size=7456540, output_bytes=1012500, output_rows=50000
+                              GpuCoalesceBatchesExec: target_batch_size=7456540, output_bytes=1519440, output_rows=62336
+                                GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ss_sold_date_sk@0)], projection=[2, 3, 4], output_bytes=1519473, output_rows=62336
+                                  GpuCoalesceBatchesExec: target_batch_size=7456540, output_bytes=124, output_rows=30
+                                    GpuFilterExec: predicate=d_year@1 = 1998 AND d_moy@2 = 9, projection=[0], output_bytes=124, output_rows=30
+                                      GpuScanExec: table=date_dim, projections=[d_date_sk, d_year, d_moy], batch_size=7456540, output_bytes=903984, output_rows=73049
+                                  GpuScanExec: table=store_sales, projections=[ss_sold_date_sk, ss_item_sk, ss_addr_sk, ss_ext_sales_price], batch_size=7456540, output_bytes=82091516, output_rows=2880404
+            GpuProjectExec: expr=[i_item_id@0 as i_item_id, sum(catalog_sales.cs_ext_sales_price)@1 as total_sales], output_bytes=45282, output_rows=1249
+              GpuAggregateExec: group_by=[i_item_id], aggr=[sum(catalog_sales.cs_ext_sales_price)], output_bytes=45282, output_rows=1249
+                GpuCoalesceBatchesExec: target_batch_size=7456540, output_bytes=80372, output_rows=2217
+                  GpuHashJoinExec: join_type=RightSemi, on=[(i_item_id@0, i_item_id@1)], output_bytes=80372, output_rows=2217
+                    GpuCoalesceBatchesExec: target_batch_size=7456540, output_bytes=37437, output_rows=1860
+                      GpuFilterExec: predicate=i_category@1 = Music, projection=[0], output_bytes=37437, output_rows=1860
+                        GpuScanExec: table=item, projections=[i_item_id, i_category], batch_size=7456540, output_bytes=542357, output_rows=18000
+                    GpuCoalesceBatchesExec: target_batch_size=7456540, output_bytes=418764, output_rows=11552
+                      GpuHashJoinExec: join_type=Inner, on=[(cs_item_sk@0, i_item_sk@0)], projection=[1, 3], output_bytes=418768, output_rows=11552
+                        GpuCoalesceBatchesExec: target_batch_size=7456540, output_bytes=233928, output_rows=11552
+                          GpuHashJoinExec: join_type=Inner, on=[(ca_address_sk@0, cs_bill_addr_sk@0)], projection=[2, 3], output_bytes=233928, output_rows=11552
+                            GpuCoalesceBatchesExec: target_batch_size=7456540, output_bytes=75265, output_rows=18246
+                              GpuFilterExec: predicate=ca_gmt_offset@1 = Some(-500),5,2, projection=[0], output_bytes=75265, output_rows=18246
+                                GpuScanExec: table=customer_address, projections=[ca_address_sk, ca_gmt_offset], batch_size=7456540, output_bytes=1012500, output_rows=50000
+                            GpuCoalesceBatchesExec: target_batch_size=7456540, output_bytes=752142, output_rows=30857
+                              GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, cs_sold_date_sk@0)], projection=[2, 3, 4], output_bytes=752142, output_rows=30857
+                                GpuCoalesceBatchesExec: target_batch_size=7456540, output_bytes=124, output_rows=30
+                                  GpuFilterExec: predicate=d_year@1 = 1998 AND d_moy@2 = 9, projection=[0], output_bytes=124, output_rows=30
+                                    GpuScanExec: table=date_dim, projections=[d_date_sk, d_year, d_moy], batch_size=7456540, output_bytes=903984, output_rows=73049
+                                GpuScanExec: table=catalog_sales, projections=[cs_sold_date_sk, cs_bill_addr_sk, cs_item_sk, cs_ext_sales_price], batch_size=7456540, output_bytes=41084120, output_rows=1441548
+                        GpuScanExec: table=item, projections=[i_item_sk, i_item_id], batch_size=7456540, output_bytes=436504, output_rows=18000
+            GpuProjectExec: expr=[i_item_id@0 as i_item_id, sum(web_sales.ws_ext_sales_price)@1 as total_sales], output_bytes=29548, output_rows=815
+              GpuAggregateExec: group_by=[i_item_id], aggr=[sum(web_sales.ws_ext_sales_price)], output_bytes=29548, output_rows=815
+                GpuCoalesceBatchesExec: target_batch_size=7456540, output_bytes=40496, output_rows=1117
+                  GpuHashJoinExec: join_type=RightSemi, on=[(i_item_id@0, i_item_id@1)], output_bytes=40496, output_rows=1117
+                    GpuCoalesceBatchesExec: target_batch_size=7456540, output_bytes=37437, output_rows=1860
+                      GpuFilterExec: predicate=i_category@1 = Music, projection=[0], output_bytes=37437, output_rows=1860
+                        GpuScanExec: table=item, projections=[i_item_id, i_category], batch_size=7456540, output_bytes=542357, output_rows=18000
+                    GpuCoalesceBatchesExec: target_batch_size=7456540, output_bytes=215040, output_rows=5932
+                      GpuHashJoinExec: join_type=Inner, on=[(ws_item_sk@0, i_item_sk@0)], projection=[1, 3], output_bytes=215040, output_rows=5932
+                        GpuCoalesceBatchesExec: target_batch_size=7456540, output_bytes=120124, output_rows=5932
+                          GpuHashJoinExec: join_type=Inner, on=[(ca_address_sk@0, ws_bill_addr_sk@1)], projection=[1, 3], output_bytes=120124, output_rows=5932
+                            GpuCoalesceBatchesExec: target_batch_size=7456540, output_bytes=75265, output_rows=18246
+                              GpuFilterExec: predicate=ca_gmt_offset@1 = Some(-500),5,2, projection=[0], output_bytes=75265, output_rows=18246
+                                GpuScanExec: table=customer_address, projections=[ca_address_sk, ca_gmt_offset], batch_size=7456540, output_bytes=1012500, output_rows=50000
+                            GpuCoalesceBatchesExec: target_batch_size=7456540, output_bytes=381030, output_rows=15632
+                              GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ws_sold_date_sk@0)], projection=[2, 3, 4], output_bytes=381039, output_rows=15632
+                                GpuCoalesceBatchesExec: target_batch_size=7456540, output_bytes=124, output_rows=30
+                                  GpuFilterExec: predicate=d_year@1 = 1998 AND d_moy@2 = 9, projection=[0], output_bytes=124, output_rows=30
+                                    GpuScanExec: table=date_dim, projections=[d_date_sk, d_year, d_moy], batch_size=7456540, output_bytes=903984, output_rows=73049
+                                GpuScanExec: table=web_sales, projections=[ws_sold_date_sk, ws_item_sk, ws_bill_addr_sk, ws_ext_sales_price], batch_size=7456540, output_bytes=20502444, output_rows=719384
+                        GpuScanExec: table=item, projections=[i_item_sk, i_item_id], batch_size=7456540, output_bytes=436504, output_rows=18000
+peacockdb_cost=164830045

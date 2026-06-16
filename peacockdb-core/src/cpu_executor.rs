@@ -5,7 +5,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 
-use datafusion::arrow::array::{BinaryArray, LargeBinaryArray, LargeStringArray, StringArray};
+use datafusion::arrow::array::{
+    Array, BinaryArray, BinaryViewArray, LargeBinaryArray, LargeStringArray, StringArray,
+    StringViewArray,
+};
 use datafusion::arrow::datatypes::{DataType, SchemaRef};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::error::{DataFusionError, Result};
@@ -513,7 +516,39 @@ pub fn batch_logical_size(batch: &RecordBatch) -> usize {
                         .unwrap_or(0);
                     offset_bytes + data
                 }
-                _ => 0,
+                DataType::Decimal128(_, _) => rows * 16,
+                DataType::Decimal256(_, _) => rows * 32,
+                DataType::FixedSizeBinary(n) => rows * (*n as usize),
+                // View layouts: count CONTENT (Σ value byte lengths + offsets),
+                // mirroring the Utf8/Binary arms. Must NOT use get_array_memory_size
+                // here — that's allocation-dependent (buffer capacity) and varies
+                // run-to-run, making the goldens non-deterministic.
+                DataType::Utf8View => {
+                    let data = col
+                        .as_any()
+                        .downcast_ref::<StringViewArray>()
+                        .map(|a| (0..a.len()).filter(|&i| a.is_valid(i)).map(|i| a.value(i).len()).sum::<usize>())
+                        .unwrap_or(0);
+                    (rows + 1) * 4 + data
+                }
+                DataType::BinaryView => {
+                    let data = col
+                        .as_any()
+                        .downcast_ref::<BinaryViewArray>()
+                        .map(|a| (0..a.len()).filter(|&i| a.is_valid(i)).map(|i| a.value(i).len()).sum::<usize>())
+                        .unwrap_or(0);
+                    (rows + 1) * 4 + data
+                }
+                // Dictionary: count the keys deterministically (rows × key width).
+                // Values are deduped/small; omitting them slightly undercounts but
+                // keeps the golden deterministic (no allocation-size dependency).
+                DataType::Dictionary(key_type, _) => rows * key_type.primitive_width().unwrap_or(4),
+                // HARD fail on an unhandled type (in debug AND release): the old
+                // silent 0 undercounted decimals/Utf8View, and an allocation-based
+                // fallback (get_array_memory_size) would make goldens
+                // non-deterministic. Panicking forces a deterministic per-type arm to
+                // be added rather than silently producing a wrong/unstable size.
+                other => panic!("batch_logical_size: unhandled DataType {other:?} — add a deterministic arm"),
             };
             bitmap_bytes + data_bytes
         })

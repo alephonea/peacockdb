@@ -1,0 +1,21 @@
+PROJECTION: projections=[__internal_decompress_string(#0), #1, __internal_decompress_integral_integer(#2, 1), #3], output_bytes=805816, output_rows=18314, materialized=0
+  ORDER_BY: order_by=[count(DISTINCT tpch.main.partsupp.ps_suppkey) DESC, tpch.main.part.p_brand ASC, tpch.main.part.p_type ASC, tpch.main.part.p_size ASC], output_bytes=750874, output_rows=18314, materialized=750874
+    PROJECTION: projections=[__internal_compress_string_hugeint(#0), #1, __internal_compress_integral_utinyint(#2, 1), #3], output_bytes=750874, output_rows=18314, materialized=0
+      PROJECTION: projections=[__internal_decompress_string(#0), #1, __internal_decompress_integral_integer(#2, 1), #3], output_bytes=805816, output_rows=18314, materialized=0
+        HASH_GROUP_BY: groups=[#0, #1, #2], aggregates=[count(DISTINCT #3)], output_bytes=750874, output_rows=18314, materialized=4849234
+          PROJECTION: projections=[p_brand, p_type, p_size, ps_suppkey], output_bytes=4849234, output_rows=118274, materialized=0
+            PROJECTION: projections=[#0, __internal_compress_string_hugeint(#1), #2, __internal_compress_integral_utinyint(#3, 1)], output_bytes=4849234, output_rows=118274, materialized=0
+              PROJECTION: projections=[#0, #1, #2, #3], output_bytes=5204056, output_rows=118274, materialized=0
+                FILTER: output_bytes=5322330, output_rows=118274, materialized=0
+                  HASH_JOIN: join_type=MARK, conditions=[ps_suppkey = #0], output_bytes=5324580, output_rows=118324, materialized=5324612
+                    HASH_JOIN: join_type=INNER, conditions=[ps_partkey = p_partkey], output_bytes=5206256, output_rows=118324, materialized=6507820
+                      TABLE_SCAN: table=partsupp, projections=[ps_partkey, ps_suppkey], output_bytes=12799680, output_rows=799980, materialized=25599680, bytes_read_est=12800000, rows_read=800000
+                      PROJECTION: projections=[#0, #1, #2, #3], output_bytes=1301564, output_rows=29581, materialized=0
+                        FILTER: output_bytes=1331145, output_rows=29581, materialized=0
+                          HASH_JOIN: join_type=MARK, conditions=[p_size = #0], output_bytes=8640990, output_rows=192022, materialized=8640990
+                            TABLE_SCAN: table=part, projections=[p_partkey, p_brand, p_type, p_size], filters="p_brand!='Brand#45' AND optional: p_size IN (3, 9, 14, 19, 23, 36, 45, 49)", output_bytes=8448968, output_rows=192022, materialized=17248968, bytes_read_est=8800000, rows_read=200000
+                            COLUMN_DATA_SCAN: output_bytes=32, output_rows=8, materialized=0
+                    PROJECTION: projections=[#1], output_bytes=32, output_rows=4, materialized=0
+                      FILTER: output_bytes=96, output_rows=4, materialized=0
+                        TABLE_SCAN: table=supplier, projections=[s_comment, s_suppkey], output_bytes=240000, output_rows=10000, materialized=480000, bytes_read_est=240000, rows_read=10000
+duckdb_cost=69402178

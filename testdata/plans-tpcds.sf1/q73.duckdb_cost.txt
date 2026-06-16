@@ -1,0 +1,23 @@
+PROJECTION: projections=[__internal_decompress_string(#0), __internal_decompress_string(#1), __internal_decompress_string(#2), __internal_decompress_string(#3), #4, #5], output_bytes=76, output_rows=1, materialized=0
+  ORDER_BY: order_by=[dj.cnt DESC, tpcds.main.customer.c_last_name ASC], output_bytes=53, output_rows=1, materialized=53
+    PROJECTION: projections=[__internal_compress_string_hugeint(#0), __internal_compress_string_hugeint(#1), __internal_compress_string_ubigint(#2), __internal_compress_string_utinyint(#3), #4, #5], output_bytes=53, output_rows=1, materialized=0
+      HASH_JOIN: join_type=INNER, conditions=[c_customer_sk = ss_customer_sk], output_bytes=76, output_rows=1, materialized=1388
+        TABLE_SCAN: table=customer, projections=[c_customer_sk, c_last_name, c_first_name, c_salutation, c_preferred_cust_flag], output_bytes=68, output_rows=1, materialized=6800068, bytes_read_est=6800000, rows_read=100000
+        FILTER: output_bytes=1312, output_rows=82, materialized=0
+          HASH_GROUP_BY: groups=[#0, #1], aggregates=[count_star()], output_bytes=23392, output_rows=1462, materialized=123384
+            PROJECTION: projections=[ss_ticket_number, ss_customer_sk], output_bytes=123384, output_rows=15423, materialized=0
+              PROJECTION: projections=[#0, #1, __internal_compress_integral_usmallint(#2, 2450816)], output_bytes=154230, output_rows=15423, materialized=0
+                HASH_JOIN: join_type=INNER, conditions=[ss_sold_date_sk = d_date_sk], output_bytes=185076, output_rows=15423, materialized=185364
+                  HASH_JOIN: join_type=INNER, conditions=[ss_store_sk = s_store_sk], output_bytes=3481152, output_rows=217572, materialized=3481192
+                    HASH_JOIN: join_type=INNER, conditions=[ss_hdemo_sk = hd_demo_sk], output_bytes=4351440, output_rows=217572, materialized=4355600
+                      TABLE_SCAN: table=store_sales, projections=[ss_sold_date_sk, ss_store_sk, ss_hdemo_sk, ss_ticket_number, ss_customer_sk], output_bytes=18696880, output_rows=934844, materialized=76304960, bytes_read_est=57608080, rows_read=2880404
+                      PROJECTION: projections=[#0], output_bytes=4160, output_rows=1040, materialized=0
+                        FILTER: output_bytes=29120, output_rows=1040, materialized=0
+                          TABLE_SCAN: table=household_demographics, projections=[hd_demo_sk, hd_buy_potential, hd_vehicle_count, hd_dep_count], filters="hd_vehicle_count>0 AND optional: hd_buy_potential='Unknown' OR hd_buy_potential='>10000'", output_bytes=134400, output_rows=4800, materialized=336000, bytes_read_est=201600, rows_read=7200
+                    FILTER: output_bytes=40, output_rows=10, materialized=0
+                      PROJECTION: projections=[#0], output_bytes=48, output_rows=12, materialized=0
+                        FILTER: output_bytes=240, output_rows=12, materialized=0
+                          TABLE_SCAN: table=store, projections=[s_store_sk, s_county], filters="optional: s_county IN ('Orange County', 'Bronx County', 'Franklin Parish', 'Williamson County')", output_bytes=240, output_rows=12, materialized=480, bytes_read_est=240, rows_read=12
+                  FILTER: output_bytes=288, output_rows=72, materialized=0
+                    TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_dom>=1 AND d_dom<=2 AND d_year>=1999 AND d_year<=2001", output_bytes=288, output_rows=72, materialized=292484, bytes_read_est=292196, rows_read=73049
+duckdb_cost=91880973

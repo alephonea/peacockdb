@@ -1,0 +1,14 @@
+TOP_N: order_by=[tpcds.main.customer.c_customer_id ASC], top=100, output_bytes=512, output_rows=16, materialized=512
+  PROJECTION: projections=[customer_id, customername], output_bytes=512, output_rows=16, materialized=0
+    HASH_JOIN: join_type=INNER, conditions=[cd_demo_sk = c_current_cdemo_sk], output_bytes=832, output_rows=16, materialized=832
+      TABLE_SCAN: table=customer_demographics, projections=[cd_demo_sk], filters="cd_demo_sk>=17 AND cd_demo_sk<=1920788", output_bytes=4369300, output_rows=1092325, materialized=12052500, bytes_read_est=7683200, rows_read=1920800
+      HASH_JOIN: join_type=INNER, conditions=[hd_income_band_sk = ib_income_band_sk], output_bytes=896, output_rows=16, materialized=896
+        HASH_JOIN: join_type=INNER, conditions=[hd_demo_sk = c_current_hdemo_sk], output_bytes=896, output_rows=16, materialized=896
+          TABLE_SCAN: table=household_demographics, projections=[hd_income_band_sk, hd_demo_sk], output_bytes=11392, output_rows=1424, materialized=68992, bytes_read_est=57600, rows_read=7200
+          HASH_JOIN: join_type=INNER, conditions=[sr_cdemo_sk = c_current_cdemo_sk], output_bytes=6840, output_rows=114, materialized=6840
+            TABLE_SCAN: table=store_returns, projections=[sr_cdemo_sk], filters="sr_cdemo_sk>=17 AND sr_cdemo_sk<=1920788", output_bytes=1105480, output_rows=276370, materialized=2256948, bytes_read_est=1151468, rows_read=287867
+            HASH_JOIN: join_type=INNER, conditions=[c_current_addr_sk = ca_address_sk], output_bytes=56820, output_rows=947, materialized=56820
+              TABLE_SCAN: table=customer, projections=[c_current_addr_sk, c_current_cdemo_sk, c_current_hdemo_sk, c_customer_id, c_last_name, c_first_name], output_bytes=5939040, output_rows=98984, materialized=11939040, bytes_read_est=6000000, rows_read=100000
+              TABLE_SCAN: table=customer_address, projections=[ca_address_sk], filters="ca_city='Edgewood'", output_bytes=1856, output_rows=464, materialized=201856, bytes_read_est=200000, rows_read=50000
+        TABLE_SCAN: table=income_band, projections=[ib_income_band_sk], filters="ib_lower_bound>=38128 AND ib_upper_bound<=88128", output_bytes=16, output_rows=4, materialized=96, bytes_read_est=80, rows_read=20
+duckdb_cost=26586228

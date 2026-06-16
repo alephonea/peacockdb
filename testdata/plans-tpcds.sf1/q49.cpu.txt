@@ -1,80 +1,81 @@
-SortExec: output_bytes=1015
-  AggregateExec: output_bytes=1015
-    CoalescePartitionsExec: output_bytes=1037
-      AggregateExec: output_bytes=1037
-        GpuUnionExec: output_bytes=1028
-          ProjectionExec: output_bytes=338
-            ProjectionExec: output_bytes=248
-              CoalesceBatchesExec: output_bytes=248
-                FilterExec: output_bytes=248
-                  ProjectionExec: output_bytes=352
-                    GpuWindowExec: output_bytes=355
-                      SortExec: output_bytes=216
-                        GpuWindowExec: output_bytes=216
-                          SortExec: output_bytes=77
-                            ProjectionExec: output_bytes=77
-                              AggregateExec: output_bytes=355
-                                CoalesceBatchesExec: output_bytes=219
-                                  HashJoinExec: output_bytes=219
-                                    CoalesceBatchesExec: output_bytes=128
-                                      FilterExec: output_bytes=128
-                                        ParquetExec: output_bytes=903984
-                                    CoalesceBatchesExec: output_bytes=9000
-                                      FilterExec: output_bytes=9000
-                                        ProjectionExec: output_bytes=4686634
-                                          CoalesceBatchesExec: output_bytes=4686634
-                                            HashJoinExec: output_bytes=4686646
-                                              ParquetExec: output_bytes=895676
-                                              CoalesceBatchesExec: output_bytes=4651659
-                                                FilterExec: output_bytes=4651669
-                                                  ParquetExec: output_bytes=12049682
-          ProjectionExec: output_bytes=386
-            ProjectionExec: output_bytes=248
-              CoalesceBatchesExec: output_bytes=248
-                FilterExec: output_bytes=248
-                  ProjectionExec: output_bytes=616
-                    GpuWindowExec: output_bytes=620
-                      SortExec: output_bytes=376
-                        GpuWindowExec: output_bytes=376
-                          SortExec: output_bytes=132
-                            ProjectionExec: output_bytes=132
-                              AggregateExec: output_bytes=620
-                                CoalesceBatchesExec: output_bytes=380
-                                  HashJoinExec: output_bytes=380
-                                    CoalesceBatchesExec: output_bytes=128
-                                      FilterExec: output_bytes=128
-                                        ParquetExec: output_bytes=903984
-                                    CoalesceBatchesExec: output_bytes=18964
-                                      FilterExec: output_bytes=18964
-                                        ProjectionExec: output_bytes=9336638
-                                          CoalesceBatchesExec: output_bytes=9336638
-                                            HashJoinExec: output_bytes=9336656
-                                              ParquetExec: output_bytes=1800840
-                                              CoalesceBatchesExec: output_bytes=9266961
-                                                FilterExec: output_bytes=9266991
-                                                  ParquetExec: output_bytes=24145932
-          ProjectionExec: output_bytes=304
-            ProjectionExec: output_bytes=208
-              CoalesceBatchesExec: output_bytes=208
-                FilterExec: output_bytes=208
-                  ProjectionExec: output_bytes=268
-                    GpuWindowExec: output_bytes=270
-                      SortExec: output_bytes=164
-                        GpuWindowExec: output_bytes=164
-                          SortExec: output_bytes=58
-                            ProjectionExec: output_bytes=58
-                              AggregateExec: output_bytes=270
-                                CoalesceBatchesExec: output_bytes=166
-                                  HashJoinExec: output_bytes=166
-                                    CoalesceBatchesExec: output_bytes=128
-                                      FilterExec: output_bytes=128
-                                        ParquetExec: output_bytes=903984
-                                    CoalesceBatchesExec: output_bytes=6384
-                                      FilterExec: output_bytes=6384
-                                        ProjectionExec: output_bytes=11498406
-                                          CoalesceBatchesExec: output_bytes=11498406
-                                            HashJoinExec: output_bytes=11498424
-                                              ParquetExec: output_bytes=3598340
-                                              CoalesceBatchesExec: output_bytes=11412597
-                                                FilterExec: output_bytes=11412657
-                                                  ParquetExec: output_bytes=48246770
+GpuSortExec: expr=[channel@0 ASC, return_rank@3 ASC, currency_rank@4 ASC, item@1 ASC], fetch=100, output_bytes=1559, output_rows=34
+  GpuAggregateExec: group_by=[channel, item, return_ratio, return_rank, currency_rank], aggr=[], output_bytes=1559, output_rows=34
+    GpuCoalescePartitionsExec, output_bytes=1581, output_rows=34
+      GpuAggregateExec: group_by=[channel, item, return_ratio, return_rank, currency_rank], aggr=[], output_bytes=1581, output_rows=34
+        GpuUnionExec, output_bytes=1572, output_rows=34
+          GpuProjectExec: expr=[web as channel, item@0 as item, return_ratio@1 as return_ratio, return_rank@2 as return_rank, currency_rank@3 as currency_rank], output_bytes=530, output_rows=12
+            GpuProjectExec: expr=[item@0 as item, return_ratio@1 as return_ratio, rank() ORDER BY [in_web.return_ratio ASC NULLS LAST] RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW@2 as return_rank, rank() ORDER BY [in_web.currency_ratio ASC NULLS LAST] RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW@3 as currency_rank], output_bytes=440, output_rows=12
+              GpuCoalesceBatchesExec: target_batch_size=5263440, output_bytes=440, output_rows=12
+                GpuFilterExec: predicate=rank() ORDER BY [in_web.return_ratio ASC NULLS LAST] RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW@2 <= 10 OR rank() ORDER BY [in_web.currency_ratio ASC NULLS LAST] RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW@3 <= 10, output_bytes=440, output_rows=12
+                  GpuProjectExec: expr=[item@0 as item, return_ratio@1 as return_ratio, rank() ORDER BY [in_web.return_ratio ASC NULLS LAST] RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW@3 as rank() ORDER BY [in_web.return_ratio ASC NULLS LAST] RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW, rank() ORDER BY [in_web.currency_ratio ASC NULLS LAST] RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW@4 as rank() ORDER BY [in_web.currency_ratio ASC NULLS LAST] RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW], output_bytes=624, output_rows=17
+                    GpuWindowExec: wdw=[rank() ORDER BY [in_web.currency_ratio ASC NULLS LAST] RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW], output_bytes=899, output_rows=17
+                      GpuSortExec: expr=[currency_ratio@2 ASC NULLS LAST], output_bytes=760, output_rows=17
+                        GpuWindowExec: wdw=[rank() ORDER BY [in_web.return_ratio ASC NULLS LAST] RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW], output_bytes=760, output_rows=17
+                          GpuSortExec: expr=[return_ratio@1 ASC NULLS LAST], output_bytes=621, output_rows=17
+                            GpuProjectExec: expr=[ws_item_sk@0 as item, CAST(sum(coalesce(wr.wr_return_quantity,Int64(0)))@1 AS Decimal128(15, 4)) / CAST(sum(coalesce(ws.ws_quantity,Int64(0)))@2 AS Decimal128(15, 4)) as return_ratio, CAST(sum(coalesce(wr.wr_return_amt,Int64(0)))@3 AS Decimal128(15, 4)) / CAST(sum(coalesce(ws.ws_net_paid,Int64(0)))@4 AS Decimal128(15, 4)) as currency_ratio], output_bytes=621, output_rows=17
+                              GpuAggregateExec: group_by=[ws_item_sk], aggr=[sum(coalesce(wr.wr_return_quantity,Int64(0))), sum(coalesce(ws.ws_quantity,Int64(0))), sum(coalesce(wr.wr_return_amt,Int64(0))), sum(coalesce(ws.ws_net_paid,Int64(0)))], output_bytes=899, output_rows=17
+                                GpuCoalesceBatchesExec: target_batch_size=5263440, output_bytes=763, output_rows=17
+                                  GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ws_sold_date_sk@0)], projection=[2, 3, 4, 5, 6], output_bytes=763, output_rows=17
+                                    GpuCoalesceBatchesExec: target_batch_size=5263440, output_bytes=128, output_rows=31
+                                      GpuFilterExec: predicate=d_year@1 = 2001 AND d_moy@2 = 12, projection=[0], output_bytes=128, output_rows=31
+                                        GpuScanExec: table=date_dim, projections=[d_date_sk, d_year, d_moy], batch_size=5263440, output_bytes=903984, output_rows=73049
+                                    GpuCoalesceBatchesExec: target_batch_size=5263440, output_bytes=26184, output_rows=537
+                                      GpuFilterExec: predicate=wr_return_amt@5 > Some(1000000),7,2, output_bytes=26184, output_rows=537
+                                        GpuProjectExec: expr=[ws_sold_date_sk@2 as ws_sold_date_sk, ws_item_sk@3 as ws_item_sk, ws_quantity@4 as ws_quantity, ws_net_paid@5 as ws_net_paid, wr_return_quantity@0 as wr_return_quantity, wr_return_amt@1 as wr_return_amt], output_bytes=13640202, output_rows=279799
+                                          GpuCoalesceBatchesExec: target_batch_size=5263440, output_bytes=13640202, output_rows=279799
+                                            GpuHashJoinExec: join_type=Right, on=[(wr_order_number@1, ws_order_number@2), (wr_item_sk@0, ws_item_sk@1)], projection=[2, 3, 4, 5, 7, 8], output_bytes=13640214, output_rows=279799
+                                              GpuScanExec: table=web_returns, projections=[wr_item_sk, wr_order_number, wr_return_quantity, wr_return_amt], batch_size=5263440, output_bytes=2042140, output_rows=71654
+                                              GpuCoalesceBatchesExec: target_batch_size=5263440, output_bytes=9128443, output_rows=279799
+                                                GpuFilterExec: predicate=ws_net_profit@5 > Some(100),7,2 AND ws_net_paid@4 > Some(0),7,2 AND ws_quantity@3 > 0, projection=[0, 1, 2, 3, 4], output_bytes=9128453, output_rows=279799
+                                                  GpuScanExec: table=web_sales, projections=[ws_sold_date_sk, ws_item_sk, ws_order_number, ws_quantity, ws_net_paid, ws_net_profit], batch_size=5263440, output_bytes=35069970, output_rows=719384
+          GpuProjectExec: expr=[catalog as channel, item@0 as item, return_ratio@1 as return_ratio, return_rank@2 as return_rank, currency_rank@3 as currency_rank], output_bytes=578, output_rows=12
+            GpuProjectExec: expr=[item@0 as item, return_ratio@1 as return_ratio, rank() ORDER BY [in_cat.return_ratio ASC NULLS LAST] RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW@2 as return_rank, rank() ORDER BY [in_cat.currency_ratio ASC NULLS LAST] RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW@3 as currency_rank], output_bytes=440, output_rows=12
+              GpuCoalesceBatchesExec: target_batch_size=5263440, output_bytes=440, output_rows=12
+                GpuFilterExec: predicate=rank() ORDER BY [in_cat.return_ratio ASC NULLS LAST] RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW@2 <= 10 OR rank() ORDER BY [in_cat.currency_ratio ASC NULLS LAST] RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW@3 <= 10, output_bytes=440, output_rows=12
+                  GpuProjectExec: expr=[item@0 as item, return_ratio@1 as return_ratio, rank() ORDER BY [in_cat.return_ratio ASC NULLS LAST] RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW@3 as rank() ORDER BY [in_cat.return_ratio ASC NULLS LAST] RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW, rank() ORDER BY [in_cat.currency_ratio ASC NULLS LAST] RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW@4 as rank() ORDER BY [in_cat.currency_ratio ASC NULLS LAST] RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW], output_bytes=1096, output_rows=30
+                    GpuWindowExec: wdw=[rank() ORDER BY [in_cat.currency_ratio ASC NULLS LAST] RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW], output_bytes=1580, output_rows=30
+                      GpuSortExec: expr=[currency_ratio@2 ASC NULLS LAST], output_bytes=1336, output_rows=30
+                        GpuWindowExec: wdw=[rank() ORDER BY [in_cat.return_ratio ASC NULLS LAST] RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW], output_bytes=1336, output_rows=30
+                          GpuSortExec: expr=[return_ratio@1 ASC NULLS LAST], output_bytes=1092, output_rows=30
+                            GpuProjectExec: expr=[cs_item_sk@0 as item, CAST(sum(coalesce(cr.cr_return_quantity,Int64(0)))@1 AS Decimal128(15, 4)) / CAST(sum(coalesce(cs.cs_quantity,Int64(0)))@2 AS Decimal128(15, 4)) as return_ratio, CAST(sum(coalesce(cr.cr_return_amount,Int64(0)))@3 AS Decimal128(15, 4)) / CAST(sum(coalesce(cs.cs_net_paid,Int64(0)))@4 AS Decimal128(15, 4)) as currency_ratio], output_bytes=1092, output_rows=30
+                              GpuAggregateExec: group_by=[cs_item_sk], aggr=[sum(coalesce(cr.cr_return_quantity,Int64(0))), sum(coalesce(cs.cs_quantity,Int64(0))), sum(coalesce(cr.cr_return_amount,Int64(0))), sum(coalesce(cs.cs_net_paid,Int64(0)))], output_bytes=1580, output_rows=30
+                                GpuCoalesceBatchesExec: target_batch_size=5263440, output_bytes=1340, output_rows=30
+                                  GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, cs_sold_date_sk@0)], projection=[2, 3, 4, 5, 6], output_bytes=1340, output_rows=30
+                                    GpuCoalesceBatchesExec: target_batch_size=5263440, output_bytes=128, output_rows=31
+                                      GpuFilterExec: predicate=d_year@1 = 2001 AND d_moy@2 = 12, projection=[0], output_bytes=128, output_rows=31
+                                        GpuScanExec: table=date_dim, projections=[d_date_sk, d_year, d_moy], batch_size=5263440, output_bytes=903984, output_rows=73049
+                                    GpuCoalesceBatchesExec: target_batch_size=5263440, output_bytes=55188, output_rows=1132
+                                      GpuFilterExec: predicate=cr_return_amount@5 > Some(1000000),7,2, output_bytes=55188, output_rows=1132
+                                        GpuProjectExec: expr=[cs_sold_date_sk@2 as cs_sold_date_sk, cs_item_sk@3 as cs_item_sk, cs_quantity@4 as cs_quantity, cs_net_paid@5 as cs_net_paid, cr_return_quantity@0 as cr_return_quantity, cr_return_amount@1 as cr_return_amount], output_bytes=27173790, output_rows=557411
+                                          GpuCoalesceBatchesExec: target_batch_size=5263440, output_bytes=27173790, output_rows=557411
+                                            GpuHashJoinExec: join_type=Right, on=[(cr_order_number@1, cs_order_number@2), (cr_item_sk@0, cs_item_sk@1)], projection=[2, 3, 4, 5, 7, 8], output_bytes=27173808, output_rows=557411
+                                              GpuScanExec: table=catalog_returns, projections=[cr_item_sk, cr_order_number, cr_return_quantity, cr_return_amount], batch_size=5263440, output_bytes=4105912, output_rows=144067
+                                              GpuCoalesceBatchesExec: target_batch_size=5263440, output_bytes=18185537, output_rows=557411
+                                                GpuFilterExec: predicate=cs_net_profit@5 > Some(100),7,2 AND cs_net_paid@4 > Some(0),7,2 AND cs_quantity@3 > 0, projection=[0, 1, 2, 3, 4], output_bytes=18185567, output_rows=557411
+                                                  GpuScanExec: table=catalog_sales, projections=[cs_sold_date_sk, cs_item_sk, cs_order_number, cs_quantity, cs_net_paid, cs_net_profit], batch_size=5263440, output_bytes=70275468, output_rows=1441548
+          GpuProjectExec: expr=[store as channel, item@0 as item, return_ratio@1 as return_ratio, return_rank@2 as return_rank, currency_rank@3 as currency_rank], output_bytes=464, output_rows=10
+            GpuProjectExec: expr=[item@0 as item, return_ratio@1 as return_ratio, rank() ORDER BY [in_store.return_ratio ASC NULLS LAST] RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW@2 as return_rank, rank() ORDER BY [in_store.currency_ratio ASC NULLS LAST] RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW@3 as currency_rank], output_bytes=368, output_rows=10
+              GpuCoalesceBatchesExec: target_batch_size=5263440, output_bytes=368, output_rows=10
+                GpuFilterExec: predicate=rank() ORDER BY [in_store.return_ratio ASC NULLS LAST] RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW@2 <= 10 OR rank() ORDER BY [in_store.currency_ratio ASC NULLS LAST] RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW@3 <= 10, output_bytes=368, output_rows=10
+                  GpuProjectExec: expr=[item@0 as item, return_ratio@1 as return_ratio, rank() ORDER BY [in_store.return_ratio ASC NULLS LAST] RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW@3 as rank() ORDER BY [in_store.return_ratio ASC NULLS LAST] RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW, rank() ORDER BY [in_store.currency_ratio ASC NULLS LAST] RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW@4 as rank() ORDER BY [in_store.currency_ratio ASC NULLS LAST] RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW], output_bytes=476, output_rows=13
+                    GpuWindowExec: wdw=[rank() ORDER BY [in_store.currency_ratio ASC NULLS LAST] RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW], output_bytes=686, output_rows=13
+                      GpuSortExec: expr=[currency_ratio@2 ASC NULLS LAST], output_bytes=580, output_rows=13
+                        GpuWindowExec: wdw=[rank() ORDER BY [in_store.return_ratio ASC NULLS LAST] RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW], output_bytes=580, output_rows=13
+                          GpuSortExec: expr=[return_ratio@1 ASC NULLS LAST], output_bytes=474, output_rows=13
+                            GpuProjectExec: expr=[ss_item_sk@0 as item, CAST(sum(coalesce(sr.sr_return_quantity,Int64(0)))@1 AS Decimal128(15, 4)) / CAST(sum(coalesce(sts.ss_quantity,Int64(0)))@2 AS Decimal128(15, 4)) as return_ratio, CAST(sum(coalesce(sr.sr_return_amt,Int64(0)))@3 AS Decimal128(15, 4)) / CAST(sum(coalesce(sts.ss_net_paid,Int64(0)))@4 AS Decimal128(15, 4)) as currency_ratio], output_bytes=474, output_rows=13
+                              GpuAggregateExec: group_by=[ss_item_sk], aggr=[sum(coalesce(sr.sr_return_quantity,Int64(0))), sum(coalesce(sts.ss_quantity,Int64(0))), sum(coalesce(sr.sr_return_amt,Int64(0))), sum(coalesce(sts.ss_net_paid,Int64(0)))], output_bytes=686, output_rows=13
+                                GpuCoalesceBatchesExec: target_batch_size=5263440, output_bytes=582, output_rows=13
+                                  GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ss_sold_date_sk@0)], projection=[2, 3, 4, 5, 6], output_bytes=582, output_rows=13
+                                    GpuCoalesceBatchesExec: target_batch_size=5263440, output_bytes=128, output_rows=31
+                                      GpuFilterExec: predicate=d_year@1 = 2001 AND d_moy@2 = 12, projection=[0], output_bytes=128, output_rows=31
+                                        GpuScanExec: table=date_dim, projections=[d_date_sk, d_year, d_moy], batch_size=5263440, output_bytes=903984, output_rows=73049
+                                    GpuCoalesceBatchesExec: target_batch_size=5263440, output_bytes=18576, output_rows=381
+                                      GpuFilterExec: predicate=sr_return_amt@5 > Some(1000000),7,2, output_bytes=18576, output_rows=381
+                                        GpuProjectExec: expr=[ss_sold_date_sk@2 as ss_sold_date_sk, ss_item_sk@3 as ss_item_sk, ss_quantity@4 as ss_quantity, ss_net_paid@5 as ss_net_paid, sr_return_quantity@0 as sr_return_quantity, sr_return_amt@1 as sr_return_amt], output_bytes=33465510, output_rows=686472
+                                          GpuCoalesceBatchesExec: target_batch_size=5263440, output_bytes=33465510, output_rows=686472
+                                            GpuHashJoinExec: join_type=Right, on=[(sr_ticket_number@1, ss_ticket_number@2), (sr_item_sk@0, ss_item_sk@1)], projection=[2, 3, 4, 5, 7, 8], output_bytes=33465528, output_rows=686472
+                                              GpuScanExec: table=store_returns, projections=[sr_item_sk, sr_ticket_number, sr_return_quantity, sr_return_amt], batch_size=5263440, output_bytes=8204212, output_rows=287867
+                                              GpuCoalesceBatchesExec: target_batch_size=5263440, output_bytes=22396149, output_rows=686472
+                                                GpuFilterExec: predicate=ss_net_profit@5 > Some(100),7,2 AND ss_net_paid@4 > Some(0),7,2 AND ss_quantity@3 > 0, projection=[0, 1, 2, 3, 4], output_bytes=22396209, output_rows=686472
+                                                  GpuScanExec: table=store_sales, projections=[ss_sold_date_sk, ss_item_sk, ss_ticket_number, ss_quantity, ss_net_paid, ss_net_profit], batch_size=5263440, output_bytes=140419698, output_rows=2880404
+peacockdb_cost=585325718

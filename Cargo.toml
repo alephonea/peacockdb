@@ -3,5 +3,6 @@ members = [
   "peacockdb",
   "peacockdb-core",
   "peacockdb-ffi",
+  "cost-report",
 ]
 resolver = "2"

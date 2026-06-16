@@ -283,9 +283,48 @@ impl GpuScanExec {
     }
 }
 
+/// Scanned table name for a parquet scan = its file stem
+/// (`.../lineitem.parquet` -> `lineitem`).
+pub fn parquet_table_name(parquet: &ParquetExec) -> Option<String> {
+    let file = parquet.base_config().file_groups.first()?.first()?;
+    file.object_meta
+        .location
+        .to_string()
+        .rsplit('/')
+        .next()?
+        .strip_suffix(".parquet")
+        .map(String::from)
+}
+
+// Scan annotation flows through GpuExtraDisplay so the `.txt` plan goldens and the
+// `.cpu.txt` cost tree label the scan identically (one shared source). We surface
+// table + projections (both round-trip through serialization) and batch_size; the
+// pushed-down parquet predicate is deliberately NOT shown here because GpuScan
+// serialization doesn't carry it, so it would break the flatbuffer roundtrip's
+// plan_str equality after deserialize.
+impl GpuExtraDisplay for GpuScanExec {
+    fn extra_display_info(&self) -> String {
+        let Some(parquet) = self.inner.as_any().downcast_ref::<ParquetExec>() else {
+            return format!("batch_size={}", self.gpu_batch_size);
+        };
+        let config = parquet.base_config();
+        let mut parts = Vec::new();
+        if let Some(t) = parquet_table_name(parquet) {
+            parts.push(format!("table={t}"));
+        }
+        let names: Vec<String> = match &config.projection {
+            Some(p) => p.iter().map(|&i| config.file_schema.field(i).name().clone()).collect(),
+            None => config.file_schema.fields().iter().map(|f| f.name().clone()).collect(),
+        };
+        parts.push(format!("projections=[{}]", names.join(", ")));
+        parts.push(format!("batch_size={}", self.gpu_batch_size));
+        parts.join(", ")
+    }
+}
+
 impl DisplayAs for GpuScanExec {
     fn fmt_as(&self, _t: DisplayFormatType, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "GpuScanExec: batch_size={}", self.gpu_batch_size)
+        write!(f, "GpuScanExec: {}", self.extra_display_info())
     }
 }
 

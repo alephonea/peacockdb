@@ -1,0 +1,19 @@
+UNGROUPED_AGGREGATE: aggregates=[avg(#0), avg(#1), avg(#2), sum(#3)], output_bytes=40, output_rows=1, materialized=64
+  PROJECTION: projections=[ss_quantity, ss_ext_sales_price, ss_ext_wholesale_cost, ss_ext_wholesale_cost], output_bytes=64, output_rows=4, materialized=0
+    PROJECTION: projections=[#3, #4, #5], output_bytes=48, output_rows=4, materialized=0
+      FILTER: output_bytes=208, output_rows=4, materialized=0
+        HASH_JOIN: join_type=INNER, conditions=[ss_hdemo_sk = hd_demo_sk], output_bytes=341952, output_rows=6576, materialized=341952
+          HASH_JOIN: join_type=INNER, conditions=[cd_demo_sk = ss_cdemo_sk], output_bytes=342420, output_rows=6585, materialized=342420
+            TABLE_SCAN: table=customer_demographics, projections=[cd_demo_sk, cd_marital_status, cd_education_status], filters="cd_demo_sk>=15 AND cd_demo_sk<=1920797", output_bytes=69134040, output_rows=1920390, materialized=138282840, bytes_read_est=69148800, rows_read=1920800
+            HASH_JOIN: join_type=INNER, conditions=[ss_store_sk = s_store_sk], output_bytes=184996, output_rows=6607, materialized=369992
+              PROJECTION: projections=[#0, #1, #2, #3, #5, #6, #7], output_bytes=184996, output_rows=6607, materialized=0
+                FILTER: output_bytes=317136, output_rows=6607, materialized=0
+                  HASH_JOIN: join_type=INNER, conditions=[ss_addr_sk = ca_address_sk], output_bytes=24513888, output_rows=510706, materialized=24513888
+                    HASH_JOIN: join_type=INNER, conditions=[ss_sold_date_sk = d_date_sk], output_bytes=21074320, output_rows=526858, materialized=21075780
+                      TABLE_SCAN: table=store_sales, projections=[ss_store_sk, ss_sold_date_sk, ss_hdemo_sk, ss_cdemo_sk, ss_sales_price, ss_addr_sk, ss_net_profit, ss_quantity, ss_ext_sales_price, ss_ext_wholesale_cost], output_bytes=21074320, output_rows=526858, materialized=136290480, bytes_read_est=115216160, rows_read=2880404
+                      FILTER: output_bytes=1460, output_rows=365, materialized=0
+                        TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_year=2001", output_bytes=1460, output_rows=365, materialized=293656, bytes_read_est=292196, rows_read=73049
+                    TABLE_SCAN: table=customer_address, projections=[ca_address_sk, ca_state], filters="ca_country='United States'", output_bytes=969500, output_rows=48475, materialized=1969500, bytes_read_est=1000000, rows_read=50000
+              TABLE_SCAN: table=store, projections=[s_store_sk], filters="s_store_sk<=10", output_bytes=40, output_rows=10, materialized=88, bytes_read_est=48, rows_read=12
+          TABLE_SCAN: table=household_demographics, projections=[hd_demo_sk, hd_dep_count], output_bytes=57600, output_rows=7200, materialized=115200, bytes_read_est=57600, rows_read=7200
+duckdb_cost=323595860

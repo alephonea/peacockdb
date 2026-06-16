@@ -1,0 +1,48 @@
+TOP_N: order_by=[sr_items.item_id ASC, sr_items.sr_item_qty ASC], top=100, output_bytes=2304, output_rows=24, materialized=2304
+  PROJECTION: projections=[item_id, sr_item_qty, sr_dev, cr_item_qty, cr_dev, wr_item_qty, wr_dev, average], output_bytes=2304, output_rows=24, materialized=0
+    PROJECTION: projections=[item_id, sr_item_qty, CAST(((sr_item_qty + cr_item_qty) + wr_item_qty) AS DOUBLE), cr_item_qty, wr_item_qty], output_bytes=1728, output_rows=24, materialized=0
+      HASH_JOIN: join_type=INNER, conditions=[item_id = item_id], output_bytes=1536, output_rows=24, materialized=23040
+        HASH_GROUP_BY: groups=[#0], aggregates=[sum(#1)], output_bytes=21504, output_rows=672, materialized=13960
+          PROJECTION: projections=[i_item_id, wr_return_quantity], output_bytes=13960, output_rows=698, materialized=0
+            HASH_JOIN: join_type=INNER, conditions=[i_item_sk = wr_item_sk], output_bytes=13960, output_rows=698, materialized=13960
+              TABLE_SCAN: table=item, projections=[i_item_sk, i_item_id], output_bytes=359000, output_rows=17950, materialized=719000, bytes_read_est=360000, rows_read=18000
+              HASH_JOIN: join_type=INNER, conditions=[wr_returned_date_sk = d_date_sk], output_bytes=8376, output_rows=698, materialized=8460
+                TABLE_SCAN: table=web_returns, projections=[wr_item_sk, wr_returned_date_sk, wr_return_quantity], output_bytes=59724, output_rows=4977, materialized=919572, bytes_read_est=859848, rows_read=71654
+                FILTER: output_bytes=84, output_rows=21, materialized=0
+                  HASH_JOIN: join_type=SEMI, conditions=[d_date = #0], output_bytes=84, output_rows=21, materialized=84
+                    TABLE_SCAN: table=date_dim, projections=[d_date, d_date_sk], output_bytes=1176, output_rows=147, materialized=585568, bytes_read_est=584392, rows_read=73049
+                    HASH_JOIN: join_type=SEMI, conditions=[d_week_seq = #0], output_bytes=84, output_rows=21, materialized=96
+                      TABLE_SCAN: table=date_dim, projections=[d_week_seq, d_date], output_bytes=1176, output_rows=147, materialized=585568, bytes_read_est=584392, rows_read=73049
+                      PROJECTION: projections=[#1], output_bytes=12, output_rows=3, materialized=0
+                        FILTER: output_bytes=24, output_rows=3, materialized=0
+                          TABLE_SCAN: table=date_dim, projections=[d_date, d_week_seq], filters="optional: d_date IN ('2000-06-30'::DATE, '2000-09-27'::DATE, '2000-11-17'::DATE)", output_bytes=584392, output_rows=73049, materialized=1168784, bytes_read_est=584392, rows_read=73049
+        HASH_JOIN: join_type=INNER, conditions=[item_id = item_id], output_bytes=14928, output_rows=311, materialized=126896
+          HASH_GROUP_BY: groups=[#0], aggregates=[sum(#1)], output_bytes=73280, output_rows=2290, materialized=52940
+            PROJECTION: projections=[i_item_id, sr_return_quantity], output_bytes=52940, output_rows=2647, materialized=0
+              HASH_JOIN: join_type=INNER, conditions=[sr_item_sk = i_item_sk], output_bytes=52940, output_rows=2647, materialized=52940
+                HASH_JOIN: join_type=INNER, conditions=[sr_returned_date_sk = d_date_sk], output_bytes=31764, output_rows=2647, materialized=31848
+                  TABLE_SCAN: table=store_returns, projections=[sr_item_sk, sr_returned_date_sk, sr_return_quantity], output_bytes=197736, output_rows=16478, materialized=3652140, bytes_read_est=3454404, rows_read=287867
+                  FILTER: output_bytes=84, output_rows=21, materialized=0
+                    HASH_JOIN: join_type=SEMI, conditions=[d_date = #0], output_bytes=84, output_rows=21, materialized=84
+                      TABLE_SCAN: table=date_dim, projections=[d_date, d_date_sk], output_bytes=1176, output_rows=147, materialized=585568, bytes_read_est=584392, rows_read=73049
+                      HASH_JOIN: join_type=SEMI, conditions=[d_week_seq = #0], output_bytes=84, output_rows=21, materialized=96
+                        TABLE_SCAN: table=date_dim, projections=[d_week_seq, d_date], output_bytes=1176, output_rows=147, materialized=585568, bytes_read_est=584392, rows_read=73049
+                        PROJECTION: projections=[#1], output_bytes=12, output_rows=3, materialized=0
+                          FILTER: output_bytes=24, output_rows=3, materialized=0
+                            TABLE_SCAN: table=date_dim, projections=[d_date, d_week_seq], filters="optional: d_date IN ('2000-06-30'::DATE, '2000-09-27'::DATE, '2000-11-17'::DATE)", output_bytes=584392, output_rows=73049, materialized=1168784, bytes_read_est=584392, rows_read=73049
+                TABLE_SCAN: table=item, projections=[i_item_sk, i_item_id], output_bytes=360000, output_rows=18000, materialized=720000, bytes_read_est=360000, rows_read=18000
+          HASH_GROUP_BY: groups=[#0], aggregates=[sum(#1)], output_bytes=38688, output_rows=1209, materialized=25920
+            PROJECTION: projections=[i_item_id, cr_return_quantity], output_bytes=25920, output_rows=1296, materialized=0
+              HASH_JOIN: join_type=INNER, conditions=[i_item_sk = cr_item_sk], output_bytes=25920, output_rows=1296, materialized=25920
+                TABLE_SCAN: table=item, projections=[i_item_sk, i_item_id], output_bytes=358940, output_rows=17947, materialized=718940, bytes_read_est=360000, rows_read=18000
+                HASH_JOIN: join_type=INNER, conditions=[cr_returned_date_sk = d_date_sk], output_bytes=15552, output_rows=1296, materialized=15636
+                  TABLE_SCAN: table=catalog_returns, projections=[cr_item_sk, cr_returned_date_sk, cr_return_quantity], output_bytes=99516, output_rows=8293, materialized=1828320, bytes_read_est=1728804, rows_read=144067
+                  FILTER: output_bytes=84, output_rows=21, materialized=0
+                    HASH_JOIN: join_type=SEMI, conditions=[d_date = #0], output_bytes=84, output_rows=21, materialized=84
+                      TABLE_SCAN: table=date_dim, projections=[d_date, d_date_sk], output_bytes=1176, output_rows=147, materialized=585568, bytes_read_est=584392, rows_read=73049
+                      HASH_JOIN: join_type=SEMI, conditions=[d_week_seq = #0], output_bytes=84, output_rows=21, materialized=96
+                        TABLE_SCAN: table=date_dim, projections=[d_week_seq, d_date], output_bytes=1176, output_rows=147, materialized=585568, bytes_read_est=584392, rows_read=73049
+                        PROJECTION: projections=[#1], output_bytes=12, output_rows=3, materialized=0
+                          FILTER: output_bytes=24, output_rows=3, materialized=0
+                            TABLE_SCAN: table=date_dim, projections=[d_date, d_week_seq], filters="optional: d_date IN ('2000-06-30'::DATE, '2000-09-27'::DATE, '2000-11-17'::DATE)", output_bytes=584392, output_rows=73049, materialized=1168784, bytes_read_est=584392, rows_read=73049
+duckdb_cost=15972096

@@ -15,17 +15,17 @@ GpuSortPreservingMergeExec: [revenue@1 DESC, o_orderdate@2 ASC NULLS LAST]
                             GpuRepartitionExec: partitioning=Hash([c_custkey@0], 8), input_partitions=8
                               GpuCoalesceBatchesExec: target_batch_size=20648881
                                 GpuFilterExec: predicate=c_mktsegment@1 = BUILDING, projection=[0]
-                                  GpuScanExec: batch_size=20648881
+                                  GpuScanExec: table=customer, projections=[c_custkey, c_mktsegment], batch_size=20648881
                           GpuCoalesceBatchesExec: target_batch_size=20648881
                             GpuRepartitionExec: partitioning=Hash([o_custkey@1], 8), input_partitions=8
                               GpuCoalesceBatchesExec: target_batch_size=20648881
                                 GpuFilterExec: predicate=o_orderdate@2 < 1995-03-15
-                                  GpuScanExec: batch_size=20648881
+                                  GpuScanExec: table=orders, projections=[o_orderkey, o_custkey, o_orderdate, o_shippriority], batch_size=20648881
                   GpuCoalesceBatchesExec: target_batch_size=20648881
                     GpuRepartitionExec: partitioning=Hash([l_orderkey@0], 8), input_partitions=8
                       GpuCoalesceBatchesExec: target_batch_size=20648881
                         GpuFilterExec: predicate=l_shipdate@3 > 1995-03-15, projection=[0, 1, 2]
-                          GpuScanExec: batch_size=20648881
+                          GpuScanExec: table=lineitem, projections=[l_orderkey, l_extendedprice, l_discount, l_shipdate], batch_size=20648881
 --- memory ---
 total_estimate_cost=1528
 GpuSortPreservingMergeExec: row_width=32, subtree_max_row_bytes=104, estimate_input_bytes=32, estimate_output_bytes=32, estimate_cost=64

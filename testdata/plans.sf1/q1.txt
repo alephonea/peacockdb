@@ -8,7 +8,7 @@ GpuSortPreservingMergeExec: [l_returnflag@0 ASC NULLS LAST, l_linestatus@1 ASC N
               GpuProjectExec: expr=[l_extendedprice@1 * (Some(1),20,0 - l_discount@2) as __common_expr_1, l_quantity@0 as l_quantity, l_extendedprice@1 as l_extendedprice, l_discount@2 as l_discount, l_tax@3 as l_tax, l_returnflag@4 as l_returnflag, l_linestatus@5 as l_linestatus]
                 GpuCoalesceBatchesExec: target_batch_size=5478274
                   GpuFilterExec: predicate=l_shipdate@6 <= 1998-09-02, projection=[0, 1, 2, 3, 4, 5]
-                    GpuScanExec: batch_size=5478274
+                    GpuScanExec: table=lineitem, projections=[l_quantity, l_extendedprice, l_discount, l_tax, l_returnflag, l_linestatus, l_shipdate], batch_size=5478274
 --- memory ---
 total_estimate_cost=3600
 GpuSortPreservingMergeExec: row_width=184, subtree_max_row_bytes=392, estimate_input_bytes=184, estimate_output_bytes=184, estimate_cost=368

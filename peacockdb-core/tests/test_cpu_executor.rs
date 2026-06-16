@@ -4,7 +4,7 @@ use std::sync::Arc;
 use datafusion::arrow::array::Int64Array;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::arrow::util::pretty::pretty_format_batches;
-use datafusion::physical_plan::ExecutionPlan;
+use datafusion::physical_plan::{DisplayFormatType, ExecutionPlan};
 
 use peacockdb_core::cpu_executor::{
     execute_node_by_node_instrumented, NodeMemoryStats,
@@ -134,24 +134,32 @@ fn batches_to_sorted_str(batches: &[RecordBatch]) -> String {
 fn cpu_stats_str(plan: &Arc<dyn ExecutionPlan>, stats: &[NodeMemoryStats]) -> String {
     struct Node<'a> {
         stat: &'a NodeMemoryStats,
+        plan: &'a Arc<dyn ExecutionPlan>,
         children: Vec<Node<'a>>,
     }
 
-    fn collect<'a>(plan: &Arc<dyn ExecutionPlan>, stats: &'a [NodeMemoryStats], idx: &mut usize) -> Node<'a> {
+    fn collect<'a>(plan: &'a Arc<dyn ExecutionPlan>, stats: &'a [NodeMemoryStats], idx: &mut usize) -> Node<'a> {
         let children: Vec<Node<'a>> = plan.children().iter()
             .map(|c| collect(c, stats, idx))
             .collect();
         let stat = &stats[*idx];
         *idx += 1;
-        Node { stat, children }
+        Node { stat, plan, children }
     }
 
     fn walk(node: &Node, indent: usize, lines: &mut Vec<String>) {
+        // The node label + its rich annotations come from the node's OWN one-line
+        // Display (DisplayAs/GpuExtraDisplay) — the exact source the .txt plan
+        // goldens use — so .cpu.txt and .txt label/annotate every node identically
+        // (Gpu* prefix, join_type/on/projection, scan table/projections, …). Only
+        // the trailing cost fields are .cpu.txt-specific. (node.stat.node_name is
+        // the post-unwrap inner CPU name and would leak "FilterExec" etc.)
         lines.push(format!(
-            "{}{}: output_bytes={}",
+            "{}{}, output_bytes={}, output_rows={}",
             " ".repeat(indent),
-            node.stat.node_name,
+            OneLine(node.plan.as_ref()),
             node.stat.output_bytes,
+            node.stat.row_count,
         ));
         for child in &node.children {
             walk(child, indent + 2, lines);
@@ -161,7 +169,21 @@ fn cpu_stats_str(plan: &Arc<dyn ExecutionPlan>, stats: &[NodeMemoryStats]) -> St
     let root = collect(plan, stats, &mut 0);
     let mut lines = Vec::new();
     walk(&root, 0, &mut lines);
+    // Explicit total footer (the per-node output_bytes above are the breakdown
+    // that sums to it), symmetric with the duckdb golden's `duckdb_cost=` line.
+    let total: usize = stats.iter().map(|s| s.output_bytes).sum();
+    lines.push(format!("peacockdb_cost={total}"));
     lines.join("\n")
+}
+
+/// One node's one-line Display (its `DisplayAs::fmt_as`, no children) — the same
+/// text the `.txt` plan goldens render for that node.
+struct OneLine<'a>(&'a dyn ExecutionPlan);
+
+impl std::fmt::Display for OneLine<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt_as(DisplayFormatType::Default, f)
+    }
 }
 
 /// Compare the per-node CPU cost tree to the `.cpu.txt` canonical in `dir`, or

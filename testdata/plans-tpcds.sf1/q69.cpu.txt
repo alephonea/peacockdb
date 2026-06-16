@@ -1,36 +1,37 @@
-SortExec: output_bytes=2904
-  ProjectionExec: output_bytes=16008
-    AggregateExec: output_bytes=7038
-      CoalesceBatchesExec: output_bytes=2685
-        HashJoinExec: output_bytes=2685
-          CoalesceBatchesExec: output_bytes=5350
-            HashJoinExec: output_bytes=5350
-              CoalesceBatchesExec: output_bytes=5474
-                HashJoinExec: output_bytes=5474
-                  CoalesceBatchesExec: output_bytes=82778
-                    HashJoinExec: output_bytes=82820
-                      CoalesceBatchesExec: output_bytes=80908
-                        HashJoinExec: output_bytes=80908
-                          CoalesceBatchesExec: output_bytes=20176
-                            FilterExec: output_bytes=20176
-                              ParquetExec: output_bytes=212500
-                          ParquetExec: output_bytes=1237500
-                      ParquetExec: output_bytes=16807000
-                  CoalesceBatchesExec: output_bytes=326997
-                    HashJoinExec: output_bytes=327007
-                      CoalesceBatchesExec: output_bytes=376
-                        FilterExec: output_bytes=376
-                          ParquetExec: output_bytes=903984
-                      ParquetExec: output_bytes=23763334
-              CoalesceBatchesExec: output_bytes=88461
-                HashJoinExec: output_bytes=88464
-                  CoalesceBatchesExec: output_bytes=376
-                    FilterExec: output_bytes=376
-                      ParquetExec: output_bytes=903984
-                  ParquetExec: output_bytes=5934918
-          CoalesceBatchesExec: output_bytes=170643
-            HashJoinExec: output_bytes=170643
-              CoalesceBatchesExec: output_bytes=376
-                FilterExec: output_bytes=376
-                  ParquetExec: output_bytes=903984
-              ParquetExec: output_bytes=11892772
+GpuSortExec: expr=[cd_gender@0 ASC NULLS LAST, cd_marital_status@1 ASC NULLS LAST, cd_education_status@2 ASC NULLS LAST, cd_purchase_estimate@4 ASC NULLS LAST, cd_credit_rating@6 ASC NULLS LAST], fetch=100, output_bytes=6441, output_rows=100
+  GpuProjectExec: expr=[cd_gender@0 as cd_gender, cd_marital_status@1 as cd_marital_status, cd_education_status@2 as cd_education_status, count(*)@5 as cnt1, cd_purchase_estimate@3 as cd_purchase_estimate, count(*)@5 as cnt2, cd_credit_rating@4 as cd_credit_rating, count(*)@5 as cnt3], output_bytes=35197, output_rows=552
+    GpuAggregateExec: group_by=[cd_gender, cd_marital_status, cd_education_status, cd_purchase_estimate, cd_credit_rating], aggr=[count(*)], output_bytes=26227, output_rows=552
+      GpuCoalesceBatchesExec: target_batch_size=6882960, output_bytes=22857, output_rows=580
+        GpuHashJoinExec: join_type=LeftAnti, on=[(c_customer_sk@0, cs_ship_customer_sk@0)], projection=[1, 2, 3, 4, 5], output_bytes=22873, output_rows=580
+          GpuCoalesceBatchesExec: target_batch_size=6882960, output_bytes=26593, output_rows=611
+            GpuHashJoinExec: join_type=LeftAnti, on=[(c_customer_sk@0, ws_bill_customer_sk@0)], output_bytes=26609, output_rows=611
+              GpuCoalesceBatchesExec: target_batch_size=6882960, output_bytes=27196, output_rows=625
+                GpuHashJoinExec: join_type=LeftSemi, on=[(c_customer_sk@0, ss_customer_sk@0)], output_bytes=27212, output_rows=625
+                  GpuCoalesceBatchesExec: target_batch_size=6882960, output_bytes=410636, output_rows=9460
+                    GpuHashJoinExec: join_type=Inner, on=[(c_current_cdemo_sk@1, cd_demo_sk@0)], projection=[0, 3, 4, 5, 6, 7], output_bytes=410918, output_rows=9460
+                      GpuCoalesceBatchesExec: target_batch_size=6882960, output_bytes=80908, output_rows=9807
+                        GpuHashJoinExec: join_type=Inner, on=[(ca_address_sk@0, c_current_addr_sk@2)], projection=[1, 2], output_bytes=80908, output_rows=9807
+                          GpuCoalesceBatchesExec: target_batch_size=6882960, output_bytes=20176, output_rows=4891
+                            GpuFilterExec: predicate=ca_state@1 = KY OR ca_state@1 = GA OR ca_state@1 = NM, projection=[0], output_bytes=20176, output_rows=4891
+                              GpuScanExec: table=customer_address, projections=[ca_address_sk, ca_state], batch_size=6882960, output_bytes=509404, output_rows=50000
+                          GpuScanExec: table=customer, projections=[c_customer_sk, c_current_cdemo_sk, c_current_addr_sk], batch_size=6882960, output_bytes=1237500, output_rows=100000
+                      GpuScanExec: table=customer_demographics, projections=[cd_demo_sk, cd_gender, cd_marital_status, cd_education_status, cd_purchase_estimate, cd_credit_rating], batch_size=6882960, output_bytes=83212056, output_rows=1920800
+                  GpuCoalesceBatchesExec: target_batch_size=6882960, output_bytes=326997, output_rows=79272
+                    GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ss_sold_date_sk@0)], projection=[2], output_bytes=327007, output_rows=79272
+                      GpuCoalesceBatchesExec: target_batch_size=6882960, output_bytes=376, output_rows=91
+                        GpuFilterExec: predicate=d_year@1 = 2001 AND d_moy@2 >= 4 AND d_moy@2 <= 6, projection=[0], output_bytes=376, output_rows=91
+                          GpuScanExec: table=date_dim, projections=[d_date_sk, d_year, d_moy], batch_size=6882960, output_bytes=903984, output_rows=73049
+                      GpuScanExec: table=store_sales, projections=[ss_sold_date_sk, ss_customer_sk], batch_size=6882960, output_bytes=23763334, output_rows=2880404
+              GpuCoalesceBatchesExec: target_batch_size=6882960, output_bytes=88461, output_rows=21445
+                GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ws_sold_date_sk@0)], projection=[2], output_bytes=88464, output_rows=21445
+                  GpuCoalesceBatchesExec: target_batch_size=6882960, output_bytes=376, output_rows=91
+                    GpuFilterExec: predicate=d_year@1 = 2001 AND d_moy@2 >= 4 AND d_moy@2 <= 6, projection=[0], output_bytes=376, output_rows=91
+                      GpuScanExec: table=date_dim, projections=[d_date_sk, d_year, d_moy], batch_size=6882960, output_bytes=903984, output_rows=73049
+                  GpuScanExec: table=web_sales, projections=[ws_sold_date_sk, ws_bill_customer_sk], batch_size=6882960, output_bytes=5934918, output_rows=719384
+          GpuCoalesceBatchesExec: target_batch_size=6882960, output_bytes=170643, output_rows=41368
+            GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, cs_sold_date_sk@0)], projection=[2], output_bytes=170643, output_rows=41368
+              GpuCoalesceBatchesExec: target_batch_size=6882960, output_bytes=376, output_rows=91
+                GpuFilterExec: predicate=d_year@1 = 2001 AND d_moy@2 >= 4 AND d_moy@2 <= 6, projection=[0], output_bytes=376, output_rows=91
+                  GpuScanExec: table=date_dim, projections=[d_date_sk, d_year, d_moy], batch_size=6882960, output_bytes=903984, output_rows=73049
+              GpuScanExec: table=catalog_sales, projections=[cs_sold_date_sk, cs_ship_customer_sk], batch_size=6882960, output_bytes=11892772, output_rows=1441548
+peacockdb_cost=131681334

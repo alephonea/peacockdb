@@ -2,7 +2,7 @@ GpuAggregateExec: group_by=[l_returnflag], aggr=[sum(lineitem.l_quantity)]
   GpuCoalesceBatchesExec: target_batch_size=22369621
     GpuRepartitionExec: partitioning=Hash([l_returnflag@0], 8), input_partitions=8
       GpuAggregateExec: group_by=[l_returnflag], aggr=[sum(lineitem.l_quantity)]
-        GpuScanExec: batch_size=22369621
+        GpuScanExec: table=lineitem, projections=[l_quantity, l_returnflag], batch_size=22369621
 --- memory ---
 total_estimate_cost=432
 GpuAggregateExec: row_width=48, subtree_max_row_bytes=96, estimate_input_bytes=48, estimate_output_bytes=48, estimate_cost=96

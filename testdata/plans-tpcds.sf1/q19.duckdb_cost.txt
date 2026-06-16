@@ -1,0 +1,19 @@
+TOP_N: order_by=[sum(tpcds.main.store_sales.ss_ext_sales_price) DESC, tpcds.main.item.i_brand ASC, tpcds.main.item.i_brand_id ASC, tpcds.main.item.i_manufact_id ASC, tpcds.main.item.i_manufact ASC], top=100, output_bytes=5600, output_rows=100, materialized=8960
+  PROJECTION: projections=[brand_id, brand, i_manufact_id, i_manufact, ext_price], output_bytes=8960, output_rows=160, materialized=0
+    PROJECTION: projections=[#0, #1, __internal_decompress_integral_integer(#2, 1), __internal_decompress_string(#3), #4], output_bytes=8960, output_rows=160, materialized=0
+      HASH_GROUP_BY: groups=[#0, #1, #2, #3], aggregates=[sum(#4)], output_bytes=8640, output_rows=160, materialized=60942
+        PROJECTION: projections=[i_brand, i_brand_id, i_manufact_id, i_manufact, ss_ext_sales_price], output_bytes=60942, output_rows=1451, materialized=0
+          PROJECTION: projections=[__internal_compress_integral_usmallint(#0, 1), __internal_compress_string_ubigint(#1), #2, #3, #4, __internal_compress_integral_usmallint(#5, 1), __internal_compress_string_hugeint(#6)], output_bytes=75452, output_rows=1451, materialized=0
+            HASH_JOIN: join_type=INNER, conditions=[ca_address_sk = c_current_addr_sk, "substring"(ca_zip, 1, 5) != "substring"(s_zip, 1, 5)], output_bytes=92864, output_rows=1451, materialized=92864
+              TABLE_SCAN: table=customer_address, projections=[ca_address_sk, ca_zip], output_bytes=999660, output_rows=49983, materialized=1999660, bytes_read_est=1000000, rows_read=50000
+              HASH_JOIN: join_type=INNER, conditions=[c_customer_sk = ss_customer_sk], output_bytes=95552, output_rows=1493, materialized=95552
+                TABLE_SCAN: table=customer, projections=[c_customer_sk, c_current_addr_sk], output_bytes=799536, output_rows=99942, materialized=1599536, bytes_read_est=800000, rows_read=100000
+                HASH_JOIN: join_type=INNER, conditions=[ss_store_sk = s_store_sk], output_bytes=97152, output_rows=1518, materialized=97152
+                  HASH_JOIN: join_type=INNER, conditions=[ss_item_sk = i_item_sk], output_bytes=78936, output_rows=1518, materialized=78936
+                    HASH_JOIN: join_type=INNER, conditions=[ss_sold_date_sk = d_date_sk], output_bytes=1701480, output_rows=85074, materialized=1701600
+                      TABLE_SCAN: table=store_sales, projections=[ss_sold_date_sk, ss_item_sk, ss_customer_sk, ss_store_sk, ss_ext_sales_price], output_bytes=1701480, output_rows=85074, materialized=59309560, bytes_read_est=57608080, rows_read=2880404
+                      FILTER: output_bytes=120, output_rows=30, materialized=0
+                        TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_moy=11 AND d_year=1998", output_bytes=120, output_rows=30, materialized=292316, bytes_read_est=292196, rows_read=73049
+                    TABLE_SCAN: table=item, projections=[i_item_sk, i_brand, i_brand_id, i_manufact_id, i_manufact], filters="i_manager_id=8", output_bytes=14124, output_rows=321, materialized=806124, bytes_read_est=792000, rows_read=18000
+                  TABLE_SCAN: table=store, projections=[s_zip, s_store_sk], filters="s_store_sk<=10", output_bytes=200, output_rows=10, materialized=440, bytes_read_est=240, rows_read=12
+duckdb_cost=66143642

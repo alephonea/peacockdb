@@ -1,0 +1,53 @@
+TOP_N: order_by=[foo.i_item_id ASC, foo.s_state ASC], top=100, output_bytes=6800, output_rows=100, materialized=0
+  UNION: output_bytes=0, output_rows=10145, materialized=0
+    UNION: output_bytes=0, output_rows=10144, materialized=0
+      PROJECTION: projections=[i_item_id, s_state, g_state, agg1, agg2, agg3, agg4], output_bytes=344896, output_rows=5072, materialized=0
+        PROJECTION: projections=[#0, __internal_decompress_string(#1), #2, #3, #4, #5], output_bytes=324608, output_rows=5072, materialized=0
+          HASH_GROUP_BY: groups=[#0, #1], aggregates=[avg(#2), avg(#3), avg(#4), avg(#5)], output_bytes=263744, output_rows=5072, materialized=269460
+            PROJECTION: projections=[i_item_id, s_state, agg1, agg2, agg3, agg4], output_bytes=269460, output_rows=7485, materialized=0
+              PROJECTION: projections=[#0, __internal_compress_string_uinteger(#1), #2, #3, #4, #5], output_bytes=269460, output_rows=7485, materialized=0
+                PROJECTION: projections=[i_item_id, s_state, agg1, agg2, agg3, agg4], output_bytes=359280, output_rows=7485, materialized=0
+                  HASH_JOIN: join_type=INNER, conditions=[i_item_sk = ss_item_sk], output_bytes=359280, output_rows=7485, materialized=359280
+                    TABLE_SCAN: table=item, projections=[i_item_sk, i_item_id], output_bytes=360000, output_rows=18000, materialized=720000, bytes_read_est=360000, rows_read=18000
+                    HASH_JOIN: join_type=INNER, conditions=[ss_store_sk = s_store_sk], output_bytes=269460, output_rows=7485, materialized=269660
+                      HASH_JOIN: join_type=INNER, conditions=[cd_demo_sk = ss_cdemo_sk], output_bytes=211764, output_rows=7563, materialized=321516
+                        FILTER: output_bytes=109752, output_rows=27438, materialized=0
+                          TABLE_SCAN: table=customer_demographics, projections=[cd_demo_sk], filters="cd_gender='M' AND cd_marital_status='S' AND cd_education_status='College'", output_bytes=109752, output_rows=27438, materialized=7792952, bytes_read_est=7683200, rows_read=1920800
+                        HASH_JOIN: join_type=INNER, conditions=[ss_sold_date_sk = d_date_sk], output_bytes=17591648, output_rows=549739, materialized=17593108
+                          TABLE_SCAN: table=store_sales, projections=[ss_sold_date_sk, ss_item_sk, ss_store_sk, ss_cdemo_sk, ss_quantity, ss_list_price, ss_coupon_amt, ss_sales_price], output_bytes=17591648, output_rows=549739, materialized=109764576, bytes_read_est=92172928, rows_read=2880404
+                          FILTER: output_bytes=1460, output_rows=365, materialized=0
+                            TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_year=2002", output_bytes=1460, output_rows=365, materialized=293656, bytes_read_est=292196, rows_read=73049
+                      FILTER: output_bytes=200, output_rows=10, materialized=0
+                        TABLE_SCAN: table=store, projections=[s_store_sk, s_state], filters="s_state='TN'", output_bytes=240, output_rows=12, materialized=480, bytes_read_est=240, rows_read=12
+      PROJECTION: projections=[i_item_id, s_state, g_state, agg1, agg2, agg3, agg4], output_bytes=344896, output_rows=5072, materialized=0
+        HASH_GROUP_BY: groups=[#0], aggregates=[avg(#1), avg(#2), avg(#3), avg(#4)], output_bytes=243456, output_rows=5072, materialized=239520
+          PROJECTION: projections=[i_item_id, agg1, agg2, agg3, agg4], output_bytes=239520, output_rows=7485, materialized=0
+            HASH_JOIN: join_type=INNER, conditions=[i_item_sk = ss_item_sk], output_bytes=239520, output_rows=7485, materialized=239520
+              TABLE_SCAN: table=item, projections=[i_item_sk, i_item_id], output_bytes=360000, output_rows=18000, materialized=720000, bytes_read_est=360000, rows_read=18000
+              HASH_JOIN: join_type=INNER, conditions=[ss_store_sk = s_store_sk], output_bytes=179640, output_rows=7485, materialized=179680
+                HASH_JOIN: join_type=INNER, conditions=[cd_demo_sk = ss_cdemo_sk], output_bytes=211764, output_rows=7563, materialized=321516
+                  FILTER: output_bytes=109752, output_rows=27438, materialized=0
+                    TABLE_SCAN: table=customer_demographics, projections=[cd_demo_sk], filters="cd_gender='M' AND cd_marital_status='S' AND cd_education_status='College'", output_bytes=109752, output_rows=27438, materialized=7792952, bytes_read_est=7683200, rows_read=1920800
+                  HASH_JOIN: join_type=INNER, conditions=[ss_sold_date_sk = d_date_sk], output_bytes=17591648, output_rows=549739, materialized=17593108
+                    TABLE_SCAN: table=store_sales, projections=[ss_sold_date_sk, ss_item_sk, ss_store_sk, ss_cdemo_sk, ss_quantity, ss_list_price, ss_coupon_amt, ss_sales_price], output_bytes=17591648, output_rows=549739, materialized=109764576, bytes_read_est=92172928, rows_read=2880404
+                    FILTER: output_bytes=1460, output_rows=365, materialized=0
+                      TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_year=2002", output_bytes=1460, output_rows=365, materialized=293656, bytes_read_est=292196, rows_read=73049
+                FILTER: output_bytes=40, output_rows=10, materialized=0
+                  TABLE_SCAN: table=store, projections=[s_store_sk], filters="s_state='TN'", output_bytes=48, output_rows=12, materialized=96, bytes_read_est=48, rows_read=12
+    PROJECTION: projections=[i_item_id, s_state, g_state, agg1, agg2, agg3, agg4], output_bytes=68, output_rows=1, materialized=0
+      UNGROUPED_AGGREGATE: aggregates=[avg(#0), avg(#1), avg(#2), avg(#3)], output_bytes=32, output_rows=1, materialized=119760
+        PROJECTION: projections=[agg1, agg2, agg3, agg4], output_bytes=119760, output_rows=7485, materialized=0
+          PROJECTION: projections=[agg1, agg2, agg3, agg4], output_bytes=119760, output_rows=7485, materialized=0
+            HASH_JOIN: join_type=INNER, conditions=[i_item_sk = ss_item_sk], output_bytes=149700, output_rows=7485, materialized=149700
+              TABLE_SCAN: table=item, projections=[i_item_sk], output_bytes=72000, output_rows=18000, materialized=144000, bytes_read_est=72000, rows_read=18000
+              HASH_JOIN: join_type=INNER, conditions=[ss_store_sk = s_store_sk], output_bytes=179640, output_rows=7485, materialized=179680
+                HASH_JOIN: join_type=INNER, conditions=[cd_demo_sk = ss_cdemo_sk], output_bytes=211764, output_rows=7563, materialized=321516
+                  FILTER: output_bytes=109752, output_rows=27438, materialized=0
+                    TABLE_SCAN: table=customer_demographics, projections=[cd_demo_sk], filters="cd_gender='M' AND cd_marital_status='S' AND cd_education_status='College'", output_bytes=109752, output_rows=27438, materialized=7792952, bytes_read_est=7683200, rows_read=1920800
+                  HASH_JOIN: join_type=INNER, conditions=[ss_sold_date_sk = d_date_sk], output_bytes=17591648, output_rows=549739, materialized=17593108
+                    TABLE_SCAN: table=store_sales, projections=[ss_sold_date_sk, ss_item_sk, ss_store_sk, ss_cdemo_sk, ss_quantity, ss_list_price, ss_coupon_amt, ss_sales_price], output_bytes=17591648, output_rows=549739, materialized=109764576, bytes_read_est=92172928, rows_read=2880404
+                    FILTER: output_bytes=1460, output_rows=365, materialized=0
+                      TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_year=2002", output_bytes=1460, output_rows=365, materialized=293656, bytes_read_est=292196, rows_read=73049
+                FILTER: output_bytes=40, output_rows=10, materialized=0
+                  TABLE_SCAN: table=store, projections=[s_store_sk], filters="s_state='TN'", output_bytes=48, output_rows=12, materialized=96, bytes_read_est=48, rows_read=12
+duckdb_cost=410888356

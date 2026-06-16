@@ -1,0 +1,36 @@
+TOP_N: order_by=[promotional_sales.promotions ASC, all_sales.total ASC], top=100, output_bytes=40, output_rows=1, materialized=40
+  PROJECTION: projections=[promotions, total, ((CAST(CAST(promotions AS DECIMAL(15,4)) AS DOUBLE) / CAST(CAST(total AS DECIMAL(15,4)) AS DOUBLE)) * 100.0)], output_bytes=40, output_rows=1, materialized=0
+    CROSS_PRODUCT: output_bytes=32, output_rows=1, materialized=64
+      UNGROUPED_AGGREGATE: aggregates=[sum(#0)], output_bytes=16, output_rows=1, materialized=6236
+        PROJECTION: projections=[ss_ext_sales_price], output_bytes=6236, output_rows=1559, materialized=0
+          HASH_JOIN: join_type=INNER, conditions=[ca_address_sk = c_current_addr_sk], output_bytes=12472, output_rows=1559, materialized=12472
+            TABLE_SCAN: table=customer_address, projections=[ca_address_sk], filters="ca_gmt_offset=-5.00", output_bytes=72960, output_rows=18240, materialized=272960, bytes_read_est=200000, rows_read=50000
+            HASH_JOIN: join_type=INNER, conditions=[c_customer_sk = ss_customer_sk], output_bytes=34376, output_rows=4297, materialized=34376
+              TABLE_SCAN: table=customer, projections=[c_customer_sk, c_current_addr_sk], output_bytes=799400, output_rows=99925, materialized=1599400, bytes_read_est=800000, rows_read=100000
+              HASH_JOIN: join_type=INNER, conditions=[ss_promo_sk = p_promo_sk], output_bytes=51996, output_rows=4333, materialized=52628
+                HASH_JOIN: join_type=INNER, conditions=[ss_store_sk = s_store_sk], output_bytes=133296, output_rows=8331, materialized=133296
+                  HASH_JOIN: join_type=INNER, conditions=[ss_item_sk = i_item_sk], output_bytes=166620, output_rows=8331, materialized=166620
+                    HASH_JOIN: join_type=INNER, conditions=[ss_sold_date_sk = d_date_sk], output_bytes=2037408, output_rows=84892, materialized=2037528
+                      TABLE_SCAN: table=store_sales, projections=[ss_sold_date_sk, ss_store_sk, ss_promo_sk, ss_customer_sk, ss_item_sk, ss_ext_sales_price], output_bytes=2037408, output_rows=84892, materialized=71167104, bytes_read_est=69129696, rows_read=2880404
+                      FILTER: output_bytes=120, output_rows=30, materialized=0
+                        TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_year=1998 AND d_moy=11", output_bytes=120, output_rows=30, materialized=292316, bytes_read_est=292196, rows_read=73049
+                    TABLE_SCAN: table=item, projections=[i_item_sk], filters="i_category='Jewelry'", output_bytes=6960, output_rows=1740, materialized=78960, bytes_read_est=72000, rows_read=18000
+                  TABLE_SCAN: table=store, projections=[s_store_sk], filters="s_store_sk<=10", output_bytes=40, output_rows=10, materialized=88, bytes_read_est=48, rows_read=12
+                PROJECTION: projections=[#0], output_bytes=632, output_rows=158, materialized=0
+                  FILTER: output_bytes=8216, output_rows=158, materialized=0
+                    TABLE_SCAN: table=promotion, projections=[p_promo_sk, p_channel_dmail, p_channel_email, p_channel_tv], output_bytes=15600, output_rows=300, materialized=31200, bytes_read_est=15600, rows_read=300
+      UNGROUPED_AGGREGATE: aggregates=[sum(#0)], output_bytes=16, output_rows=1, materialized=12036
+        PROJECTION: projections=[ss_ext_sales_price], output_bytes=12036, output_rows=3009, materialized=0
+          HASH_JOIN: join_type=INNER, conditions=[ca_address_sk = c_current_addr_sk], output_bytes=24072, output_rows=3009, materialized=24072
+            TABLE_SCAN: table=customer_address, projections=[ca_address_sk], filters="ca_gmt_offset=-5.00", output_bytes=72968, output_rows=18242, materialized=272968, bytes_read_est=200000, rows_read=50000
+            HASH_JOIN: join_type=INNER, conditions=[c_customer_sk = ss_customer_sk], output_bytes=66520, output_rows=8315, materialized=66520
+              TABLE_SCAN: table=customer, projections=[c_customer_sk, c_current_addr_sk], output_bytes=799760, output_rows=99970, materialized=1599760, bytes_read_est=800000, rows_read=100000
+              HASH_JOIN: join_type=INNER, conditions=[ss_store_sk = s_store_sk], output_bytes=101112, output_rows=8426, materialized=101112
+                HASH_JOIN: join_type=INNER, conditions=[ss_item_sk = i_item_sk], output_bytes=134816, output_rows=8426, materialized=134816
+                  HASH_JOIN: join_type=INNER, conditions=[ss_sold_date_sk = d_date_sk], output_bytes=1718340, output_rows=85917, materialized=1718460
+                    TABLE_SCAN: table=store_sales, projections=[ss_sold_date_sk, ss_store_sk, ss_customer_sk, ss_item_sk, ss_ext_sales_price], output_bytes=1718340, output_rows=85917, materialized=59326420, bytes_read_est=57608080, rows_read=2880404
+                    FILTER: output_bytes=120, output_rows=30, materialized=0
+                      TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_year=1998 AND d_moy=11", output_bytes=120, output_rows=30, materialized=292316, bytes_read_est=292196, rows_read=73049
+                  TABLE_SCAN: table=item, projections=[i_item_sk], filters="i_category='Jewelry'", output_bytes=6960, output_rows=1740, materialized=78960, bytes_read_est=72000, rows_read=18000
+                TABLE_SCAN: table=store, projections=[s_store_sk], filters="s_store_sk<=10", output_bytes=40, output_rows=10, materialized=88, bytes_read_est=48, rows_read=12
+duckdb_cost=139512816

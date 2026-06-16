@@ -1,0 +1,17 @@
+TOP_N: order_by=[tpcds.main.item.i_item_id ASC], top=100, output_bytes=4800, output_rows=100, materialized=153648
+  HASH_GROUP_BY: groups=[#0], aggregates=[avg(#1), avg(#2), avg(#3), avg(#4)], output_bytes=153648, output_rows=3201, materialized=129024
+    PROJECTION: projections=[i_item_id, cs_quantity, cs_list_price, cs_coupon_amt, cs_sales_price], output_bytes=129024, output_rows=4032, materialized=0
+      HASH_JOIN: join_type=INNER, conditions=[i_item_sk = cs_item_sk], output_bytes=129024, output_rows=4032, materialized=129024
+        TABLE_SCAN: table=item, projections=[i_item_sk, i_item_id], filters="optional: Dynamic Filter (i_item_id)", output_bytes=359900, output_rows=17995, materialized=719900, bytes_read_est=360000, rows_read=18000
+        HASH_JOIN: join_type=INNER, conditions=[cs_promo_sk = p_promo_sk], output_bytes=96768, output_rows=4032, materialized=97964
+          HASH_JOIN: join_type=INNER, conditions=[cd_demo_sk = cs_bill_cdemo_sk], output_bytes=113400, output_rows=4050, materialized=223136
+            FILTER: output_bytes=109736, output_rows=27434, materialized=0
+              TABLE_SCAN: table=customer_demographics, projections=[cd_demo_sk], filters="cd_gender='M' AND cd_marital_status='S' AND cd_education_status='College'", output_bytes=109736, output_rows=27434, materialized=7792936, bytes_read_est=7683200, rows_read=1920800
+            HASH_JOIN: join_type=INNER, conditions=[cs_sold_date_sk = d_date_sk], output_bytes=9202016, output_rows=287563, materialized=9203480
+              TABLE_SCAN: table=catalog_sales, projections=[cs_sold_date_sk, cs_item_sk, cs_bill_cdemo_sk, cs_promo_sk, cs_quantity, cs_list_price, cs_coupon_amt, cs_sales_price], output_bytes=9202016, output_rows=287563, materialized=55331552, bytes_read_est=46129536, rows_read=1441548
+              FILTER: output_bytes=1464, output_rows=366, materialized=0
+                TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_year=2000", output_bytes=1464, output_rows=366, materialized=293660, bytes_read_est=292196, rows_read=73049
+          PROJECTION: projections=[#0], output_bytes=1196, output_rows=299, materialized=0
+            FILTER: output_bytes=10764, output_rows=299, materialized=0
+              TABLE_SCAN: table=promotion, projections=[p_promo_sk, p_channel_email, p_channel_event], output_bytes=10800, output_rows=300, materialized=21600, bytes_read_est=10800, rows_read=300
+duckdb_cost=74095924

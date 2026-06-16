@@ -15,7 +15,7 @@ GpuSortPreservingMergeExec: [s_store_name1@0 ASC, s_store_id1@1 ASC, d_week_seq1
                             GpuHashJoinExec: join_type=Inner, on=[(s_store_sk@0, ss_store_sk@1)], projection=[1, 2, 3, 5, 6, 7, 8, 9, 10, 11]
                               GpuCoalesceBatchesExec: target_batch_size=3376546
                                 GpuRepartitionExec: partitioning=Hash([s_store_sk@0], 8), input_partitions=1
-                                  GpuScanExec: batch_size=3376546
+                                  GpuScanExec: table=store, projections=[s_store_sk, s_store_id, s_store_name], batch_size=3376546
                               GpuCoalesceBatchesExec: target_batch_size=3376546
                                 GpuRepartitionExec: partitioning=Hash([ss_store_sk@1], 8), input_partitions=8
                                   GpuProjectExec: expr=[d_week_seq@0 as d_week_seq, ss_store_sk@1 as ss_store_sk, sum(CASE WHEN date_dim.d_day_name = Utf8("Sunday") THEN store_sales.ss_sales_price ELSE NULL END)@2 as sun_sales, sum(CASE WHEN date_dim.d_day_name = Utf8("Monday") THEN store_sales.ss_sales_price ELSE NULL END)@3 as mon_sales, sum(CASE WHEN date_dim.d_day_name = Utf8("Tuesday") THEN store_sales.ss_sales_price ELSE NULL END)@4 as tue_sales, sum(CASE WHEN date_dim.d_day_name = Utf8("Wednesday") THEN store_sales.ss_sales_price ELSE NULL END)@5 as wed_sales, sum(CASE WHEN date_dim.d_day_name = Utf8("Thursday") THEN store_sales.ss_sales_price ELSE NULL END)@6 as thu_sales, sum(CASE WHEN date_dim.d_day_name = Utf8("Friday") THEN store_sales.ss_sales_price ELSE NULL END)@7 as fri_sales, sum(CASE WHEN date_dim.d_day_name = Utf8("Saturday") THEN store_sales.ss_sales_price ELSE NULL END)@8 as sat_sales]
@@ -29,16 +29,16 @@ GpuSortPreservingMergeExec: [s_store_name1@0 ASC, s_store_id1@1 ASC, d_week_seq1
                                                   GpuCoalesceBatchesExec: target_batch_size=3376546
                                                     GpuRepartitionExec: partitioning=Hash([d_date_sk@0], 8), input_partitions=8
                                                       GpuRepartitionExec: partitioning=RoundRobinBatch(8), input_partitions=1
-                                                        GpuScanExec: batch_size=3376546
+                                                        GpuScanExec: table=date_dim, projections=[d_date_sk, d_week_seq, d_day_name], batch_size=3376546
                                                   GpuCoalesceBatchesExec: target_batch_size=3376546
                                                     GpuRepartitionExec: partitioning=Hash([ss_sold_date_sk@0], 8), input_partitions=8
-                                                      GpuScanExec: batch_size=3376546
+                                                      GpuScanExec: table=store_sales, projections=[ss_sold_date_sk, ss_store_sk, ss_sales_price], batch_size=3376546
                     GpuCoalesceBatchesExec: target_batch_size=3376546
                       GpuRepartitionExec: partitioning=Hash([d_week_seq@0], 8), input_partitions=8
                         GpuCoalesceBatchesExec: target_batch_size=3376546
                           GpuFilterExec: predicate=d_month_seq@0 >= 1212 AND d_month_seq@0 <= 1223, projection=[1]
                             GpuRepartitionExec: partitioning=RoundRobinBatch(8), input_partitions=1
-                              GpuScanExec: batch_size=3376546
+                              GpuScanExec: table=date_dim, projections=[d_month_seq, d_week_seq], batch_size=3376546
           GpuCoalesceBatchesExec: target_batch_size=3376546
             GpuRepartitionExec: partitioning=Hash([s_store_id2@1, x.d_week_seq2 - Int64(52)@9], 8), input_partitions=8
               GpuProjectExec: expr=[d_week_seq@0 as d_week_seq2, s_store_id@8 as s_store_id2, sun_sales@1 as sun_sales2, mon_sales@2 as mon_sales2, tue_sales@3 as tue_sales2, wed_sales@4 as wed_sales2, thu_sales@5 as thu_sales2, fri_sales@6 as fri_sales2, sat_sales@7 as sat_sales2, CAST(d_week_seq@0 AS Int64) - 52 as x.d_week_seq2 - Int64(52)]
@@ -51,7 +51,7 @@ GpuSortPreservingMergeExec: [s_store_name1@0 ASC, s_store_id1@1 ASC, d_week_seq1
                             GpuHashJoinExec: join_type=Inner, on=[(s_store_sk@0, ss_store_sk@1)], projection=[1, 2, 4, 5, 6, 7, 8, 9, 10]
                               GpuCoalesceBatchesExec: target_batch_size=3376546
                                 GpuRepartitionExec: partitioning=Hash([s_store_sk@0], 8), input_partitions=1
-                                  GpuScanExec: batch_size=3376546
+                                  GpuScanExec: table=store, projections=[s_store_sk, s_store_id], batch_size=3376546
                               GpuCoalesceBatchesExec: target_batch_size=3376546
                                 GpuRepartitionExec: partitioning=Hash([ss_store_sk@1], 8), input_partitions=8
                                   GpuProjectExec: expr=[d_week_seq@0 as d_week_seq, ss_store_sk@1 as ss_store_sk, sum(CASE WHEN date_dim.d_day_name = Utf8("Sunday") THEN store_sales.ss_sales_price ELSE NULL END)@2 as sun_sales, sum(CASE WHEN date_dim.d_day_name = Utf8("Monday") THEN store_sales.ss_sales_price ELSE NULL END)@3 as mon_sales, sum(CASE WHEN date_dim.d_day_name = Utf8("Tuesday") THEN store_sales.ss_sales_price ELSE NULL END)@4 as tue_sales, sum(CASE WHEN date_dim.d_day_name = Utf8("Wednesday") THEN store_sales.ss_sales_price ELSE NULL END)@5 as wed_sales, sum(CASE WHEN date_dim.d_day_name = Utf8("Thursday") THEN store_sales.ss_sales_price ELSE NULL END)@6 as thu_sales, sum(CASE WHEN date_dim.d_day_name = Utf8("Friday") THEN store_sales.ss_sales_price ELSE NULL END)@7 as fri_sales, sum(CASE WHEN date_dim.d_day_name = Utf8("Saturday") THEN store_sales.ss_sales_price ELSE NULL END)@8 as sat_sales]
@@ -65,16 +65,16 @@ GpuSortPreservingMergeExec: [s_store_name1@0 ASC, s_store_id1@1 ASC, d_week_seq1
                                                   GpuCoalesceBatchesExec: target_batch_size=3376546
                                                     GpuRepartitionExec: partitioning=Hash([d_date_sk@0], 8), input_partitions=8
                                                       GpuRepartitionExec: partitioning=RoundRobinBatch(8), input_partitions=1
-                                                        GpuScanExec: batch_size=3376546
+                                                        GpuScanExec: table=date_dim, projections=[d_date_sk, d_week_seq, d_day_name], batch_size=3376546
                                                   GpuCoalesceBatchesExec: target_batch_size=3376546
                                                     GpuRepartitionExec: partitioning=Hash([ss_sold_date_sk@0], 8), input_partitions=8
-                                                      GpuScanExec: batch_size=3376546
+                                                      GpuScanExec: table=store_sales, projections=[ss_sold_date_sk, ss_store_sk, ss_sales_price], batch_size=3376546
                     GpuCoalesceBatchesExec: target_batch_size=3376546
                       GpuRepartitionExec: partitioning=Hash([d_week_seq@0], 8), input_partitions=8
                         GpuCoalesceBatchesExec: target_batch_size=3376546
                           GpuFilterExec: predicate=d_month_seq@0 >= 1224 AND d_month_seq@0 <= 1235, projection=[1]
                             GpuRepartitionExec: partitioning=RoundRobinBatch(8), input_partitions=1
-                              GpuScanExec: batch_size=3376546
+                              GpuScanExec: table=date_dim, projections=[d_month_seq, d_week_seq], batch_size=3376546
 --- memory ---
 total_estimate_cost=14436
 GpuSortPreservingMergeExec: row_width=180, subtree_max_row_bytes=636, estimate_input_bytes=180, estimate_output_bytes=180, estimate_cost=360

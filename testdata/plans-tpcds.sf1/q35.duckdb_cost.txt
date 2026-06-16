@@ -1,0 +1,47 @@
+TOP_N: order_by=[ca.ca_state ASC, tpcds.main.customer_demographics.cd_gender ASC, tpcds.main.customer_demographics.cd_marital_status ASC, tpcds.main.customer_demographics.cd_dep_count ASC, tpcds.main.customer_demographics.cd_dep_employed_count ASC, tpcds.main.customer_demographics.cd_dep_college_count ASC], top=100, output_bytes=13200, output_rows=100, materialized=632544
+  PROJECTION: projections=[ca_state, cd_gender, cd_marital_status, cd_dep_count, cnt1, min1, max1, avg1, cd_dep_employed_count, cnt2, min2, max2, avg2, cd_dep_college_count, cnt3, min(cd_dep_college_count), max(cd_dep_college_count), avg(cd_dep_college_count)], output_bytes=632544, output_rows=4792, materialized=0
+    PROJECTION: projections=[__internal_decompress_string(#0), __internal_decompress_string(#1), __internal_decompress_string(#2), #3, #4, #5, #6, #7, #8, #9, #10, #11, #12, #13, #14, #15], output_bytes=555872, output_rows=4792, materialized=0
+      HASH_GROUP_BY: groups=[#0, #1, #2, #3, #4, #5], aggregates=[count_star(), min(#6), max(#7), avg(#8), min(#9), max(#10), avg(#11), min(#12), max(#13), avg(#14)], output_bytes=354608, output_rows=4792, materialized=263574
+        PROJECTION: projections=[ca_state, cd_gender, cd_marital_status, cd_dep_count, cd_dep_employed_count, cd_dep_college_count, cd_dep_count, cd_dep_count, cd_dep_count, cd_dep_employed_count, cd_dep_employed_count, cd_dep_employed_count, cd_dep_college_count, cd_dep_college_count, cd_dep_college_count], output_bytes=263574, output_rows=4881, materialized=0
+          PROJECTION: projections=[__internal_compress_string_utinyint(#0), __internal_compress_string_utinyint(#1), #2, #3, #4, __internal_compress_string_uinteger(#5)], output_bytes=87858, output_rows=4881, materialized=0
+            PROJECTION: projections=[#0, #1, #2, #3, #4, #5], output_bytes=292860, output_rows=4881, materialized=0
+              FILTER: output_bytes=302622, output_rows=4881, materialized=0
+                LEFT_DELIM_JOIN: join_type=MARK, conditions=[c_customer_sk IS NOT DISTINCT FROM c_customer_sk], output_bytes=0, output_rows=0, materialized=90816
+                  LEFT_DELIM_JOIN: join_type=MARK, conditions=[c_customer_sk IS NOT DISTINCT FROM c_customer_sk], output_bytes=0, output_rows=0, materialized=90816
+                    RIGHT_DELIM_JOIN: join_type=RIGHT_SEMI, conditions=[c_customer_sk IS NOT DISTINCT FROM c_customer_sk], output_bytes=0, output_rows=0, materialized=386248
+                      HASH_JOIN: join_type=INNER, conditions=[c_current_addr_sk = ca_address_sk], output_bytes=6179968, output_rows=96562, materialized=6179968
+                        HASH_JOIN: join_type=INNER, conditions=[cd_demo_sk = c_current_cdemo_sk], output_bytes=5021224, output_rows=96562, materialized=5021224
+                          TABLE_SCAN: table=customer_demographics, projections=[cd_demo_sk, cd_gender, cd_marital_status, cd_dep_count, cd_dep_employed_count, cd_dep_college_count], filters="cd_demo_sk>=17 AND cd_demo_sk<=1920788", output_bytes=92197056, output_rows=1920772, materialized=184395456, bytes_read_est=92198400, rows_read=1920800
+                          TABLE_SCAN: table=customer, projections=[c_current_addr_sk, c_current_cdemo_sk, c_customer_sk], output_bytes=1200000, output_rows=100000, materialized=2400000, bytes_read_est=1200000, rows_read=100000
+                        TABLE_SCAN: table=customer_address, projections=[ca_address_sk, ca_state], output_bytes=1000000, output_rows=50000, materialized=2000000, bytes_read_est=1000000, rows_read=50000
+                      HASH_JOIN: join_type=RIGHT_SEMI, conditions=[c_customer_sk IS NOT DISTINCT FROM c_customer_sk], output_bytes=1453056, output_rows=22704, materialized=2610948
+                        PROJECTION: projections=[c_customer_sk], output_bytes=1157892, output_rows=289473, materialized=0
+                          HASH_JOIN: join_type=INNER, conditions=[c_customer_sk = ss_customer_sk], output_bytes=2315784, output_rows=289473, materialized=2315784
+                            DELIM_SCAN: output_bytes=0, output_rows=0, materialized=0
+                            HASH_JOIN: join_type=INNER, conditions=[ss_sold_date_sk = d_date_sk], output_bytes=2455512, output_rows=306939, materialized=2456608
+                              TABLE_SCAN: table=store_sales, projections=[ss_customer_sk, ss_sold_date_sk], output_bytes=2455512, output_rows=306939, materialized=25498744, bytes_read_est=23043232, rows_read=2880404
+                              FILTER: output_bytes=1096, output_rows=274, materialized=0
+                                TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_year=2002 AND d_qoy<4", output_bytes=1096, output_rows=274, materialized=293292, bytes_read_est=292196, rows_read=73049
+                        DUMMY_SCAN: output_bytes=0, output_rows=0, materialized=0
+                      HASH_GROUP_BY: groups=[#5], output_bytes=386248, output_rows=96562, materialized=0
+                    HASH_JOIN: join_type=MARK, conditions=[c_customer_sk IS NOT DISTINCT FROM c_customer_sk], output_bytes=1475760, output_rows=22704, materialized=1549024
+                      COLUMN_DATA_SCAN: output_bytes=1453056, output_rows=22704, materialized=0
+                      PROJECTION: projections=[c_customer_sk], output_bytes=73264, output_rows=18316, materialized=0
+                        HASH_JOIN: join_type=INNER, conditions=[c_customer_sk = ws_bill_customer_sk], output_bytes=146528, output_rows=18316, materialized=146528
+                          DELIM_SCAN: output_bytes=0, output_rows=0, materialized=0
+                          HASH_JOIN: join_type=INNER, conditions=[ws_sold_date_sk = d_date_sk], output_bytes=631704, output_rows=78963, materialized=632800
+                            TABLE_SCAN: table=web_sales, projections=[ws_bill_customer_sk, ws_sold_date_sk], output_bytes=631704, output_rows=78963, materialized=6386776, bytes_read_est=5755072, rows_read=719384
+                            FILTER: output_bytes=1096, output_rows=274, materialized=0
+                              TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_year=2002 AND d_qoy<4", output_bytes=1096, output_rows=274, materialized=293292, bytes_read_est=292196, rows_read=73049
+                    HASH_GROUP_BY: groups=[#5], output_bytes=90816, output_rows=22704, materialized=0
+                  HASH_JOIN: join_type=MARK, conditions=[c_customer_sk IS NOT DISTINCT FROM c_customer_sk], output_bytes=1407648, output_rows=22704, materialized=1549480
+                    COLUMN_DATA_SCAN: output_bytes=1475760, output_rows=22704, materialized=0
+                    PROJECTION: projections=[c_customer_sk], output_bytes=141832, output_rows=35458, materialized=0
+                      HASH_JOIN: join_type=INNER, conditions=[c_customer_sk = cs_ship_customer_sk], output_bytes=283664, output_rows=35458, materialized=283664
+                        DELIM_SCAN: output_bytes=0, output_rows=0, materialized=0
+                        HASH_JOIN: join_type=INNER, conditions=[cs_sold_date_sk = d_date_sk], output_bytes=1273224, output_rows=159153, materialized=1274320
+                          TABLE_SCAN: table=catalog_sales, projections=[cs_ship_customer_sk, cs_sold_date_sk], output_bytes=1273224, output_rows=159153, materialized=12805608, bytes_read_est=11532384, rows_read=1441548
+                          FILTER: output_bytes=1096, output_rows=274, materialized=0
+                            TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_year=2002 AND d_qoy<4", output_bytes=1096, output_rows=274, materialized=293292, bytes_read_est=292196, rows_read=73049
+                  HASH_GROUP_BY: groups=[#5], output_bytes=90816, output_rows=22704, materialized=0
+duckdb_cost=259850806

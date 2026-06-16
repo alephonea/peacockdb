@@ -10,7 +10,7 @@ GpuSortPreservingMergeExec: [revenue@2 DESC]
                   GpuHashJoinExec: join_type=Inner, on=[(n_nationkey@0, c_nationkey@3)], projection=[1, 2, 3, 4, 6, 7, 8, 9, 10]
                     GpuCoalesceBatchesExec: target_batch_size=4880644
                       GpuRepartitionExec: partitioning=Hash([n_nationkey@0], 8), input_partitions=1
-                        GpuScanExec: batch_size=4880644
+                        GpuScanExec: table=nation, projections=[n_nationkey, n_name], batch_size=4880644
                     GpuCoalesceBatchesExec: target_batch_size=4880644
                       GpuRepartitionExec: partitioning=Hash([c_nationkey@3], 8), input_partitions=8
                         GpuCoalesceBatchesExec: target_batch_size=4880644
@@ -21,17 +21,17 @@ GpuSortPreservingMergeExec: [revenue@2 DESC]
                                   GpuHashJoinExec: join_type=Inner, on=[(c_custkey@0, o_custkey@1)], projection=[0, 1, 2, 3, 4, 5, 6, 7]
                                     GpuCoalesceBatchesExec: target_batch_size=4880644
                                       GpuRepartitionExec: partitioning=Hash([c_custkey@0], 8), input_partitions=8
-                                        GpuScanExec: batch_size=4880644
+                                        GpuScanExec: table=customer, projections=[c_custkey, c_name, c_address, c_nationkey, c_phone, c_acctbal, c_comment], batch_size=4880644
                                     GpuCoalesceBatchesExec: target_batch_size=4880644
                                       GpuRepartitionExec: partitioning=Hash([o_custkey@1], 8), input_partitions=8
                                         GpuCoalesceBatchesExec: target_batch_size=4880644
                                           GpuFilterExec: predicate=o_orderdate@2 >= 1993-10-01 AND o_orderdate@2 < 1994-01-01, projection=[0, 1]
-                                            GpuScanExec: batch_size=4880644
+                                            GpuScanExec: table=orders, projections=[o_orderkey, o_custkey, o_orderdate], batch_size=4880644
                             GpuCoalesceBatchesExec: target_batch_size=4880644
                               GpuRepartitionExec: partitioning=Hash([l_orderkey@0], 8), input_partitions=8
                                 GpuCoalesceBatchesExec: target_batch_size=4880644
                                   GpuFilterExec: predicate=l_returnflag@3 = R, projection=[0, 1, 2]
-                                    GpuScanExec: batch_size=4880644
+                                    GpuScanExec: table=lineitem, projections=[l_orderkey, l_extendedprice, l_discount, l_returnflag], batch_size=4880644
 --- memory ---
 total_estimate_cost=8496
 GpuSortPreservingMergeExec: row_width=200, subtree_max_row_bytes=440, estimate_input_bytes=200, estimate_output_bytes=200, estimate_cost=400

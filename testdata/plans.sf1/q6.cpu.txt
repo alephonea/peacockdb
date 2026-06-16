@@ -1,5 +1,6 @@
-ProjectionExec: output_bytes=1
-  AggregateExec: output_bytes=1
-    CoalesceBatchesExec: output_bytes=28540
-      FilterExec: output_bytes=28584
-        ParquetExec: output_bytes=27005468
+GpuProjectExec: expr=[sum(lineitem.l_extendedprice * lineitem.l_discount)@0 as revenue], output_bytes=17, output_rows=1
+  GpuAggregateExec: group_by=[], aggr=[sum(lineitem.l_extendedprice * lineitem.l_discount)], output_bytes=17, output_rows=1
+    GpuCoalesceBatchesExec: target_batch_size=25565281, output_bytes=3681660, output_rows=114160
+      GpuFilterExec: predicate=l_shipdate@3 >= 1994-01-01 AND l_shipdate@3 < 1995-01-01 AND l_discount@2 >= Some(5),15,2 AND l_discount@2 <= Some(7),15,2 AND l_quantity@0 < Some(2400),15,2, projection=[1, 2], output_bytes=3681704, output_rows=114160
+        GpuScanExec: table=lineitem, projections=[l_quantity, l_extendedprice, l_discount, l_shipdate], batch_size=25565281, output_bytes=315063788, output_rows=6001215
+peacockdb_cost=322427186

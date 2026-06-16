@@ -16,7 +16,7 @@ GpuSortPreservingMergeExec: [i_category@2 ASC, i_class@3 ASC, i_item_id@0 ASC, i
                               GpuCoalesceBatchesExec: target_batch_size=6242685
                                 GpuFilterExec: predicate=d_date@1 >= 1999-02-22 AND d_date@1 <= 1999-03-24, projection=[0]
                                   GpuRepartitionExec: partitioning=RoundRobinBatch(8), input_partitions=1
-                                    GpuScanExec: batch_size=6242685
+                                    GpuScanExec: table=date_dim, projections=[d_date_sk, d_date], batch_size=6242685
                           GpuCoalesceBatchesExec: target_batch_size=6242685
                             GpuRepartitionExec: partitioning=Hash([cs_sold_date_sk@0], 8), input_partitions=8
                               GpuProjectExec: expr=[cs_sold_date_sk@5 as cs_sold_date_sk, cs_ext_sales_price@6 as cs_ext_sales_price, i_item_id@0 as i_item_id, i_item_desc@1 as i_item_desc, i_current_price@2 as i_current_price, i_class@3 as i_class, i_category@4 as i_category]
@@ -27,10 +27,10 @@ GpuSortPreservingMergeExec: [i_category@2 ASC, i_class@3 ASC, i_item_id@0 ASC, i
                                         GpuCoalesceBatchesExec: target_batch_size=6242685
                                           GpuFilterExec: predicate=i_category@5 = Sports OR i_category@5 = Books OR i_category@5 = Home
                                             GpuRepartitionExec: partitioning=RoundRobinBatch(8), input_partitions=1
-                                              GpuScanExec: batch_size=6242685
+                                              GpuScanExec: table=item, projections=[i_item_sk, i_item_id, i_item_desc, i_current_price, i_class, i_category], batch_size=6242685
                                     GpuCoalesceBatchesExec: target_batch_size=6242685
                                       GpuRepartitionExec: partitioning=Hash([cs_item_sk@1], 8), input_partitions=8
-                                        GpuScanExec: batch_size=6242685
+                                        GpuScanExec: table=catalog_sales, projections=[cs_sold_date_sk, cs_item_sk, cs_ext_sales_price], batch_size=6242685
 --- memory ---
 total_estimate_cost=7696
 GpuSortPreservingMergeExec: row_width=168, subtree_max_row_bytes=344, estimate_input_bytes=168, estimate_output_bytes=168, estimate_cost=336

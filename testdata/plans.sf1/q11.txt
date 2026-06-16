@@ -13,7 +13,7 @@ GpuSortPreservingMergeExec: [value@1 DESC]
                         GpuCoalesceBatchesExec: target_batch_size=24403223
                           GpuFilterExec: predicate=n_name@1 = GERMANY, projection=[0]
                             GpuRepartitionExec: partitioning=RoundRobinBatch(8), input_partitions=1
-                              GpuScanExec: batch_size=24403223
+                              GpuScanExec: table=nation, projections=[n_nationkey, n_name], batch_size=24403223
                     GpuCoalesceBatchesExec: target_batch_size=24403223
                       GpuRepartitionExec: partitioning=Hash([s_nationkey@2], 8), input_partitions=8
                         GpuProjectExec: expr=[ps_availqty@1 as ps_availqty, ps_supplycost@2 as ps_supplycost, s_nationkey@0 as s_nationkey]
@@ -22,10 +22,10 @@ GpuSortPreservingMergeExec: [value@1 DESC]
                               GpuCoalesceBatchesExec: target_batch_size=24403223
                                 GpuRepartitionExec: partitioning=Hash([s_suppkey@0], 8), input_partitions=8
                                   GpuRepartitionExec: partitioning=RoundRobinBatch(8), input_partitions=1
-                                    GpuScanExec: batch_size=24403223
+                                    GpuScanExec: table=supplier, projections=[s_suppkey, s_nationkey], batch_size=24403223
                               GpuCoalesceBatchesExec: target_batch_size=24403223
                                 GpuRepartitionExec: partitioning=Hash([ps_suppkey@0], 8), input_partitions=8
-                                  GpuScanExec: batch_size=24403223
+                                  GpuScanExec: table=partsupp, projections=[ps_suppkey, ps_availqty, ps_supplycost], batch_size=24403223
         GpuAggregateExec: group_by=[ps_partkey], aggr=[sum(partsupp.ps_supplycost * partsupp.ps_availqty)]
           GpuCoalesceBatchesExec: target_batch_size=24403223
             GpuRepartitionExec: partitioning=Hash([ps_partkey@0], 8), input_partitions=8
@@ -37,7 +37,7 @@ GpuSortPreservingMergeExec: [value@1 DESC]
                         GpuCoalesceBatchesExec: target_batch_size=24403223
                           GpuFilterExec: predicate=n_name@1 = GERMANY, projection=[0]
                             GpuRepartitionExec: partitioning=RoundRobinBatch(8), input_partitions=1
-                              GpuScanExec: batch_size=24403223
+                              GpuScanExec: table=nation, projections=[n_nationkey, n_name], batch_size=24403223
                     GpuCoalesceBatchesExec: target_batch_size=24403223
                       GpuRepartitionExec: partitioning=Hash([s_nationkey@3], 8), input_partitions=8
                         GpuProjectExec: expr=[ps_partkey@1 as ps_partkey, ps_availqty@2 as ps_availqty, ps_supplycost@3 as ps_supplycost, s_nationkey@0 as s_nationkey]
@@ -46,10 +46,10 @@ GpuSortPreservingMergeExec: [value@1 DESC]
                               GpuCoalesceBatchesExec: target_batch_size=24403223
                                 GpuRepartitionExec: partitioning=Hash([s_suppkey@0], 8), input_partitions=8
                                   GpuRepartitionExec: partitioning=RoundRobinBatch(8), input_partitions=1
-                                    GpuScanExec: batch_size=24403223
+                                    GpuScanExec: table=supplier, projections=[s_suppkey, s_nationkey], batch_size=24403223
                               GpuCoalesceBatchesExec: target_batch_size=24403223
                                 GpuRepartitionExec: partitioning=Hash([ps_suppkey@1], 8), input_partitions=8
-                                  GpuScanExec: batch_size=24403223
+                                  GpuScanExec: table=partsupp, projections=[ps_partkey, ps_suppkey, ps_availqty, ps_supplycost], batch_size=24403223
 --- memory ---
 total_estimate_cost=2328
 GpuSortPreservingMergeExec: row_width=24, subtree_max_row_bytes=88, estimate_input_bytes=24, estimate_output_bytes=24, estimate_cost=48

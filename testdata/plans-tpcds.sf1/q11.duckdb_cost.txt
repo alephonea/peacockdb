@@ -1,0 +1,54 @@
+TOP_N: order_by=[t_s_secyear.customer_id ASC, t_s_secyear.customer_first_name ASC, t_s_secyear.customer_last_name ASC, t_s_secyear.customer_preferred_cust_flag ASC], top=100, output_bytes=5760, output_rows=90, materialized=5760
+  PROJECTION: projections=[customer_id, customer_first_name, customer_last_name, customer_preferred_cust_flag], output_bytes=5760, output_rows=90, materialized=0
+    PROJECTION: projections=[#0, #1, #2, #5], output_bytes=5760, output_rows=90, materialized=0
+      FILTER: output_bytes=11520, output_rows=90, materialized=0
+        HASH_JOIN: join_type=INNER, conditions=[customer_id = customer_id], output_bytes=23040, output_rows=180, materialized=3065520
+          PROJECTION: projections=[customer_id, customer_first_name, customer_last_name, customer_preferred_cust_flag, year_total], output_bytes=3042480, output_rows=38031, materialized=0
+            PROJECTION: projections=[#0, __internal_decompress_string(#1), __internal_decompress_string(#2), __internal_decompress_string(#3), #4, __internal_decompress_string(#5), #6, __internal_decompress_integral_integer(#7, 2002), #8], output_bytes=5020092, output_rows=38031, materialized=0
+              HASH_GROUP_BY: groups=[#0, #1, #2, #3, #4, #5, #6, #7], aggregates=[sum(#8)], output_bytes=3765069, output_rows=38031, materialized=46526904
+                PROJECTION: projections=[c_customer_id, c_first_name, c_last_name, c_preferred_cust_flag, c_birth_country, c_login, c_email_address, d_year, (ss_ext_list_price - ss_ext_discount_amt)], output_bytes=46526904, output_rows=534792, materialized=0
+                  PROJECTION: projections=[#0, __internal_compress_string_hugeint(#1), __internal_compress_string_hugeint(#2), __internal_compress_string_utinyint(#3), #4, __internal_compress_string_utinyint(#5), #6, #7, #8, __internal_compress_integral_utinyint(#9, 2002)], output_bytes=48666072, output_rows=534792, materialized=0
+                    HASH_JOIN: join_type=INNER, conditions=[c_customer_sk = ss_customer_sk], output_bytes=66314208, output_rows=534792, materialized=66314208
+                      TABLE_SCAN: table=customer, projections=[c_customer_sk, c_customer_id, c_first_name, c_last_name, c_preferred_cust_flag, c_birth_country, c_login, c_email_address], output_bytes=11557196, output_rows=99631, materialized=23157196, bytes_read_est=11600000, rows_read=100000
+                      HASH_JOIN: join_type=INNER, conditions=[ss_sold_date_sk = d_date_sk], output_bytes=8795824, output_rows=549739, materialized=8798744
+                        TABLE_SCAN: table=store_sales, projections=[ss_customer_sk, ss_sold_date_sk, ss_ext_list_price, ss_ext_discount_amt], output_bytes=8795824, output_rows=549739, materialized=54882288, bytes_read_est=46086464, rows_read=2880404
+                        FILTER: output_bytes=2920, output_rows=365, materialized=0
+                          TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_year], filters="d_year=2002", output_bytes=2920, output_rows=365, materialized=587312, bytes_read_est=584392, rows_read=73049
+          HASH_JOIN: join_type=INNER, conditions=[customer_id = customer_id], output_bytes=31040, output_rows=485, materialized=390784
+            PROJECTION: projections=[customer_id, year_total], output_bytes=359744, output_rows=11242, materialized=0
+              PROJECTION: projections=[#0, __internal_decompress_string(#1), __internal_decompress_string(#2), __internal_decompress_string(#3), #4, __internal_decompress_string(#5), #6, __internal_decompress_integral_integer(#7, 2002), #8], output_bytes=1483944, output_rows=11242, materialized=0
+                HASH_GROUP_BY: groups=[#0, #1, #2, #3, #4, #5, #6, #7], aggregates=[sum(#8)], output_bytes=1112958, output_rows=11242, materialized=12385233
+                  PROJECTION: projections=[c_customer_id, c_first_name, c_last_name, c_preferred_cust_flag, c_birth_country, c_login, c_email_address, d_year, (ws_ext_list_price - ws_ext_discount_amt)], output_bytes=12385233, output_rows=142359, materialized=0
+                    PROJECTION: projections=[#0, __internal_compress_string_hugeint(#1), __internal_compress_string_hugeint(#2), __internal_compress_string_utinyint(#3), #4, __internal_compress_string_utinyint(#5), #6, #7, #8, __internal_compress_integral_utinyint(#9, 2002)], output_bytes=12954669, output_rows=142359, materialized=0
+                      HASH_JOIN: join_type=INNER, conditions=[c_customer_sk = ws_bill_customer_sk], output_bytes=17652516, output_rows=142359, materialized=17652516
+                        TABLE_SCAN: table=customer, projections=[c_customer_sk, c_customer_id, c_first_name, c_last_name, c_preferred_cust_flag, c_birth_country, c_login, c_email_address], filters="c_customer_sk>=2", output_bytes=11591416, output_rows=99926, materialized=23191416, bytes_read_est=11600000, rows_read=100000
+                        HASH_JOIN: join_type=INNER, conditions=[ws_sold_date_sk = d_date_sk], output_bytes=2280000, output_rows=142500, materialized=2282920
+                          TABLE_SCAN: table=web_sales, projections=[ws_bill_customer_sk, ws_sold_date_sk, ws_ext_list_price, ws_ext_discount_amt], output_bytes=2280000, output_rows=142500, materialized=13790144, bytes_read_est=11510144, rows_read=719384
+                          FILTER: output_bytes=2920, output_rows=365, materialized=0
+                            TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_year], filters="d_year=2002", output_bytes=2920, output_rows=365, materialized=587312, bytes_read_est=584392, rows_read=73049
+            HASH_JOIN: join_type=INNER, conditions=[customer_id = customer_id], output_bytes=211872, output_rows=4414, materialized=1794784
+              PROJECTION: projections=[#0, #8], output_bytes=1213248, output_rows=37914, materialized=0
+                FILTER: output_bytes=5004648, output_rows=37914, materialized=0
+                  PROJECTION: projections=[#0, __internal_decompress_string(#1), __internal_decompress_string(#2), __internal_decompress_string(#3), #4, __internal_decompress_string(#5), #6, __internal_decompress_integral_integer(#7, 2001), #8], output_bytes=5004648, output_rows=37914, materialized=0
+                    HASH_GROUP_BY: groups=[#0, #1, #2, #3, #4, #5, #6, #7], aggregates=[sum(#8)], output_bytes=3753486, output_rows=37914, materialized=46397535
+                      PROJECTION: projections=[c_customer_id, c_first_name, c_last_name, c_preferred_cust_flag, c_birth_country, c_login, c_email_address, d_year, (ss_ext_list_price - ss_ext_discount_amt)], output_bytes=46397535, output_rows=533305, materialized=0
+                        PROJECTION: projections=[#0, __internal_compress_string_hugeint(#1), __internal_compress_string_hugeint(#2), __internal_compress_string_utinyint(#3), #4, __internal_compress_string_utinyint(#5), #6, #7, #8, __internal_compress_integral_utinyint(#9, 2001)], output_bytes=48530755, output_rows=533305, materialized=0
+                          HASH_JOIN: join_type=INNER, conditions=[c_customer_sk = ss_customer_sk], output_bytes=66129820, output_rows=533305, materialized=66129820
+                            TABLE_SCAN: table=customer, projections=[c_customer_sk, c_customer_id, c_first_name, c_last_name, c_preferred_cust_flag, c_birth_country, c_login, c_email_address], output_bytes=11597100, output_rows=99975, materialized=23197100, bytes_read_est=11600000, rows_read=100000
+                            HASH_JOIN: join_type=INNER, conditions=[ss_sold_date_sk = d_date_sk], output_bytes=8741024, output_rows=546314, materialized=8743944
+                              TABLE_SCAN: table=store_sales, projections=[ss_customer_sk, ss_sold_date_sk, ss_ext_list_price, ss_ext_discount_amt], output_bytes=8741024, output_rows=546314, materialized=54827488, bytes_read_est=46086464, rows_read=2880404
+                              FILTER: output_bytes=2920, output_rows=365, materialized=0
+                                TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_year], filters="d_year=2001", output_bytes=2920, output_rows=365, materialized=587312, bytes_read_est=584392, rows_read=73049
+              PROJECTION: projections=[#0, #8], output_bytes=369664, output_rows=11552, materialized=0
+                FILTER: output_bytes=1524864, output_rows=11552, materialized=0
+                  PROJECTION: projections=[#0, __internal_decompress_string(#1), __internal_decompress_string(#2), __internal_decompress_string(#3), #4, __internal_decompress_string(#5), #6, __internal_decompress_integral_integer(#7, 2001), #8], output_bytes=1524864, output_rows=11552, materialized=0
+                    HASH_GROUP_BY: groups=[#0, #1, #2, #3, #4, #5, #6, #7], aggregates=[sum(#8)], output_bytes=1143648, output_rows=11552, materialized=12789870
+                      PROJECTION: projections=[c_customer_id, c_first_name, c_last_name, c_preferred_cust_flag, c_birth_country, c_login, c_email_address, d_year, (ws_ext_list_price - ws_ext_discount_amt)], output_bytes=12789870, output_rows=147010, materialized=0
+                        PROJECTION: projections=[#0, __internal_compress_string_hugeint(#1), __internal_compress_string_hugeint(#2), __internal_compress_string_utinyint(#3), #4, __internal_compress_string_utinyint(#5), #6, #7, #8, __internal_compress_integral_utinyint(#9, 2001)], output_bytes=13377910, output_rows=147010, materialized=0
+                          HASH_JOIN: join_type=INNER, conditions=[c_customer_sk = ws_bill_customer_sk], output_bytes=18229240, output_rows=147010, materialized=18229240
+                            TABLE_SCAN: table=customer, projections=[c_customer_sk, c_customer_id, c_first_name, c_last_name, c_preferred_cust_flag, c_birth_country, c_login, c_email_address], filters="c_customer_sk>=2", output_bytes=11599420, output_rows=99995, materialized=23199420, bytes_read_est=11600000, rows_read=100000
+                            HASH_JOIN: join_type=INNER, conditions=[ws_sold_date_sk = d_date_sk], output_bytes=2352384, output_rows=147024, materialized=2355304
+                              TABLE_SCAN: table=web_sales, projections=[ws_bill_customer_sk, ws_sold_date_sk, ws_ext_list_price, ws_ext_discount_amt], output_bytes=2352384, output_rows=147024, materialized=13862528, bytes_read_est=11510144, rows_read=719384
+                              FILTER: output_bytes=2920, output_rows=365, materialized=0
+                                TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_year], filters="d_year=2001", output_bytes=2920, output_rows=365, materialized=587312, bytes_read_est=584392, rows_read=73049
+duckdb_cost=546319914
