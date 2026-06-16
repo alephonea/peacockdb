@@ -163,7 +163,7 @@ gpu_result_test!(test_gpu_tpch_q11, "q11");
 gpu_result_test!(test_gpu_tpch_q12, "q12");
 gpu_result_test!(test_gpu_tpch_q13, "q13");
 gpu_result_test!(test_gpu_tpch_q14, "q14");
-// q15 uses a view; skip like test_cpu_executor.rs / test_queries.rs
+gpu_result_test!(test_gpu_tpch_q15, "q15"); // view inlined as a CTE (see q15.sql)
 gpu_result_test!(test_gpu_tpch_q16, "q16");
 gpu_result_test!(test_gpu_tpch_q17, "q17");
 gpu_result_test!(test_gpu_tpch_q18, "q18");
@@ -334,9 +334,12 @@ gpu_result_test_tpcds!(test_gpu_tpcds_q97, "q97");
 // Execute on GPU but diverge from CPU; root cause beyond projection scope.
 // q38: INTERSECT (×3) of DISTINCT sets feeding count(*).
 // gpu_result_test_tpcds!(test_gpu_tpcds_q38, "q38");
-// q75: UNION (distinct) + COALESCE + decimal-cast self-join.
-// gpu_result_test_tpcds!(test_gpu_tpcds_q75, "q75");
-// q76: UNION ALL + IS NULL filters + grouped count(*).
+// q75: UNION (distinct) + COALESCE + decimal-cast self-join; the UNION-DISTINCT
+// dedup goes through the GROUP BY path, now null_policy::INCLUDE (Bucket H), so
+// it is now GPU-green (zero code).
+gpu_result_test_tpcds!(test_gpu_tpcds_q75, "q75");
+// q76: UNION ALL + IS NULL filters + grouped count(*) — still diverges on GPU
+// (executes, wrong result) even after Bucket H. Parked under Bucket I (#59).
 // gpu_result_test_tpcds!(test_gpu_tpcds_q76, "q76");
 
 // --- Bucket C: window functions (GpuWindow node) ---
@@ -345,10 +348,11 @@ gpu_result_test_tpcds!(test_gpu_tpcds_q12, "q12");
 // q20: the LIMIT-100 top-N NULL-ordering tiebreak is now reconciled by GpuSort
 // honoring per-column null_precedence (issue #42).
 gpu_result_test_tpcds!(test_gpu_tpcds_q20, "q20");
-// q98: same whole-partition-sum pattern as q12; only fails under GPU memory
-// pressure (OOM during init when the shared H200 is occupied). Verify on a free
-// GPU before enabling.
-// gpu_result_test_tpcds!(test_gpu_tpcds_q98, "q98");
+// q98: same whole-partition-sum pattern as q12; computes correctly (GPU-green).
+// It can OOM under shared-H200 memory pressure (a resource flake, not a
+// correctness gap) until the analyze_memory GPU-memory modeling lands; that
+// flakiness risk is knowingly accepted to keep it enabled.
+gpu_result_test_tpcds!(test_gpu_tpcds_q98, "q98");
 // rank() windows (StandardWindowExpr) not yet supported by GpuWindow:
 // gpu_result_test_tpcds!(test_gpu_tpcds_q36, "q36");
 // gpu_result_test_tpcds!(test_gpu_tpcds_q44, "q44");
@@ -376,10 +380,9 @@ gpu_result_test_tpcds!(test_gpu_tpcds_q35, "q35");
 // supported for non-arithmetic types") — same blocker as q28, not a join issue
 // (issue #44).
 // gpu_result_test_tpcds!(test_gpu_tpcds_q9, "q9");
-// q24: NestedLoopJoin works, but blocked by a GpuHashJoin cuDF failure ("Unary
-// cast type must be fixed-width" — a cast to a non-fixed-width/string type) —
-// distinct blocker, not a join issue (issue #45).
-// gpu_result_test_tpcds!(test_gpu_tpcds_q24, "q24");
+// q24: string->string key-cast (s_zip = ca_zip) now a no-op in the CastExpr
+// column path (#45).
+gpu_result_test_tpcds!(test_gpu_tpcds_q24, "q24");
 // q54: scalar fn `round` now implemented in the GpuProject column path (#43).
 gpu_result_test_tpcds!(test_gpu_tpcds_q54, "q54");
 // CrossJoinExec (now supported):

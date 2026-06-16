@@ -286,29 +286,23 @@ query_plan_test!(test_cross_join, "cross-join");
 
 query_plan_test!(plan_tpch_q1,  "q1");
 query_plan_test!(plan_tpch_q2,  "q2");
-// TODO(plan_serializer): Final/FinalPartitioned AggregateExec roundtrip uses
-// input.schema() (partial output) to resolve aggr args, but those args
-// reference the partial's *input* schema. Need to also serialize
-// AggregateExec::input_schema() and pass it to AggregateExprBuilder.
-// query_plan_test!(plan_tpch_q3,  "q3");
+query_plan_test!(plan_tpch_q3,  "q3");
 query_plan_test!(plan_tpch_q4,  "q4");
-// query_plan_test!(plan_tpch_q5,  "q5");  // Same Final-aggregate-input-schema bug.
-// query_plan_test!(plan_tpch_q6,  "q6");  // Same Final-aggregate-input-schema bug.
+query_plan_test!(plan_tpch_q5,  "q5");
+query_plan_test!(plan_tpch_q6,  "q6");
 query_plan_test!(plan_tpch_q7,  "q7");
 query_plan_test!(plan_tpch_q8,  "q8");
 query_plan_test!(plan_tpch_q9,  "q9");
-// query_plan_test!(plan_tpch_q10, "q10"); // Same Final-aggregate-input-schema bug.
+query_plan_test!(plan_tpch_q10, "q10");
 query_plan_test!(plan_tpch_q11, "q11");
 query_plan_test!(plan_tpch_q12, "q12");
 query_plan_test!(plan_tpch_q13, "q13");
 query_plan_test!(plan_tpch_q14, "q14");
-// query_plan_test!(plan_tpch_q15, "q15");
+query_plan_test!(plan_tpch_q15, "q15");
 query_plan_test!(plan_tpch_q16, "q16");
 query_plan_test!(plan_tpch_q17, "q17");
 query_plan_test!(plan_tpch_q18, "q18");
-// query_plan_test!(plan_tpch_q19, "q19"); // Same Final-aggregate-input-schema bug.
-                                       // Was previously masked by InListExpr
-                                       // serializer error; now exposed.
+query_plan_test!(plan_tpch_q19, "q19");
 query_plan_test!(plan_tpch_q20, "q20");
 query_plan_test!(plan_tpch_q21, "q21");
 query_plan_test!(plan_tpch_q22, "q22");

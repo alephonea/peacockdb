@@ -1,0 +1,16 @@
+GpuProjectExec: expr=[sum(lineitem.l_extendedprice * lineitem.l_discount)@0 as revenue]
+  GpuAggregateExec: group_by=[], aggr=[sum(lineitem.l_extendedprice * lineitem.l_discount)]
+    GpuCoalescePartitionsExec
+      GpuAggregateExec: group_by=[], aggr=[sum(lineitem.l_extendedprice * lineitem.l_discount)]
+        GpuCoalesceBatchesExec: target_batch_size=25565281
+          GpuFilterExec: predicate=l_shipdate@3 >= 1994-01-01 AND l_shipdate@3 < 1995-01-01 AND l_discount@2 >= Some(5),15,2 AND l_discount@2 <= Some(7),15,2 AND l_quantity@0 < Some(2400),15,2, projection=[1, 2]
+            GpuScanExec: batch_size=25565281
+--- memory ---
+total_estimate_cost=344
+GpuProjectExec: row_width=16, subtree_max_row_bytes=84, estimate_input_bytes=16, estimate_output_bytes=16, estimate_cost=32
+  GpuAggregateExec: row_width=16, subtree_max_row_bytes=84, estimate_input_bytes=16, estimate_output_bytes=16, estimate_cost=32
+    GpuCoalescePartitionsExec: row_width=16, subtree_max_row_bytes=84, estimate_input_bytes=16, estimate_output_bytes=16, estimate_cost=32
+      GpuAggregateExec: row_width=16, subtree_max_row_bytes=84, estimate_input_bytes=32, estimate_output_bytes=16, estimate_cost=48
+        GpuCoalesceBatchesExec: row_width=32, subtree_max_row_bytes=84, estimate_input_bytes=32, estimate_output_bytes=32, estimate_cost=64
+          GpuFilterExec: row_width=32, subtree_max_row_bytes=84, estimate_input_bytes=52, estimate_output_bytes=32, estimate_cost=84
+            GpuScanExec: row_width=52, subtree_max_row_bytes=52, estimate_input_bytes=0, estimate_output_bytes=52, estimate_cost=52
