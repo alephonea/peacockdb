@@ -1282,6 +1282,25 @@ static TableResult execute_aggregate(const fb::GpuAggregate* agg) {
   bool is_final = (agg->mode() == fb::AggregateMode_Final ||
                    agg->mode() == fb::AggregateMode_FinalPartitioned);
 
+  // DISTINCT aggregates (e.g. count(DISTINCT x)) carry AggregateFuncNode.distinct
+  // and need cuDF's nunique / distinct aggregations, which this executor does not
+  // implement yet — make_agg silently computes the NON-distinct value. The CPU
+  // oracle honours the flag (AggregateExprBuilder.distinct()), so a distinct-
+  // flagged aggregate would diverge silently. Fail loudly instead. Today no
+  // enabled query reaches this: DataFusion's SingleDistinctToGroupBy rewrites a
+  // standalone count(DISTINCT x) into a GROUP BY + plain count (no flag at the
+  // GPU); the flag only survives when DISTINCT is mixed with other aggregates on
+  // one node (e.g. TPC-DS q28, parked) — see #62.
+  if (agg->aggr_funcs()) {
+    for (flatbuffers::uoffset_t i = 0; i < agg->aggr_funcs()->size(); ++i) {
+      if (agg->aggr_funcs()->Get(i)->distinct())
+        throw std::runtime_error(
+            "DISTINCT aggregate (e.g. count(DISTINCT)) not yet supported on the "
+            "GPU when the flag survives to the executor (mixed with other "
+            "aggregates); needs cuDF nunique/distinct aggregations — see #62");
+    }
+  }
+
   // Build group-by keys.
   std::vector<cudf::size_type> key_indices;
   std::vector<std::string> key_names;
@@ -1308,10 +1327,23 @@ static TableResult execute_aggregate(const fb::GpuAggregate* agg) {
   // below, since the column_views handed to cuDF point into these.
   std::vector<std::unique_ptr<cudf::column>> computed_args;
 
-  // Helper to determine the values column for a function node.
-  auto get_values_col = [&](const fb::AggregateFuncNode* func) -> cudf::column_view {
+  // Helper to determine the values column for a function node. `agg_idx` is the
+  // aggregate's positional index, used only for the Final-stage case.
+  auto get_values_col = [&](const fb::AggregateFuncNode* func,
+                            size_t agg_idx) -> cudf::column_view {
     cudf::column_view base;
-    if (func->args() && func->args()->size() > 0) {
+    if (is_final) {
+      // Final/FinalPartitioned: this stage's input is the Partial stage's OUTPUT
+      // (group keys + one accumulator column per aggregate), NOT the original
+      // ungrouped data. func->args() index the original input (aggr_input_schema)
+      // and are therefore meaningless here, so resolve the value positionally:
+      // the aggregate columns sit right after the group keys (whose count already
+      // includes __grouping_id for the grouping-set Final). With single-partition
+      // passthrough repartition there is one Partial row per key, so re-running
+      // the aggregation over this column is the documented singleton-identity.
+      base = tv.column(
+          static_cast<cudf::size_type>(key_indices.size() + agg_idx));
+    } else if (func->args() && func->args()->size() > 0) {
       auto* arg = func->args()->Get(0);
       if (arg->node_type() == fb::ExprNode_ColumnRef) {
         base = tv.column(static_cast<cudf::size_type>(arg->node_as_ColumnRef()->index()));
@@ -1354,7 +1386,7 @@ static TableResult execute_aggregate(const fb::GpuAggregate* agg) {
         auto* func = agg->aggr_funcs()->Get(i);
         std::string name = func->name() ? func->name()->str() : "count";
 
-        cudf::column_view values_col = get_values_col(func);
+        cudf::column_view values_col = get_values_col(func, i);
         bool is_count = (name == "count" || name == "COUNT");
 
         bool is_avg = is_avg_name(name);
@@ -1434,6 +1466,123 @@ static TableResult execute_aggregate(const fb::GpuAggregate* agg) {
     return {std::make_unique<cudf::table>(std::move(out_cols)), std::move(out_names)};
   }
 
+  // ---- ROLLUP / CUBE / GROUPING SETS ----
+  // DataFusion's Partial AggregateExec expands ROLLUP/CUBE/GROUPING SETS into N
+  // grouping sets and appends a `__grouping_id` column (right after the group
+  // columns); the downstream Final AggregateExec then re-groups by
+  // [group cols..., __grouping_id] as a plain GROUP BY (its own grouping_sets is
+  // empty), and the outer projection drops __grouping_id. cuDF has no native
+  // ROLLUP/CUBE, so for each set we substitute the per-position NULL placeholder
+  // (null_exprs[i]) for the masked group columns, run the same aggregations, tag
+  // the rows with a distinct grouping id, and concatenate every set. Only per-set
+  // DISTINCTNESS of the id matters — it lets the Final keep sets apart even when a
+  // placeholder NULL collides with a natural NULL — so the exact bit encoding is
+  // irrelevant (the column never reaches the query output).
+  // Detect a REAL grouping-set aggregate by null_exprs being non-empty:
+  // DataFusion populates null_expr() only for ROLLUP/CUBE/GROUPING SETS. A plain
+  // GROUP BY — and the Final stage of a grouping-set agg, which re-groups
+  // [cols..., __grouping_id] as a single set — still serializes grouping_sets as
+  // one all-false mask but leaves null_exprs EMPTY, and must take the normal
+  // single-groupby path below (no __grouping_id appended).
+  if (agg->null_exprs() && agg->null_exprs()->size() > 0 &&
+      agg->grouping_sets() && agg->grouping_sets()->size() > 0) {
+    auto* sets = agg->grouping_sets();
+    auto nkeys = static_cast<cudf::size_type>(key_cols.size());
+    if (agg->null_exprs()->size() != static_cast<flatbuffers::uoffset_t>(nkeys))
+      throw std::runtime_error(
+          "grouping sets: null_exprs length != group_exprs");
+
+    // NULL placeholder column per group position (full input length): a masked
+    // position contributes an all-NULL key of the matching type, which is
+    // concatenate-compatible with the real column for that position.
+    std::vector<std::unique_ptr<cudf::column>> null_placeholders;
+    null_placeholders.reserve(nkeys);
+    for (cudf::size_type i = 0; i < nkeys; ++i)
+      null_placeholders.push_back(build_column(agg->null_exprs()->Get(i), tv));
+
+    // Aggregate value columns + metadata — identical for every set. Reserve
+    // computed_args up front so the views get_values_col returns stay valid as
+    // it fills the vector across funcs (no reallocation).
+    std::vector<cudf::column_view> gs_values;
+    std::vector<std::string> gs_func_names;
+    std::vector<std::string> gs_agg_names;
+    std::vector<bool> gs_is_count;
+    if (agg->aggr_funcs()) {
+      computed_args.reserve(agg->aggr_funcs()->size() * 2 + 4);
+      for (flatbuffers::uoffset_t i = 0; i < agg->aggr_funcs()->size(); ++i) {
+        auto* func = agg->aggr_funcs()->Get(i);
+        std::string name = func->name() ? func->name()->str() : "count";
+        gs_values.push_back(get_values_col(func, i));
+        gs_func_names.push_back(name);
+        gs_agg_names.push_back(func->alias() ? func->alias()->str() : name);
+        gs_is_count.push_back(name == "count" || name == "COUNT");
+      }
+    }
+
+    std::vector<std::unique_ptr<cudf::table>> set_tables;
+    set_tables.reserve(sets->size());
+    for (flatbuffers::uoffset_t s = 0; s < sets->size(); ++s) {
+      auto* mask = sets->Get(s)->values();
+      if (!mask || mask->size() != static_cast<flatbuffers::uoffset_t>(nkeys))
+        throw std::runtime_error("grouping set mask length != group_exprs length");
+
+      std::vector<cudf::column_view> set_keys;
+      set_keys.reserve(nkeys);
+      // NOTE: this gid is only required to be DISTINCT per grouping set so the
+      // Final stage can keep sets apart (a placeholder NULL must not collide
+      // with a natural NULL). It does NOT match DataFusion's __grouping_id bit
+      // convention (which encodes column position/order for GROUPING()), and no
+      // currently-enabled query projects or orders by GROUPING(), so the exact
+      // encoding is unobservable. A future query that SELECTs/ORDER BYs
+      // GROUPING(col) must first make this encoding match DataFusion. See #65.
+      int32_t gid = 0;
+      for (cudf::size_type i = 0; i < nkeys; ++i) {
+        if (mask->Get(i)) {  // masked -> NULL placeholder; record the bit
+          set_keys.push_back(null_placeholders[i]->view());
+          gid |= (1 << i);
+        } else {
+          set_keys.push_back(key_cols[i]);
+        }
+      }
+
+      cudf::groupby::groupby gbs{cudf::table_view{set_keys},
+                                 cudf::null_policy::INCLUDE};
+      std::vector<cudf::groupby::aggregation_request> reqs;
+      reqs.reserve(gs_values.size());
+      for (size_t a = 0; a < gs_values.size(); ++a) {
+        cudf::groupby::aggregation_request r;
+        r.values = gs_values[a];
+        r.aggregations.push_back(make_agg(gs_func_names[a], is_final));
+        reqs.push_back(std::move(r));
+      }
+      auto [gk, res] = gbs.aggregate(reqs);
+
+      std::vector<std::unique_ptr<cudf::column>> cols;
+      cols.reserve(static_cast<size_t>(nkeys) + 1 + res.size());
+      for (cudf::size_type i = 0; i < gk->num_columns(); ++i)
+        cols.push_back(std::make_unique<cudf::column>(gk->view().column(i)));
+      cudf::numeric_scalar<int32_t> gid_s(gid, true);
+      cols.push_back(cudf::make_column_from_scalar(gid_s, gk->num_rows()));
+      for (size_t a = 0; a < res.size(); ++a) {
+        auto col = std::move(res[a].results[0]);
+        if (gs_is_count[a] && col->type().id() == cudf::type_id::INT32)
+          col = cudf::cast(*col, cudf::data_type{cudf::type_id::INT64});
+        cols.push_back(std::move(col));
+      }
+      set_tables.push_back(std::make_unique<cudf::table>(std::move(cols)));
+    }
+
+    std::vector<cudf::table_view> views;
+    views.reserve(set_tables.size());
+    for (auto& t : set_tables) views.push_back(t->view());
+    auto out = cudf::concatenate(views);
+
+    std::vector<std::string> names = key_names;
+    names.push_back("__grouping_id");
+    for (auto& n : gs_agg_names) names.push_back(n);
+    return {std::move(out), std::move(names)};
+  }
+
   cudf::table_view keys_view{key_cols};
   // SQL GROUP BY puts NULL keys in their own group; cuDF's groupby defaults to
   // null_policy::EXCLUDE, which DROPS every row that has a NULL in any grouping
@@ -1452,7 +1601,7 @@ static TableResult execute_aggregate(const fb::GpuAggregate* agg) {
       std::string name = func->name() ? func->name()->str() : "count";
 
       cudf::groupby::aggregation_request req;
-      req.values = get_values_col(func);
+      req.values = get_values_col(func, i);
       req.aggregations.push_back(make_agg(name, is_final));
       requests.push_back(std::move(req));
 
