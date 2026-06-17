@@ -156,17 +156,14 @@ if [ "$RSYNC" -eq 1 ]; then
   ssh "$HOST" "mkdir -p '$REMOTE_DIR/cpp/install'"
   rsync -r -P "$INSTALL_DIR"/* "$HOST:$REMOTE_DIR/cpp/install/"
 
-  if [ "$MODE" = "cpu" ]; then
-    # Ship the committed plan goldens so they match the just-built binaries.
-    # These are version-controlled fixtures (not generated data); shipping them
-    # keeps the run independent of whatever commit the remote repo is checked
-    # out at. The heavy parquet datasets are generated on the remote, untouched.
-    # The GPU suite doesn't use goldens, so skip them in --gpu mode.
-    for g in plans.sf1 plans-tpcds.sf1 plans; do
-      [ -d "testdata/$g" ] || continue
-      echo "==> rsync goldens testdata/$g"
-      rsync -r --delete "testdata/$g/" "$HOST:$REMOTE_DIR/testdata/$g/"
-    done
+  if [ "$MODE" = "cpu" ] && [ -d testdata/goldens ]; then
+    # Ship the committed goldens (testdata/goldens/<dataset>.sf<N>/) so they match
+    # the just-built binaries — version-controlled fixtures, run-independent of the
+    # remote's checked-out commit. Heavy parquet datasets are generated on the
+    # remote, untouched. The GPU suite uses no goldens, so skip in --gpu mode.
+    # (For an --update-canonical run the remote regenerates these in place.)
+    echo "==> rsync goldens testdata/goldens"
+    rsync -r --delete testdata/goldens/ "$HOST:$REMOTE_DIR/testdata/goldens/"
   fi
 fi
 
@@ -236,8 +233,6 @@ fi
 # here if the run succeeded.
 if [ "$RUN" -eq 1 ] && [ "$FETCH_GOLDENS" -eq 1 ] && [ "$MODE" = "cpu" ]; then
   echo "==> fetching goldens back from $HOST"
-  for g in plans plans.sf1 plans-tpcds.sf1; do
-    rsync -r --include='*/' --include='*.txt' --exclude='*' \
-      "$HOST:$REMOTE_DIR/testdata/$g/" "testdata/$g/"
-  done
+  rsync -r --include='*/' --include='*.txt' --exclude='*' \
+    "$HOST:$REMOTE_DIR/testdata/goldens/" testdata/goldens/
 fi

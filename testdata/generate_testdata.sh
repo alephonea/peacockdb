@@ -13,7 +13,7 @@
 set -euo pipefail
 
 SF=1
-BENCH=tpch
+BENCH=""   # required — pass --bench tpch|tpcds explicitly
 while [ $# -gt 0 ]; do
   case "$1" in
     --sf) SF="$2"; shift ;;
@@ -25,6 +25,7 @@ done
 
 case "$BENCH" in
   tpch|tpcds) ;;
+  "") echo "error: --bench is required (tpch or tpcds)"; exit 1 ;;
   *) echo "error: --bench must be tpch or tpcds (got: $BENCH)"; exit 1 ;;
 esac
 

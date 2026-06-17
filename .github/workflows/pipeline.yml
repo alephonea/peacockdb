@@ -44,7 +44,7 @@ jobs:
           # shift row_width and target_batch_size across every plan golden.
           # generate_testdata.sh asserts $(duckdb --version) matches this.
           conda install -y -n base -c conda-forge 'duckdb-cli=1.2.2'
-          testdata/generate_testdata.sh
+          testdata/generate_testdata.sh --bench tpch
           testdata/generate_testdata.sh --bench tpcds
 
       - name: Run Rust tests
@@ -193,7 +193,7 @@ jobs:
 
       - name: Generate SF-1 testdata (skips if present)
         run: |
-          ssh gpu "cd $REMOTE_DIR && DUCKDB=/home/info/.local/bin/duckdb testdata/generate_testdata.sh"
+          ssh gpu "cd $REMOTE_DIR && DUCKDB=/home/info/.local/bin/duckdb testdata/generate_testdata.sh --bench tpch"
           ssh gpu "cd $REMOTE_DIR && DUCKDB=/home/info/.local/bin/duckdb testdata/generate_testdata.sh --bench tpcds"
 
       - name: Run GPU tests

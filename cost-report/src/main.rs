@@ -31,6 +31,9 @@ const RATIO_GREEN_MAX: f64 = 1.4;
 
 const PAGES_URL_DEFAULT: &str = "https://asymptote-tech.github.io/peacockdb/";
 const DEFAULT_REPO: &str = "asymptote-tech/peacockdb";
+/// Device label of the CPU-cost goldens (1 partition / 2 GiB), part of the
+/// `.cpu.txt` filename under the unified golden layout.
+const CPU_DEVICE: &str = "tp1-mem2gib";
 /// Hidden marker so CI can find-and-update its single PR comment in place.
 const SENTINEL: &str = "<!-- peacockdb-cost-report -->";
 
@@ -68,7 +71,7 @@ impl Row {
 struct Dataset {
     label: &'static str,
     total: usize,
-    /// Repo-relative golden dir, e.g. "testdata/plans.sf1" — used for cell links.
+    /// Repo-relative golden dir, e.g. "testdata/goldens/tpch.sf1" — used for cell links.
     canon_rel: &'static str,
     rows: Vec<Row>,
 }
@@ -130,11 +133,11 @@ fn main() {
 
     let test_src = std::fs::read_to_string(&tests)
         .unwrap_or_else(|e| panic!("cannot read {}: {e}", tests.display()));
-    let op_tpch = operational_set(&test_src, "test_gpu_tpch_q");
-    let op_tpcds = operational_set(&test_src, "test_gpu_tpcds_q");
+    let op_tpch = operational_set(&test_src, "tpch");
+    let op_tpcds = operational_set(&test_src, "tpcds");
 
-    let tpch = build_dataset("TPC-H", 22, "testdata/plans.sf1", &testdata.join("plans.sf1"), &op_tpch);
-    let tpcds = build_dataset("TPC-DS", 99, "testdata/plans-tpcds.sf1", &testdata.join("plans-tpcds.sf1"), &op_tpcds);
+    let tpch = build_dataset("TPC-H", 22, "testdata/goldens/tpch.sf1", &testdata.join("goldens/tpch.sf1"), &op_tpch);
+    let tpcds = build_dataset("TPC-DS", 99, "testdata/goldens/tpcds.sf1", &testdata.join("goldens/tpcds.sf1"), &op_tpcds);
     let datasets = [tpch, tpcds];
 
     let freshness = freshness_line(links.sha.as_deref(), generated_at.as_deref());
@@ -152,18 +155,22 @@ fn main() {
     }
 }
 
-/// Queries whose GPU result test is enabled. A query is operational iff a macro
-/// invocation referencing `<func_prefix><n>` appears on a line that is not
-/// commented out (the repo disables a query by commenting its macro line).
-fn operational_set(src: &str, func_prefix: &str) -> BTreeSet<u32> {
+/// Query numbers whose GPU result test is enabled for `dataset`. A query is
+/// operational iff an uncommented `gpu_result_test!(<dataset>, <sf>, q<N>, …)`
+/// invocation appears (the repo disables one by commenting its macro line).
+/// Only `q<N>` queries are counted (synthetic micro-queries like `scan_limit`
+/// aren't in the numbered coverage table).
+fn operational_set(src: &str, dataset: &str) -> BTreeSet<u32> {
+    let needle = format!("gpu_result_test!({dataset},");
     let mut set = BTreeSet::new();
     for line in src.lines() {
         let t = line.trim_start();
         if t.starts_with("//") {
             continue;
         }
-        if let Some(pos) = t.find(func_prefix) {
-            let digits: String = t[pos + func_prefix.len()..]
+        let Some(pos) = t.find(&needle) else { continue };
+        if let Some(qpos) = t[pos..].find(", q") {
+            let digits: String = t[pos + qpos + 3..]
                 .chars()
                 .take_while(|c| c.is_ascii_digit())
                 .collect();
@@ -191,7 +198,7 @@ fn build_dataset(
         .map(|n| Row {
             n,
             operational: operational.contains(&n),
-            peacockdb: read_total(&canon.join(format!("q{n}.cpu.txt")), "peacockdb_cost="),
+            peacockdb: read_total(&canon.join(format!("q{n}.{CPU_DEVICE}.cpu.txt")), "peacockdb_cost="),
             duckdb: read_total(&canon.join(format!("q{n}.duckdb_cost.txt")), "duckdb_cost="),
         })
         .collect();
@@ -321,7 +328,7 @@ fn render_html(datasets: &[Dataset], pages_url: &str, links: &Links, generated_a
         let _ = write!(s, "<h2>{}</h2><table><tr><th>Query</th><th>Status</th>\
             <th>PeacockDB Σout</th><th>DuckDB Σout</th><th>Ratio</th></tr>", d.label);
         for r in &d.rows {
-            let pk_url = r.peacockdb.and_then(|_| links.golden_url(d.canon_rel, r.n, "cpu.txt"));
+            let pk_url = r.peacockdb.and_then(|_| links.golden_url(d.canon_rel, r.n, &format!("{CPU_DEVICE}.cpu.txt")));
             let dk_url = r.duckdb.and_then(|_| links.golden_url(d.canon_rel, r.n, "duckdb_cost.txt"));
             let _ = write!(
                 s,
@@ -391,7 +398,7 @@ fn render_markdown(datasets: &[Dataset], pages_url: &str, published: bool, links
             d.total
         );
         for r in &d.rows {
-            let pk_url = r.peacockdb.and_then(|_| links.golden_url(d.canon_rel, r.n, "cpu.txt"));
+            let pk_url = r.peacockdb.and_then(|_| links.golden_url(d.canon_rel, r.n, &format!("{CPU_DEVICE}.cpu.txt")));
             let dk_url = r.duckdb.and_then(|_| links.golden_url(d.canon_rel, r.n, "duckdb_cost.txt"));
             // Markdown can't set a row background, so flag the >threshold rows
             // with 🔴 — the comment-side equivalent of the HTML light-red row.
@@ -428,17 +435,18 @@ mod tests {
     #[test]
     fn operational_set_honors_comment_convention() {
         let src = "\
-gpu_result_test!(test_gpu_tpch_q1, \"q1\");
-gpu_result_test!(test_gpu_tpch_q11, \"q11\");
-// gpu_result_test!(test_gpu_tpch_q9, \"q9\");
-gpu_result_test_tpcds!(test_gpu_tpcds_q5, \"q5\");
-//gpu_result_test_tpcds!(test_gpu_tpcds_q28, \"q28\");
+gpu_result_test!(tpch, 1, q1, H200);
+gpu_result_test!(tpch, 1, q11, H200);
+gpu_result_test!(tpch, 1, scan_limit, H200);
+// gpu_result_test!(tpch, 1, q9, H200);
+gpu_result_test!(tpcds, 1, q5, H200);
+//gpu_result_test!(tpcds, 1, q28, H200);
 ";
-        let tpch = operational_set(src, "test_gpu_tpch_q");
-        let tpcds = operational_set(src, "test_gpu_tpcds_q");
+        let tpch = operational_set(src, "tpch");
+        let tpcds = operational_set(src, "tpcds");
         assert!(tpch.contains(&1) && tpch.contains(&11));
         assert!(!tpch.contains(&9)); // commented out
-        assert_eq!(tpch.len(), 2); // q1 must not bleed into q11
+        assert_eq!(tpch.len(), 2); // q1/q11 only; scan_limit (non-qN) not counted
         assert!(tpcds.contains(&5));
         assert!(!tpcds.contains(&28)); // commented (no space after //)
         assert_eq!(tpcds.len(), 1);
@@ -459,7 +467,7 @@ gpu_result_test_tpcds!(test_gpu_tpcds_q5, \"q5\");
     #[test]
     fn cost_cells_link_only_when_value_and_url_present() {
         let v = Some(43_308_088u64);
-        let url = Some("https://x/blob/abc/testdata/plans.sf1/q1.cpu.txt".to_string());
+        let url = Some("https://x/blob/abc/testdata/goldens/tpch.sf1/q1.tp1-mem2gib.cpu.txt".to_string());
         assert!(cost_cell_html(v, url.clone()).starts_with("<a href="));
         assert!(cost_cell_md(v, url).starts_with("[41.30 MB]("));
         // value but no sha/url → plain text, no link.

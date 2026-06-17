@@ -137,11 +137,15 @@ SQL
 TPCH_PROFILES="$TESTDATA/duckdb-profiles/tpch"
 TPCDS_PROFILES="$TESTDATA/duckdb-profiles/tpcds"
 
+# Goldens live under the unified layout: testdata/goldens/<dataset>.sf<N>/
+TPCH_GOLD="$TESTDATA/goldens/tpch.sf1"
+TPCDS_GOLD="$TESTDATA/goldens/tpcds.sf1"
+
 if [ "$EXTRACT_ONLY" = 1 ]; then
-  extract_dataset tpch  "$TPCH_PROFILES"  "$TESTDATA/plans.sf1"
-  extract_dataset tpcds "$TPCDS_PROFILES" "$TESTDATA/plans-tpcds.sf1"
+  extract_dataset tpch  "$TPCH_PROFILES"  "$TPCH_GOLD"
+  extract_dataset tpcds "$TPCDS_PROFILES" "$TPCDS_GOLD"
 else
-  gen_dataset tpch  "$TESTDATA/tpch.sf1"  "$TESTDATA/tpch-queries"  "$TESTDATA/plans.sf1"       "$TPCH_PROFILES"  1 22
-  gen_dataset tpcds "$TESTDATA/tpcds.sf1" "$TESTDATA/tpcds-queries" "$TESTDATA/plans-tpcds.sf1" "$TPCDS_PROFILES" 1 99
+  gen_dataset tpch  "$TESTDATA/tpch.sf1"  "$TESTDATA/tpch-queries"  "$TPCH_GOLD"  "$TPCH_PROFILES"  1 22
+  gen_dataset tpcds "$TESTDATA/tpcds.sf1" "$TESTDATA/tpcds-queries" "$TPCDS_GOLD" "$TPCDS_PROFILES" 1 99
 fi
 echo "done."
