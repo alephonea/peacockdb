@@ -1,2 +1,6 @@
-# Generated datasets — not checked in.
-tpch.sf*/
+# Generated parquet datasets — not checked in.
+# Anchored to this dir (leading /) so they ONLY match the data dirs at
+# testdata/<dataset>.sf<N>/ and NOT the committed goldens under
+# testdata/goldens/<dataset>.sf<N>/ (the unanchored form caught those too).
+/tpch.sf*/
+/tpcds.sf*/

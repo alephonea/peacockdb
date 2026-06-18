@@ -2764,6 +2764,7 @@ dependencies = [
  "flatbuffers 25.12.19",
  "flatc-fork",
  "futures",
+ "paste",
  "peacockdb-ffi",
  "tokio",
 ]
