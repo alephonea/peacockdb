@@ -6,8 +6,23 @@ PROJECTION: projections=[__internal_decompress_string(#0), #1, #2], output_bytes
           PROJECTION: projections=[l_shipmode, CASE  WHEN (((o_orderpriority = '1-URGENT') OR (o_orderpriority = '2-HIGH'))) THEN (1) ELSE 0 END, CASE  WHEN (((o_orderpriority != '1-URGENT') AND (o_orderpriority != '2-HIGH'))) THEN (1) ELSE 0 END], output_bytes=495808, output_rows=30988, materialized=0
             PROJECTION: projections=[#0, __internal_compress_string_ubigint(#1)], output_bytes=743712, output_rows=30988, materialized=0
               HASH_JOIN: join_type=INNER, conditions=[o_orderkey = l_orderkey], output_bytes=991616, output_rows=30988, materialized=1735328
-                TABLE_SCAN: table=orders, projections=[o_orderkey, o_orderpriority], output_bytes=35997432, output_rows=1499893, materialized=71997432, bytes_read_est=36000000, rows_read=1500000
+                TABLE_SCAN: table=orders, projections=[o_orderkey, o_orderpriority], output_bytes=36000000, output_rows=1500000, materialized=36000000, bytes_read=30787329, rows_read=1500000
                 PROJECTION: projections=[#0, #1], output_bytes=743712, output_rows=30988, materialized=0
                   FILTER: output_bytes=1115568, output_rows=30988, materialized=0
-                    TABLE_SCAN: table=lineitem, projections=[l_orderkey, l_shipmode, l_commitdate, l_receiptdate, l_shipdate], filters="l_receiptdate>='1994-01-01'::DATE AND l_receiptdate<'1995-01-01'::DATE AND l_commitdate<'1995-01-01'::DATE AND l_shipdate<'1995-01-01'::DATE AND optional: l_shipmode IN ('MAIL', 'SHIP')", output_bytes=31887828, output_rows=885773, materialized=247931568, bytes_read_est=216043740, rows_read=6001215
-duckdb_cost=322160216
+                    TABLE_SCAN: table=lineitem, projections=[l_orderkey, l_shipmode, l_commitdate, l_receiptdate, l_shipdate], filters="optional: l_shipmode IN ('MAIL', 'SHIP') AND l_receiptdate>='1994-01-01'::DATE AND (CAST(l_receiptdate AS TIMESTAMP) < '1995-01-01 00:00:00'::TIMESTAMP)", output_bytes=32754384, output_rows=909844, materialized=32754384, bytes_read=31420445, rows_read=1105920
+duckdb_cost=133193374
+materialization_total=70985600
+storage_read_total=62207774
+
+--- row-group pruning (storage reduction) ---
+orders  dyn_filter=[o_orderkey>=256 AND o_orderkey<=5999812]  row_groups=13/13  rows=1500000/1500000 (100.0%)  bytes_fetched=8249324/8249324 (100.0%)
+lineitem  filter=[optional: l_shipmode IN ('MAIL', 'SHIP') AND l_receiptdate>='1994-01-01'::DATE AND (CAST(l_receiptdate AS TIMESTAMP) < '1995-01-01 00:00:00'::TIMESTAMP)]  row_groups=9/49  rows=1105920/6001215 (18.4%)  bytes_fetched=7905576/42927422 (18.4%)
+pruning_bytes_fetched=16154900/51176746 (31.6%)
+
+--- cost breakdown ---
+TABLE_SCAN(orders)                     36000000  50.7%
+TABLE_SCAN(lineitem)                   32754384  46.1%
+HASH_JOIN                               1735328   2.4%
+HASH_GROUP_BY                            495808   0.7%
+ORDER_BY                                     80   0.0%
+total=70985600

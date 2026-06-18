@@ -1,0 +1,1 @@
+["t_time_sk>=31 AND t_time_sk<=86058","ws_sold_date_sk>=2451484 AND ws_sold_date_sk<=2451513 AND ws_item_sk>=114 AND ws_item_sk<=18000","","cs_sold_date_sk>=2451484 AND cs_sold_date_sk<=2451513 AND cs_item_sk>=114 AND cs_item_sk<=18000","","ss_sold_date_sk>=2451484 AND ss_sold_date_sk<=2451513 AND ss_item_sk>=114 AND ss_item_sk<=18000","",""]

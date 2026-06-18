@@ -6,9 +6,23 @@ ORDER_BY: order_by=[count_star() DESC, c_orders.c_count DESC], output_bytes=672,
           HASH_GROUP_BY: groups=[#0], aggregates=[count(#1)], output_bytes=1800000, output_rows=150000, materialized=18411624
             PROJECTION: projections=[c_custkey, o_orderkey], output_bytes=18411624, output_rows=1534302, materialized=0
               PROJECTION: projections=[#0, __internal_compress_integral_uinteger(#1, 1)], output_bytes=18411624, output_rows=1534302, materialized=0
-                HASH_JOIN: join_type=RIGHT, conditions=[o_custkey = c_custkey], output_bytes=24548832, output_rows=1534302, materialized=48297600
-                  PROJECTION: projections=[#0, #2], output_bytes=23748768, output_rows=1484298, materialized=0
-                    FILTER: output_bytes=47497536, output_rows=1484298, materialized=0
-                      TABLE_SCAN: table=orders, projections=[o_custkey, o_comment, o_orderkey], output_bytes=48000000, output_rows=1500000, materialized=96000000, bytes_read_est=48000000, rows_read=1500000
-                  TABLE_SCAN: table=customer, projections=[c_custkey], output_bytes=1200000, output_rows=150000, materialized=2400000, bytes_read_est=1200000, rows_read=150000
-duckdb_cost=166309896
+                HASH_JOIN: join_type=RIGHT, conditions=[o_custkey = c_custkey], output_bytes=24548832, output_rows=1534302, materialized=24548832
+                  TABLE_SCAN: table=orders, projections=[o_custkey, o_orderkey], filters="(o_comment !~~ '%special%requests%')", output_bytes=23748768, output_rows=1484298, materialized=23748768, bytes_read=24375000, rows_read=1500000
+                  TABLE_SCAN: table=customer, projections=[c_custkey], output_bytes=1200000, output_rows=150000, materialized=1200000, bytes_read=1218750, rows_read=150000
+duckdb_cost=94703646
+materialization_total=69109896
+storage_read_total=25593750
+
+--- row-group pruning (storage reduction) ---
+orders  filter=[(o_comment !~~ '%special%requests%')]  dyn_filter=[o_custkey>=1 AND o_custkey<=150000]  row_groups=13/13  rows=1500000/1500000 (100.0%)  bytes_fetched=14583325/14583325 (100.0%)
+customer  row_groups=2/2  rows=150000/150000 (100.0%)  bytes_fetched=601155/601155 (100.0%)
+pruning_bytes_fetched=15184480/15184480 (100.0%)
+
+--- cost breakdown ---
+HASH_JOIN                              24548832  35.5%
+TABLE_SCAN(orders)                     23748768  34.4%
+HASH_GROUP_BY                          18411624  26.6%
+HASH_GROUP_BY                           1200000   1.7%
+TABLE_SCAN(customer)                    1200000   1.7%
+ORDER_BY                                    672   0.0%
+total=69109896

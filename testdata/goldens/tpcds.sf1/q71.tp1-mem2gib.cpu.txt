@@ -1,38 +1,38 @@
-GpuProjectExec: expr=[brand_id@0 as brand_id, brand@1 as brand, t_hour@2 as t_hour, t_minute@3 as t_minute, ext_price@4 as ext_price], output_bytes=50567, output_rows=1031
-  GpuSortExec: expr=[ext_price@4 DESC, i_brand_id@5 ASC, t_hour@2 ASC], output_bytes=54820, output_rows=1031
-    GpuProjectExec: expr=[i_brand_id@1 as brand_id, i_brand@0 as brand, t_hour@2 as t_hour, t_minute@3 as t_minute, sum(tmp.ext_price)@4 as ext_price, i_brand_id@1 as i_brand_id], output_bytes=54820, output_rows=1031
-      GpuAggregateExec: group_by=[i_brand, i_brand_id, t_hour, t_minute], aggr=[sum(tmp.ext_price)], output_bytes=50567, output_rows=1031
-        GpuCoalesceBatchesExec: target_batch_size=5592405, output_bytes=52184, output_rows=1064
-          GpuHashJoinExec: join_type=Inner, on=[(time_sk@3, t_time_sk@0)], projection=[0, 1, 2, 5, 6], output_bytes=52184, output_rows=1064
-            GpuCoalescePartitionsExec, output_bytes=123320, output_rows=2746
-              GpuCoalesceBatchesExec: target_batch_size=5592405, output_bytes=123320, output_rows=2746
-                GpuHashJoinExec: join_type=Inner, on=[(i_item_sk@0, sold_item_sk@1)], projection=[1, 2, 3, 5], output_bytes=123332, output_rows=2746
-                  GpuCoalesceBatchesExec: target_batch_size=5592405, output_bytes=9224, output_rows=321
-                    GpuFilterExec: predicate=i_manager_id@3 = 1, projection=[0, 1, 2], output_bytes=9224, output_rows=321
-                      GpuScanExec: table=item, projections=[i_item_sk, i_brand_id, i_brand, i_manager_id], batch_size=5592405, output_bytes=587897, output_rows=18000
-                  GpuUnionExec, output_bytes=3804603, output_rows=156086
-                    GpuProjectExec: expr=[ws_ext_sales_price@2 as ext_price, ws_item_sk@1 as sold_item_sk, ws_sold_time_sk@0 as time_sk], output_bytes=563844, output_rows=23132
-                      GpuCoalesceBatchesExec: target_batch_size=5592405, output_bytes=563844, output_rows=23132
-                        GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ws_sold_date_sk@0)], projection=[2, 3, 4], output_bytes=563850, output_rows=23132
-                          GpuCoalesceBatchesExec: target_batch_size=5592405, output_bytes=124, output_rows=30
-                            GpuFilterExec: predicate=d_moy@2 = 11 AND d_year@1 = 1999, projection=[0], output_bytes=124, output_rows=30
-                              GpuScanExec: table=date_dim, projections=[d_date_sk, d_year, d_moy], batch_size=5592405, output_bytes=903984, output_rows=73049
-                          GpuScanExec: table=web_sales, projections=[ws_sold_date_sk, ws_sold_time_sk, ws_item_sk, ws_ext_sales_price], batch_size=5592405, output_bytes=20502444, output_rows=719384
-                    GpuProjectExec: expr=[cs_ext_sales_price@2 as ext_price, cs_item_sk@1 as sold_item_sk, cs_sold_time_sk@0 as time_sk], output_bytes=1136877, output_rows=46641
-                      GpuCoalesceBatchesExec: target_batch_size=5592405, output_bytes=1136877, output_rows=46641
-                        GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, cs_sold_date_sk@0)], projection=[2, 3, 4], output_bytes=1136877, output_rows=46641
-                          GpuCoalesceBatchesExec: target_batch_size=5592405, output_bytes=124, output_rows=30
-                            GpuFilterExec: predicate=d_moy@2 = 11 AND d_year@1 = 1999, projection=[0], output_bytes=124, output_rows=30
-                              GpuScanExec: table=date_dim, projections=[d_date_sk, d_year, d_moy], batch_size=5592405, output_bytes=903984, output_rows=73049
-                          GpuScanExec: table=catalog_sales, projections=[cs_sold_date_sk, cs_sold_time_sk, cs_item_sk, cs_ext_sales_price], batch_size=5592405, output_bytes=41084120, output_rows=1441548
-                    GpuProjectExec: expr=[ss_ext_sales_price@2 as ext_price, ss_item_sk@1 as sold_item_sk, ss_sold_time_sk@0 as time_sk], output_bytes=2103882, output_rows=86313
-                      GpuCoalesceBatchesExec: target_batch_size=5592405, output_bytes=2103882, output_rows=86313
-                        GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ss_sold_date_sk@0)], projection=[2, 3, 4], output_bytes=2103918, output_rows=86313
-                          GpuCoalesceBatchesExec: target_batch_size=5592405, output_bytes=124, output_rows=30
-                            GpuFilterExec: predicate=d_moy@2 = 11 AND d_year@1 = 1999, projection=[0], output_bytes=124, output_rows=30
-                              GpuScanExec: table=date_dim, projections=[d_date_sk, d_year, d_moy], batch_size=5592405, output_bytes=903984, output_rows=73049
-                          GpuScanExec: table=store_sales, projections=[ss_sold_date_sk, ss_sold_time_sk, ss_item_sk, ss_ext_sales_price], batch_size=5592405, output_bytes=82091516, output_rows=2880404
-            GpuCoalesceBatchesExec: target_batch_size=5592405, output_bytes=311850, output_rows=25200
-              GpuFilterExec: predicate=t_meal_time@3 = breakfast OR t_meal_time@3 = dinner, projection=[0, 1, 2], output_bytes=311850, output_rows=25200
-                GpuScanExec: table=time_dim, projections=[t_time_sk, t_hour, t_minute, t_meal_time], batch_size=5592405, output_bytes=1674004, output_rows=86400
-peacockdb_cost=165198393
+GpuProjectExec: expr=[brand_id@0 as brand_id, brand@1 as brand, t_hour@2 as t_hour, t_minute@3 as t_minute, ext_price@4 as ext_price], output_bytes=62939, output_rows=1031
+  GpuSortExec: expr=[ext_price@4 DESC, i_brand_id@5 ASC, t_hour@2 ASC], output_bytes=71316, output_rows=1031
+    GpuProjectExec: expr=[i_brand_id@1 as brand_id, i_brand@0 as brand, t_hour@2 as t_hour, t_minute@3 as t_minute, sum(tmp.ext_price)@4 as ext_price, i_brand_id@1 as i_brand_id], output_bytes=71316, output_rows=1031
+      GpuAggregateExec: group_by=[i_brand, i_brand_id, t_hour, t_minute], aggr=[sum(tmp.ext_price)], output_bytes=62939, output_rows=1031
+        GpuCoalesceBatchesExec: target_batch_size=4473924, output_bytes=64952, output_rows=1064
+          GpuHashJoinExec: join_type=Inner, on=[(time_sk@3, t_time_sk@0)], projection=[0, 1, 2, 5, 6], output_bytes=64952, output_rows=1064
+            GpuCoalescePartitionsExec, output_bytes=145288, output_rows=2746
+              GpuCoalesceBatchesExec: target_batch_size=4473924, output_bytes=145288, output_rows=2746
+                GpuHashJoinExec: join_type=Inner, on=[(i_item_sk@0, sold_item_sk@1)], projection=[1, 2, 3, 5], output_bytes=145300, output_rows=2746
+                  GpuCoalesceBatchesExec: target_batch_size=4473924, output_bytes=11792, output_rows=321
+                    GpuFilterExec: predicate=i_manager_id@3 = 1, projection=[0, 1, 2], output_bytes=11792, output_rows=321
+                      GpuScanExec: table=item, projections=[i_item_sk, i_brand_id, i_brand, i_manager_id], batch_size=4473924, output_bytes=803897, output_rows=18000
+                  GpuUnionExec, output_bytes=5053291, output_rows=156086
+                    GpuProjectExec: expr=[ws_ext_sales_price@2 as ext_price, ws_item_sk@1 as sold_item_sk, ws_sold_time_sk@0 as time_sk], output_bytes=748900, output_rows=23132
+                      GpuCoalesceBatchesExec: target_batch_size=4473924, output_bytes=748900, output_rows=23132
+                        GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ws_sold_date_sk@0)], projection=[2, 3, 4], output_bytes=748900, output_rows=23132
+                          GpuCoalesceBatchesExec: target_batch_size=4473924, output_bytes=244, output_rows=30
+                            GpuFilterExec: predicate=d_moy@2 = 11 AND d_year@1 = 1999, projection=[0], output_bytes=244, output_rows=30
+                              GpuScanExec: table=date_dim, projections=[d_date_sk, d_year, d_moy], batch_size=4473924, output_bytes=1780572, output_rows=73049
+                          GpuScanExec: table=web_sales, projections=[ws_sold_date_sk, ws_sold_time_sk, ws_item_sk, ws_ext_sales_price], batch_size=4473924, output_bytes=29135052, output_rows=719384
+                    GpuProjectExec: expr=[cs_ext_sales_price@2 as ext_price, cs_item_sk@1 as sold_item_sk, cs_sold_time_sk@0 as time_sk], output_bytes=1510005, output_rows=46641
+                      GpuCoalesceBatchesExec: target_batch_size=4473924, output_bytes=1510005, output_rows=46641
+                        GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, cs_sold_date_sk@0)], projection=[2, 3, 4], output_bytes=1510005, output_rows=46641
+                          GpuCoalesceBatchesExec: target_batch_size=4473924, output_bytes=244, output_rows=30
+                            GpuFilterExec: predicate=d_moy@2 = 11 AND d_year@1 = 1999, projection=[0], output_bytes=244, output_rows=30
+                              GpuScanExec: table=date_dim, projections=[d_date_sk, d_year, d_moy], batch_size=4473924, output_bytes=1780572, output_rows=73049
+                          GpuScanExec: table=catalog_sales, projections=[cs_sold_date_sk, cs_sold_time_sk, cs_item_sk, cs_ext_sales_price], batch_size=4473924, output_bytes=58382696, output_rows=1441548
+                    GpuProjectExec: expr=[ss_ext_sales_price@2 as ext_price, ss_item_sk@1 as sold_item_sk, ss_sold_time_sk@0 as time_sk], output_bytes=2794386, output_rows=86313
+                      GpuCoalesceBatchesExec: target_batch_size=4473924, output_bytes=2794386, output_rows=86313
+                        GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ss_sold_date_sk@0)], projection=[2, 3, 4], output_bytes=2794386, output_rows=86313
+                          GpuCoalesceBatchesExec: target_batch_size=4473924, output_bytes=244, output_rows=30
+                            GpuFilterExec: predicate=d_moy@2 = 11 AND d_year@1 = 1999, projection=[0], output_bytes=244, output_rows=30
+                              GpuScanExec: table=date_dim, projections=[d_date_sk, d_year, d_moy], batch_size=4473924, output_bytes=1780572, output_rows=73049
+                          GpuScanExec: table=store_sales, projections=[ss_sold_date_sk, ss_sold_time_sk, ss_item_sk, ss_ext_sales_price], batch_size=4473924, output_bytes=116656364, output_rows=2880404
+            GpuCoalesceBatchesExec: target_batch_size=4473924, output_bytes=614250, output_rows=25200
+              GpuFilterExec: predicate=t_meal_time@3 = breakfast OR t_meal_time@3 = dinner, projection=[0, 1, 2], output_bytes=614250, output_rows=25200
+                GpuScanExec: table=time_dim, projections=[t_time_sk, t_hour, t_minute, t_meal_time], batch_size=4473924, output_bytes=2710804, output_rows=86400
+peacockdb_cost=235331531

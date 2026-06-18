@@ -1,43 +1,81 @@
-ORDER_BY: order_by=[ss1.ca_county ASC], output_bytes=2288, output_rows=44, materialized=2288
-  PROJECTION: projections=[ca_county, d_year, web_q1_q2_increase, store_q1_q2_increase, web_q2_q3_increase, store_q2_q3_increase], output_bytes=2288, output_rows=44, materialized=0
-    CTE: output_bytes=0, output_rows=0, materialized=0
-      PROJECTION: projections=[#0, __internal_decompress_integral_integer(#1, 1), __internal_decompress_integral_integer(#2, 1900), #3], output_bytes=206080, output_rows=5152, materialized=0
-        HASH_GROUP_BY: groups=[#0, #1, #2], aggregates=[sum(#3)], output_bytes=175168, output_rows=5152, materialized=6685118
-          PROJECTION: projections=[ca_county, d_qoy, d_year, ss_ext_sales_price], output_bytes=6685118, output_rows=303869, materialized=0
-            PROJECTION: projections=[#0, __internal_compress_integral_utinyint(#1, 1), __internal_compress_integral_utinyint(#2, 1900), #3], output_bytes=6685118, output_rows=303869, materialized=0
-              HASH_JOIN: join_type=INNER, conditions=[ss_addr_sk = ca_address_sk], output_bytes=8508332, output_rows=303869, materialized=8508332
-                HASH_JOIN: join_type=INNER, conditions=[ss_sold_date_sk = d_date_sk], output_bytes=4861904, output_rows=303869, materialized=4865192
-                  TABLE_SCAN: table=store_sales, projections=[ss_sold_date_sk, ss_addr_sk, ss_ext_sales_price], output_bytes=3646428, output_rows=303869, materialized=38211276, bytes_read_est=34564848, rows_read=2880404
-                  FILTER: output_bytes=3288, output_rows=274, materialized=0
-                    TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_qoy, d_year], filters="d_date_sk>=2450816 AND d_date_sk<=2452642", output_bytes=21924, output_rows=1827, materialized=898512, bytes_read_est=876588, rows_read=73049
-                TABLE_SCAN: table=customer_address, projections=[ca_address_sk, ca_county], output_bytes=1000000, output_rows=50000, materialized=2000000, bytes_read_est=1000000, rows_read=50000
-      CTE: output_bytes=0, output_rows=0, materialized=0
-        PROJECTION: projections=[#0, __internal_decompress_integral_integer(#1, 1), __internal_decompress_integral_integer(#2, 1900), #3], output_bytes=125520, output_rows=3138, materialized=0
-          HASH_GROUP_BY: groups=[#0, #1, #2], aggregates=[sum(#3)], output_bytes=106692, output_rows=3138, materialized=1761716
-            PROJECTION: projections=[ca_county, d_qoy, d_year, ws_ext_sales_price], output_bytes=1761716, output_rows=80078, materialized=0
-              PROJECTION: projections=[#0, __internal_compress_integral_utinyint(#1, 1), __internal_compress_integral_utinyint(#2, 1900), #3], output_bytes=1761716, output_rows=80078, materialized=0
-                HASH_JOIN: join_type=INNER, conditions=[ws_bill_addr_sk = ca_address_sk], output_bytes=2242184, output_rows=80078, materialized=2242184
-                  HASH_JOIN: join_type=INNER, conditions=[ws_sold_date_sk = d_date_sk], output_bytes=1281248, output_rows=80078, materialized=1284536
-                    TABLE_SCAN: table=web_sales, projections=[ws_sold_date_sk, ws_bill_addr_sk, ws_ext_sales_price], output_bytes=960936, output_rows=80078, materialized=9593544, bytes_read_est=8632608, rows_read=719384
-                    FILTER: output_bytes=3288, output_rows=274, materialized=0
-                      TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_qoy, d_year], filters="d_date_sk>=2450816 AND d_date_sk<=2452642", output_bytes=21924, output_rows=1827, materialized=898512, bytes_read_est=876588, rows_read=73049
-                  TABLE_SCAN: table=customer_address, projections=[ca_address_sk, ca_county], output_bytes=1000000, output_rows=50000, materialized=2000000, bytes_read_est=1000000, rows_read=50000
-        FILTER: output_bytes=10560, output_rows=44, materialized=0
-          HASH_JOIN: join_type=INNER, conditions=[ca_county = ca_county, ca_county = ca_county, ca_county = ca_county, ca_county = ca_county, ca_county = ca_county, ca_county = ca_county, ca_county = ca_county, ca_county = ca_county, ca_county = ca_county], output_bytes=84960, output_rows=354, materialized=84960
-            HASH_JOIN: join_type=INNER, conditions=[ca_county = ca_county, ca_county = ca_county], output_bytes=96240, output_rows=802, materialized=163680
-              HASH_JOIN: join_type=INNER, conditions=[ca_county = ca_county], output_bytes=68480, output_rows=856, materialized=172440
-                FILTER: output_bytes=66280, output_rows=1657, materialized=0
-                  CTE_SCAN: output_bytes=206080, output_rows=5152, materialized=0
-                FILTER: output_bytes=37680, output_rows=942, materialized=0
-                  CTE_SCAN: output_bytes=125520, output_rows=3138, materialized=0
-              FILTER: output_bytes=67440, output_rows=1686, materialized=0
-                CTE_SCAN: output_bytes=206080, output_rows=5152, materialized=0
-            HASH_JOIN: join_type=INNER, conditions=[ca_county = ca_county, ca_county = ca_county], output_bytes=80160, output_rows=668, materialized=152520
-              HASH_JOIN: join_type=INNER, conditions=[ca_county = ca_county], output_bytes=54000, output_rows=675, materialized=141840
-                FILTER: output_bytes=37400, output_rows=935, materialized=0
-                  CTE_SCAN: output_bytes=125520, output_rows=3138, materialized=0
-                FILTER: output_bytes=50440, output_rows=1261, materialized=0
-                  CTE_SCAN: output_bytes=125520, output_rows=3138, materialized=0
-              FILTER: output_bytes=72360, output_rows=1809, materialized=0
-                CTE_SCAN: output_bytes=206080, output_rows=5152, materialized=0
-duckdb_cost=79666650
+CTE: output_bytes=0, output_rows=0, materialized=0
+  PROJECTION: projections=[#0, __internal_decompress_integral_bigint(#1, 1), __internal_decompress_integral_bigint(#2, 2000), #3], output_bytes=247296, output_rows=5152, materialized=0
+    HASH_GROUP_BY: groups=[#0, #1, #2], aggregates=[sum(#3)], output_bytes=175168, output_rows=5152, materialized=6685118
+      PROJECTION: projections=[ca_county, d_qoy, d_year, ss_ext_sales_price], output_bytes=6685118, output_rows=303869, materialized=0
+        PROJECTION: projections=[#0, #1, __internal_compress_integral_utinyint(#2, 1), __internal_compress_integral_utinyint(#3, 2000)], output_bytes=6685118, output_rows=303869, materialized=0
+          HASH_JOIN: join_type=INNER, conditions=[ca_address_sk = ss_addr_sk], output_bytes=10939284, output_rows=303869, materialized=10939284
+            TABLE_SCAN: table=customer_address, projections=[ca_address_sk, ca_county], output_bytes=1200000, output_rows=50000, materialized=1200000, bytes_read=1290069, rows_read=50000
+            HASH_JOIN: join_type=INNER, conditions=[ss_sold_date_sk = d_date_sk], output_bytes=8710212, output_rows=311079, materialized=8716788
+              TABLE_SCAN: table=store_sales, projections=[ss_sold_date_sk, ss_addr_sk, ss_ext_sales_price], output_bytes=10913680, output_rows=545684, materialized=10913680, bytes_read=17666521, rows_read=545684
+              FILTER: output_bytes=6576, output_rows=274, materialized=0
+                TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_qoy, d_year], filters="(((d_qoy = 1) OR (d_qoy = 2)) OR (d_qoy = 3)) AND (((d_qoy = 1) OR (d_qoy = 2)) OR (d_qoy = 3)) AND d_year=2000", output_bytes=6576, output_rows=274, materialized=6576, bytes_read=1780572, rows_read=73049
+  CTE: output_bytes=0, output_rows=0, materialized=0
+    PROJECTION: projections=[#0, __internal_decompress_integral_bigint(#1, 1), __internal_decompress_integral_bigint(#2, 2000), #3], output_bytes=150624, output_rows=3138, materialized=0
+      HASH_GROUP_BY: groups=[#0, #1, #2], aggregates=[sum(#3)], output_bytes=106692, output_rows=3138, materialized=1761716
+        PROJECTION: projections=[ca_county, d_qoy, d_year, ws_ext_sales_price], output_bytes=1761716, output_rows=80078, materialized=0
+          PROJECTION: projections=[#0, #1, __internal_compress_integral_utinyint(#2, 1), __internal_compress_integral_utinyint(#3, 2000)], output_bytes=1761716, output_rows=80078, materialized=0
+            HASH_JOIN: join_type=INNER, conditions=[ca_address_sk = ws_bill_addr_sk], output_bytes=2882808, output_rows=80078, materialized=2882808
+              TABLE_SCAN: table=customer_address, projections=[ca_address_sk, ca_county], output_bytes=1200000, output_rows=50000, materialized=1200000, bytes_read=1290069, rows_read=50000
+              HASH_JOIN: join_type=INNER, conditions=[ws_sold_date_sk = d_date_sk], output_bytes=2242324, output_rows=80083, materialized=2248900
+                TABLE_SCAN: table=web_sales, projections=[ws_sold_date_sk, ws_bill_addr_sk, ws_ext_sales_price], output_bytes=2457600, output_rows=122880, materialized=2457600, bytes_read=3978240, rows_read=122880
+                FILTER: output_bytes=6576, output_rows=274, materialized=0
+                  TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_qoy, d_year], filters="(((d_qoy = 1) OR (d_qoy = 2)) OR (d_qoy = 3)) AND (((d_qoy = 1) OR (d_qoy = 2)) OR (d_qoy = 3)) AND d_year=2000", output_bytes=6576, output_rows=274, materialized=6576, bytes_read=1780572, rows_read=73049
+    ORDER_BY: order_by=[ss1.ca_county ASC], output_bytes=2464, output_rows=44, materialized=2464
+      PROJECTION: projections=[ca_county, d_year, web_q1_q2_increase, store_q1_q2_increase, web_q2_q3_increase, store_q2_q3_increase], output_bytes=2464, output_rows=44, materialized=0
+        FILTER: output_bytes=5280, output_rows=44, materialized=0
+          HASH_JOIN: join_type=INNER, conditions=[ca_county = ca_county], output_bytes=42480, output_rows=354, materialized=42480
+            HASH_JOIN: join_type=INNER, conditions=[ca_county = ca_county], output_bytes=57744, output_rows=802, materialized=125184
+              HASH_JOIN: join_type=INNER, conditions=[ca_county = ca_county], output_bytes=41088, output_rows=856, materialized=124256
+                PROJECTION: projections=[#0, #3], output_bytes=53024, output_rows=1657, materialized=0
+                  FILTER: output_bytes=79536, output_rows=1657, materialized=0
+                    CTE_SCAN: output_bytes=247296, output_rows=5152, materialized=0
+                PROJECTION: projections=[#0, #3], output_bytes=30144, output_rows=942, materialized=0
+                  FILTER: output_bytes=45216, output_rows=942, materialized=0
+                    CTE_SCAN: output_bytes=150624, output_rows=3138, materialized=0
+              PROJECTION: projections=[#0, #2, #3], output_bytes=67440, output_rows=1686, materialized=0
+                FILTER: output_bytes=80928, output_rows=1686, materialized=0
+                  CTE_SCAN: output_bytes=247296, output_rows=5152, materialized=0
+            HASH_JOIN: join_type=INNER, conditions=[ca_county = ca_county], output_bytes=42752, output_rows=668, materialized=100640
+              HASH_JOIN: join_type=INNER, conditions=[ca_county = ca_county], output_bytes=32400, output_rows=675, materialized=102672
+                PROJECTION: projections=[#0, #3], output_bytes=29920, output_rows=935, materialized=0
+                  FILTER: output_bytes=44880, output_rows=935, materialized=0
+                    CTE_SCAN: output_bytes=150624, output_rows=3138, materialized=0
+                PROJECTION: projections=[#0, #3], output_bytes=40352, output_rows=1261, materialized=0
+                  FILTER: output_bytes=60528, output_rows=1261, materialized=0
+                    CTE_SCAN: output_bytes=150624, output_rows=3138, materialized=0
+              PROJECTION: projections=[#0, #3], output_bytes=57888, output_rows=1809, materialized=0
+                FILTER: output_bytes=86832, output_rows=1809, materialized=0
+                  CTE_SCAN: output_bytes=247296, output_rows=5152, materialized=0
+duckdb_cost=77302785
+materialization_total=49516742
+storage_read_total=27786043
+
+--- row-group pruning (storage reduction) ---
+customer_address  dyn_filter=[ca_address_sk>=1 AND ca_address_sk<=50000]  row_groups=1/1  rows=50000/50000 (100.0%)  bytes_fetched=288620/288620 (100.0%)
+store_sales  dyn_filter=[ss_sold_date_sk>=2451545 AND ss_sold_date_sk<=2451818]  row_groups=5/24  rows=545684/2880404 (18.9%)  bytes_fetched=3221236/17286812 (18.6%)
+date_dim  filter=[(((d_qoy = 1) OR (d_qoy = 2)) OR (d_qoy = 3)) AND (((d_qoy = 1) OR (d_qoy = 2)) OR (d_qoy = 3)) AND d_year=2000]  row_groups=1/1  rows=73049/73049 (100.0%)  bytes_fetched=294080/294080 (100.0%)
+customer_address  dyn_filter=[ca_address_sk>=6 AND ca_address_sk<=49989]  row_groups=1/1  rows=50000/50000 (100.0%)  bytes_fetched=288620/288620 (100.0%)
+web_sales  dyn_filter=[ws_sold_date_sk>=2451545 AND ws_sold_date_sk<=2451818]  row_groups=1/6  rows=122880/719384 (17.1%)  bytes_fetched=749781/4376077 (17.1%)
+date_dim  filter=[(((d_qoy = 1) OR (d_qoy = 2)) OR (d_qoy = 3)) AND (((d_qoy = 1) OR (d_qoy = 2)) OR (d_qoy = 3)) AND d_year=2000]  row_groups=1/1  rows=73049/73049 (100.0%)  bytes_fetched=294080/294080 (100.0%)
+pruning_bytes_fetched=5136417/22828289 (22.5%)
+
+--- cost breakdown ---
+HASH_JOIN                              10939284  22.1%
+TABLE_SCAN(store_sales)                10913680  22.0%
+HASH_JOIN                               8716788  17.6%
+HASH_GROUP_BY                           6685118  13.5%
+HASH_JOIN                               2882808   5.8%
+TABLE_SCAN(web_sales)                   2457600   5.0%
+HASH_JOIN                               2248900   4.5%
+HASH_GROUP_BY                           1761716   3.6%
+TABLE_SCAN(customer_address)            1200000   2.4%
+TABLE_SCAN(customer_address)            1200000   2.4%
+HASH_JOIN                                125184   0.3%
+HASH_JOIN                                124256   0.3%
+HASH_JOIN                                102672   0.2%
+HASH_JOIN                                100640   0.2%
+HASH_JOIN                                 42480   0.1%
+TABLE_SCAN(date_dim)                       6576   0.0%
+TABLE_SCAN(date_dim)                       6576   0.0%
+ORDER_BY                                   2464   0.0%
+total=49516742

@@ -1,0 +1,1 @@
+["cs_bill_customer_sk>=1 AND cs_bill_customer_sk<=100000 AND cs_sold_date_sk>=2452002 AND cs_sold_date_sk<=2452092","c_current_addr_sk>=1 AND c_current_addr_sk<=50000","",""]

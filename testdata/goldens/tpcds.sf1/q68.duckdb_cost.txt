@@ -1,27 +1,57 @@
-TOP_N: order_by=[tpcds.main.customer.c_last_name ASC, dn.ss_ticket_number ASC], top=100, output_bytes=11600, output_rows=100, materialized=247892
-  PROJECTION: projections=[c_last_name, c_first_name, ca_city, bought_city, ss_ticket_number, extended_price, extended_tax, list_price], output_bytes=247892, output_rows=2137, materialized=0
-    HASH_JOIN: join_type=INNER, conditions=[ca_address_sk = c_current_addr_sk, ca_city != bought_city], output_bytes=247892, output_rows=2137, materialized=247892
-      TABLE_SCAN: table=customer_address, projections=[ca_address_sk, ca_city], output_bytes=998140, output_rows=49907, materialized=1998140, bytes_read_est=1000000, rows_read=50000
-      HASH_JOIN: join_type=INNER, conditions=[c_customer_sk = ss_customer_sk], output_bytes=237744, output_rows=2286, materialized=406800
-        TABLE_SCAN: table=customer, projections=[c_customer_sk, c_current_addr_sk, c_last_name, c_first_name], output_bytes=3995560, output_rows=99889, materialized=7995560, bytes_read_est=4000000, rows_read=100000
-        PROJECTION: projections=[ss_ticket_number, ss_customer_sk, bought_city, extended_price, list_price, extended_tax], output_bytes=169056, output_rows=2348, materialized=0
-          PROJECTION: projections=[#0, #1, __internal_decompress_integral_integer(#2, 1), #3, #4, #5, #6], output_bytes=178448, output_rows=2348, materialized=0
+TOP_N: order_by=[tpcds.main.customer.c_last_name ASC, dn.ss_ticket_number ASC], top=100, output_bytes=12000, output_rows=100, materialized=256440
+  PROJECTION: projections=[c_last_name, c_first_name, ca_city, bought_city, ss_ticket_number, extended_price, extended_tax, list_price], output_bytes=256440, output_rows=2137, materialized=0
+    HASH_JOIN: join_type=INNER, conditions=[c_current_addr_sk = ca_address_sk, bought_city != ca_city], output_bytes=256440, output_rows=2137, materialized=256440
+      HASH_JOIN: join_type=INNER, conditions=[c_customer_sk = ss_customer_sk], output_bytes=256032, output_rows=2286, materialized=443872
+        TABLE_SCAN: table=customer, projections=[c_customer_sk, c_current_addr_sk, c_last_name, c_first_name], filters="optional: c_last_name IS NULL OR Dynamic Filter (c_last_name)", output_bytes=4800000, output_rows=100000, materialized=4800000, bytes_read=3604617, rows_read=100000
+        PROJECTION: projections=[ss_ticket_number, ss_customer_sk, bought_city, extended_price, list_price, extended_tax], output_bytes=187840, output_rows=2348, materialized=0
+          PROJECTION: projections=[__internal_decompress_integral_bigint(#0, 1), __internal_decompress_integral_bigint(#1, 1), __internal_decompress_integral_bigint(#2, 1), #3, #4, #5, #6], output_bytes=206624, output_rows=2348, materialized=0
             HASH_GROUP_BY: groups=[#0, #1, #2, #3], aggregates=[sum(#4), sum(#5), sum(#6)], output_bytes=173752, output_rows=2348, materialized=957144
               PROJECTION: projections=[ss_ticket_number, ss_customer_sk, ss_addr_sk, ca_city, ss_ext_sales_price, ss_ext_list_price, ss_ext_tax], output_bytes=957144, output_rows=25188, materialized=0
-                PROJECTION: projections=[#0, __internal_compress_integral_usmallint(#1, 1), #2, #3, #4, #5, #6], output_bytes=957144, output_rows=25188, materialized=0
-                  HASH_JOIN: join_type=INNER, conditions=[ca_address_sk = ss_addr_sk], output_bytes=1007520, output_rows=25188, materialized=1007520
-                    TABLE_SCAN: table=customer_address, projections=[ca_address_sk, ca_city], output_bytes=999700, output_rows=49985, materialized=1999700, bytes_read_est=1000000, rows_read=50000
-                    HASH_JOIN: join_type=INNER, conditions=[ss_hdemo_sk = hd_demo_sk], output_bytes=709296, output_rows=25332, materialized=716496
-                      HASH_JOIN: join_type=INNER, conditions=[ss_sold_date_sk = d_date_sk], output_bytes=2852480, output_rows=89140, materialized=2852768
-                        HASH_JOIN: join_type=INNER, conditions=[ss_store_sk = s_store_sk], output_bytes=45882756, output_rows=1274521, materialized=45882796
-                          TABLE_SCAN: table=store_sales, projections=[ss_sold_date_sk, ss_store_sk, ss_hdemo_sk, ss_addr_sk, ss_ticket_number, ss_customer_sk, ss_ext_sales_price, ss_ext_list_price, ss_ext_tax], output_bytes=45882756, output_rows=1274521, materialized=149577300, bytes_read_est=103694544, rows_read=2880404
-                          FILTER: output_bytes=40, output_rows=10, materialized=0
-                            PROJECTION: projections=[#0], output_bytes=48, output_rows=12, materialized=0
-                              FILTER: output_bytes=240, output_rows=12, materialized=0
-                                TABLE_SCAN: table=store, projections=[s_store_sk, s_city], filters="optional: s_city IN ('Fairview', 'Midway')", output_bytes=240, output_rows=12, materialized=480, bytes_read_est=240, rows_read=12
-                        FILTER: output_bytes=288, output_rows=72, materialized=0
-                          TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_dom>=1 AND d_dom<=2 AND d_year>=1999 AND d_year<=2001", output_bytes=288, output_rows=72, materialized=292484, bytes_read_est=292196, rows_read=73049
-                      PROJECTION: projections=[#0], output_bytes=7200, output_rows=1800, materialized=0
-                        FILTER: output_bytes=21600, output_rows=1800, materialized=0
-                          TABLE_SCAN: table=household_demographics, projections=[hd_demo_sk, hd_dep_count, hd_vehicle_count], output_bytes=86400, output_rows=7200, materialized=172800, bytes_read_est=86400, rows_read=7200
-duckdb_cost=214355772
+                PROJECTION: projections=[#0, __internal_compress_integral_usmallint(#1, 1), __internal_compress_integral_uinteger(#2, 1), __internal_compress_integral_uinteger(#3, 1), #4, #5, #6], output_bytes=957144, output_rows=25188, materialized=0
+                  HASH_JOIN: join_type=INNER, conditions=[ca_address_sk = ss_addr_sk], output_bytes=1309776, output_rows=25188, materialized=1309776
+                    TABLE_SCAN: table=customer_address, projections=[ca_address_sk, ca_city], output_bytes=1200000, output_rows=50000, materialized=1200000, bytes_read=1046065, rows_read=50000
+                    HASH_JOIN: join_type=INNER, conditions=[ss_hdemo_sk = hd_demo_sk], output_bytes=1114608, output_rows=25332, materialized=1129008
+                      HASH_JOIN: join_type=INNER, conditions=[ss_sold_date_sk = d_date_sk], output_bytes=5514080, output_rows=106040, materialized=5514656
+                        HASH_JOIN: join_type=INNER, conditions=[ss_store_sk = s_store_sk], output_bytes=165056580, output_rows=2750943, materialized=165056660
+                          TABLE_SCAN: table=store_sales, projections=[ss_sold_date_sk, ss_store_sk, ss_hdemo_sk, ss_addr_sk, ss_ticket_number, ss_customer_sk, ss_ext_sales_price, ss_ext_list_price, ss_ext_tax], output_bytes=106469040, output_rows=1774484, materialized=106469040, bytes_read=172346763, rows_read=1774484
+                          FILTER: output_bytes=80, output_rows=10, materialized=0
+                            PROJECTION: projections=[#0], output_bytes=96, output_rows=12, materialized=0
+                              FILTER: output_bytes=288, output_rows=12, materialized=0
+                                TABLE_SCAN: table=store, projections=[s_store_sk, s_city], filters="optional: s_city IN ('Fairview', 'Midway')", output_bytes=288, output_rows=12, materialized=288, bytes_read=224, rows_read=12
+                        FILTER: output_bytes=576, output_rows=72, materialized=0
+                          TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_dom>=1 AND d_dom<=2 AND d_year>=1999 AND d_year<=2001", output_bytes=576, output_rows=72, materialized=576, bytes_read=1780572, rows_read=73049
+                      PROJECTION: projections=[#0], output_bytes=14400, output_rows=1800, materialized=0
+                        FILTER: output_bytes=36000, output_rows=1800, materialized=0
+                          TABLE_SCAN: table=household_demographics, projections=[hd_demo_sk, hd_dep_count, hd_vehicle_count], output_bytes=144000, output_rows=7200, materialized=144000, bytes_read=146700, rows_read=7200
+      TABLE_SCAN: table=customer_address, projections=[ca_address_sk, ca_city], output_bytes=1200000, output_rows=50000, materialized=1200000, bytes_read=1046065, rows_read=50000
+duckdb_cost=468708906
+materialization_total=288737900
+storage_read_total=179971006
+
+--- row-group pruning (storage reduction) ---
+customer  filter=[optional: c_last_name IS NULL OR Dynamic Filter (c_last_name)]  dyn_filter=[c_customer_sk>=90 AND c_customer_sk<=99978 AND c_current_addr_sk>=1 AND c_current_addr_sk<=50000]  row_groups=1/1  rows=100000/100000 (100.0%)  bytes_fetched=1212312/1212312 (100.0%)
+customer_address  dyn_filter=[ca_address_sk>=7 AND ca_address_sk<=49991]  row_groups=1/1  rows=50000/50000 (100.0%)  bytes_fetched=270675/270675 (100.0%)
+store_sales  dyn_filter=[ss_sold_date_sk>=2451180 AND ss_sold_date_sk<=2452246 AND ss_store_sk>=1 AND ss_store_sk<=10 AND ss_hdemo_sk>=480 AND ss_hdemo_sk<=6599]  row_groups=15/24  rows=1774484/2880404 (61.6%)  bytes_fetched=35189958/57022673 (61.7%)
+store  filter=[optional: s_city IN ('Fairview', 'Midway')]  row_groups=1/1  rows=12/12 (100.0%)  bytes_fetched=181/181 (100.0%)
+date_dim  filter=[d_dom>=1 AND d_dom<=2 AND d_year>=1999 AND d_year<=2001]  row_groups=1/1  rows=73049/73049 (100.0%)  bytes_fetched=298540/298540 (100.0%)
+household_demographics  row_groups=1/1  rows=7200/7200 (100.0%)  bytes_fetched=29834/29834 (100.0%)
+customer_address  row_groups=1/1  rows=50000/50000 (100.0%)  bytes_fetched=270675/270675 (100.0%)
+pruning_bytes_fetched=37272175/59104890 (63.1%)
+
+--- cost breakdown ---
+HASH_JOIN                             165056660  57.2%
+TABLE_SCAN(store_sales)               106469040  36.9%
+HASH_JOIN                               5514656   1.9%
+TABLE_SCAN(customer)                    4800000   1.7%
+HASH_JOIN                               1309776   0.5%
+TABLE_SCAN(customer_address)            1200000   0.4%
+TABLE_SCAN(customer_address)            1200000   0.4%
+HASH_JOIN                               1129008   0.4%
+HASH_GROUP_BY                            957144   0.3%
+HASH_JOIN                                443872   0.2%
+TOP_N                                    256440   0.1%
+HASH_JOIN                                256440   0.1%
+TABLE_SCAN(household_demographics)         144000   0.0%
+TABLE_SCAN(date_dim)                        576   0.0%
+TABLE_SCAN(store)                           288   0.0%
+total=288737900

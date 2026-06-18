@@ -1,0 +1,1 @@
+["sr_returned_date_sk>=2451545 AND sr_returned_date_sk<=2451910","","c_customer_sk>=6 AND c_customer_sk<=100000",""]

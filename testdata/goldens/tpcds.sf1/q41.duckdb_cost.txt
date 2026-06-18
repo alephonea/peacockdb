@@ -4,7 +4,7 @@ TOP_N: order_by=[i1.i_product_name ASC], top=100, output_bytes=64, output_rows=4
       PROJECTION: projections=[#0], output_bytes=64, output_rows=4, materialized=0
         FILTER: output_bytes=96, output_rows=4, materialized=0
           LEFT_DELIM_JOIN: join_type=SINGLE, conditions=[i_manufact IS NOT DISTINCT FROM i_manufact], output_bytes=0, output_rows=0, materialized=2144
-            TABLE_SCAN: table=item, projections=[i_manufact, i_product_name], filters="i_manufact_id>=738 AND i_manufact_id<=778", output_bytes=7648, output_rows=239, materialized=583648, bytes_read_est=576000, rows_read=18000
+            TABLE_SCAN: table=item, projections=[i_manufact, i_product_name], filters="i_manufact_id>=738 AND i_manufact_id<=778", output_bytes=7648, output_rows=239, materialized=7648, bytes_read=822486, rows_read=18000
             HASH_JOIN: join_type=SINGLE, conditions=[i_manufact IS NOT DISTINCT FROM i_manufact], output_bytes=5736, output_rows=239, materialized=7344
               COLUMN_DATA_SCAN: output_bytes=7648, output_rows=239, materialized=0
               PROJECTION: projections=[CASE  WHEN ((item_cnt IS NULL)) THEN (0) ELSE item_cnt END, i_manufact], output_bytes=1608, output_rows=67, materialized=0
@@ -12,12 +12,31 @@ TOP_N: order_by=[i1.i_product_name ASC], top=100, output_bytes=64, output_rows=4
                   PROJECTION: projections=[__internal_decompress_string(#0), #1], output_bytes=48, output_rows=2, materialized=0
                     HASH_GROUP_BY: groups=[#0], aggregates=[count_star()], output_bytes=48, output_rows=2, materialized=32
                       PROJECTION: projections=[i_manufact], output_bytes=32, output_rows=2, materialized=0
-                        PROJECTION: projections=[__internal_compress_string_hugeint(#0), #1], output_bytes=64, output_rows=2, materialized=0
+                        PROJECTION: projections=[__internal_compress_string_uhugeint(#0), #1], output_bytes=64, output_rows=2, materialized=0
                           HASH_JOIN: join_type=INNER, conditions=[i_manufact = i_manufact], output_bytes=64, output_rows=2, materialized=192
                             PROJECTION: projections=[#0], output_bytes=128, output_rows=8, materialized=0
                               FILTER: output_bytes=640, output_rows=8, materialized=0
-                                TABLE_SCAN: table=item, projections=[i_manufact, i_category, i_color, i_units, i_size], output_bytes=1412320, output_rows=17654, materialized=2852320, bytes_read_est=1440000, rows_read=18000
+                                TABLE_SCAN: table=item, projections=[i_manufact, i_category, i_color, i_units, i_size], output_bytes=1440000, output_rows=18000, materialized=1440000, bytes_read=930748, rows_read=18000
                             DELIM_SCAN: output_bytes=0, output_rows=0, materialized=0
                   DELIM_SCAN: output_bytes=0, output_rows=0, materialized=0
             HASH_GROUP_BY: groups=[#0], output_bytes=2144, output_rows=134, materialized=0
-duckdb_cost=3447464
+duckdb_cost=3212378
+materialization_total=1459144
+storage_read_total=1753234
+
+--- row-group pruning (storage reduction) ---
+item  filter=[i_manufact_id>=738 AND i_manufact_id<=778]  row_groups=1/1  rows=18000/18000 (100.0%)  bytes_fetched=180157/180157 (100.0%)
+item  dyn_filter=[i_manufact>='ableantiation' AND i_manufact<='pripripri']  row_groups=1/1  rows=18000/18000 (100.0%)  bytes_fetched=75045/75045 (100.0%)
+pruning_bytes_fetched=255202/255202 (100.0%)
+
+--- cost breakdown ---
+TABLE_SCAN(item)                        1440000  98.7%
+TABLE_SCAN(item)                           7648   0.5%
+HASH_JOIN                                  7344   0.5%
+LEFT_DELIM_JOIN                            2144   0.1%
+HASH_JOIN                                  1656   0.1%
+HASH_JOIN                                   192   0.0%
+TOP_N                                        64   0.0%
+HASH_GROUP_BY                                64   0.0%
+HASH_GROUP_BY                                32   0.0%
+total=1459144

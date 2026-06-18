@@ -8,7 +8,7 @@ GpuSortExec: expr=[s_name@0 ASC NULLS LAST], output_bytes=9553, output_rows=186
               GpuScanExec: table=nation, projections=[n_nationkey, n_name], batch_size=14128181, output_bytes=389, output_rows=25
           GpuScanExec: table=supplier, projections=[s_suppkey, s_name, s_address, s_nationkey], batch_size=14128181, output_bytes=634779, output_rows=10000
       GpuCoalesceBatchesExec: target_batch_size=14128181, output_bytes=47394, output_rows=5833
-        GpuHashJoinExec: join_type=Inner, on=[(ps_partkey@0, l_partkey@1), (ps_suppkey@1, l_suppkey@2)], filter=CAST(ps_availqty@0 AS Float64) > Float64(0.5) * sum(lineitem.l_quantity)@1, projection=[1], output_bytes=47427, output_rows=5833
+        GpuHashJoinExec: join_type=Inner, on=[(ps_partkey@0, l_partkey@1), (ps_suppkey@1, l_suppkey@2)], filter=CAST(ps_availqty@0 AS Float64) > Float64(0.5) * sum(lineitem.l_quantity)@1, projection=[1], output_bytes=47424, output_rows=5833
           GpuCoalesceBatchesExec: target_batch_size=14128181, output_bytes=207384, output_rows=8508
             GpuHashJoinExec: join_type=RightSemi, on=[(p_partkey@0, ps_partkey@0)], output_bytes=207387, output_rows=8508
               GpuCoalesceBatchesExec: target_batch_size=14128181, output_bytes=17282, output_rows=2127
@@ -18,6 +18,6 @@ GpuSortExec: expr=[s_name@0 ASC NULLS LAST], output_bytes=9553, output_rows=186
           GpuProjectExec: expr=[0.5 * CAST(sum(lineitem.l_quantity)@2 AS Float64) as Float64(0.5) * sum(lineitem.l_quantity), l_partkey@0 as l_partkey, l_suppkey@1 as l_suppkey], output_bytes=13240746, output_rows=543210
             GpuAggregateExec: group_by=[l_partkey, l_suppkey], aggr=[sum(lineitem.l_quantity)], output_bytes=17586426, output_rows=543210
               GpuCoalesceBatchesExec: target_batch_size=14128181, output_bytes=29443606, output_rows=909455
-                GpuFilterExec: predicate=l_shipdate@3 >= 1994-01-01 AND l_shipdate@3 < 1995-01-01, projection=[0, 1, 2], output_bytes=29443672, output_rows=909455
-                  GpuScanExec: table=lineitem, projections=[l_partkey, l_suppkey, l_quantity, l_shipdate], batch_size=14128181, output_bytes=219044348, output_rows=6001215
-peacockdb_cost=338516069
+                GpuFilterExec: predicate=l_shipdate@3 >= 1994-01-01 AND l_shipdate@3 < 1995-01-01, projection=[0, 1, 2], output_bytes=29443606, output_rows=909455
+                  GpuScanExec: table=lineitem, projections=[l_partkey, l_suppkey, l_quantity, l_shipdate], batch_size=14128181, output_bytes=35880960, output_rows=983040
+peacockdb_cost=155352612

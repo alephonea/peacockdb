@@ -18,9 +18,9 @@ GpuSortExec: expr=[nation@0 ASC NULLS LAST, o_year@1 DESC], output_bytes=5509, o
                             GpuHashJoinExec: join_type=Inner, on=[(s_suppkey@0, l_suppkey@2)], projection=[1, 2, 3, 4, 5, 6, 7], output_bytes=24554186, output_rows=319404
                               GpuScanExec: table=supplier, projections=[s_suppkey, s_nationkey], batch_size=10324440, output_bytes=122500, output_rows=10000
                               GpuCoalesceBatchesExec: target_batch_size=10324440, output_bytes=23236644, output_rows=319404
-                                GpuHashJoinExec: join_type=Inner, on=[(p_partkey@0, l_partkey@1)], projection=[1, 2, 3, 4, 5, 6], output_bytes=23236746, output_rows=319404
+                                GpuHashJoinExec: join_type=Inner, on=[(p_partkey@0, l_partkey@1)], projection=[1, 2, 3, 4, 5, 6], output_bytes=23236794, output_rows=319404
                                   GpuCoalesceBatchesExec: target_batch_size=10324440, output_bytes=86645, output_rows=10664
                                     GpuFilterExec: predicate=p_name@1 LIKE %green%, projection=[0], output_bytes=86646, output_rows=10664
                                       GpuScanExec: table=part, projections=[p_partkey, p_name], batch_size=10324440, output_bytes=9000229, output_rows=200000
                                   GpuScanExec: table=lineitem, projections=[l_orderkey, l_partkey, l_suppkey, l_quantity, l_extendedprice, l_discount], batch_size=10324440, output_bytes=436588392, output_rows=6001215
-peacockdb_cost=814612857
+peacockdb_cost=814612905

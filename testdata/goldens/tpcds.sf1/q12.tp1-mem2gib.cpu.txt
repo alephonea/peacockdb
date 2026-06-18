@@ -3,16 +3,16 @@ GpuSortExec: expr=[i_category@2 ASC NULLS LAST, i_class@3 ASC NULLS LAST, i_item
     GpuWindowExec: wdw=[sum(sum(web_sales.ws_ext_sales_price)) PARTITION BY [item.i_class] ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING], output_bytes=271173, output_rows=1407
       GpuSortExec: expr=[i_class@3 ASC NULLS LAST], output_bytes=248485, output_rows=1407
         GpuAggregateExec: group_by=[i_item_id, i_item_desc, i_category, i_class, i_current_price], aggr=[sum(web_sales.ws_ext_sales_price)], output_bytes=248485, output_rows=1407
-          GpuCoalesceBatchesExec: target_batch_size=6242685, output_bytes=355220, output_rows=2007
+          GpuCoalesceBatchesExec: target_batch_size=6100805, output_bytes=355220, output_rows=2007
             GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ws_sold_date_sk@0)], projection=[2, 3, 4, 5, 6, 7], output_bytes=355220, output_rows=2007
-              GpuCoalesceBatchesExec: target_batch_size=6242685, output_bytes=128, output_rows=31
-                GpuFilterExec: predicate=d_date@1 >= 1999-02-22 AND d_date@1 <= 1999-03-24, projection=[0], output_bytes=128, output_rows=31
-                  GpuScanExec: table=date_dim, projections=[d_date_sk, d_date], batch_size=6242685, output_bytes=602656, output_rows=73049
-              GpuProjectExec: expr=[ws_sold_date_sk@5 as ws_sold_date_sk, ws_ext_sales_price@6 as ws_ext_sales_price, i_item_id@0 as i_item_id, i_item_desc@1 as i_item_desc, i_current_price@2 as i_current_price, i_class@3 as i_class, i_category@4 as i_category], output_bytes=38789223, output_rows=213725
-                GpuCoalesceBatchesExec: target_batch_size=6242685, output_bytes=38789223, output_rows=213725
-                  GpuHashJoinExec: join_type=Inner, on=[(i_item_sk@0, ws_item_sk@1)], projection=[1, 2, 3, 4, 5, 6, 8], output_bytes=38789685, output_rows=213725
-                    GpuCoalesceBatchesExec: target_batch_size=6242685, output_bytes=881954, output_rows=5323
-                      GpuFilterExec: predicate=i_category@5 = Sports OR i_category@5 = Books OR i_category@5 = Home, output_bytes=881954, output_rows=5323
-                        GpuScanExec: table=item, projections=[i_item_sk, i_item_id, i_item_desc, i_current_price, i_class, i_category], batch_size=6242685, output_bytes=3003665, output_rows=18000
-                    GpuScanExec: table=web_sales, projections=[ws_sold_date_sk, ws_item_sk, ws_ext_sales_price], batch_size=6242685, output_bytes=17534985, output_rows=719384
-peacockdb_cost=141031132
+              GpuCoalesceBatchesExec: target_batch_size=6100805, output_bytes=252, output_rows=31
+                GpuFilterExec: predicate=d_date@1 >= 1999-02-22 AND d_date@1 <= 1999-03-24, projection=[0], output_bytes=252, output_rows=31
+                  GpuScanExec: table=date_dim, projections=[d_date_sk, d_date], batch_size=6100805, output_bytes=894852, output_rows=73049
+              GpuProjectExec: expr=[ws_sold_date_sk@5 as ws_sold_date_sk, ws_ext_sales_price@6 as ws_ext_sales_price, i_item_id@0 as i_item_id, i_item_desc@1 as i_item_desc, i_current_price@2 as i_current_price, i_class@3 as i_class, i_category@4 as i_category], output_bytes=39644123, output_rows=213725
+                GpuCoalesceBatchesExec: target_batch_size=6100805, output_bytes=39644123, output_rows=213725
+                  GpuHashJoinExec: join_type=Inner, on=[(i_item_sk@0, ws_item_sk@1)], projection=[1, 2, 3, 4, 5, 6, 8], output_bytes=39644578, output_rows=213725
+                    GpuCoalesceBatchesExec: target_batch_size=6100805, output_bytes=903246, output_rows=5323
+                      GpuFilterExec: predicate=i_category@5 = Sports OR i_category@5 = Books OR i_category@5 = Home, output_bytes=903246, output_rows=5323
+                        GpuScanExec: table=item, projections=[i_item_sk, i_item_id, i_item_desc, i_current_price, i_class, i_category], batch_size=6100805, output_bytes=3075665, output_rows=18000
+                    GpuScanExec: table=web_sales, projections=[ws_sold_date_sk, ws_item_sk, ws_ext_sales_price], batch_size=6100805, output_bytes=23290057, output_rows=719384
+peacockdb_cost=149757925

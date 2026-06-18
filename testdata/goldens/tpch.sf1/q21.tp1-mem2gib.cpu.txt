@@ -4,7 +4,7 @@ GpuSortExec: expr=[numwait@1 DESC, s_name@0 ASC NULLS LAST], fetch=100, output_b
       GpuCoalesceBatchesExec: target_batch_size=19173961, output_bytes=91624, output_rows=4141
         GpuHashJoinExec: join_type=LeftAnti, on=[(l_orderkey@1, l_orderkey@0)], filter=l_suppkey@1 != l_suppkey@0, projection=[0], output_bytes=91756, output_rows=4141
           GpuCoalesceBatchesExec: target_batch_size=19173961, output_bytes=2804797, output_rows=73089
-            GpuHashJoinExec: join_type=LeftSemi, on=[(l_orderkey@1, l_orderkey@0)], filter=l_suppkey@1 != l_suppkey@0, output_bytes=2805001, output_rows=73089
+            GpuHashJoinExec: join_type=LeftSemi, on=[(l_orderkey@1, l_orderkey@0)], filter=l_suppkey@1 != l_suppkey@0, output_bytes=2805101, output_rows=73089
               GpuCoalesceBatchesExec: target_batch_size=19173961, output_bytes=2911554, output_rows=75871
                 GpuHashJoinExec: join_type=Inner, on=[(n_nationkey@0, s_nationkey@1)], projection=[1, 3, 4], output_bytes=2911590, output_rows=75871
                   GpuCoalesceBatchesExec: target_batch_size=19173961, output_bytes=5, output_rows=1
@@ -13,16 +13,16 @@ GpuSortExec: expr=[numwait@1 DESC, s_name@0 ASC NULLS LAST], fetch=100, output_b
                   GpuCoalesceBatchesExec: target_batch_size=19173961, output_bytes=77728722, output_rows=1828911
                     GpuHashJoinExec: join_type=Inner, on=[(o_orderkey@0, l_orderkey@2)], projection=[1, 2, 3, 4], output_bytes=77729614, output_rows=1828911
                       GpuCoalesceBatchesExec: target_batch_size=19173961, output_bytes=5926481, output_rows=729413
-                        GpuFilterExec: predicate=o_orderstatus@1 = F, projection=[0], output_bytes=5926485, output_rows=729413
-                          GpuScanExec: table=orders, projections=[o_orderkey, o_orderstatus], batch_size=19173961, output_bytes=19875052, output_rows=1500000
+                        GpuFilterExec: predicate=o_orderstatus@1 = F, projection=[0], output_bytes=5926481, output_rows=729413
+                          GpuScanExec: table=orders, projections=[o_orderkey, o_orderstatus], batch_size=19173961, output_bytes=11397148, output_rows=860160
                       GpuCoalesceBatchesExec: target_batch_size=19173961, output_bytes=161215084, output_rows=3793296
                         GpuHashJoinExec: join_type=Inner, on=[(s_suppkey@0, l_suppkey@1)], projection=[1, 2, 3, 4], output_bytes=161216936, output_rows=3793296
                           GpuScanExec: table=supplier, projections=[s_suppkey, s_name, s_nationkey], batch_size=19173961, output_bytes=343754, output_rows=10000
                           GpuCoalesceBatchesExec: target_batch_size=19173961, output_bytes=61641060, output_rows=3793296
-                            GpuFilterExec: predicate=l_receiptdate@3 > l_commitdate@2, projection=[0, 1], output_bytes=61641104, output_rows=3793296
+                            GpuFilterExec: predicate=l_receiptdate@3 > l_commitdate@2, projection=[0, 1], output_bytes=61641100, output_rows=3793296
                               GpuScanExec: table=lineitem, projections=[l_orderkey, l_suppkey, l_commitdate, l_receiptdate], batch_size=19173961, output_bytes=147029768, output_rows=6001215
               GpuScanExec: table=lineitem, projections=[l_orderkey, l_suppkey], batch_size=19173961, output_bytes=97519744, output_rows=6001215
           GpuCoalesceBatchesExec: target_batch_size=19173961, output_bytes=61641060, output_rows=3793296
-            GpuFilterExec: predicate=l_receiptdate@3 > l_commitdate@2, projection=[0, 1], output_bytes=61641104, output_rows=3793296
+            GpuFilterExec: predicate=l_receiptdate@3 > l_commitdate@2, projection=[0, 1], output_bytes=61641100, output_rows=3793296
               GpuScanExec: table=lineitem, projections=[l_orderkey, l_suppkey, l_commitdate, l_receiptdate], batch_size=19173961, output_bytes=147029768, output_rows=6001215
-peacockdb_cost=1159750363
+peacockdb_cost=1151272547

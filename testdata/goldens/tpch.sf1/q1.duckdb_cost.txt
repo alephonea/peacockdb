@@ -6,5 +6,17 @@ PROJECTION: projections=[__internal_decompress_string(#0), __internal_decompress
           PROJECTION: projections=[l_returnflag, l_linestatus, l_quantity, l_extendedprice, #4, (#4 * (1.00 + l_tax)), l_quantity, l_extendedprice, l_discount], output_bytes=343162278, output_rows=5916591, materialized=0
             PROJECTION: projections=[__internal_compress_string_utinyint(#0), __internal_compress_string_utinyint(#1), #2, #3, #4, #5, #6], output_bytes=248496822, output_rows=5916591, materialized=0
               PROJECTION: projections=[l_returnflag, l_linestatus, l_quantity, l_extendedprice, (l_extendedprice * (1.00 - l_discount)), l_tax, l_discount], output_bytes=425994552, output_rows=5916591, materialized=0
-                TABLE_SCAN: table=lineitem, projections=[l_returnflag, l_linestatus, l_quantity, l_extendedprice, l_discount, l_tax], filters="l_shipdate<='1998-09-02'::DATE", output_bytes=378661824, output_rows=5916591, materialized=762739584, bytes_read_est=384077760, rows_read=6001215
-duckdb_cost=1105902254
+                TABLE_SCAN: table=lineitem, projections=[l_returnflag, l_linestatus, l_quantity, l_extendedprice, l_discount, l_tax], filters="(CAST(l_shipdate AS TIMESTAMP) <= '1998-09-02 00:00:00'::TIMESTAMP)", output_bytes=378661824, output_rows=5916591, materialized=378661824, bytes_read=468094770, rows_read=6001215
+duckdb_cost=1189919264
+materialization_total=721824494
+storage_read_total=468094770
+
+--- row-group pruning (storage reduction) ---
+lineitem  filter=[(CAST(l_shipdate AS TIMESTAMP) <= '1998-09-02 00:00:00'::TIMESTAMP)]  row_groups=49/49  rows=6001215/6001215 (100.0%)  bytes_fetched=42379654/42379654 (100.0%)
+pruning_bytes_fetched=42379654/42379654 (100.0%)
+
+--- cost breakdown ---
+TABLE_SCAN(lineitem)                  378661824  52.5%
+PERFECT_HASH_GROUP_BY                 343162278  47.5%
+ORDER_BY                                    392   0.0%
+total=721824494

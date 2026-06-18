@@ -1,20 +1,46 @@
 PROJECTION: projections=[__internal_decompress_string(#0), #1], output_bytes=160, output_rows=5, materialized=0
   ORDER_BY: order_by=[sum((tpch.main.lineitem.l_extendedprice * (1 - tpch.main.lineitem.l_discount))) DESC], output_bytes=160, output_rows=5, materialized=160
-    PROJECTION: projections=[__internal_compress_string_hugeint(#0), #1], output_bytes=160, output_rows=5, materialized=0
+    PROJECTION: projections=[__internal_compress_string_uhugeint(#0), #1], output_bytes=160, output_rows=5, materialized=0
       PROJECTION: projections=[__internal_decompress_string(#0), #1], output_bytes=160, output_rows=5, materialized=0
         HASH_GROUP_BY: groups=[#0], aggregates=[sum(#1)], output_bytes=160, output_rows=5, materialized=173832
           PROJECTION: projections=[n_name, (l_extendedprice * (1.00 - l_discount))], output_bytes=173832, output_rows=7243, materialized=0
-            PROJECTION: projections=[__internal_compress_string_hugeint(#2), #0, #1, __internal_compress_integral_usmallint(#3, 1), __internal_compress_integral_utinyint(#4, 0)], output_bytes=253505, output_rows=7243, materialized=0
+            PROJECTION: projections=[__internal_compress_string_uhugeint(#2), #0, #1, __internal_compress_integral_usmallint(#3, 1), __internal_compress_integral_utinyint(#4, 0)], output_bytes=253505, output_rows=7243, materialized=0
               HASH_JOIN: join_type=INNER, conditions=[c_nationkey = s_nationkey, l_suppkey = s_suppkey], output_bytes=318692, output_rows=7243, materialized=318692
                 HASH_JOIN: join_type=INNER, conditions=[l_orderkey = o_orderkey], output_bytes=8099608, output_rows=184082, materialized=8099608
-                  TABLE_SCAN: table=lineitem, projections=[l_orderkey, l_suppkey, l_extendedprice, l_discount], output_bytes=192019968, output_rows=6000624, materialized=384058848, bytes_read_est=192038880, rows_read=6001215
-                  HASH_JOIN: join_type=INNER, conditions=[o_custkey = c_custkey], output_bytes=1288224, output_rows=46008, materialized=2133348
-                    TABLE_SCAN: table=orders, projections=[o_custkey, o_orderkey], filters="o_orderdate>='1994-01-01'::DATE AND o_orderdate<'1995-01-01'::DATE", output_bytes=3641408, output_rows=227588, materialized=27641408, bytes_read_est=24000000, rows_read=1500000
-                    FILTER: output_bytes=845124, output_rows=30183, materialized=0
-                      HASH_JOIN: join_type=INNER, conditions=[c_nationkey = n_nationkey], output_bytes=845124, output_rows=30183, materialized=845124
-                        TABLE_SCAN: table=customer, projections=[c_custkey, c_nationkey], output_bytes=1008648, output_rows=84054, materialized=2808648, bytes_read_est=1800000, rows_read=150000
-                        HASH_JOIN: join_type=INNER, conditions=[n_regionkey = r_regionkey], output_bytes=120, output_rows=5, materialized=120
-                          TABLE_SCAN: table=nation, projections=[n_nationkey, n_regionkey, n_name], output_bytes=120, output_rows=5, materialized=720, bytes_read_est=600, rows_read=25
-                          TABLE_SCAN: table=region, projections=[r_regionkey], filters="r_name='ASIA'", output_bytes=4, output_rows=1, materialized=24, bytes_read_est=20, rows_read=5
-                TABLE_SCAN: table=supplier, projections=[s_suppkey, s_nationkey], output_bytes=120000, output_rows=10000, materialized=240000, bytes_read_est=120000, rows_read=10000
-duckdb_cost=426320532
+                  TABLE_SCAN: table=lineitem, projections=[l_orderkey, l_suppkey, l_extendedprice, l_discount], output_bytes=192038880, output_rows=6001215, materialized=192038880, bytes_read=289558624, rows_read=6001215
+                  HASH_JOIN: join_type=INNER, conditions=[o_custkey = c_custkey], output_bytes=1288224, output_rows=46008, materialized=1288224
+                    TABLE_SCAN: table=orders, projections=[o_custkey, o_orderkey], filters="o_orderdate>='1994-01-01'::DATE AND (CAST(o_orderdate AS TIMESTAMP) < '1995-01-01 00:00:00'::TIMESTAMP)", output_bytes=3641552, output_rows=227597, materialized=3641552, bytes_read=7464960, rows_read=368640
+                    HASH_JOIN: join_type=INNER, conditions=[c_nationkey = n_nationkey], output_bytes=845124, output_rows=30183, materialized=845124
+                      TABLE_SCAN: table=customer, projections=[c_custkey, c_nationkey], filters="c_custkey<=149999", output_bytes=1799988, output_rows=149999, materialized=1799988, bytes_read=1837500, rows_read=150000
+                      HASH_JOIN: join_type=INNER, conditions=[n_regionkey = r_regionkey], output_bytes=120, output_rows=5, materialized=120
+                        TABLE_SCAN: table=nation, projections=[n_nationkey, n_regionkey, n_name], output_bytes=600, output_rows=25, materialized=600, bytes_read=485, rows_read=25
+                        TABLE_SCAN: table=region, projections=[r_regionkey], filters="r_name='ASIA'", output_bytes=4, output_rows=1, materialized=4, bytes_read=75, rows_read=5
+                TABLE_SCAN: table=supplier, projections=[s_suppkey, s_nationkey], output_bytes=120000, output_rows=10000, materialized=120000, bytes_read=122500, rows_read=10000
+duckdb_cost=507310928
+materialization_total=208326784
+storage_read_total=298984144
+
+--- row-group pruning (storage reduction) ---
+lineitem  dyn_filter=[l_orderkey>=66 AND l_orderkey<=5999426]  row_groups=49/49  rows=6001215/6001215 (100.0%)  bytes_fetched=75751731/75751731 (100.0%)
+orders  filter=[o_orderdate>='1994-01-01'::DATE AND (CAST(o_orderdate AS TIMESTAMP) < '1995-01-01 00:00:00'::TIMESTAMP)]  dyn_filter=[o_custkey>=7 AND o_custkey<=149997]  row_groups=3/13  rows=368640/1500000 (24.6%)  bytes_fetched=3587959/14600972 (24.6%)
+customer  filter=[c_custkey<=149999]  dyn_filter=[c_nationkey>=8 AND c_nationkey<=21]  row_groups=2/2  rows=150000/150000 (100.0%)  bytes_fetched=695814/695814 (100.0%)
+nation  dyn_filter=[n_regionkey=2]  row_groups=1/1  rows=25/25 (100.0%)  bytes_fetched=478/478 (100.0%)
+region  filter=[r_name='ASIA']  row_groups=1/1  rows=5/5 (100.0%)  bytes_fetched=119/119 (100.0%)
+supplier  row_groups=1/1  rows=10000/10000 (100.0%)  bytes_fetched=47418/47418 (100.0%)
+pruning_bytes_fetched=80083519/91096532 (87.9%)
+
+--- cost breakdown ---
+TABLE_SCAN(lineitem)                  192038880  92.2%
+HASH_JOIN                               8099608   3.9%
+TABLE_SCAN(orders)                      3641552   1.7%
+TABLE_SCAN(customer)                    1799988   0.9%
+HASH_JOIN                               1288224   0.6%
+HASH_JOIN                                845124   0.4%
+HASH_JOIN                                318692   0.2%
+HASH_GROUP_BY                            173832   0.1%
+TABLE_SCAN(supplier)                     120000   0.1%
+TABLE_SCAN(nation)                          600   0.0%
+ORDER_BY                                    160   0.0%
+HASH_JOIN                                   120   0.0%
+TABLE_SCAN(region)                            4   0.0%
+total=208326784

@@ -1,0 +1,1 @@
+["ws_ship_date_sk>=2451545 AND ws_ship_date_sk<=2451910 AND ws_warehouse_sk>=1 AND ws_warehouse_sk<=5 AND ws_ship_mode_sk>=1 AND ws_ship_mode_sk<=20 AND ws_web_site_sk>=1 AND ws_web_site_sk<=30","","","",""]

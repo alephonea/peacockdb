@@ -3,11 +3,32 @@ TOP_N: order_by=[x.w_warehouse_name ASC, x.i_item_id ASC], top=100, output_bytes
     HASH_GROUP_BY: groups=[#0, #1], aggregates=[sum(#2), sum(#3)], output_bytes=178880, output_rows=2795, materialized=1006200
       PROJECTION: projections=[w_warehouse_name, i_item_id, CASE  WHEN ((d_date < '2000-03-11'::DATE)) THEN (inv_quantity_on_hand) ELSE 0 END, CASE  WHEN ((d_date >= '2000-03-11'::DATE)) THEN (inv_quantity_on_hand) ELSE 0 END], output_bytes=1006200, output_rows=25155, materialized=0
         HASH_JOIN: join_type=INNER, conditions=[inv_warehouse_sk = w_warehouse_sk], output_bytes=1006200, output_rows=25155, materialized=1006200
-          HASH_JOIN: join_type=INNER, conditions=[inv_item_sk = i_item_sk], output_bytes=704340, output_rows=25155, materialized=704340
-            HASH_JOIN: join_type=INNER, conditions=[inv_date_sk = d_date_sk], output_bytes=6478560, output_rows=404910, materialized=6479048
-              TABLE_SCAN: table=inventory, projections=[inv_item_sk, inv_warehouse_sk, inv_date_sk, inv_quantity_on_hand], output_bytes=6478560, output_rows=404910, materialized=194398560, bytes_read_est=187920000, rows_read=11745000
-              FILTER: output_bytes=488, output_rows=61, materialized=0
-                TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_date], filters="d_date>='2000-02-10'::DATE AND d_date<='2000-04-10'::DATE", output_bytes=488, output_rows=61, materialized=584880, bytes_read_est=584392, rows_read=73049
-            TABLE_SCAN: table=item, projections=[i_item_sk, i_item_id], filters="i_current_price>=0.99 AND i_current_price<=1.49", output_bytes=22080, output_rows=1104, materialized=382080, bytes_read_est=360000, rows_read=18000
-          TABLE_SCAN: table=warehouse, projections=[w_warehouse_sk, w_warehouse_name], output_bytes=100, output_rows=5, materialized=200, bytes_read_est=100, rows_read=5
-duckdb_cost=204664356
+          HASH_JOIN: join_type=INNER, conditions=[inv_item_sk = i_item_sk], output_bytes=804960, output_rows=25155, materialized=804960
+            HASH_JOIN: join_type=INNER, conditions=[inv_date_sk = d_date_sk], output_bytes=9720000, output_rows=405000, materialized=9720732
+              TABLE_SCAN: table=inventory, projections=[inv_item_sk, inv_warehouse_sk, inv_date_sk, inv_quantity_on_hand], output_bytes=13762560, output_rows=491520, materialized=13762560, bytes_read=14008320, rows_read=491520
+              FILTER: output_bytes=732, output_rows=61, materialized=0
+                TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_date], filters="d_date>='2000-02-10'::DATE AND d_date<='2000-04-10'::DATE", output_bytes=732, output_rows=61, materialized=732, bytes_read=885720, rows_read=73049
+            TABLE_SCAN: table=item, projections=[i_item_sk, i_item_id], filters="i_current_price>=0.99 AND i_current_price<=1.49", output_bytes=26496, output_rows=1104, materialized=26496, bytes_read=796500, rows_read=18000
+          TABLE_SCAN: table=warehouse, projections=[w_warehouse_sk, w_warehouse_name], output_bytes=120, output_rows=5, materialized=120, bytes_read=133, rows_read=5
+duckdb_cost=42121521
+materialization_total=26430848
+storage_read_total=15690673
+
+--- row-group pruning (storage reduction) ---
+inventory  dyn_filter=[inv_item_sk>=2 AND inv_item_sk<=17998 AND inv_warehouse_sk>=1 AND inv_warehouse_sk<=5 AND inv_date_sk>=2451585 AND inv_date_sk<=2451645]  row_groups=4/96  rows=491520/11745000 (4.2%)  bytes_fetched=1090466/26111430 (4.2%)
+date_dim  filter=[d_date>='2000-02-10'::DATE AND d_date<='2000-04-10'::DATE]  row_groups=1/1  rows=73049/73049 (100.0%)  bytes_fetched=584645/584645 (100.0%)
+item  filter=[i_current_price>=0.99 AND i_current_price<=1.49]  row_groups=1/1  rows=18000/18000 (100.0%)  bytes_fetched=167205/167205 (100.0%)
+warehouse  row_groups=1/1  rows=5/5 (100.0%)  bytes_fetched=173/173 (100.0%)
+pruning_bytes_fetched=1842489/26863453 (6.9%)
+
+--- cost breakdown ---
+TABLE_SCAN(inventory)                  13762560  52.1%
+HASH_JOIN                               9720732  36.8%
+HASH_GROUP_BY                           1006200   3.8%
+HASH_JOIN                               1006200   3.8%
+HASH_JOIN                                804960   3.0%
+TOP_N                                    102848   0.4%
+TABLE_SCAN(item)                          26496   0.1%
+TABLE_SCAN(date_dim)                        732   0.0%
+TABLE_SCAN(warehouse)                       120   0.0%
+total=26430848

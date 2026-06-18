@@ -11,9 +11,9 @@ GpuSortExec: expr=[revenue@2 DESC], fetch=20, output_bytes=3898, output_rows=20
                   GpuHashJoinExec: join_type=Inner, on=[(c_custkey@0, o_custkey@1)], projection=[0, 1, 2, 3, 4, 5, 6, 7], output_bytes=10468819, output_rows=57069
                     GpuScanExec: table=customer, projections=[c_custkey, c_name, c_address, c_nationkey, c_phone, c_acctbal, c_comment], batch_size=4880644, output_bytes=26315437, output_rows=150000
                     GpuCoalesceBatchesExec: target_batch_size=4880644, output_bytes=927372, output_rows=57069
-                      GpuFilterExec: predicate=o_orderdate@2 >= 1993-10-01 AND o_orderdate@2 < 1994-01-01, projection=[0, 1], output_bytes=927382, output_rows=57069
-                        GpuScanExec: table=orders, projections=[o_orderkey, o_custkey, o_orderdate], batch_size=4880644, output_bytes=30562500, output_rows=1500000
+                      GpuFilterExec: predicate=o_orderdate@2 >= 1993-10-01 AND o_orderdate@2 < 1994-01-01, projection=[0, 1], output_bytes=927372, output_rows=57069
+                        GpuScanExec: table=orders, projections=[o_orderkey, o_custkey, o_orderdate], batch_size=4880644, output_bytes=2503680, output_rows=122880
                 GpuCoalesceBatchesExec: target_batch_size=4880644, output_bytes=59709377, output_rows=1478870
-                  GpuFilterExec: predicate=l_returnflag@3 = R, projection=[0, 1, 2], output_bytes=59709452, output_rows=1478870
-                    GpuScanExec: table=lineitem, projections=[l_orderkey, l_extendedprice, l_discount, l_returnflag], batch_size=4880644, output_bytes=273055479, output_rows=6001215
-peacockdb_cost=608722826
+                  GpuFilterExec: predicate=l_returnflag@3 = R, projection=[0, 1, 2], output_bytes=59709410, output_rows=1478870
+                    GpuScanExec: table=lineitem, projections=[l_orderkey, l_extendedprice, l_discount, l_returnflag], batch_size=4880644, output_bytes=139776100, output_rows=3072000
+peacockdb_cost=447384575

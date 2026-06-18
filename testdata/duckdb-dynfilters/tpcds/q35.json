@@ -1,0 +1,1 @@
+["cd_demo_sk>=17 AND cd_demo_sk<=1920788","","","ss_sold_date_sk>=2452276 AND ss_sold_date_sk<=2452549","","ws_sold_date_sk>=2452276 AND ws_sold_date_sk<=2452549","","cs_sold_date_sk>=2452276 AND cs_sold_date_sk<=2452549",""]

@@ -1,0 +1,1 @@
+["t_time_sk>=40 AND t_time_sk<=86367","ws_sold_date_sk>=2451911 AND ws_sold_date_sk<=2452275 AND ws_ship_mode_sk>=5 AND ws_ship_mode_sk<=13","","","","t_time_sk>=20 AND t_time_sk<=86383","cs_sold_date_sk>=2451911 AND cs_sold_date_sk<=2452275 AND cs_ship_mode_sk>=5 AND cs_ship_mode_sk<=13","","",""]

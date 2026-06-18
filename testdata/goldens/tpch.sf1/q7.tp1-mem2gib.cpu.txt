@@ -18,12 +18,12 @@ GpuSortExec: expr=[supp_nation@0 ASC NULLS LAST, cust_nation@1 ASC NULLS LAST, l
                       GpuHashJoinExec: join_type=Inner, on=[(c_custkey@0, o_custkey@4)], projection=[1, 2, 3, 4, 5], output_bytes=81594585, output_rows=1828450
                         GpuScanExec: table=customer, projections=[c_custkey, c_nationkey], batch_size=10324440, output_bytes=1837500, output_rows=150000
                         GpuCoalesceBatchesExec: target_batch_size=10324440, output_bytes=88908385, output_rows=1828450
-                          GpuHashJoinExec: join_type=Inner, on=[(l_orderkey@1, o_orderkey@0)], projection=[0, 2, 3, 4, 6], output_bytes=88908405, output_rows=1828450
+                          GpuHashJoinExec: join_type=Inner, on=[(l_orderkey@1, o_orderkey@0)], projection=[0, 2, 3, 4, 6], output_bytes=88908395, output_rows=1828450
                             GpuCoalesceBatchesExec: target_batch_size=10324440, output_bytes=88908385, output_rows=1828450
                               GpuHashJoinExec: join_type=Inner, on=[(s_suppkey@0, l_suppkey@1)], projection=[1, 2, 4, 5, 6], output_bytes=88908385, output_rows=1828450
                                 GpuScanExec: table=supplier, projections=[s_suppkey, s_nationkey], batch_size=10324440, output_bytes=122500, output_rows=10000
                                 GpuCoalesceBatchesExec: target_batch_size=10324440, output_bytes=96222185, output_rows=1828450
-                                  GpuFilterExec: predicate=l_shipdate@4 >= 1995-01-01 AND l_shipdate@4 <= 1996-12-31, output_bytes=96222290, output_rows=1828450
-                                    GpuScanExec: table=lineitem, projections=[l_orderkey, l_suppkey, l_extendedprice, l_discount, l_shipdate], batch_size=10324440, output_bytes=315813940, output_rows=6001215
+                                  GpuFilterExec: predicate=l_shipdate@4 >= 1995-01-01 AND l_shipdate@4 <= 1996-12-31, output_bytes=96222185, output_rows=1828450
+                                    GpuScanExec: table=lineitem, projections=[l_orderkey, l_suppkey, l_extendedprice, l_discount, l_shipdate], batch_size=10324440, output_bytes=103464960, output_rows=1966080
                             GpuScanExec: table=orders, projections=[o_orderkey, o_custkey], batch_size=10324440, output_bytes=24375000, output_rows=1500000
-peacockdb_cost=1158286984
+peacockdb_cost=945937889

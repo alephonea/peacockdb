@@ -1,21 +1,44 @@
 STREAMING_LIMIT: output_bytes=48, output_rows=1, materialized=0
   UNGROUPED_AGGREGATE: aggregates=[sum(#0), sum(#1), sum(#2)], output_bytes=48, output_rows=1, materialized=10021080
-    PROJECTION: projections=[CASE  WHEN (((customer_sk IS NOT NULL) AND (customer_sk IS NULL))) THEN (1) ELSE 0 END, CASE  WHEN (((customer_sk IS NULL) AND (customer_sk IS NOT NULL))) THEN (1) ELSE 0 END, CASE  WHEN (((customer_sk IS NOT NULL) AND (customer_sk IS NOT NULL))) THEN (1) ELSE 0 END], output_bytes=10021080, output_rows=835090, materialized=0
-      HASH_JOIN: join_type=FULL, conditions=[customer_sk = customer_sk, item_sk = item_sk], output_bytes=6680720, output_rows=835090, materialized=13362808
-        PROJECTION: projections=[#0, __internal_decompress_integral_integer(#1, 1)], output_bytes=4382064, output_rows=547758, materialized=0
-          HASH_GROUP_BY: groups=[#0, #1], output_bytes=3286548, output_rows=547758, materialized=3323820
-            PROJECTION: projections=[ss_customer_sk, ss_item_sk], output_bytes=3323820, output_rows=553970, materialized=0
-              PROJECTION: projections=[#0, __internal_compress_integral_usmallint(#1, 1), __internal_compress_integral_usmallint(#2, 2450816)], output_bytes=4431760, output_rows=553970, materialized=0
-                HASH_JOIN: join_type=INNER, conditions=[ss_sold_date_sk = d_date_sk], output_bytes=6647640, output_rows=553970, materialized=6649104
-                  TABLE_SCAN: table=store_sales, projections=[ss_sold_date_sk, ss_customer_sk, ss_item_sk], output_bytes=6647640, output_rows=553970, materialized=41212488, bytes_read_est=34564848, rows_read=2880404
-                  FILTER: output_bytes=1464, output_rows=366, materialized=0
-                    TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_month_seq>=1200 AND d_month_seq<=1211", output_bytes=1464, output_rows=366, materialized=293660, bytes_read_est=292196, rows_read=73049
-        PROJECTION: projections=[#0, __internal_decompress_integral_integer(#1, 1)], output_bytes=2300024, output_rows=287503, materialized=0
-          HASH_GROUP_BY: groups=[#0, #1], output_bytes=1725018, output_rows=287503, materialized=1725378
-            PROJECTION: projections=[cs_bill_customer_sk, cs_item_sk], output_bytes=1725378, output_rows=287563, materialized=0
-              PROJECTION: projections=[#0, __internal_compress_integral_usmallint(#1, 1), __internal_compress_integral_usmallint(#2, 2450815)], output_bytes=2300504, output_rows=287563, materialized=0
-                HASH_JOIN: join_type=INNER, conditions=[cs_sold_date_sk = d_date_sk], output_bytes=3450756, output_rows=287563, materialized=3452220
-                  TABLE_SCAN: table=catalog_sales, projections=[cs_sold_date_sk, cs_bill_customer_sk, cs_item_sk], output_bytes=3450756, output_rows=287563, materialized=20749332, bytes_read_est=17298576, rows_read=1441548
-                  FILTER: output_bytes=1464, output_rows=366, materialized=0
-                    TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_month_seq>=1200 AND d_month_seq<=1211", output_bytes=1464, output_rows=366, materialized=293660, bytes_read_est=292196, rows_read=73049
-duckdb_cost=101083550
+    PROJECTION: projections=[CASE  WHEN ((#0 AND (customer_sk IS NULL))) THEN (1) ELSE 0 END, CASE  WHEN (((customer_sk IS NULL) AND (customer_sk IS NOT NULL))) THEN (1) ELSE 0 END, CASE  WHEN ((#0 AND (customer_sk IS NOT NULL))) THEN (1) ELSE 0 END], output_bytes=10021080, output_rows=835090, materialized=0
+      PROJECTION: projections=[(customer_sk IS NOT NULL), customer_sk, customer_sk], output_bytes=14196530, output_rows=835090, materialized=0
+        HASH_JOIN: join_type=FULL, conditions=[customer_sk = customer_sk, item_sk = item_sk], output_bytes=13361440, output_rows=835090, materialized=26725616
+          PROJECTION: projections=[__internal_decompress_integral_bigint(#0, 1), __internal_decompress_integral_bigint(#1, 1)], output_bytes=8764128, output_rows=547758, materialized=0
+            HASH_GROUP_BY: groups=[#0, #1], output_bytes=3286548, output_rows=547758, materialized=3323820
+              PROJECTION: projections=[ss_customer_sk, ss_item_sk], output_bytes=3323820, output_rows=553970, materialized=0
+                PROJECTION: projections=[__internal_compress_integral_uinteger(#0, 1), __internal_compress_integral_usmallint(#1, 1), __internal_compress_integral_usmallint(#2, 2450816)], output_bytes=4431760, output_rows=553970, materialized=0
+                  HASH_JOIN: join_type=INNER, conditions=[ss_sold_date_sk = d_date_sk], output_bytes=13295280, output_rows=553970, materialized=13298208
+                    TABLE_SCAN: table=store_sales, projections=[ss_sold_date_sk, ss_customer_sk, ss_item_sk], output_bytes=18994656, output_rows=791444, materialized=18994656, bytes_read=19291449, rows_read=791444
+                    FILTER: output_bytes=2928, output_rows=366, materialized=0
+                      TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_month_seq>=1200 AND d_month_seq<=1211", output_bytes=2928, output_rows=366, materialized=2928, bytes_read=1187048, rows_read=73049
+          PROJECTION: projections=[__internal_decompress_integral_bigint(#0, 1), __internal_decompress_integral_bigint(#1, 1)], output_bytes=4600048, output_rows=287503, materialized=0
+            HASH_GROUP_BY: groups=[#0, #1], output_bytes=1725018, output_rows=287503, materialized=1725378
+              PROJECTION: projections=[cs_bill_customer_sk, cs_item_sk], output_bytes=1725378, output_rows=287563, materialized=0
+                PROJECTION: projections=[__internal_compress_integral_uinteger(#0, 1), __internal_compress_integral_usmallint(#1, 1), __internal_compress_integral_usmallint(#2, 2450815)], output_bytes=2300504, output_rows=287563, materialized=0
+                  HASH_JOIN: join_type=INNER, conditions=[cs_sold_date_sk = d_date_sk], output_bytes=6901512, output_rows=287563, materialized=6904440
+                    TABLE_SCAN: table=catalog_sales, projections=[cs_sold_date_sk, cs_bill_customer_sk, cs_item_sk], output_bytes=8847360, output_rows=368640, materialized=8847360, bytes_read=8985600, rows_read=368640
+                    FILTER: output_bytes=2928, output_rows=366, materialized=0
+                      TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_month_seq>=1200 AND d_month_seq<=1211", output_bytes=2928, output_rows=366, materialized=2928, bytes_read=1187048, rows_read=73049
+duckdb_cost=120497559
+materialization_total=89846414
+storage_read_total=30651145
+
+--- row-group pruning (storage reduction) ---
+store_sales  dyn_filter=[ss_sold_date_sk>=2451545 AND ss_sold_date_sk<=2451910]  row_groups=7/24  rows=791444/2880404 (27.5%)  bytes_fetched=3336783/12152199 (27.5%)
+date_dim  filter=[d_month_seq>=1200 AND d_month_seq<=1211]  row_groups=1/1  rows=73049/73049 (100.0%)  bytes_fetched=309271/309271 (100.0%)
+catalog_sales  dyn_filter=[cs_sold_date_sk>=2451545 AND cs_sold_date_sk<=2451910]  row_groups=3/12  rows=368640/1441548 (25.6%)  bytes_fetched=1599502/6254539 (25.6%)
+date_dim  filter=[d_month_seq>=1200 AND d_month_seq<=1211]  row_groups=1/1  rows=73049/73049 (100.0%)  bytes_fetched=309271/309271 (100.0%)
+pruning_bytes_fetched=5554827/19025280 (29.2%)
+
+--- cost breakdown ---
+HASH_JOIN                              26725616  29.7%
+TABLE_SCAN(store_sales)                18994656  21.1%
+HASH_JOIN                              13298208  14.8%
+UNGROUPED_AGGREGATE                    10021080  11.2%
+TABLE_SCAN(catalog_sales)               8847360   9.8%
+HASH_JOIN                               6904440   7.7%
+HASH_GROUP_BY                           3323820   3.7%
+HASH_GROUP_BY                           1725378   1.9%
+TABLE_SCAN(date_dim)                       2928   0.0%
+TABLE_SCAN(date_dim)                       2928   0.0%
+total=89846414

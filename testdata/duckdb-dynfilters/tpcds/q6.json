@@ -1,0 +1,1 @@
+["ca_address_sk>=10 AND ca_address_sk<=49995","c_customer_sk>=29 AND c_customer_sk<=99995","i_item_sk>=1 AND i_item_sk<=17999","ss_sold_date_sk>=2451911 AND ss_sold_date_sk<=2451941","d_month_seq=1212","","i_category>='Books' AND i_category<='Women'"]

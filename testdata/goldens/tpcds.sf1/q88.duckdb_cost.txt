@@ -6,100 +6,211 @@ PROJECTION: projections=[h8_30_to_9, h9_to_9_30, h9_30_to_10, h10_to_10_30, h10_
           CROSS_PRODUCT: output_bytes=32, output_rows=1, materialized=40
             CROSS_PRODUCT: output_bytes=24, output_rows=1, materialized=32
               CROSS_PRODUCT: output_bytes=16, output_rows=1, materialized=32
-                UNGROUPED_AGGREGATE: aggregates=[count_star()], output_bytes=8, output_rows=1, materialized=49548
-                  HASH_JOIN: join_type=INNER, conditions=[ss_hdemo_sk = hd_demo_sk], output_bytes=49548, output_rows=4129, materialized=57228
-                    HASH_JOIN: join_type=INNER, conditions=[ss_store_sk = s_store_sk], output_bytes=121792, output_rows=15224, materialized=121796
-                      HASH_JOIN: join_type=INNER, conditions=[ss_sold_time_sk = t_time_sk], output_bytes=182688, output_rows=15224, materialized=189888
-                        TABLE_SCAN: table=store_sales, projections=[ss_sold_time_sk, ss_hdemo_sk, ss_store_sk], output_bytes=182688, output_rows=15224, materialized=34747536, bytes_read_est=34564848, rows_read=2880404
-                        FILTER: output_bytes=7200, output_rows=1800, materialized=0
-                          TABLE_SCAN: table=time_dim, projections=[t_time_sk], filters="t_hour=11 AND t_minute>=30", output_bytes=7200, output_rows=1800, materialized=352800, bytes_read_est=345600, rows_read=86400
-                      FILTER: output_bytes=4, output_rows=1, materialized=0
-                        TABLE_SCAN: table=store, projections=[s_store_sk], filters="s_store_name='ese'", output_bytes=4, output_rows=1, materialized=52, bytes_read_est=48, rows_read=12
-                    PROJECTION: projections=[#0], output_bytes=7680, output_rows=1920, materialized=0
-                      FILTER: output_bytes=23040, output_rows=1920, materialized=0
-                        TABLE_SCAN: table=household_demographics, projections=[hd_demo_sk, hd_dep_count, hd_vehicle_count], output_bytes=86400, output_rows=7200, materialized=172800, bytes_read_est=86400, rows_read=7200
-                UNGROUPED_AGGREGATE: aggregates=[count_star()], output_bytes=8, output_rows=1, materialized=54624
-                  HASH_JOIN: join_type=INNER, conditions=[ss_hdemo_sk = hd_demo_sk], output_bytes=54624, output_rows=4552, materialized=62304
-                    HASH_JOIN: join_type=INNER, conditions=[ss_store_sk = s_store_sk], output_bytes=142088, output_rows=17761, materialized=142092
-                      HASH_JOIN: join_type=INNER, conditions=[ss_sold_time_sk = t_time_sk], output_bytes=213132, output_rows=17761, materialized=220332
-                        TABLE_SCAN: table=store_sales, projections=[ss_sold_time_sk, ss_hdemo_sk, ss_store_sk], output_bytes=213132, output_rows=17761, materialized=34777980, bytes_read_est=34564848, rows_read=2880404
-                        FILTER: output_bytes=7200, output_rows=1800, materialized=0
-                          TABLE_SCAN: table=time_dim, projections=[t_time_sk], filters="t_hour=12 AND t_minute<30", output_bytes=7200, output_rows=1800, materialized=352800, bytes_read_est=345600, rows_read=86400
-                      FILTER: output_bytes=4, output_rows=1, materialized=0
-                        TABLE_SCAN: table=store, projections=[s_store_sk], filters="s_store_name='ese'", output_bytes=4, output_rows=1, materialized=52, bytes_read_est=48, rows_read=12
-                    PROJECTION: projections=[#0], output_bytes=7680, output_rows=1920, materialized=0
-                      FILTER: output_bytes=23040, output_rows=1920, materialized=0
-                        TABLE_SCAN: table=household_demographics, projections=[hd_demo_sk, hd_dep_count, hd_vehicle_count], output_bytes=86400, output_rows=7200, materialized=172800, bytes_read_est=86400, rows_read=7200
-              UNGROUPED_AGGREGATE: aggregates=[count_star()], output_bytes=8, output_rows=1, materialized=47196
-                HASH_JOIN: join_type=INNER, conditions=[ss_hdemo_sk = hd_demo_sk], output_bytes=47196, output_rows=3933, materialized=54876
-                  HASH_JOIN: join_type=INNER, conditions=[ss_store_sk = s_store_sk], output_bytes=119416, output_rows=14927, materialized=119420
-                    HASH_JOIN: join_type=INNER, conditions=[ss_sold_time_sk = t_time_sk], output_bytes=179124, output_rows=14927, materialized=186324
-                      TABLE_SCAN: table=store_sales, projections=[ss_sold_time_sk, ss_hdemo_sk, ss_store_sk], output_bytes=179124, output_rows=14927, materialized=34743972, bytes_read_est=34564848, rows_read=2880404
-                      FILTER: output_bytes=7200, output_rows=1800, materialized=0
-                        TABLE_SCAN: table=time_dim, projections=[t_time_sk], filters="t_hour=11 AND t_minute<30", output_bytes=7200, output_rows=1800, materialized=352800, bytes_read_est=345600, rows_read=86400
-                    FILTER: output_bytes=4, output_rows=1, materialized=0
-                      TABLE_SCAN: table=store, projections=[s_store_sk], filters="s_store_name='ese'", output_bytes=4, output_rows=1, materialized=52, bytes_read_est=48, rows_read=12
-                  PROJECTION: projections=[#0], output_bytes=7680, output_rows=1920, materialized=0
-                    FILTER: output_bytes=23040, output_rows=1920, materialized=0
-                      TABLE_SCAN: table=household_demographics, projections=[hd_demo_sk, hd_dep_count, hd_vehicle_count], output_bytes=86400, output_rows=7200, materialized=172800, bytes_read_est=86400, rows_read=7200
-            UNGROUPED_AGGREGATE: aggregates=[count_star()], output_bytes=8, output_rows=1, materialized=85332
-              HASH_JOIN: join_type=INNER, conditions=[ss_hdemo_sk = hd_demo_sk], output_bytes=85332, output_rows=7111, materialized=93012
-                HASH_JOIN: join_type=INNER, conditions=[ss_store_sk = s_store_sk], output_bytes=215640, output_rows=26955, materialized=215644
-                  HASH_JOIN: join_type=INNER, conditions=[ss_sold_time_sk = t_time_sk], output_bytes=323460, output_rows=26955, materialized=330660
-                    TABLE_SCAN: table=store_sales, projections=[ss_sold_time_sk, ss_hdemo_sk, ss_store_sk], output_bytes=323460, output_rows=26955, materialized=34888308, bytes_read_est=34564848, rows_read=2880404
-                    FILTER: output_bytes=7200, output_rows=1800, materialized=0
-                      TABLE_SCAN: table=time_dim, projections=[t_time_sk], filters="t_hour=10 AND t_minute>=30", output_bytes=7200, output_rows=1800, materialized=352800, bytes_read_est=345600, rows_read=86400
-                  FILTER: output_bytes=4, output_rows=1, materialized=0
-                    TABLE_SCAN: table=store, projections=[s_store_sk], filters="s_store_name='ese'", output_bytes=4, output_rows=1, materialized=52, bytes_read_est=48, rows_read=12
-                PROJECTION: projections=[#0], output_bytes=7680, output_rows=1920, materialized=0
-                  FILTER: output_bytes=23040, output_rows=1920, materialized=0
-                    TABLE_SCAN: table=household_demographics, projections=[hd_demo_sk, hd_dep_count, hd_vehicle_count], output_bytes=86400, output_rows=7200, materialized=172800, bytes_read_est=86400, rows_read=7200
-          UNGROUPED_AGGREGATE: aggregates=[count_star()], output_bytes=8, output_rows=1, materialized=91080
-            HASH_JOIN: join_type=INNER, conditions=[ss_hdemo_sk = hd_demo_sk], output_bytes=91080, output_rows=7590, materialized=98760
-              HASH_JOIN: join_type=INNER, conditions=[ss_store_sk = s_store_sk], output_bytes=218256, output_rows=27282, materialized=218260
-                HASH_JOIN: join_type=INNER, conditions=[ss_sold_time_sk = t_time_sk], output_bytes=327384, output_rows=27282, materialized=334584
-                  TABLE_SCAN: table=store_sales, projections=[ss_sold_time_sk, ss_hdemo_sk, ss_store_sk], output_bytes=327384, output_rows=27282, materialized=34892232, bytes_read_est=34564848, rows_read=2880404
-                  FILTER: output_bytes=7200, output_rows=1800, materialized=0
-                    TABLE_SCAN: table=time_dim, projections=[t_time_sk], filters="t_hour=10 AND t_minute<30", output_bytes=7200, output_rows=1800, materialized=352800, bytes_read_est=345600, rows_read=86400
-                FILTER: output_bytes=4, output_rows=1, materialized=0
-                  TABLE_SCAN: table=store, projections=[s_store_sk], filters="s_store_name='ese'", output_bytes=4, output_rows=1, materialized=52, bytes_read_est=48, rows_read=12
-              PROJECTION: projections=[#0], output_bytes=7680, output_rows=1920, materialized=0
-                FILTER: output_bytes=23040, output_rows=1920, materialized=0
-                  TABLE_SCAN: table=household_demographics, projections=[hd_demo_sk, hd_dep_count, hd_vehicle_count], output_bytes=86400, output_rows=7200, materialized=172800, bytes_read_est=86400, rows_read=7200
-        UNGROUPED_AGGREGATE: aggregates=[count_star()], output_bytes=8, output_rows=1, materialized=55116
-          HASH_JOIN: join_type=INNER, conditions=[ss_hdemo_sk = hd_demo_sk], output_bytes=55116, output_rows=4593, materialized=62796
-            HASH_JOIN: join_type=INNER, conditions=[ss_store_sk = s_store_sk], output_bytes=140328, output_rows=17541, materialized=140332
-              HASH_JOIN: join_type=INNER, conditions=[ss_sold_time_sk = t_time_sk], output_bytes=210492, output_rows=17541, materialized=217692
-                TABLE_SCAN: table=store_sales, projections=[ss_sold_time_sk, ss_hdemo_sk, ss_store_sk], output_bytes=210492, output_rows=17541, materialized=34775340, bytes_read_est=34564848, rows_read=2880404
-                FILTER: output_bytes=7200, output_rows=1800, materialized=0
-                  TABLE_SCAN: table=time_dim, projections=[t_time_sk], filters="t_hour=9 AND t_minute>=30", output_bytes=7200, output_rows=1800, materialized=352800, bytes_read_est=345600, rows_read=86400
-              FILTER: output_bytes=4, output_rows=1, materialized=0
-                TABLE_SCAN: table=store, projections=[s_store_sk], filters="s_store_name='ese'", output_bytes=4, output_rows=1, materialized=52, bytes_read_est=48, rows_read=12
-            PROJECTION: projections=[#0], output_bytes=7680, output_rows=1920, materialized=0
-              FILTER: output_bytes=23040, output_rows=1920, materialized=0
-                TABLE_SCAN: table=household_demographics, projections=[hd_demo_sk, hd_dep_count, hd_vehicle_count], output_bytes=86400, output_rows=7200, materialized=172800, bytes_read_est=86400, rows_read=7200
-      UNGROUPED_AGGREGATE: aggregates=[count_star()], output_bytes=8, output_rows=1, materialized=56964
-        HASH_JOIN: join_type=INNER, conditions=[ss_hdemo_sk = hd_demo_sk], output_bytes=56964, output_rows=4747, materialized=64644
-          HASH_JOIN: join_type=INNER, conditions=[ss_store_sk = s_store_sk], output_bytes=142800, output_rows=17850, materialized=142804
-            HASH_JOIN: join_type=INNER, conditions=[ss_sold_time_sk = t_time_sk], output_bytes=214200, output_rows=17850, materialized=221400
-              TABLE_SCAN: table=store_sales, projections=[ss_sold_time_sk, ss_hdemo_sk, ss_store_sk], output_bytes=214200, output_rows=17850, materialized=34779048, bytes_read_est=34564848, rows_read=2880404
-              FILTER: output_bytes=7200, output_rows=1800, materialized=0
-                TABLE_SCAN: table=time_dim, projections=[t_time_sk], filters="t_hour=9 AND t_minute<30", output_bytes=7200, output_rows=1800, materialized=352800, bytes_read_est=345600, rows_read=86400
-            FILTER: output_bytes=4, output_rows=1, materialized=0
-              TABLE_SCAN: table=store, projections=[s_store_sk], filters="s_store_name='ese'", output_bytes=4, output_rows=1, materialized=52, bytes_read_est=48, rows_read=12
-          PROJECTION: projections=[#0], output_bytes=7680, output_rows=1920, materialized=0
-            FILTER: output_bytes=23040, output_rows=1920, materialized=0
-              TABLE_SCAN: table=household_demographics, projections=[hd_demo_sk, hd_dep_count, hd_vehicle_count], output_bytes=86400, output_rows=7200, materialized=172800, bytes_read_est=86400, rows_read=7200
-    UNGROUPED_AGGREGATE: aggregates=[count_star()], output_bytes=8, output_rows=1, materialized=28128
-      HASH_JOIN: join_type=INNER, conditions=[ss_hdemo_sk = hd_demo_sk], output_bytes=28128, output_rows=2344, materialized=35808
-        HASH_JOIN: join_type=INNER, conditions=[ss_store_sk = s_store_sk], output_bytes=71544, output_rows=8943, materialized=71548
-          HASH_JOIN: join_type=INNER, conditions=[ss_sold_time_sk = t_time_sk], output_bytes=107316, output_rows=8943, materialized=114516
-            TABLE_SCAN: table=store_sales, projections=[ss_sold_time_sk, ss_hdemo_sk, ss_store_sk], output_bytes=107316, output_rows=8943, materialized=34672164, bytes_read_est=34564848, rows_read=2880404
-            FILTER: output_bytes=7200, output_rows=1800, materialized=0
-              TABLE_SCAN: table=time_dim, projections=[t_time_sk], filters="t_hour=8 AND t_minute>=30", output_bytes=7200, output_rows=1800, materialized=352800, bytes_read_est=345600, rows_read=86400
-          FILTER: output_bytes=4, output_rows=1, materialized=0
-            TABLE_SCAN: table=store, projections=[s_store_sk], filters="s_store_name='ese'", output_bytes=4, output_rows=1, materialized=52, bytes_read_est=48, rows_read=12
-        PROJECTION: projections=[#0], output_bytes=7680, output_rows=1920, materialized=0
-          FILTER: output_bytes=23040, output_rows=1920, materialized=0
-            TABLE_SCAN: table=household_demographics, projections=[hd_demo_sk, hd_dep_count, hd_vehicle_count], output_bytes=86400, output_rows=7200, materialized=172800, bytes_read_est=86400, rows_read=7200
-duckdb_cost=286466848
+                UNGROUPED_AGGREGATE: aggregates=[count_star()], output_bytes=8, output_rows=1, materialized=99096
+                  HASH_JOIN: join_type=INNER, conditions=[ss_store_sk = s_store_sk], output_bytes=99096, output_rows=4129, materialized=99104
+                    HASH_JOIN: join_type=INNER, conditions=[ss_sold_time_sk = t_time_sk], output_bytes=386944, output_rows=24184, materialized=401344
+                      HASH_JOIN: join_type=INNER, conditions=[ss_hdemo_sk = hd_demo_sk], output_bytes=17567016, output_rows=731959, materialized=17582376
+                        TABLE_SCAN: table=store_sales, projections=[ss_sold_time_sk, ss_hdemo_sk, ss_store_sk], output_bytes=69129696, output_rows=2880404, materialized=69129696, bytes_read=70209849, rows_read=2880404
+                        PROJECTION: projections=[#0], output_bytes=15360, output_rows=1920, materialized=0
+                          FILTER: output_bytes=38400, output_rows=1920, materialized=0
+                            TABLE_SCAN: table=household_demographics, projections=[hd_demo_sk, hd_dep_count, hd_vehicle_count], filters="(((hd_dep_count = 4) OR (hd_dep_count = 2)) OR (hd_dep_count = 0))", output_bytes=43200, output_rows=2160, materialized=43200, bytes_read=146700, rows_read=7200
+                      FILTER: output_bytes=14400, output_rows=1800, materialized=0
+                        TABLE_SCAN: table=time_dim, projections=[t_time_sk], filters="t_hour=11 AND t_minute>=30", output_bytes=14400, output_rows=1800, materialized=14400, bytes_read=2106000, rows_read=86400
+                    FILTER: output_bytes=8, output_rows=1, materialized=0
+                      TABLE_SCAN: table=store, projections=[s_store_sk], filters="s_store_name='ese'", output_bytes=8, output_rows=1, materialized=8, bytes_read=197, rows_read=12
+                UNGROUPED_AGGREGATE: aggregates=[count_star()], output_bytes=8, output_rows=1, materialized=109248
+                  HASH_JOIN: join_type=INNER, conditions=[ss_store_sk = s_store_sk], output_bytes=109248, output_rows=4552, materialized=109256
+                    HASH_JOIN: join_type=INNER, conditions=[ss_sold_time_sk = t_time_sk], output_bytes=446784, output_rows=27924, materialized=461184
+                      HASH_JOIN: join_type=INNER, conditions=[ss_hdemo_sk = hd_demo_sk], output_bytes=17567016, output_rows=731959, materialized=17582376
+                        TABLE_SCAN: table=store_sales, projections=[ss_sold_time_sk, ss_hdemo_sk, ss_store_sk], output_bytes=69129696, output_rows=2880404, materialized=69129696, bytes_read=70209849, rows_read=2880404
+                        PROJECTION: projections=[#0], output_bytes=15360, output_rows=1920, materialized=0
+                          FILTER: output_bytes=38400, output_rows=1920, materialized=0
+                            TABLE_SCAN: table=household_demographics, projections=[hd_demo_sk, hd_dep_count, hd_vehicle_count], filters="(((hd_dep_count = 4) OR (hd_dep_count = 2)) OR (hd_dep_count = 0))", output_bytes=43200, output_rows=2160, materialized=43200, bytes_read=146700, rows_read=7200
+                      FILTER: output_bytes=14400, output_rows=1800, materialized=0
+                        TABLE_SCAN: table=time_dim, projections=[t_time_sk], filters="t_hour=12 AND t_minute<30", output_bytes=14400, output_rows=1800, materialized=14400, bytes_read=2106000, rows_read=86400
+                    FILTER: output_bytes=8, output_rows=1, materialized=0
+                      TABLE_SCAN: table=store, projections=[s_store_sk], filters="s_store_name='ese'", output_bytes=8, output_rows=1, materialized=8, bytes_read=197, rows_read=12
+              UNGROUPED_AGGREGATE: aggregates=[count_star()], output_bytes=8, output_rows=1, materialized=94392
+                HASH_JOIN: join_type=INNER, conditions=[ss_store_sk = s_store_sk], output_bytes=94392, output_rows=3933, materialized=94400
+                  HASH_JOIN: join_type=INNER, conditions=[ss_sold_time_sk = t_time_sk], output_bytes=393232, output_rows=24577, materialized=407632
+                    HASH_JOIN: join_type=INNER, conditions=[ss_hdemo_sk = hd_demo_sk], output_bytes=17567016, output_rows=731959, materialized=17582376
+                      TABLE_SCAN: table=store_sales, projections=[ss_sold_time_sk, ss_hdemo_sk, ss_store_sk], output_bytes=69129696, output_rows=2880404, materialized=69129696, bytes_read=70209849, rows_read=2880404
+                      PROJECTION: projections=[#0], output_bytes=15360, output_rows=1920, materialized=0
+                        FILTER: output_bytes=38400, output_rows=1920, materialized=0
+                          TABLE_SCAN: table=household_demographics, projections=[hd_demo_sk, hd_dep_count, hd_vehicle_count], filters="(((hd_dep_count = 4) OR (hd_dep_count = 2)) OR (hd_dep_count = 0))", output_bytes=43200, output_rows=2160, materialized=43200, bytes_read=146700, rows_read=7200
+                    FILTER: output_bytes=14400, output_rows=1800, materialized=0
+                      TABLE_SCAN: table=time_dim, projections=[t_time_sk], filters="t_hour=11 AND t_minute<30", output_bytes=14400, output_rows=1800, materialized=14400, bytes_read=2106000, rows_read=86400
+                  FILTER: output_bytes=8, output_rows=1, materialized=0
+                    TABLE_SCAN: table=store, projections=[s_store_sk], filters="s_store_name='ese'", output_bytes=8, output_rows=1, materialized=8, bytes_read=197, rows_read=12
+            UNGROUPED_AGGREGATE: aggregates=[count_star()], output_bytes=8, output_rows=1, materialized=170664
+              HASH_JOIN: join_type=INNER, conditions=[ss_store_sk = s_store_sk], output_bytes=170664, output_rows=7111, materialized=170672
+                HASH_JOIN: join_type=INNER, conditions=[ss_sold_time_sk = t_time_sk], output_bytes=685536, output_rows=42846, materialized=699936
+                  HASH_JOIN: join_type=INNER, conditions=[ss_hdemo_sk = hd_demo_sk], output_bytes=17567016, output_rows=731959, materialized=17582376
+                    TABLE_SCAN: table=store_sales, projections=[ss_sold_time_sk, ss_hdemo_sk, ss_store_sk], output_bytes=69129696, output_rows=2880404, materialized=69129696, bytes_read=70209849, rows_read=2880404
+                    PROJECTION: projections=[#0], output_bytes=15360, output_rows=1920, materialized=0
+                      FILTER: output_bytes=38400, output_rows=1920, materialized=0
+                        TABLE_SCAN: table=household_demographics, projections=[hd_demo_sk, hd_dep_count, hd_vehicle_count], filters="(((hd_dep_count = 4) OR (hd_dep_count = 2)) OR (hd_dep_count = 0))", output_bytes=43200, output_rows=2160, materialized=43200, bytes_read=146700, rows_read=7200
+                  FILTER: output_bytes=14400, output_rows=1800, materialized=0
+                    TABLE_SCAN: table=time_dim, projections=[t_time_sk], filters="t_hour=10 AND t_minute>=30", output_bytes=14400, output_rows=1800, materialized=14400, bytes_read=2106000, rows_read=86400
+                FILTER: output_bytes=8, output_rows=1, materialized=0
+                  TABLE_SCAN: table=store, projections=[s_store_sk], filters="s_store_name='ese'", output_bytes=8, output_rows=1, materialized=8, bytes_read=197, rows_read=12
+          UNGROUPED_AGGREGATE: aggregates=[count_star()], output_bytes=8, output_rows=1, materialized=182160
+            HASH_JOIN: join_type=INNER, conditions=[ss_store_sk = s_store_sk], output_bytes=182160, output_rows=7590, materialized=182168
+              HASH_JOIN: join_type=INNER, conditions=[ss_sold_time_sk = t_time_sk], output_bytes=698768, output_rows=43673, materialized=713168
+                HASH_JOIN: join_type=INNER, conditions=[ss_hdemo_sk = hd_demo_sk], output_bytes=17567016, output_rows=731959, materialized=17582376
+                  TABLE_SCAN: table=store_sales, projections=[ss_sold_time_sk, ss_hdemo_sk, ss_store_sk], output_bytes=69129696, output_rows=2880404, materialized=69129696, bytes_read=70209849, rows_read=2880404
+                  PROJECTION: projections=[#0], output_bytes=15360, output_rows=1920, materialized=0
+                    FILTER: output_bytes=38400, output_rows=1920, materialized=0
+                      TABLE_SCAN: table=household_demographics, projections=[hd_demo_sk, hd_dep_count, hd_vehicle_count], filters="(((hd_dep_count = 4) OR (hd_dep_count = 2)) OR (hd_dep_count = 0))", output_bytes=43200, output_rows=2160, materialized=43200, bytes_read=146700, rows_read=7200
+                FILTER: output_bytes=14400, output_rows=1800, materialized=0
+                  TABLE_SCAN: table=time_dim, projections=[t_time_sk], filters="t_hour=10 AND t_minute<30", output_bytes=14400, output_rows=1800, materialized=14400, bytes_read=2106000, rows_read=86400
+              FILTER: output_bytes=8, output_rows=1, materialized=0
+                TABLE_SCAN: table=store, projections=[s_store_sk], filters="s_store_name='ese'", output_bytes=8, output_rows=1, materialized=8, bytes_read=197, rows_read=12
+        UNGROUPED_AGGREGATE: aggregates=[count_star()], output_bytes=8, output_rows=1, materialized=110232
+          HASH_JOIN: join_type=INNER, conditions=[ss_store_sk = s_store_sk], output_bytes=110232, output_rows=4593, materialized=110240
+            HASH_JOIN: join_type=INNER, conditions=[ss_sold_time_sk = t_time_sk], output_bytes=460144, output_rows=28759, materialized=474544
+              HASH_JOIN: join_type=INNER, conditions=[ss_hdemo_sk = hd_demo_sk], output_bytes=17567016, output_rows=731959, materialized=17582376
+                TABLE_SCAN: table=store_sales, projections=[ss_sold_time_sk, ss_hdemo_sk, ss_store_sk], output_bytes=69129696, output_rows=2880404, materialized=69129696, bytes_read=70209849, rows_read=2880404
+                PROJECTION: projections=[#0], output_bytes=15360, output_rows=1920, materialized=0
+                  FILTER: output_bytes=38400, output_rows=1920, materialized=0
+                    TABLE_SCAN: table=household_demographics, projections=[hd_demo_sk, hd_dep_count, hd_vehicle_count], filters="(((hd_dep_count = 4) OR (hd_dep_count = 2)) OR (hd_dep_count = 0))", output_bytes=43200, output_rows=2160, materialized=43200, bytes_read=146700, rows_read=7200
+              FILTER: output_bytes=14400, output_rows=1800, materialized=0
+                TABLE_SCAN: table=time_dim, projections=[t_time_sk], filters="t_hour=9 AND t_minute>=30", output_bytes=14400, output_rows=1800, materialized=14400, bytes_read=2106000, rows_read=86400
+            FILTER: output_bytes=8, output_rows=1, materialized=0
+              TABLE_SCAN: table=store, projections=[s_store_sk], filters="s_store_name='ese'", output_bytes=8, output_rows=1, materialized=8, bytes_read=197, rows_read=12
+      UNGROUPED_AGGREGATE: aggregates=[count_star()], output_bytes=8, output_rows=1, materialized=113928
+        HASH_JOIN: join_type=INNER, conditions=[ss_store_sk = s_store_sk], output_bytes=113928, output_rows=4747, materialized=113936
+          HASH_JOIN: join_type=INNER, conditions=[ss_sold_time_sk = t_time_sk], output_bytes=465200, output_rows=29075, materialized=479600
+            HASH_JOIN: join_type=INNER, conditions=[ss_hdemo_sk = hd_demo_sk], output_bytes=17567016, output_rows=731959, materialized=17582376
+              TABLE_SCAN: table=store_sales, projections=[ss_sold_time_sk, ss_hdemo_sk, ss_store_sk], output_bytes=69129696, output_rows=2880404, materialized=69129696, bytes_read=70209849, rows_read=2880404
+              PROJECTION: projections=[#0], output_bytes=15360, output_rows=1920, materialized=0
+                FILTER: output_bytes=38400, output_rows=1920, materialized=0
+                  TABLE_SCAN: table=household_demographics, projections=[hd_demo_sk, hd_dep_count, hd_vehicle_count], filters="(((hd_dep_count = 4) OR (hd_dep_count = 2)) OR (hd_dep_count = 0))", output_bytes=43200, output_rows=2160, materialized=43200, bytes_read=146700, rows_read=7200
+            FILTER: output_bytes=14400, output_rows=1800, materialized=0
+              TABLE_SCAN: table=time_dim, projections=[t_time_sk], filters="t_hour=9 AND t_minute<30", output_bytes=14400, output_rows=1800, materialized=14400, bytes_read=2106000, rows_read=86400
+          FILTER: output_bytes=8, output_rows=1, materialized=0
+            TABLE_SCAN: table=store, projections=[s_store_sk], filters="s_store_name='ese'", output_bytes=8, output_rows=1, materialized=8, bytes_read=197, rows_read=12
+    UNGROUPED_AGGREGATE: aggregates=[count_star()], output_bytes=8, output_rows=1, materialized=56256
+      HASH_JOIN: join_type=INNER, conditions=[ss_store_sk = s_store_sk], output_bytes=56256, output_rows=2344, materialized=56264
+        HASH_JOIN: join_type=INNER, conditions=[ss_sold_time_sk = t_time_sk], output_bytes=219120, output_rows=13695, materialized=233520
+          HASH_JOIN: join_type=INNER, conditions=[ss_hdemo_sk = hd_demo_sk], output_bytes=17567016, output_rows=731959, materialized=17582376
+            TABLE_SCAN: table=store_sales, projections=[ss_sold_time_sk, ss_hdemo_sk, ss_store_sk], output_bytes=69129696, output_rows=2880404, materialized=69129696, bytes_read=70209849, rows_read=2880404
+            PROJECTION: projections=[#0], output_bytes=15360, output_rows=1920, materialized=0
+              FILTER: output_bytes=38400, output_rows=1920, materialized=0
+                TABLE_SCAN: table=household_demographics, projections=[hd_demo_sk, hd_dep_count, hd_vehicle_count], filters="(((hd_dep_count = 4) OR (hd_dep_count = 2)) OR (hd_dep_count = 0))", output_bytes=43200, output_rows=2160, materialized=43200, bytes_read=146700, rows_read=7200
+          FILTER: output_bytes=14400, output_rows=1800, materialized=0
+            TABLE_SCAN: table=time_dim, projections=[t_time_sk], filters="t_hour=8 AND t_minute>=30", output_bytes=14400, output_rows=1800, materialized=14400, bytes_read=2106000, rows_read=86400
+        FILTER: output_bytes=8, output_rows=1, materialized=0
+          TABLE_SCAN: table=store, projections=[s_store_sk], filters="s_store_name='ese'", output_bytes=8, output_rows=1, materialized=8, bytes_read=197, rows_read=12
+duckdb_cost=1279602696
+materialization_total=699900728
+storage_read_total=579701968
+
+--- row-group pruning (storage reduction) ---
+store_sales  dyn_filter=[ss_sold_time_sk>=41400 AND ss_sold_time_sk<=43199 AND ss_hdemo_sk>=1 AND ss_hdemo_sk<=7200 AND ss_store_sk=4]  row_groups=24/24  rows=2880404/2880404 (100.0%)  bytes_fetched=12481881/12481881 (100.0%)
+household_demographics  filter=[(((hd_dep_count = 4) OR (hd_dep_count = 2)) OR (hd_dep_count = 0))]  row_groups=1/1  rows=7200/7200 (100.0%)  bytes_fetched=29834/29834 (100.0%)
+time_dim  filter=[t_hour=11 AND t_minute>=30]  row_groups=1/1  rows=86400/86400 (100.0%)  bytes_fetched=347352/347352 (100.0%)
+store  filter=[s_store_name='ese']  row_groups=1/1  rows=12/12 (100.0%)  bytes_fetched=217/217 (100.0%)
+store_sales  dyn_filter=[ss_sold_time_sk>=43200 AND ss_sold_time_sk<=44999 AND ss_hdemo_sk>=1 AND ss_hdemo_sk<=7200 AND ss_store_sk=4]  row_groups=24/24  rows=2880404/2880404 (100.0%)  bytes_fetched=12481881/12481881 (100.0%)
+household_demographics  filter=[(((hd_dep_count = 4) OR (hd_dep_count = 2)) OR (hd_dep_count = 0))]  row_groups=1/1  rows=7200/7200 (100.0%)  bytes_fetched=29834/29834 (100.0%)
+time_dim  filter=[t_hour=12 AND t_minute<30]  row_groups=1/1  rows=86400/86400 (100.0%)  bytes_fetched=347352/347352 (100.0%)
+store  filter=[s_store_name='ese']  row_groups=1/1  rows=12/12 (100.0%)  bytes_fetched=217/217 (100.0%)
+store_sales  dyn_filter=[ss_sold_time_sk>=39600 AND ss_sold_time_sk<=41399 AND ss_hdemo_sk>=1 AND ss_hdemo_sk<=7200 AND ss_store_sk=4]  row_groups=24/24  rows=2880404/2880404 (100.0%)  bytes_fetched=12481881/12481881 (100.0%)
+household_demographics  filter=[(((hd_dep_count = 4) OR (hd_dep_count = 2)) OR (hd_dep_count = 0))]  row_groups=1/1  rows=7200/7200 (100.0%)  bytes_fetched=29834/29834 (100.0%)
+time_dim  filter=[t_hour=11 AND t_minute<30]  row_groups=1/1  rows=86400/86400 (100.0%)  bytes_fetched=347352/347352 (100.0%)
+store  filter=[s_store_name='ese']  row_groups=1/1  rows=12/12 (100.0%)  bytes_fetched=217/217 (100.0%)
+store_sales  dyn_filter=[ss_sold_time_sk>=37800 AND ss_sold_time_sk<=39599 AND ss_hdemo_sk>=1 AND ss_hdemo_sk<=7200 AND ss_store_sk=4]  row_groups=24/24  rows=2880404/2880404 (100.0%)  bytes_fetched=12481881/12481881 (100.0%)
+household_demographics  filter=[(((hd_dep_count = 4) OR (hd_dep_count = 2)) OR (hd_dep_count = 0))]  row_groups=1/1  rows=7200/7200 (100.0%)  bytes_fetched=29834/29834 (100.0%)
+time_dim  filter=[t_hour=10 AND t_minute>=30]  row_groups=1/1  rows=86400/86400 (100.0%)  bytes_fetched=347352/347352 (100.0%)
+store  filter=[s_store_name='ese']  row_groups=1/1  rows=12/12 (100.0%)  bytes_fetched=217/217 (100.0%)
+store_sales  dyn_filter=[ss_sold_time_sk>=36000 AND ss_sold_time_sk<=37799 AND ss_hdemo_sk>=1 AND ss_hdemo_sk<=7200 AND ss_store_sk=4]  row_groups=24/24  rows=2880404/2880404 (100.0%)  bytes_fetched=12481881/12481881 (100.0%)
+household_demographics  filter=[(((hd_dep_count = 4) OR (hd_dep_count = 2)) OR (hd_dep_count = 0))]  row_groups=1/1  rows=7200/7200 (100.0%)  bytes_fetched=29834/29834 (100.0%)
+time_dim  filter=[t_hour=10 AND t_minute<30]  row_groups=1/1  rows=86400/86400 (100.0%)  bytes_fetched=347352/347352 (100.0%)
+store  filter=[s_store_name='ese']  row_groups=1/1  rows=12/12 (100.0%)  bytes_fetched=217/217 (100.0%)
+store_sales  dyn_filter=[ss_sold_time_sk>=34200 AND ss_sold_time_sk<=35999 AND ss_hdemo_sk>=1 AND ss_hdemo_sk<=7200 AND ss_store_sk=4]  row_groups=24/24  rows=2880404/2880404 (100.0%)  bytes_fetched=12481881/12481881 (100.0%)
+household_demographics  filter=[(((hd_dep_count = 4) OR (hd_dep_count = 2)) OR (hd_dep_count = 0))]  row_groups=1/1  rows=7200/7200 (100.0%)  bytes_fetched=29834/29834 (100.0%)
+time_dim  filter=[t_hour=9 AND t_minute>=30]  row_groups=1/1  rows=86400/86400 (100.0%)  bytes_fetched=347352/347352 (100.0%)
+store  filter=[s_store_name='ese']  row_groups=1/1  rows=12/12 (100.0%)  bytes_fetched=217/217 (100.0%)
+store_sales  dyn_filter=[ss_sold_time_sk>=32400 AND ss_sold_time_sk<=34199 AND ss_hdemo_sk>=1 AND ss_hdemo_sk<=7200 AND ss_store_sk=4]  row_groups=24/24  rows=2880404/2880404 (100.0%)  bytes_fetched=12481881/12481881 (100.0%)
+household_demographics  filter=[(((hd_dep_count = 4) OR (hd_dep_count = 2)) OR (hd_dep_count = 0))]  row_groups=1/1  rows=7200/7200 (100.0%)  bytes_fetched=29834/29834 (100.0%)
+time_dim  filter=[t_hour=9 AND t_minute<30]  row_groups=1/1  rows=86400/86400 (100.0%)  bytes_fetched=347352/347352 (100.0%)
+store  filter=[s_store_name='ese']  row_groups=1/1  rows=12/12 (100.0%)  bytes_fetched=217/217 (100.0%)
+store_sales  dyn_filter=[ss_sold_time_sk>=30600 AND ss_sold_time_sk<=32399 AND ss_hdemo_sk>=1 AND ss_hdemo_sk<=7200 AND ss_store_sk=4]  row_groups=24/24  rows=2880404/2880404 (100.0%)  bytes_fetched=12481881/12481881 (100.0%)
+household_demographics  filter=[(((hd_dep_count = 4) OR (hd_dep_count = 2)) OR (hd_dep_count = 0))]  row_groups=1/1  rows=7200/7200 (100.0%)  bytes_fetched=29834/29834 (100.0%)
+time_dim  filter=[t_hour=8 AND t_minute>=30]  row_groups=1/1  rows=86400/86400 (100.0%)  bytes_fetched=347352/347352 (100.0%)
+store  filter=[s_store_name='ese']  row_groups=1/1  rows=12/12 (100.0%)  bytes_fetched=217/217 (100.0%)
+pruning_bytes_fetched=102874272/102874272 (100.0%)
+
+--- cost breakdown ---
+TABLE_SCAN(store_sales)                69129696   9.9%
+TABLE_SCAN(store_sales)                69129696   9.9%
+TABLE_SCAN(store_sales)                69129696   9.9%
+TABLE_SCAN(store_sales)                69129696   9.9%
+TABLE_SCAN(store_sales)                69129696   9.9%
+TABLE_SCAN(store_sales)                69129696   9.9%
+TABLE_SCAN(store_sales)                69129696   9.9%
+TABLE_SCAN(store_sales)                69129696   9.9%
+HASH_JOIN                              17582376   2.5%
+HASH_JOIN                              17582376   2.5%
+HASH_JOIN                              17582376   2.5%
+HASH_JOIN                              17582376   2.5%
+HASH_JOIN                              17582376   2.5%
+HASH_JOIN                              17582376   2.5%
+HASH_JOIN                              17582376   2.5%
+HASH_JOIN                              17582376   2.5%
+HASH_JOIN                                713168   0.1%
+HASH_JOIN                                699936   0.1%
+HASH_JOIN                                479600   0.1%
+HASH_JOIN                                474544   0.1%
+HASH_JOIN                                461184   0.1%
+HASH_JOIN                                407632   0.1%
+HASH_JOIN                                401344   0.1%
+HASH_JOIN                                233520   0.0%
+HASH_JOIN                                182168   0.0%
+UNGROUPED_AGGREGATE                      182160   0.0%
+HASH_JOIN                                170672   0.0%
+UNGROUPED_AGGREGATE                      170664   0.0%
+HASH_JOIN                                113936   0.0%
+UNGROUPED_AGGREGATE                      113928   0.0%
+HASH_JOIN                                110240   0.0%
+UNGROUPED_AGGREGATE                      110232   0.0%
+HASH_JOIN                                109256   0.0%
+UNGROUPED_AGGREGATE                      109248   0.0%
+HASH_JOIN                                 99104   0.0%
+UNGROUPED_AGGREGATE                       99096   0.0%
+HASH_JOIN                                 94400   0.0%
+UNGROUPED_AGGREGATE                       94392   0.0%
+HASH_JOIN                                 56264   0.0%
+UNGROUPED_AGGREGATE                       56256   0.0%
+TABLE_SCAN(household_demographics)          43200   0.0%
+TABLE_SCAN(household_demographics)          43200   0.0%
+TABLE_SCAN(household_demographics)          43200   0.0%
+TABLE_SCAN(household_demographics)          43200   0.0%
+TABLE_SCAN(household_demographics)          43200   0.0%
+TABLE_SCAN(household_demographics)          43200   0.0%
+TABLE_SCAN(household_demographics)          43200   0.0%
+TABLE_SCAN(household_demographics)          43200   0.0%
+TABLE_SCAN(time_dim)                      14400   0.0%
+TABLE_SCAN(time_dim)                      14400   0.0%
+TABLE_SCAN(time_dim)                      14400   0.0%
+TABLE_SCAN(time_dim)                      14400   0.0%
+TABLE_SCAN(time_dim)                      14400   0.0%
+TABLE_SCAN(time_dim)                      14400   0.0%
+TABLE_SCAN(time_dim)                      14400   0.0%
+TABLE_SCAN(time_dim)                      14400   0.0%
+CROSS_PRODUCT                                72   0.0%
+CROSS_PRODUCT                                64   0.0%
+CROSS_PRODUCT                                56   0.0%
+CROSS_PRODUCT                                48   0.0%
+CROSS_PRODUCT                                40   0.0%
+CROSS_PRODUCT                                32   0.0%
+CROSS_PRODUCT                                32   0.0%
+TABLE_SCAN(store)                             8   0.0%
+TABLE_SCAN(store)                             8   0.0%
+TABLE_SCAN(store)                             8   0.0%
+TABLE_SCAN(store)                             8   0.0%
+TABLE_SCAN(store)                             8   0.0%
+TABLE_SCAN(store)                             8   0.0%
+TABLE_SCAN(store)                             8   0.0%
+TABLE_SCAN(store)                             8   0.0%
+total=699900728

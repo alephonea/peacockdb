@@ -1,0 +1,1 @@
+["ca_address_sk>=4596 AND ca_address_sk<=49224","hd_demo_sk>=48 AND hd_demo_sk<=7133","cd_demo_sk>=844 AND cd_demo_sk<=1919882","c_customer_sk>=74 AND c_customer_sk<=99990","cr_returned_date_sk>=2451119 AND cr_returned_date_sk<=2451148","",""]

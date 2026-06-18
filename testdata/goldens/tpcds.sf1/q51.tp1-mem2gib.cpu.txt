@@ -1,36 +1,36 @@
-GpuSortExec: expr=[item_sk@0 ASC, d_date@1 ASC], fetch=100, output_bytes=7278, output_rows=100
-  GpuProjectExec: expr=[item_sk@0 as item_sk, d_date@1 as d_date, web_sales@2 as web_sales, store_sales@3 as store_sales, max(x.web_sales) PARTITION BY [x.item_sk] ORDER BY [x.d_date ASC NULLS LAST] ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW@4 as web_cumulative, max(x.store_sales) PARTITION BY [x.item_sk] ORDER BY [x.d_date ASC NULLS LAST] ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW@5 as store_cumulative], output_bytes=1858254, output_rows=25543
-    GpuCoalesceBatchesExec: target_batch_size=14913080, output_bytes=1858254, output_rows=25543
-      GpuFilterExec: predicate=max(x.web_sales) PARTITION BY [x.item_sk] ORDER BY [x.d_date ASC NULLS LAST] ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW@4 > max(x.store_sales) PARTITION BY [x.item_sk] ORDER BY [x.d_date ASC NULLS LAST] ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW@5, output_bytes=1858254, output_rows=25543
-        GpuWindowExec: wdw=[max(x.web_sales) PARTITION BY [x.item_sk] ORDER BY [x.d_date ASC NULLS LAST] ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW, max(x.store_sales) PARTITION BY [x.item_sk] ORDER BY [x.d_date ASC NULLS LAST] ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW], output_bytes=44427264, output_rows=610684
-          GpuSortExec: expr=[item_sk@0 ASC NULLS LAST, d_date@1 ASC NULLS LAST], output_bytes=24732704, output_rows=610684
-            GpuProjectExec: expr=[CASE WHEN item_sk@0 IS NOT NULL THEN item_sk@0 ELSE item_sk@3 END as item_sk, CASE WHEN d_date@1 IS NOT NULL THEN d_date@1 ELSE d_date@4 END as d_date, cume_sales@2 as web_sales, cume_sales@5 as store_sales], output_bytes=24732704, output_rows=610684
-              GpuCoalesceBatchesExec: target_batch_size=14913080, output_bytes=29770848, output_rows=610684
-                GpuHashJoinExec: join_type=Full, on=[(item_sk@0, item_sk@0), (d_date@1, d_date@1)], output_bytes=29770848, output_rows=610684
-                  GpuProjectExec: expr=[ws_item_sk@0 as item_sk, d_date@1 as d_date, sum(sum(web_sales.ws_sales_price)) PARTITION BY [web_sales.ws_item_sk] ORDER BY [date_dim.d_date ASC NULLS LAST] ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW@3 as cume_sales], output_bytes=3371307, output_rows=138310
-                    GpuWindowExec: wdw=[sum(sum(web_sales.ws_sales_price)) PARTITION BY [web_sales.ws_item_sk] ORDER BY [date_dim.d_date ASC NULLS LAST] ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW], output_bytes=5601556, output_rows=138310
-                      GpuSortExec: expr=[ws_item_sk@0 ASC NULLS LAST, d_date@1 ASC NULLS LAST], output_bytes=3371307, output_rows=138310
-                        GpuAggregateExec: group_by=[ws_item_sk, d_date], aggr=[sum(web_sales.ws_sales_price)], output_bytes=3371307, output_rows=138310
-                          GpuProjectExec: expr=[ws_item_sk@1 as ws_item_sk, ws_sales_price@2 as ws_sales_price, d_date@0 as d_date], output_bytes=3465639, output_rows=142180
-                            GpuCoalesceBatchesExec: target_batch_size=14913080, output_bytes=3465639, output_rows=142180
-                              GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ws_sold_date_sk@0)], projection=[1, 3, 4], output_bytes=3465639, output_rows=142180
-                                GpuCoalesceBatchesExec: target_batch_size=14913080, output_bytes=3020, output_rows=366
-                                  GpuFilterExec: predicate=d_month_seq@2 >= 1200 AND d_month_seq@2 <= 1211, projection=[0, 1], output_bytes=3020, output_rows=366
-                                    GpuScanExec: table=date_dim, projections=[d_date_sk, d_date, d_month_seq], batch_size=14913080, output_bytes=903984, output_rows=73049
-                                GpuCoalesceBatchesExec: target_batch_size=14913080, output_bytes=17534985, output_rows=719384
-                                  GpuFilterExec: predicate=ws_item_sk@1 IS NOT NULL, output_bytes=17534985, output_rows=719384
-                                    GpuScanExec: table=web_sales, projections=[ws_sold_date_sk, ws_item_sk, ws_sales_price], batch_size=14913080, output_bytes=17534985, output_rows=719384
-                  GpuProjectExec: expr=[ss_item_sk@0 as item_sk, d_date@1 as d_date, sum(sum(store_sales.ss_sales_price)) PARTITION BY [store_sales.ss_item_sk] ORDER BY [date_dim.d_date ASC NULLS LAST] ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW@3 as cume_sales], output_bytes=12168123, output_rows=499205
-                    GpuWindowExec: wdw=[sum(sum(store_sales.ss_sales_price)) PARTITION BY [store_sales.ss_item_sk] ORDER BY [date_dim.d_date ASC NULLS LAST] ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW], output_bytes=20217804, output_rows=499205
-                      GpuSortExec: expr=[ss_item_sk@0 ASC NULLS LAST, d_date@1 ASC NULLS LAST], output_bytes=12168123, output_rows=499205
-                        GpuAggregateExec: group_by=[ss_item_sk, d_date], aggr=[sum(store_sales.ss_sales_price)], output_bytes=12168123, output_rows=499205
-                          GpuProjectExec: expr=[ss_item_sk@1 as ss_item_sk, ss_sales_price@2 as ss_sales_price, d_date@0 as d_date], output_bytes=13503021, output_rows=553970
-                            GpuCoalesceBatchesExec: target_batch_size=14913080, output_bytes=13503021, output_rows=553970
-                              GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ss_sold_date_sk@0)], projection=[1, 3, 4], output_bytes=13503021, output_rows=553970
-                                GpuCoalesceBatchesExec: target_batch_size=14913080, output_bytes=3020, output_rows=366
-                                  GpuFilterExec: predicate=d_month_seq@2 >= 1200 AND d_month_seq@2 <= 1211, projection=[0, 1], output_bytes=3020, output_rows=366
-                                    GpuScanExec: table=date_dim, projections=[d_date_sk, d_date, d_month_seq], batch_size=14913080, output_bytes=903984, output_rows=73049
-                                GpuCoalesceBatchesExec: target_batch_size=14913080, output_bytes=70209849, output_rows=2880404
-                                  GpuFilterExec: predicate=ss_item_sk@1 IS NOT NULL, output_bytes=70209849, output_rows=2880404
-                                    GpuScanExec: table=store_sales, projections=[ss_sold_date_sk, ss_item_sk, ss_sales_price], batch_size=14913080, output_bytes=70209849, output_rows=2880404
-peacockdb_cost=547414588
+GpuSortExec: expr=[item_sk@0 ASC, d_date@1 ASC], fetch=100, output_bytes=7678, output_rows=100
+  GpuProjectExec: expr=[item_sk@0 as item_sk, d_date@1 as d_date, web_sales@2 as web_sales, store_sales@3 as store_sales, max(x.web_sales) PARTITION BY [x.item_sk] ORDER BY [x.d_date ASC NULLS LAST] ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW@4 as web_cumulative, max(x.store_sales) PARTITION BY [x.item_sk] ORDER BY [x.d_date ASC NULLS LAST] ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW@5 as store_cumulative], output_bytes=1960426, output_rows=25543
+    GpuCoalesceBatchesExec: target_batch_size=14128181, output_bytes=1960426, output_rows=25543
+      GpuFilterExec: predicate=max(x.web_sales) PARTITION BY [x.item_sk] ORDER BY [x.d_date ASC NULLS LAST] ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW@4 > max(x.store_sales) PARTITION BY [x.item_sk] ORDER BY [x.d_date ASC NULLS LAST] ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW@5, output_bytes=1960426, output_rows=25543
+        GpuWindowExec: wdw=[max(x.web_sales) PARTITION BY [x.item_sk] ORDER BY [x.d_date ASC NULLS LAST] ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW, max(x.store_sales) PARTITION BY [x.item_sk] ORDER BY [x.d_date ASC NULLS LAST] ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW], output_bytes=46870000, output_rows=610684
+          GpuSortExec: expr=[item_sk@0 ASC NULLS LAST, d_date@1 ASC NULLS LAST], output_bytes=27175440, output_rows=610684
+            GpuProjectExec: expr=[CASE WHEN item_sk@0 IS NOT NULL THEN item_sk@0 ELSE item_sk@3 END as item_sk, CASE WHEN d_date@1 IS NOT NULL THEN d_date@1 ELSE d_date@4 END as d_date, cume_sales@2 as web_sales, cume_sales@5 as store_sales], output_bytes=27175440, output_rows=610684
+              GpuCoalesceBatchesExec: target_batch_size=14128181, output_bytes=34656320, output_rows=610684
+                GpuHashJoinExec: join_type=Full, on=[(item_sk@0, item_sk@0), (d_date@1, d_date@1)], output_bytes=34656320, output_rows=610684
+                  GpuProjectExec: expr=[ws_item_sk@0 as item_sk, d_date@1 as d_date, sum(sum(web_sales.ws_sales_price)) PARTITION BY [web_sales.ws_item_sk] ORDER BY [date_dim.d_date ASC NULLS LAST] ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW@3 as cume_sales], output_bytes=3924547, output_rows=138310
+                    GpuWindowExec: wdw=[sum(sum(web_sales.ws_sales_price)) PARTITION BY [web_sales.ws_item_sk] ORDER BY [date_dim.d_date ASC NULLS LAST] ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW], output_bytes=6154796, output_rows=138310
+                      GpuSortExec: expr=[ws_item_sk@0 ASC NULLS LAST, d_date@1 ASC NULLS LAST], output_bytes=3924547, output_rows=138310
+                        GpuAggregateExec: group_by=[ws_item_sk, d_date], aggr=[sum(web_sales.ws_sales_price)], output_bytes=3924547, output_rows=138310
+                          GpuProjectExec: expr=[ws_item_sk@1 as ws_item_sk, ws_sales_price@2 as ws_sales_price, d_date@0 as d_date], output_bytes=4034359, output_rows=142180
+                            GpuCoalesceBatchesExec: target_batch_size=14128181, output_bytes=4034359, output_rows=142180
+                              GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ws_sold_date_sk@0)], projection=[1, 3, 4], output_bytes=4034359, output_rows=142180
+                                GpuCoalesceBatchesExec: target_batch_size=14128181, output_bytes=4484, output_rows=366
+                                  GpuFilterExec: predicate=d_month_seq@2 >= 1200 AND d_month_seq@2 <= 1211, projection=[0, 1], output_bytes=4484, output_rows=366
+                                    GpuScanExec: table=date_dim, projections=[d_date_sk, d_date, d_month_seq], batch_size=14128181, output_bytes=1488376, output_rows=73049
+                                GpuCoalesceBatchesExec: target_batch_size=14128181, output_bytes=23290057, output_rows=719384
+                                  GpuFilterExec: predicate=ws_item_sk@1 IS NOT NULL, output_bytes=23290057, output_rows=719384
+                                    GpuScanExec: table=web_sales, projections=[ws_sold_date_sk, ws_item_sk, ws_sales_price], batch_size=14128181, output_bytes=23290057, output_rows=719384
+                  GpuProjectExec: expr=[ss_item_sk@0 as item_sk, d_date@1 as d_date, sum(sum(store_sales.ss_sales_price)) PARTITION BY [store_sales.ss_item_sk] ORDER BY [date_dim.d_date ASC NULLS LAST] ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW@3 as cume_sales], output_bytes=14164943, output_rows=499205
+                    GpuWindowExec: wdw=[sum(sum(store_sales.ss_sales_price)) PARTITION BY [store_sales.ss_item_sk] ORDER BY [date_dim.d_date ASC NULLS LAST] ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW], output_bytes=22214624, output_rows=499205
+                      GpuSortExec: expr=[ss_item_sk@0 ASC NULLS LAST, d_date@1 ASC NULLS LAST], output_bytes=14164943, output_rows=499205
+                        GpuAggregateExec: group_by=[ss_item_sk, d_date], aggr=[sum(store_sales.ss_sales_price)], output_bytes=14164943, output_rows=499205
+                          GpuProjectExec: expr=[ss_item_sk@1 as ss_item_sk, ss_sales_price@2 as ss_sales_price, d_date@0 as d_date], output_bytes=15718901, output_rows=553970
+                            GpuCoalesceBatchesExec: target_batch_size=14128181, output_bytes=15718901, output_rows=553970
+                              GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ss_sold_date_sk@0)], projection=[1, 3, 4], output_bytes=15718901, output_rows=553970
+                                GpuCoalesceBatchesExec: target_batch_size=14128181, output_bytes=4484, output_rows=366
+                                  GpuFilterExec: predicate=d_month_seq@2 >= 1200 AND d_month_seq@2 <= 1211, projection=[0, 1], output_bytes=4484, output_rows=366
+                                    GpuScanExec: table=date_dim, projections=[d_date_sk, d_date, d_month_seq], batch_size=14128181, output_bytes=1488376, output_rows=73049
+                                GpuCoalesceBatchesExec: target_batch_size=14128181, output_bytes=93253081, output_rows=2880404
+                                  GpuFilterExec: predicate=ss_item_sk@1 IS NOT NULL, output_bytes=93253081, output_rows=2880404
+                                    GpuScanExec: table=store_sales, projections=[ss_sold_date_sk, ss_item_sk, ss_sales_price], batch_size=14128181, output_bytes=93253081, output_rows=2880404
+peacockdb_cost=670944248

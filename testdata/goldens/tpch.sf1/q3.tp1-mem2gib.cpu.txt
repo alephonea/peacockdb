@@ -9,9 +9,9 @@ GpuSortExec: expr=[revenue@1 DESC, o_orderdate@2 ASC NULLS LAST], fetch=10, outp
                 GpuFilterExec: predicate=c_mktsegment@1 = BUILDING, projection=[0], output_bytes=244905, output_rows=30142
                   GpuScanExec: table=customer, projections=[c_custkey, c_mktsegment], batch_size=20648881, output_bytes=3187118, output_rows=150000
               GpuCoalesceBatchesExec: target_batch_size=20648881, output_bytes=17818976, output_rows=727305
-                GpuFilterExec: predicate=o_orderdate@2 < 1995-03-15, output_bytes=17819000, output_rows=727305
-                  GpuScanExec: table=orders, projections=[o_orderkey, o_custkey, o_orderdate, o_shippriority], batch_size=20648881, output_bytes=36750000, output_rows=1500000
+                GpuFilterExec: predicate=o_orderdate@2 < 1995-03-15, output_bytes=17818976, output_rows=727305
+                  GpuScanExec: table=orders, projections=[o_orderkey, o_custkey, o_orderdate, o_shippriority], batch_size=20648881, output_bytes=18063360, output_rows=737280
           GpuCoalesceBatchesExec: target_batch_size=20648881, output_bytes=130886706, output_rows=3241776
-            GpuFilterExec: predicate=l_shipdate@3 > 1995-03-15, projection=[0, 1, 2], output_bytes=130886784, output_rows=3241776
-              GpuScanExec: table=lineitem, projections=[l_orderkey, l_extendedprice, l_discount, l_shipdate], batch_size=20648881, output_bytes=267054068, output_rows=6001215
-peacockdb_cost=613434445
+            GpuFilterExec: predicate=l_shipdate@3 > 1995-03-15, projection=[0, 1, 2], output_bytes=130886709, output_rows=3241776
+              GpuScanExec: table=lineitem, projections=[l_orderkey, l_extendedprice, l_discount, l_shipdate], batch_size=20648881, output_bytes=146754548, output_rows=3297855
+peacockdb_cost=474448186

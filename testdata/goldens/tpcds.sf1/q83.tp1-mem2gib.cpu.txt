@@ -8,58 +8,58 @@ GpuSortExec: expr=[item_id@0 ASC, sr_item_qty@1 ASC], fetch=100, output_bytes=18
               GpuHashJoinExec: join_type=Inner, on=[(item_id@0, item_id@0)], projection=[1, 2, 3], output_bytes=11317, output_rows=311
                 GpuProjectExec: expr=[i_item_id@0 as item_id, sum(catalog_returns.cr_return_quantity)@1 as cr_item_qty], output_bytes=34160, output_rows=1209
                   GpuAggregateExec: group_by=[i_item_id], aggr=[sum(catalog_returns.cr_return_quantity)], output_bytes=34160, output_rows=1209
-                    GpuCoalesceBatchesExec: target_batch_size=12201611, output_bytes=31432, output_rows=1296
-                      GpuHashJoinExec: join_type=RightSemi, on=[(d_date@0, d_date@2)], projection=[0, 1], output_bytes=31432, output_rows=1296
+                    GpuCoalesceBatchesExec: target_batch_size=12201611, output_bytes=36616, output_rows=1296
+                      GpuHashJoinExec: join_type=RightSemi, on=[(d_date@0, d_date@2)], projection=[0, 1], output_bytes=36616, output_rows=1296
                         GpuCoalesceBatchesExec: target_batch_size=12201611, output_bytes=87, output_rows=21
                           GpuHashJoinExec: join_type=RightSemi, on=[(d_week_seq@0, d_week_seq@1)], projection=[0], output_bytes=87, output_rows=21
-                            GpuCoalesceBatchesExec: target_batch_size=12201611, output_bytes=13, output_rows=3
-                              GpuFilterExec: predicate=d_date@0 = 2000-06-30 OR d_date@0 = 2000-09-27 OR d_date@0 = 2000-11-17, projection=[1], output_bytes=13, output_rows=3
-                                GpuScanExec: table=date_dim, projections=[d_date, d_week_seq], batch_size=12201611, output_bytes=602656, output_rows=73049
-                            GpuScanExec: table=date_dim, projections=[d_date, d_week_seq], batch_size=12201611, output_bytes=602656, output_rows=73049
-                        GpuProjectExec: expr=[cr_return_quantity@1 as cr_return_quantity, i_item_id@2 as i_item_id, d_date@0 as d_date], output_bytes=4087907, output_rows=144067
-                          GpuCoalesceBatchesExec: target_batch_size=12201611, output_bytes=4087907, output_rows=144067
-                            GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, cr_returned_date_sk@0)], projection=[1, 3, 4], output_bytes=4087975, output_rows=144067
-                              GpuScanExec: table=date_dim, projections=[d_date_sk, d_date], batch_size=12201611, output_bytes=602656, output_rows=73049
-                              GpuProjectExec: expr=[cr_returned_date_sk@1 as cr_returned_date_sk, cr_return_quantity@2 as cr_return_quantity, i_item_id@0 as i_item_id], output_bytes=4087907, output_rows=144067
-                                GpuCoalesceBatchesExec: target_batch_size=12201611, output_bytes=4087907, output_rows=144067
-                                  GpuHashJoinExec: join_type=Inner, on=[(i_item_sk@0, cr_item_sk@1)], projection=[1, 2, 4], output_bytes=4087975, output_rows=144067
-                                    GpuScanExec: table=item, projections=[i_item_sk, i_item_id], batch_size=12201611, output_bytes=436504, output_rows=18000
-                                    GpuScanExec: table=catalog_returns, projections=[cr_returned_date_sk, cr_item_sk, cr_return_quantity], batch_size=12201611, output_bytes=1782831, output_rows=144067
+                            GpuCoalesceBatchesExec: target_batch_size=12201611, output_bytes=25, output_rows=3
+                              GpuFilterExec: predicate=d_date@0 = 2000-06-30 OR d_date@0 = 2000-09-27 OR d_date@0 = 2000-11-17, projection=[1], output_bytes=25, output_rows=3
+                                GpuScanExec: table=date_dim, projections=[d_date, d_week_seq], batch_size=12201611, output_bytes=894852, output_rows=73049
+                            GpuScanExec: table=date_dim, projections=[d_date, d_week_seq], batch_size=12201611, output_bytes=894852, output_rows=73049
+                        GpuProjectExec: expr=[cr_return_quantity@1 as cr_return_quantity, i_item_id@2 as i_item_id, d_date@0 as d_date], output_bytes=4664175, output_rows=144067
+                          GpuCoalesceBatchesExec: target_batch_size=12201611, output_bytes=4664175, output_rows=144067
+                            GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, cr_returned_date_sk@0)], projection=[1, 3, 4], output_bytes=4664243, output_rows=144067
+                              GpuScanExec: table=date_dim, projections=[d_date_sk, d_date], batch_size=12201611, output_bytes=894852, output_rows=73049
+                              GpuProjectExec: expr=[cr_returned_date_sk@1 as cr_returned_date_sk, cr_return_quantity@2 as cr_return_quantity, i_item_id@0 as i_item_id], output_bytes=5240443, output_rows=144067
+                                GpuCoalesceBatchesExec: target_batch_size=12201611, output_bytes=5240443, output_rows=144067
+                                  GpuHashJoinExec: join_type=Inner, on=[(i_item_sk@0, cr_item_sk@1)], projection=[1, 2, 4], output_bytes=5240511, output_rows=144067
+                                    GpuScanExec: table=item, projections=[i_item_sk, i_item_id], batch_size=12201611, output_bytes=508504, output_rows=18000
+                                    GpuScanExec: table=catalog_returns, projections=[cr_returned_date_sk, cr_item_sk, cr_return_quantity], batch_size=12201611, output_bytes=3511635, output_rows=144067
                 GpuProjectExec: expr=[i_item_id@0 as item_id, sum(store_returns.sr_return_quantity)@1 as sr_item_qty], output_bytes=64698, output_rows=2290
                   GpuAggregateExec: group_by=[i_item_id], aggr=[sum(store_returns.sr_return_quantity)], output_bytes=64698, output_rows=2290
-                    GpuCoalesceBatchesExec: target_batch_size=12201611, output_bytes=64194, output_rows=2647
-                      GpuHashJoinExec: join_type=RightSemi, on=[(d_date@0, d_date@2)], projection=[0, 1], output_bytes=64194, output_rows=2647
+                    GpuCoalesceBatchesExec: target_batch_size=12201611, output_bytes=74782, output_rows=2647
+                      GpuHashJoinExec: join_type=RightSemi, on=[(d_date@0, d_date@2)], projection=[0, 1], output_bytes=74782, output_rows=2647
                         GpuCoalesceBatchesExec: target_batch_size=12201611, output_bytes=87, output_rows=21
                           GpuHashJoinExec: join_type=RightSemi, on=[(d_week_seq@0, d_week_seq@1)], projection=[0], output_bytes=87, output_rows=21
-                            GpuCoalesceBatchesExec: target_batch_size=12201611, output_bytes=13, output_rows=3
-                              GpuFilterExec: predicate=d_date@0 = 2000-06-30 OR d_date@0 = 2000-09-27 OR d_date@0 = 2000-11-17, projection=[1], output_bytes=13, output_rows=3
-                                GpuScanExec: table=date_dim, projections=[d_date, d_week_seq], batch_size=12201611, output_bytes=602656, output_rows=73049
-                            GpuScanExec: table=date_dim, projections=[d_date, d_week_seq], batch_size=12201611, output_bytes=602656, output_rows=73049
-                        GpuProjectExec: expr=[sr_return_quantity@1 as sr_return_quantity, i_item_id@2 as i_item_id, d_date@0 as d_date], output_bytes=7877557, output_rows=277623
-                          GpuCoalesceBatchesExec: target_batch_size=12201611, output_bytes=7877557, output_rows=277623
-                            GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, sr_returned_date_sk@0)], projection=[1, 3, 4], output_bytes=7877689, output_rows=277623
-                              GpuScanExec: table=date_dim, projections=[d_date_sk, d_date], batch_size=12201611, output_bytes=602656, output_rows=73049
-                              GpuProjectExec: expr=[sr_returned_date_sk@1 as sr_returned_date_sk, sr_return_quantity@2 as sr_return_quantity, i_item_id@0 as i_item_id], output_bytes=8168232, output_rows=287867
-                                GpuCoalesceBatchesExec: target_batch_size=12201611, output_bytes=8168232, output_rows=287867
-                                  GpuHashJoinExec: join_type=Inner, on=[(i_item_sk@0, sr_item_sk@1)], projection=[1, 2, 4], output_bytes=8168372, output_rows=287867
-                                    GpuScanExec: table=item, projections=[i_item_sk, i_item_id], batch_size=12201611, output_bytes=436504, output_rows=18000
-                                    GpuScanExec: table=store_returns, projections=[sr_returned_date_sk, sr_item_sk, sr_return_quantity], batch_size=12201611, output_bytes=3562356, output_rows=287867
+                            GpuCoalesceBatchesExec: target_batch_size=12201611, output_bytes=25, output_rows=3
+                              GpuFilterExec: predicate=d_date@0 = 2000-06-30 OR d_date@0 = 2000-09-27 OR d_date@0 = 2000-11-17, projection=[1], output_bytes=25, output_rows=3
+                                GpuScanExec: table=date_dim, projections=[d_date, d_week_seq], batch_size=12201611, output_bytes=894852, output_rows=73049
+                            GpuScanExec: table=date_dim, projections=[d_date, d_week_seq], batch_size=12201611, output_bytes=894852, output_rows=73049
+                        GpuProjectExec: expr=[sr_return_quantity@1 as sr_return_quantity, i_item_id@2 as i_item_id, d_date@0 as d_date], output_bytes=8988049, output_rows=277623
+                          GpuCoalesceBatchesExec: target_batch_size=12201611, output_bytes=8988049, output_rows=277623
+                            GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, sr_returned_date_sk@0)], projection=[1, 3, 4], output_bytes=8988181, output_rows=277623
+                              GpuScanExec: table=date_dim, projections=[d_date_sk, d_date], batch_size=12201611, output_bytes=894852, output_rows=73049
+                              GpuProjectExec: expr=[sr_returned_date_sk@1 as sr_returned_date_sk, sr_return_quantity@2 as sr_return_quantity, i_item_id@0 as i_item_id], output_bytes=10471168, output_rows=287867
+                                GpuCoalesceBatchesExec: target_batch_size=12201611, output_bytes=10471168, output_rows=287867
+                                  GpuHashJoinExec: join_type=Inner, on=[(i_item_sk@0, sr_item_sk@1)], projection=[1, 2, 4], output_bytes=10471308, output_rows=287867
+                                    GpuScanExec: table=item, projections=[i_item_sk, i_item_id], batch_size=12201611, output_bytes=508504, output_rows=18000
+                                    GpuScanExec: table=store_returns, projections=[sr_returned_date_sk, sr_item_sk, sr_return_quantity], batch_size=12201611, output_bytes=7016760, output_rows=287867
           GpuProjectExec: expr=[i_item_id@0 as item_id, sum(web_returns.wr_return_quantity)@1 as wr_item_qty], output_bytes=18988, output_rows=672
             GpuAggregateExec: group_by=[i_item_id], aggr=[sum(web_returns.wr_return_quantity)], output_bytes=18988, output_rows=672
-              GpuCoalesceBatchesExec: target_batch_size=12201611, output_bytes=16932, output_rows=698
-                GpuHashJoinExec: join_type=LeftSemi, on=[(d_date@2, d_date@0)], projection=[0, 1], output_bytes=16936, output_rows=698
-                  GpuCoalesceBatchesExec: target_batch_size=12201611, output_bytes=1942586, output_rows=68461
-                    GpuHashJoinExec: join_type=Inner, on=[(wr_returned_date_sk@0, d_date_sk@0)], projection=[1, 2, 4], output_bytes=1942618, output_rows=68461
-                      GpuProjectExec: expr=[wr_returned_date_sk@1 as wr_returned_date_sk, wr_return_quantity@2 as wr_return_quantity, i_item_id@0 as i_item_id], output_bytes=2033187, output_rows=71654
-                        GpuCoalesceBatchesExec: target_batch_size=12201611, output_bytes=2033187, output_rows=71654
-                          GpuHashJoinExec: join_type=Inner, on=[(i_item_sk@0, wr_item_sk@1)], projection=[1, 2, 4], output_bytes=2033219, output_rows=71654
-                            GpuScanExec: table=item, projections=[i_item_sk, i_item_id], batch_size=12201611, output_bytes=436504, output_rows=18000
-                            GpuScanExec: table=web_returns, projections=[wr_returned_date_sk, wr_item_sk, wr_return_quantity], batch_size=12201611, output_bytes=886719, output_rows=71654
-                      GpuScanExec: table=date_dim, projections=[d_date_sk, d_date], batch_size=12201611, output_bytes=602656, output_rows=73049
+              GpuCoalesceBatchesExec: target_batch_size=12201611, output_bytes=19724, output_rows=698
+                GpuHashJoinExec: join_type=LeftSemi, on=[(d_date@2, d_date@0)], projection=[0, 1], output_bytes=19728, output_rows=698
+                  GpuCoalesceBatchesExec: target_batch_size=12201611, output_bytes=2216430, output_rows=68461
+                    GpuHashJoinExec: join_type=Inner, on=[(wr_returned_date_sk@0, d_date_sk@0)], projection=[1, 2, 4], output_bytes=2216462, output_rows=68461
+                      GpuProjectExec: expr=[wr_returned_date_sk@1 as wr_returned_date_sk, wr_return_quantity@2 as wr_return_quantity, i_item_id@0 as i_item_id], output_bytes=2606419, output_rows=71654
+                        GpuCoalesceBatchesExec: target_batch_size=12201611, output_bytes=2606419, output_rows=71654
+                          GpuHashJoinExec: join_type=Inner, on=[(i_item_sk@0, wr_item_sk@1)], projection=[1, 2, 4], output_bytes=2606451, output_rows=71654
+                            GpuScanExec: table=item, projections=[i_item_sk, i_item_id], batch_size=12201611, output_bytes=508504, output_rows=18000
+                            GpuScanExec: table=web_returns, projections=[wr_returned_date_sk, wr_item_sk, wr_return_quantity], batch_size=12201611, output_bytes=1746567, output_rows=71654
+                      GpuScanExec: table=date_dim, projections=[d_date_sk, d_date], batch_size=12201611, output_bytes=894852, output_rows=73049
                   GpuCoalesceBatchesExec: target_batch_size=12201611, output_bytes=87, output_rows=21
                     GpuHashJoinExec: join_type=RightSemi, on=[(d_week_seq@0, d_week_seq@1)], projection=[0], output_bytes=87, output_rows=21
-                      GpuCoalesceBatchesExec: target_batch_size=12201611, output_bytes=13, output_rows=3
-                        GpuFilterExec: predicate=d_date@0 = 2000-06-30 OR d_date@0 = 2000-09-27 OR d_date@0 = 2000-11-17, projection=[1], output_bytes=13, output_rows=3
-                          GpuScanExec: table=date_dim, projections=[d_date, d_week_seq], batch_size=12201611, output_bytes=602656, output_rows=73049
-                      GpuScanExec: table=date_dim, projections=[d_date, d_week_seq], batch_size=12201611, output_bytes=602656, output_rows=73049
-peacockdb_cost=96117814
+                      GpuCoalesceBatchesExec: target_batch_size=12201611, output_bytes=25, output_rows=3
+                        GpuFilterExec: predicate=d_date@0 = 2000-06-30 OR d_date@0 = 2000-09-27 OR d_date@0 = 2000-11-17, projection=[1], output_bytes=25, output_rows=3
+                          GpuScanExec: table=date_dim, projections=[d_date, d_week_seq], batch_size=12201611, output_bytes=894852, output_rows=73049
+                      GpuScanExec: table=date_dim, projections=[d_date, d_week_seq], batch_size=12201611, output_bytes=894852, output_rows=73049
+peacockdb_cost=122737914

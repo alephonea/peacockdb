@@ -1,30 +1,59 @@
-TOP_N: order_by=[tpcds.main.customer.c_customer_id ASC, tpcds.main.customer.c_salutation ASC, tpcds.main.customer.c_first_name ASC, tpcds.main.customer.c_last_name ASC, tpcds.main.customer_address.ca_street_number ASC, tpcds.main.customer_address.ca_street_name ASC, tpcds.main.customer_address.ca_street_type ASC, tpcds.main.customer_address.ca_suite_number ASC, tpcds.main.customer_address.ca_city ASC, tpcds.main.customer_address.ca_county ASC, tpcds.main.customer_address.ca_state ASC, tpcds.main.customer_address.ca_zip ASC, tpcds.main.customer_address.ca_country ASC, tpcds.main.customer_address.ca_gmt_offset ASC, tpcds.main.customer_address.ca_location_type ASC, ctr1.ctr_total_return ASC], top=100, output_bytes=24400, output_rows=100, materialized=89548
-  PROJECTION: projections=[c_customer_id, c_salutation, c_first_name, c_last_name, ca_street_number, ca_street_name, ca_street_type, ca_suite_number, ca_city, ca_county, ca_state, ca_zip, ca_country, ca_gmt_offset, ca_location_type, ctr_total_return], output_bytes=89548, output_rows=367, materialized=0
-    CTE: output_bytes=0, output_rows=0, materialized=0
-      PROJECTION: projections=[#0, __internal_decompress_string(#1), #2], output_bytes=1001520, output_rows=27820, materialized=0
-        HASH_GROUP_BY: groups=[#0, #1], aggregates=[sum(#2)], output_bytes=667680, output_rows=27820, materialized=338892
-          PROJECTION: projections=[cr_returning_customer_sk, ca_state, cr_return_amt_inc_tax], output_bytes=338892, output_rows=28241, materialized=0
-            PROJECTION: projections=[__internal_compress_string_uinteger(#0), #1, #2], output_bytes=338892, output_rows=28241, materialized=0
-              HASH_JOIN: join_type=INNER, conditions=[ca_address_sk = cr_returning_addr_sk], output_bytes=677784, output_rows=28241, materialized=677784
-                TABLE_SCAN: table=customer_address, projections=[ca_address_sk, ca_state], output_bytes=999980, output_rows=49999, materialized=1999980, bytes_read_est=1000000, rows_read=50000
-                HASH_JOIN: join_type=INNER, conditions=[cr_returned_date_sk = d_date_sk], output_bytes=460672, output_rows=28792, materialized=462136
-                  TABLE_SCAN: table=catalog_returns, projections=[cr_returned_date_sk, cr_returning_addr_sk, cr_returning_customer_sk, cr_return_amt_inc_tax], output_bytes=460672, output_rows=28792, materialized=2765744, bytes_read_est=2305072, rows_read=144067
-                  FILTER: output_bytes=1464, output_rows=366, materialized=0
-                    TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_year=2000", output_bytes=1464, output_rows=366, materialized=293660, bytes_read_est=292196, rows_read=73049
-      FILTER: output_bytes=110100, output_rows=367, materialized=0
-        RIGHT_DELIM_JOIN: join_type=RIGHT, conditions=[ctr_state IS NOT DISTINCT FROM ctr_state], output_bytes=0, output_rows=0, materialized=800
-          HASH_JOIN: join_type=INNER, conditions=[ca_address_sk = c_current_addr_sk], output_bytes=387780, output_rows=1405, materialized=387780
-            TABLE_SCAN: table=customer_address, filters="ca_state='GA'", output_bytes=410928, output_rows=2446, materialized=8810928, bytes_read_est=8400000, rows_read=50000
-            HASH_JOIN: join_type=INNER, conditions=[c_customer_sk = ctr_customer_sk], output_bytes=2999376, output_rows=27772, materialized=2999376
-              TABLE_SCAN: table=customer, output_bytes=7199568, output_rows=99994, materialized=14399568, bytes_read_est=7200000, rows_read=100000
-              CTE_SCAN: output_bytes=1001520, output_rows=27820, materialized=0
-          HASH_JOIN: join_type=RIGHT, conditions=[ctr_state IS NOT DISTINCT FROM ctr_state], output_bytes=421500, output_rows=1405, materialized=422676
-            PROJECTION: projections=[(avg(ctr_total_return) * 1.2), ctr_state], output_bytes=1176, output_rows=49, materialized=0
-              HASH_GROUP_BY: groups=[#0], aggregates=[avg(#1)], output_bytes=1176, output_rows=49, materialized=861952
-                PROJECTION: projections=[ctr_state, ctr_total_return], output_bytes=861952, output_rows=26936, materialized=0
-                  HASH_JOIN: join_type=INNER, conditions=[ctr_state = ctr_state], output_bytes=1292928, output_rows=26936, materialized=1292928
-                    CTE_SCAN: output_bytes=1001520, output_rows=27820, materialized=0
-                    DELIM_SCAN: output_bytes=0, output_rows=0, materialized=0
-            DUMMY_SCAN: output_bytes=0, output_rows=0, materialized=0
-          HASH_GROUP_BY: groups=[#19], output_bytes=800, output_rows=50, materialized=0
-duckdb_cost=35803752
+CTE: output_bytes=0, output_rows=0, materialized=0
+  PROJECTION: projections=[__internal_decompress_integral_bigint(#0, 2), __internal_decompress_string(#1), #2], output_bytes=1112800, output_rows=27820, materialized=0
+    HASH_GROUP_BY: groups=[#0, #1], aggregates=[sum(#2)], output_bytes=667680, output_rows=27820, materialized=338892
+      PROJECTION: projections=[cr_returning_customer_sk, ca_state, cr_return_amt_inc_tax], output_bytes=338892, output_rows=28241, materialized=0
+        PROJECTION: projections=[__internal_compress_string_uinteger(#0), __internal_compress_integral_uinteger(#1, 2), #2], output_bytes=338892, output_rows=28241, materialized=0
+          HASH_JOIN: join_type=INNER, conditions=[ca_address_sk = cr_returning_addr_sk], output_bytes=790748, output_rows=28241, materialized=790748
+            TABLE_SCAN: table=customer_address, projections=[ca_address_sk, ca_state], output_bytes=1200000, output_rows=50000, materialized=1200000, bytes_read=709400, rows_read=50000
+            HASH_JOIN: join_type=INNER, conditions=[cr_returned_date_sk = d_date_sk], output_bytes=806176, output_rows=28792, materialized=809104
+              TABLE_SCAN: table=catalog_returns, projections=[cr_returned_date_sk, cr_returning_addr_sk, cr_returning_customer_sk, cr_return_amt_inc_tax], output_bytes=3440640, output_rows=122880, materialized=3440640, bytes_read=4976640, rows_read=122880
+              FILTER: output_bytes=2928, output_rows=366, materialized=0
+                TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_year=2000", output_bytes=2928, output_rows=366, materialized=2928, bytes_read=1187048, rows_read=73049
+  TOP_N: order_by=[tpcds.main.customer.c_customer_id ASC, tpcds.main.customer.c_salutation ASC, tpcds.main.customer.c_first_name ASC, tpcds.main.customer.c_last_name ASC, tpcds.main.customer_address.ca_street_number ASC, tpcds.main.customer_address.ca_street_name ASC, tpcds.main.customer_address.ca_street_type ASC, tpcds.main.customer_address.ca_suite_number ASC, tpcds.main.customer_address.ca_city ASC, tpcds.main.customer_address.ca_county ASC, tpcds.main.customer_address.ca_state ASC, tpcds.main.customer_address.ca_zip ASC, tpcds.main.customer_address.ca_country ASC, tpcds.main.customer_address.ca_gmt_offset ASC, tpcds.main.customer_address.ca_location_type ASC, ctr1.ctr_total_return ASC], top=100, output_bytes=24400, output_rows=100, materialized=89548
+    PROJECTION: projections=[c_customer_id, c_salutation, c_first_name, c_last_name, ca_street_number, ca_street_name, ca_street_type, ca_suite_number, ca_city, ca_county, ca_state, ca_zip, ca_country, ca_gmt_offset, ca_location_type, ctr_total_return], output_bytes=89548, output_rows=367, materialized=0
+      PROJECTION: projections=[#0, #1, #2, #3, #4, #5, #6, #7, #8, #9, #10, #11, #12, #13, #14, #15], output_bytes=89548, output_rows=367, materialized=0
+        FILTER: output_bytes=92484, output_rows=367, materialized=0
+          LEFT_DELIM_JOIN: join_type=LEFT, conditions=[ctr_state IS NOT DISTINCT FROM ctr_state], output_bytes=0, output_rows=0, materialized=800
+            HASH_JOIN: join_type=INNER, conditions=[ca_address_sk = c_current_addr_sk], output_bytes=365300, output_rows=1405, materialized=365300
+              TABLE_SCAN: table=customer_address, projections=[ca_address_sk, ca_state, ca_street_number, ca_street_name, ca_street_type, ca_suite_number, ca_city, ca_county, ca_zip, ca_country, ca_gmt_offset, ca_location_type], filters="ca_state='GA'", output_bytes=420712, output_rows=2446, materialized=420712, bytes_read=6941318, rows_read=50000
+              HASH_JOIN: join_type=INNER, conditions=[c_customer_sk = ctr_customer_sk], output_bytes=2888288, output_rows=27772, materialized=2888288
+                TABLE_SCAN: table=customer, projections=[c_current_addr_sk, c_customer_sk, c_customer_id, c_salutation, c_first_name, c_last_name], output_bytes=8000000, output_rows=100000, materialized=8000000, bytes_read=6330207, rows_read=100000
+                CTE_SCAN: output_bytes=1112800, output_rows=27820, materialized=0
+            HASH_JOIN: join_type=LEFT, conditions=[ctr_state IS NOT DISTINCT FROM ctr_state], output_bytes=354060, output_rows=1405, materialized=355236
+              COLUMN_DATA_SCAN: output_bytes=365300, output_rows=1405, materialized=0
+              PROJECTION: projections=[(avg(ctr_total_return) * 1.2), ctr_state], output_bytes=1176, output_rows=49, materialized=0
+                HASH_GROUP_BY: groups=[#0], aggregates=[avg(#1)], output_bytes=1176, output_rows=49, materialized=861952
+                  PROJECTION: projections=[ctr_state, ctr_total_return], output_bytes=861952, output_rows=26936, materialized=0
+                    HASH_JOIN: join_type=INNER, conditions=[ctr_state = ctr_state], output_bytes=1292928, output_rows=26936, materialized=1292928
+                      CTE_SCAN: output_bytes=1112800, output_rows=27820, materialized=0
+                      DELIM_SCAN: output_bytes=0, output_rows=0, materialized=0
+            HASH_GROUP_BY: groups=[#15], output_bytes=800, output_rows=50, materialized=0
+duckdb_cost=41001689
+materialization_total=20857076
+storage_read_total=20144613
+
+--- row-group pruning (storage reduction) ---
+customer_address  dyn_filter=[ca_address_sk>=2 AND ca_address_sk<=50000]  row_groups=1/1  rows=50000/50000 (100.0%)  bytes_fetched=241055/241055 (100.0%)
+catalog_returns  dyn_filter=[cr_returned_date_sk>=2451545 AND cr_returned_date_sk<=2451910]  row_groups=1/2  rows=122880/144067 (85.3%)  bytes_fetched=1561106/1830787 (85.3%)
+date_dim  filter=[d_year=2000]  row_groups=1/1  rows=73049/73049 (100.0%)  bytes_fetched=293872/293872 (100.0%)
+customer_address  filter=[ca_state='GA']  dyn_filter=[ca_address_sk>=1 AND ca_address_sk<=49998]  row_groups=1/1  rows=50000/50000 (100.0%)  bytes_fetched=808464/808464 (100.0%)
+customer  dyn_filter=[c_customer_sk>=3 AND c_customer_sk<=99996]  row_groups=1/1  rows=100000/100000 (100.0%)  bytes_fetched=1753052/1753052 (100.0%)
+pruning_bytes_fetched=4657549/4927230 (94.5%)
+
+--- cost breakdown ---
+TABLE_SCAN(customer)                    8000000  38.4%
+TABLE_SCAN(catalog_returns)             3440640  16.5%
+HASH_JOIN                               2888288  13.8%
+HASH_JOIN                               1292928   6.2%
+TABLE_SCAN(customer_address)            1200000   5.8%
+HASH_GROUP_BY                            861952   4.1%
+HASH_JOIN                                809104   3.9%
+HASH_JOIN                                790748   3.8%
+TABLE_SCAN(customer_address)             420712   2.0%
+HASH_JOIN                                365300   1.8%
+HASH_JOIN                                355236   1.7%
+HASH_GROUP_BY                            338892   1.6%
+TOP_N                                     89548   0.4%
+TABLE_SCAN(date_dim)                       2928   0.0%
+LEFT_DELIM_JOIN                             800   0.0%
+total=20857076

@@ -3,25 +3,51 @@ STREAMING_LIMIT: output_bytes=16, output_rows=1, materialized=0
     PROJECTION: projections=[cs_ext_discount_amt], output_bytes=12, output_rows=3, materialized=0
       PROJECTION: projections=[#1], output_bytes=12, output_rows=3, materialized=0
         FILTER: output_bytes=36, output_rows=3, materialized=0
-          RIGHT_DELIM_JOIN: join_type=RIGHT, conditions=[i_item_sk IS NOT DISTINCT FROM i_item_sk], output_bytes=0, output_rows=0, materialized=8
-            HASH_JOIN: join_type=INNER, conditions=[d_date_sk = cs_sold_date_sk], output_bytes=144, output_rows=12, materialized=508
-              FILTER: output_bytes=364, output_rows=91, materialized=0
-                TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_date>='2000-01-27'::DATE AND d_date<='2000-04-26'::DATE", output_bytes=364, output_rows=91, materialized=292560, bytes_read_est=292196, rows_read=73049
-              HASH_JOIN: join_type=INNER, conditions=[cs_item_sk = i_item_sk], output_bytes=6320, output_rows=395, materialized=6320
-                TABLE_SCAN: table=catalog_sales, projections=[cs_item_sk, cs_sold_date_sk, cs_ext_discount_amt], output_bytes=5264448, output_rows=438704, materialized=22563024, bytes_read_est=17298576, rows_read=1441548
-                TABLE_SCAN: table=item, projections=[i_item_sk], filters="i_manufact_id=977", output_bytes=16, output_rows=4, materialized=72016, bytes_read_est=72000, rows_read=18000
-            HASH_JOIN: join_type=RIGHT, conditions=[i_item_sk IS NOT DISTINCT FROM i_item_sk], output_bytes=144, output_rows=12, materialized=168
-              PROJECTION: projections=[(1.3 * avg(cs_ext_discount_amt)), i_item_sk], output_bytes=24, output_rows=2, materialized=0
-                PROJECTION: projections=[__internal_decompress_integral_integer(#0, 1), #1], output_bytes=24, output_rows=2, materialized=0
+          RIGHT_DELIM_JOIN: join_type=RIGHT, conditions=[i_item_sk IS NOT DISTINCT FROM i_item_sk], output_bytes=0, output_rows=0, materialized=16
+            HASH_JOIN: join_type=INNER, conditions=[d_date_sk = cs_sold_date_sk], output_bytes=240, output_rows=12, materialized=968
+              FILTER: output_bytes=728, output_rows=91, materialized=0
+                TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_date>='2000-01-27'::DATE AND d_date<='2000-04-26'::DATE", output_bytes=728, output_rows=91, materialized=728, bytes_read=885720, rows_read=73049
+              HASH_JOIN: join_type=INNER, conditions=[cs_item_sk = i_item_sk], output_bytes=11060, output_rows=395, materialized=11060
+                TABLE_SCAN: table=catalog_sales, projections=[cs_item_sk, cs_sold_date_sk, cs_ext_discount_amt], output_bytes=28830960, output_rows=1441548, materialized=28830960, bytes_read=46670118, rows_read=1441548
+                TABLE_SCAN: table=item, projections=[i_item_sk], filters="i_manufact_id=977", output_bytes=32, output_rows=4, materialized=32, bytes_read=292500, rows_read=18000
+            HASH_JOIN: join_type=RIGHT, conditions=[i_item_sk IS NOT DISTINCT FROM i_item_sk], output_bytes=144, output_rows=12, materialized=176
+              PROJECTION: projections=[(1.3 * avg(cs_ext_discount_amt)), i_item_sk], output_bytes=32, output_rows=2, materialized=0
+                PROJECTION: projections=[__internal_decompress_integral_bigint(#0, 1), #1], output_bytes=32, output_rows=2, materialized=0
                   HASH_GROUP_BY: groups=[#0], aggregates=[avg(#1)], output_bytes=20, output_rows=2, materialized=72
                     PROJECTION: projections=[i_item_sk, cs_ext_discount_amt], output_bytes=72, output_rows=12, materialized=0
                       PROJECTION: projections=[__internal_compress_integral_usmallint(#0, 1), #1, __internal_compress_integral_usmallint(#2, 2450815)], output_bytes=96, output_rows=12, materialized=0
-                        HASH_JOIN: join_type=INNER, conditions=[cs_sold_date_sk = d_date_sk], output_bytes=144, output_rows=12, materialized=508
-                          HASH_JOIN: join_type=INNER, conditions=[cs_item_sk = i_item_sk], output_bytes=192, output_rows=12, materialized=192
-                            TABLE_SCAN: table=catalog_sales, projections=[cs_item_sk, cs_sold_date_sk, cs_ext_discount_amt], output_bytes=151908, output_rows=12659, materialized=17450484, bytes_read_est=17298576, rows_read=1441548
+                        HASH_JOIN: join_type=INNER, conditions=[cs_sold_date_sk = d_date_sk], output_bytes=240, output_rows=12, materialized=968
+                          HASH_JOIN: join_type=INNER, conditions=[cs_item_sk = i_item_sk], output_bytes=7420, output_rows=265, materialized=7420
+                            TABLE_SCAN: table=catalog_sales, projections=[cs_item_sk, cs_sold_date_sk, cs_ext_discount_amt], output_bytes=4915200, output_rows=245760, materialized=4915200, bytes_read=7956480, rows_read=245760
                             DELIM_SCAN: output_bytes=0, output_rows=0, materialized=0
-                          FILTER: output_bytes=364, output_rows=91, materialized=0
-                            TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_date>='2000-01-27'::DATE AND d_date<='2000-04-26'::DATE", output_bytes=364, output_rows=91, materialized=292560, bytes_read_est=292196, rows_read=73049
+                          FILTER: output_bytes=728, output_rows=91, materialized=0
+                            TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_date>='2000-01-27'::DATE AND d_date<='2000-04-26'::DATE", output_bytes=728, output_rows=91, materialized=728, bytes_read=885720, rows_read=73049
               DUMMY_SCAN: output_bytes=0, output_rows=0, materialized=0
-            HASH_GROUP_BY: groups=[#1], output_bytes=8, output_rows=2, materialized=0
-duckdb_cost=40678432
+            HASH_GROUP_BY: groups=[#1], output_bytes=16, output_rows=2, materialized=0
+duckdb_cost=90458878
+materialization_total=33768340
+storage_read_total=56690538
+
+--- row-group pruning (storage reduction) ---
+date_dim  filter=[d_date>='2000-01-27'::DATE AND d_date<='2000-04-26'::DATE]  dyn_filter=[d_date_sk>=2450816 AND d_date_sk<=2452638]  row_groups=1/1  rows=73049/73049 (100.0%)  bytes_fetched=584645/584645 (100.0%)
+catalog_sales  dyn_filter=[cs_item_sk>=4118 AND cs_item_sk<=9583]  row_groups=12/12  rows=1441548/1441548 (100.0%)  bytes_fetched=8779784/8779784 (100.0%)
+item  filter=[i_manufact_id=977]  row_groups=1/1  rows=18000/18000 (100.0%)  bytes_fetched=99866/99866 (100.0%)
+catalog_sales  dyn_filter=[cs_item_sk>=4118 AND cs_item_sk<=9583 AND cs_sold_date_sk>=2451571 AND cs_sold_date_sk<=2451661]  row_groups=2/12  rows=245760/1441548 (17.0%)  bytes_fetched=1503224/8779784 (17.1%)
+date_dim  filter=[d_date>='2000-01-27'::DATE AND d_date<='2000-04-26'::DATE]  row_groups=1/1  rows=73049/73049 (100.0%)  bytes_fetched=584645/584645 (100.0%)
+pruning_bytes_fetched=11552164/18828724 (61.4%)
+
+--- cost breakdown ---
+TABLE_SCAN(catalog_sales)              28830960  85.4%
+TABLE_SCAN(catalog_sales)               4915200  14.6%
+HASH_JOIN                                 11060   0.0%
+HASH_JOIN                                  7420   0.0%
+HASH_JOIN                                   968   0.0%
+HASH_JOIN                                   968   0.0%
+TABLE_SCAN(date_dim)                        728   0.0%
+TABLE_SCAN(date_dim)                        728   0.0%
+HASH_JOIN                                   176   0.0%
+HASH_GROUP_BY                                72   0.0%
+TABLE_SCAN(item)                             32   0.0%
+RIGHT_DELIM_JOIN                             16   0.0%
+UNGROUPED_AGGREGATE                          12   0.0%
+total=33768340

@@ -1,19 +1,36 @@
 PROJECTION: projections=[__internal_decompress_string(#0), #1], output_bytes=120, output_rows=5, materialized=0
   ORDER_BY: order_by=[tpch.main.orders.o_orderpriority ASC], output_bytes=120, output_rows=5, materialized=120
-    PROJECTION: projections=[__internal_compress_string_hugeint(#0), #1], output_bytes=120, output_rows=5, materialized=0
+    PROJECTION: projections=[__internal_compress_string_uhugeint(#0), #1], output_bytes=120, output_rows=5, materialized=0
       PROJECTION: projections=[__internal_decompress_string(#0), #1], output_bytes=120, output_rows=5, materialized=0
         HASH_GROUP_BY: groups=[#0], aggregates=[count_star()], output_bytes=120, output_rows=5, materialized=840368
           PROJECTION: projections=[o_orderpriority], output_bytes=840368, output_rows=52523, materialized=0
-            PROJECTION: projections=[__internal_compress_string_hugeint(#0)], output_bytes=840368, output_rows=52523, materialized=0
-              RIGHT_DELIM_JOIN: join_type=RIGHT_SEMI, conditions=[o_orderkey IS NOT DISTINCT FROM o_orderkey], output_bytes=0, output_rows=0, materialized=457744
-                TABLE_SCAN: table=orders, projections=[o_orderkey, o_orderpriority], filters="o_orderdate>='1993-07-01'::DATE AND o_orderdate<'1993-10-01'::DATE", output_bytes=1373232, output_rows=57218, materialized=37373232, bytes_read_est=36000000, rows_read=1500000
-                HASH_JOIN: join_type=RIGHT_SEMI, conditions=[o_orderkey IS NOT DISTINCT FROM o_orderkey], output_bytes=840368, output_rows=52523, materialized=1999320
+            PROJECTION: projections=[__internal_compress_string_uhugeint(#0)], output_bytes=840368, output_rows=52523, materialized=0
+              LEFT_DELIM_JOIN: join_type=SEMI, conditions=[o_orderkey IS NOT DISTINCT FROM o_orderkey], output_bytes=0, output_rows=0, materialized=457744
+                TABLE_SCAN: table=orders, projections=[o_orderkey, o_orderpriority], filters="o_orderdate>='1993-07-01'::DATE AND (CAST(o_orderdate AS TIMESTAMP) < '1993-10-01 00:00:00'::TIMESTAMP)", output_bytes=1373232, output_rows=57218, materialized=1373232, bytes_read=6026590, rows_read=245760
+                HASH_JOIN: join_type=SEMI, conditions=[o_orderkey IS NOT DISTINCT FROM o_orderkey], output_bytes=840368, output_rows=52523, materialized=1999320
+                  COLUMN_DATA_SCAN: output_bytes=1373232, output_rows=57218, materialized=0
                   PROJECTION: projections=[o_orderkey], output_bytes=1158952, output_rows=144869, materialized=0
-                    HASH_JOIN: join_type=INNER, conditions=[l_orderkey = o_orderkey], output_bytes=2317904, output_rows=144869, materialized=32663272
-                      PROJECTION: projections=[#0], output_bytes=30345368, output_rows=3793171, materialized=0
-                        FILTER: output_bytes=60690736, output_rows=3793171, materialized=0
-                          TABLE_SCAN: table=lineitem, projections=[l_orderkey, l_commitdate, l_receiptdate], output_bytes=96016336, output_rows=6001021, materialized=192035776, bytes_read_est=96019440, rows_read=6001215
+                    HASH_JOIN: join_type=INNER, conditions=[l_orderkey = o_orderkey], output_bytes=2317904, output_rows=144869, materialized=32664272
+                      PROJECTION: projections=[#0], output_bytes=30346368, output_rows=3793296, materialized=0
+                        FILTER: output_bytes=60692736, output_rows=3793296, materialized=0
+                          TABLE_SCAN: table=lineitem, projections=[l_orderkey, l_commitdate, l_receiptdate], output_bytes=96019440, output_rows=6001215, materialized=96019440, bytes_read=96769592, rows_read=6001215
                       DELIM_SCAN: output_bytes=0, output_rows=0, materialized=0
-                  DUMMY_SCAN: output_bytes=0, output_rows=0, materialized=0
                 HASH_GROUP_BY: groups=[#0], output_bytes=457744, output_rows=57218, materialized=0
-duckdb_cost=265369832
+duckdb_cost=236150678
+materialization_total=133354496
+storage_read_total=102796182
+
+--- row-group pruning (storage reduction) ---
+orders  filter=[o_orderdate>='1993-07-01'::DATE AND (CAST(o_orderdate AS TIMESTAMP) < '1993-10-01 00:00:00'::TIMESTAMP)]  row_groups=2/13  rows=245760/1500000 (16.4%)  bytes_fetched=1354533/8266971 (16.4%)
+lineitem  dyn_filter=[l_orderkey>=193 AND l_orderkey<=5999975]  row_groups=49/49  rows=6001215/6001215 (100.0%)  bytes_fetched=40627430/40627430 (100.0%)
+pruning_bytes_fetched=41981963/48894401 (85.9%)
+
+--- cost breakdown ---
+TABLE_SCAN(lineitem)                   96019440  72.0%
+HASH_JOIN                              32664272  24.5%
+HASH_JOIN                               1999320   1.5%
+TABLE_SCAN(orders)                      1373232   1.0%
+HASH_GROUP_BY                            840368   0.6%
+LEFT_DELIM_JOIN                          457744   0.3%
+ORDER_BY                                    120   0.0%
+total=133354496

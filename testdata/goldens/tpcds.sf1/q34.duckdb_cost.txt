@@ -1,23 +1,46 @@
-PROJECTION: projections=[__internal_decompress_string(#0), __internal_decompress_string(#1), __internal_decompress_string(#2), __internal_decompress_string(#3), #4, #5], output_bytes=34580, output_rows=455, materialized=0
+PROJECTION: projections=[__internal_decompress_string(#0), __internal_decompress_string(#1), __internal_decompress_string(#2), __internal_decompress_string(#3), __internal_decompress_integral_bigint(#4, 1), #5], output_bytes=36400, output_rows=455, materialized=0
   ORDER_BY: order_by=[tpcds.main.customer.c_last_name ASC, tpcds.main.customer.c_first_name ASC, tpcds.main.customer.c_salutation ASC, tpcds.main.customer.c_preferred_cust_flag DESC, dn.ss_ticket_number ASC], output_bytes=24115, output_rows=455, materialized=24115
-    PROJECTION: projections=[__internal_compress_string_hugeint(#0), __internal_compress_string_hugeint(#1), __internal_compress_string_ubigint(#2), __internal_compress_string_utinyint(#3), #4, #5], output_bytes=24115, output_rows=455, materialized=0
-      HASH_JOIN: join_type=INNER, conditions=[c_customer_sk = ss_customer_sk], output_bytes=34580, output_rows=455, materialized=41860
-        TABLE_SCAN: table=customer, projections=[c_customer_sk, c_last_name, c_first_name, c_salutation, c_preferred_cust_flag], output_bytes=6775588, output_rows=99641, materialized=13575588, bytes_read_est=6800000, rows_read=100000
-        FILTER: output_bytes=7280, output_rows=455, materialized=0
-          HASH_GROUP_BY: groups=[#0, #1], aggregates=[count_star()], output_bytes=81360, output_rows=5085, materialized=425992
-            PROJECTION: projections=[ss_ticket_number, ss_customer_sk], output_bytes=425992, output_rows=53249, materialized=0
-              PROJECTION: projections=[#0, #1, __internal_compress_integral_utinyint(#2, 1)], output_bytes=479241, output_rows=53249, materialized=0
-                HASH_JOIN: join_type=INNER, conditions=[ss_store_sk = s_store_sk], output_bytes=638988, output_rows=53249, materialized=639028
-                  HASH_JOIN: join_type=INNER, conditions=[ss_hdemo_sk = hd_demo_sk], output_bytes=851984, output_rows=53249, materialized=856144
-                    HASH_JOIN: join_type=INNER, conditions=[ss_sold_date_sk = d_date_sk], output_bytes=4520580, output_rows=226029, materialized=4521588
-                      TABLE_SCAN: table=store_sales, projections=[ss_sold_date_sk, ss_store_sk, ss_hdemo_sk, ss_ticket_number, ss_customer_sk], output_bytes=19629960, output_rows=981498, materialized=77238040, bytes_read_est=57608080, rows_read=2880404
-                      FILTER: output_bytes=1008, output_rows=252, materialized=0
-                        PROJECTION: projections=[#0], output_bytes=1008, output_rows=252, materialized=0
-                          FILTER: output_bytes=2016, output_rows=252, materialized=0
-                            TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_dom], filters="d_year>=1999 AND d_year<=2001", output_bytes=8768, output_rows=1096, materialized=593160, bytes_read_est=584392, rows_read=73049
-                    PROJECTION: projections=[#0], output_bytes=4160, output_rows=1040, materialized=0
-                      FILTER: output_bytes=29120, output_rows=1040, materialized=0
-                        TABLE_SCAN: table=household_demographics, projections=[hd_demo_sk, hd_buy_potential, hd_vehicle_count, hd_dep_count], filters="hd_vehicle_count>0 AND optional: hd_buy_potential='>10000' OR hd_buy_potential='Unknown'", output_bytes=134400, output_rows=4800, materialized=336000, bytes_read_est=201600, rows_read=7200
-                  FILTER: output_bytes=40, output_rows=10, materialized=0
-                    TABLE_SCAN: table=store, projections=[s_store_sk], filters="s_county='Williamson County'", output_bytes=48, output_rows=12, materialized=96, bytes_read_est=48, rows_read=12
-duckdb_cost=98251611
+    PROJECTION: projections=[__internal_compress_string_uhugeint(#0), __internal_compress_string_uhugeint(#1), __internal_compress_string_ubigint(#2), __internal_compress_string_utinyint(#3), __internal_compress_integral_uinteger(#4, 1), #5], output_bytes=24115, output_rows=455, materialized=0
+      HASH_JOIN: join_type=INNER, conditions=[c_customer_sk = ss_customer_sk], output_bytes=36400, output_rows=455, materialized=47320
+        TABLE_SCAN: table=customer, projections=[c_customer_sk, c_last_name, c_first_name, c_salutation, c_preferred_cust_flag], output_bytes=7200000, output_rows=100000, materialized=7200000, bytes_read=4026781, rows_read=100000
+        FILTER: output_bytes=10920, output_rows=455, materialized=0
+          PROJECTION: projections=[__internal_decompress_integral_bigint(#0, 1), __internal_decompress_integral_bigint(#1, 1), #2], output_bytes=122040, output_rows=5085, materialized=0
+            HASH_GROUP_BY: groups=[#0, #1], aggregates=[count_star()], output_bytes=81360, output_rows=5085, materialized=425992
+              PROJECTION: projections=[ss_ticket_number, ss_customer_sk], output_bytes=425992, output_rows=53249, materialized=0
+                PROJECTION: projections=[__internal_compress_integral_uinteger(#0, 1), __internal_compress_integral_uinteger(#1, 1), __internal_compress_integral_usmallint(#2, 2450816)], output_bytes=532490, output_rows=53249, materialized=0
+                  HASH_JOIN: join_type=INNER, conditions=[ss_sold_date_sk = d_date_sk], output_bytes=1277976, output_rows=53249, materialized=1279992
+                    HASH_JOIN: join_type=INNER, conditions=[ss_store_sk = s_store_sk], output_bytes=12470720, output_rows=389710, materialized=12470800
+                      HASH_JOIN: join_type=INNER, conditions=[ss_hdemo_sk = hd_demo_sk], output_bytes=15964120, output_rows=399103, materialized=15972440
+                        TABLE_SCAN: table=store_sales, projections=[ss_sold_date_sk, ss_store_sk, ss_hdemo_sk, ss_ticket_number, ss_customer_sk], output_bytes=70979360, output_rows=1774484, materialized=70979360, bytes_read=72088415, rows_read=1774484
+                        PROJECTION: projections=[#0], output_bytes=8320, output_rows=1040, materialized=0
+                          FILTER: output_bytes=37440, output_rows=1040, materialized=0
+                            TABLE_SCAN: table=household_demographics, projections=[hd_demo_sk, hd_buy_potential, hd_vehicle_count, hd_dep_count], filters="optional: hd_buy_potential='>10000' OR hd_buy_potential='Unknown' AND hd_vehicle_count>0", output_bytes=172800, output_rows=4800, materialized=172800, bytes_read=229500, rows_read=7200
+                      FILTER: output_bytes=80, output_rows=10, materialized=0
+                        TABLE_SCAN: table=store, projections=[s_store_sk], filters="s_county='Williamson County'", output_bytes=96, output_rows=12, materialized=96, bytes_read=350, rows_read=12
+                    FILTER: output_bytes=2016, output_rows=252, materialized=0
+                      TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="((d_dom <= 3) OR ((d_dom >= 25) AND (d_dom <= 28))) AND d_year>=1999 AND d_year<=2001", output_bytes=2016, output_rows=252, materialized=2016, bytes_read=1780572, rows_read=73049
+duckdb_cost=186700549
+materialization_total=108574931
+storage_read_total=78125618
+
+--- row-group pruning (storage reduction) ---
+customer  dyn_filter=[c_customer_sk>=212 AND c_customer_sk<=99852]  row_groups=1/1  rows=100000/100000 (100.0%)  bytes_fetched=865002/865002 (100.0%)
+store_sales  dyn_filter=[ss_sold_date_sk>=2451180 AND ss_sold_date_sk<=2452272 AND ss_store_sk>=1 AND ss_store_sk<=10 AND ss_hdemo_sk>=1520 AND ss_hdemo_sk<=5999]  row_groups=15/24  rows=1774484/2880404 (61.6%)  bytes_fetched=11795278/19263904 (61.2%)
+household_demographics  filter=[optional: hd_buy_potential='>10000' OR hd_buy_potential='Unknown' AND hd_vehicle_count>0]  row_groups=1/1  rows=7200/7200 (100.0%)  bytes_fetched=29991/29991 (100.0%)
+store  filter=[s_county='Williamson County']  row_groups=1/1  rows=12/12 (100.0%)  bytes_fetched=172/172 (100.0%)
+date_dim  filter=[((d_dom <= 3) OR ((d_dom >= 25) AND (d_dom <= 28))) AND d_year>=1999 AND d_year<=2001]  row_groups=1/1  rows=73049/73049 (100.0%)  bytes_fetched=298540/298540 (100.0%)
+pruning_bytes_fetched=12988983/20457609 (63.5%)
+
+--- cost breakdown ---
+TABLE_SCAN(store_sales)                70979360  65.4%
+HASH_JOIN                              15972440  14.7%
+HASH_JOIN                              12470800  11.5%
+TABLE_SCAN(customer)                    7200000   6.6%
+HASH_JOIN                               1279992   1.2%
+HASH_GROUP_BY                            425992   0.4%
+TABLE_SCAN(household_demographics)         172800   0.2%
+HASH_JOIN                                 47320   0.0%
+ORDER_BY                                  24115   0.0%
+TABLE_SCAN(date_dim)                       2016   0.0%
+TABLE_SCAN(store)                            96   0.0%
+total=108574931

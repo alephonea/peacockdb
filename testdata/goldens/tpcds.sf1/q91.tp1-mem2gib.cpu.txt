@@ -2,31 +2,31 @@ GpuProjectExec: expr=[call_center@0 as call_center, call_center_name@1 as call_c
   GpuSortExec: expr=[sum(catalog_returns.cr_net_loss)@4 DESC], output_bytes=175, output_rows=2
     GpuProjectExec: expr=[cc_call_center_id@0 as call_center, cc_name@1 as call_center_name, cc_manager@2 as manager, sum(catalog_returns.cr_net_loss)@5 as returns_loss, sum(catalog_returns.cr_net_loss)@5 as sum(catalog_returns.cr_net_loss)], output_bytes=175, output_rows=2
       GpuAggregateExec: group_by=[cc_call_center_id, cc_name, cc_manager, cd_marital_status, cd_education_status], aggr=[sum(catalog_returns.cr_net_loss)], output_bytes=192, output_rows=2
-        GpuCoalesceBatchesExec: target_batch_size=5835553, output_bytes=271, output_rows=3
+        GpuCoalesceBatchesExec: target_batch_size=5592405, output_bytes=271, output_rows=3
           GpuHashJoinExec: join_type=Inner, on=[(hd_demo_sk@0, c_current_hdemo_sk@4)], projection=[1, 2, 3, 4, 6, 7], output_bytes=271, output_rows=3
-            GpuCoalesceBatchesExec: target_batch_size=5835553, output_bytes=4950, output_rows=1200
-              GpuFilterExec: predicate=hd_buy_potential@1 LIKE Unknown%, projection=[0], output_bytes=4950, output_rows=1200
-                GpuScanExec: table=household_demographics, projections=[hd_demo_sk, hd_buy_potential], batch_size=5835553, output_bytes=113404, output_rows=7200
-            GpuCoalesceBatchesExec: target_batch_size=5835553, output_bytes=1649, output_rows=18
-              GpuHashJoinExec: join_type=Inner, on=[(c_current_cdemo_sk@4, cd_demo_sk@0)], projection=[0, 1, 2, 3, 5, 7, 8], output_bytes=1649, output_rows=18
-                GpuCoalesceBatchesExec: target_batch_size=5835553, output_bytes=16548, output_rows=218
-                  GpuHashJoinExec: join_type=Inner, on=[(c_current_addr_sk@6, ca_address_sk@0)], projection=[0, 1, 2, 3, 4, 5], output_bytes=16548, output_rows=218
-                    GpuCoalesceBatchesExec: target_batch_size=5835553, output_bytes=147563, output_rows=1837
-                      GpuHashJoinExec: join_type=Inner, on=[(cr_returning_customer_sk@3, c_customer_sk@0)], projection=[0, 1, 2, 4, 6, 7, 8], output_bytes=147563, output_rows=1837
-                        GpuCoalesceBatchesExec: target_batch_size=5835553, output_bytes=134269, output_rows=1863
-                          GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, cr_returned_date_sk@3)], projection=[1, 2, 3, 5, 6], output_bytes=134269, output_rows=1863
-                            GpuCoalesceBatchesExec: target_batch_size=5835553, output_bytes=124, output_rows=30
-                              GpuFilterExec: predicate=d_year@1 = 1998 AND d_moy@2 = 11, projection=[0], output_bytes=124, output_rows=30
-                                GpuScanExec: table=date_dim, projections=[d_date_sk, d_year, d_moy], batch_size=5835553, output_bytes=903984, output_rows=73049
-                            GpuCoalesceBatchesExec: target_batch_size=5835553, output_bytes=10740168, output_rows=141152
-                              GpuHashJoinExec: join_type=Inner, on=[(cc_call_center_sk@0, cr_call_center_sk@2)], projection=[1, 2, 3, 4, 5, 7], output_bytes=10740378, output_rows=141152
-                                GpuScanExec: table=call_center, projections=[cc_call_center_sk, cc_call_center_id, cc_name, cc_manager], batch_size=5835553, output_bytes=354, output_rows=6
-                                GpuScanExec: table=catalog_returns, projections=[cr_returned_date_sk, cr_returning_customer_sk, cr_call_center_sk, cr_net_loss], batch_size=5835553, output_bytes=4105912, output_rows=144067
-                        GpuScanExec: table=customer, projections=[c_customer_sk, c_current_cdemo_sk, c_current_hdemo_sk, c_current_addr_sk], batch_size=5835553, output_bytes=1650000, output_rows=100000
-                    GpuCoalesceBatchesExec: target_batch_size=5835553, output_bytes=22478, output_rows=5449
-                      GpuFilterExec: predicate=ca_gmt_offset@1 = Some(-700),5,2, projection=[0], output_bytes=22478, output_rows=5449
-                        GpuScanExec: table=customer_address, projections=[ca_address_sk, ca_gmt_offset], batch_size=5835553, output_bytes=1012500, output_rows=50000
-                GpuCoalesceBatchesExec: target_batch_size=5835553, output_bytes=2675408, output_rows=109760
-                  GpuFilterExec: predicate=cd_marital_status@1 = M AND cd_education_status@2 = Unknown OR cd_marital_status@1 = W AND cd_education_status@2 = Advanced Degree, output_bytes=2675543, output_rows=109760
-                    GpuScanExec: table=customer_demographics, projections=[cd_demo_sk, cd_marital_status, cd_education_status], batch_size=5835553, output_bytes=44075628, output_rows=1920800
-peacockdb_cost=79349667
+            GpuCoalesceBatchesExec: target_batch_size=5592405, output_bytes=9750, output_rows=1200
+              GpuFilterExec: predicate=hd_buy_potential@1 LIKE Unknown%, projection=[0], output_bytes=9750, output_rows=1200
+                GpuScanExec: table=household_demographics, projections=[hd_demo_sk, hd_buy_potential], batch_size=5592405, output_bytes=142204, output_rows=7200
+            GpuCoalesceBatchesExec: target_batch_size=5592405, output_bytes=1721, output_rows=18
+              GpuHashJoinExec: join_type=Inner, on=[(c_current_cdemo_sk@4, cd_demo_sk@0)], projection=[0, 1, 2, 3, 5, 7, 8], output_bytes=1721, output_rows=18
+                GpuCoalesceBatchesExec: target_batch_size=5592405, output_bytes=18292, output_rows=218
+                  GpuHashJoinExec: join_type=Inner, on=[(c_current_addr_sk@6, ca_address_sk@0)], projection=[0, 1, 2, 3, 4, 5], output_bytes=18292, output_rows=218
+                    GpuCoalesceBatchesExec: target_batch_size=5592405, output_bytes=169607, output_rows=1837
+                      GpuHashJoinExec: join_type=Inner, on=[(cr_returning_customer_sk@3, c_customer_sk@0)], projection=[0, 1, 2, 4, 6, 7, 8], output_bytes=169607, output_rows=1837
+                        GpuCoalesceBatchesExec: target_batch_size=5592405, output_bytes=141721, output_rows=1863
+                          GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, cr_returned_date_sk@3)], projection=[1, 2, 3, 5, 6], output_bytes=141721, output_rows=1863
+                            GpuCoalesceBatchesExec: target_batch_size=5592405, output_bytes=244, output_rows=30
+                              GpuFilterExec: predicate=d_year@1 = 1998 AND d_moy@2 = 11, projection=[0], output_bytes=244, output_rows=30
+                                GpuScanExec: table=date_dim, projections=[d_date_sk, d_year, d_moy], batch_size=5592405, output_bytes=1780572, output_rows=73049
+                            GpuCoalesceBatchesExec: target_batch_size=5592405, output_bytes=11869384, output_rows=141152
+                              GpuHashJoinExec: join_type=Inner, on=[(cc_call_center_sk@0, cr_call_center_sk@2)], projection=[1, 2, 3, 4, 5, 7], output_bytes=11869594, output_rows=141152
+                                GpuScanExec: table=call_center, projections=[cc_call_center_sk, cc_call_center_id, cc_name, cc_manager], batch_size=5592405, output_bytes=378, output_rows=6
+                                GpuScanExec: table=catalog_returns, projections=[cr_returned_date_sk, cr_returning_customer_sk, cr_call_center_sk, cr_net_loss], batch_size=5592405, output_bytes=5834716, output_rows=144067
+                        GpuScanExec: table=customer, projections=[c_customer_sk, c_current_cdemo_sk, c_current_hdemo_sk, c_current_addr_sk], batch_size=5592405, output_bytes=3250000, output_rows=100000
+                    GpuCoalesceBatchesExec: target_batch_size=5592405, output_bytes=44274, output_rows=5449
+                      GpuFilterExec: predicate=ca_gmt_offset@1 = Some(-700),5,2, projection=[0], output_bytes=44274, output_rows=5449
+                        GpuScanExec: table=customer_address, projections=[ca_address_sk, ca_gmt_offset], batch_size=5592405, output_bytes=1212500, output_rows=50000
+                GpuCoalesceBatchesExec: target_batch_size=5592405, output_bytes=3114448, output_rows=109760
+                  GpuFilterExec: predicate=cd_marital_status@1 = M AND cd_education_status@2 = Unknown OR cd_marital_status@1 = W AND cd_education_status@2 = Advanced Degree, output_bytes=3114583, output_rows=109760
+                    GpuScanExec: table=customer_demographics, projections=[cd_demo_sk, cd_marital_status, cd_education_status], batch_size=5592405, output_bytes=51758828, output_rows=1920800
+peacockdb_cost=94719651

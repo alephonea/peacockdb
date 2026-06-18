@@ -1,0 +1,1 @@
+["d_date_sk>=2450848 AND d_date_sk<=2452749","ws_ship_addr_sk>=29 AND ws_ship_addr_sk<=49935 AND ws_web_site_sk>=20 AND ws_web_site_sk<=29","","","ws_order_number>=44 AND ws_order_number<=59994","wr_order_number>=44 AND wr_order_number<=59994"]
