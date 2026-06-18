@@ -487,16 +487,24 @@ def scan_cost(node: Node) -> tuple[int, int, int]:
     apples-to-apples (IMPORTANT-1; dmitry). NOT the compressed parquet bytes
     (pruning['bytes_fetched'] — that stays the storage/disk-IO-reduction metric in the
     row-group-pruning section). Falls back to the derived rows_read × output-row-width
-    only when no parquet stats are available. OUTPUT term is decoded post-filter
-    materialized (already in the same units). Returns a dict."""
+    only when no parquet stats are available.
+
+    read >= output: a scan can't output more than it read. ENFORCED by a byte-level
+    max-clamp (not just the row-level cap), because the two terms now meet at the scan
+    on DIFFERENT byte bases — the READ term is pyarrow Arrow-nbytes (dense in-memory)
+    while the OUTPUT term is DuckDB's result_set_size estimate. For ~6% of scans (tiny
+    dim tables, e.g. q76 dim out 432,000 vs decoded read 326,349) the decoded read came
+    out below the DuckDB-basis output, so the row-level cap alone left output > read;
+    the max-clamp restores the invariant. Returns a dict."""
     rows_read = node.rows_fetched if node.rows_fetched is not None else node.rows_scanned
     per_row = (node.output_bytes / node.output_rows) if node.output_rows else 0
+    out_rows = min(node.output_rows, rows_read)        # can't output more ROWS than read
+    out_bytes = int(out_rows * per_row)
     if node.pruning is not None and node.pruning.get("bytes_fetched_decoded") is not None:
         bytes_read = node.pruning["bytes_fetched_decoded"]  # DECODED Arrow read (peacockdb units)
     else:
         bytes_read = int(rows_read * per_row)          # derived fallback (no parquet)
-    out_rows = min(node.output_rows, rows_read)        # can't output more than read
-    out_bytes = int(out_rows * per_row)
+    bytes_read = max(bytes_read, out_bytes)            # read >= output at BYTE level (two-basis seam)
     return {"rows_read": rows_read, "bytes_read": bytes_read,
             "out_rows": out_rows, "out_bytes": out_bytes}
 

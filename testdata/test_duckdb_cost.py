@@ -338,6 +338,17 @@ class TestSections(unittest.TestCase):
         scan.pruning = {"rows_fetched": 5, "bytes_fetched": 999}
         self.assertEqual(dc.scan_cost(scan)["bytes_read"], 5 * 32)
 
+    def test_scan_cost_byte_clamp_read_ge_output(self):
+        # Two-basis seam: decoded Arrow read (300) < DuckDB-basis out_bytes (10*100=1000).
+        # The byte-level max-clamp must restore read >= output (bytes_read == out_bytes).
+        scan = dc.Node("TABLE_SCAN", 1000, 10, 10, {"Table": "dim"})  # per_row=100
+        scan.rows_fetched = 10
+        scan.pruning = {"rows_fetched": 10, "bytes_fetched": 50, "bytes_fetched_decoded": 300}
+        sc = dc.scan_cost(scan)
+        self.assertEqual(sc["out_bytes"], 1000)
+        self.assertEqual(sc["bytes_read"], 1000)        # clamped up from 300 to out_bytes
+        self.assertGreaterEqual(sc["bytes_read"], sc["out_bytes"])  # invariant holds
+
     def test_breakdown_section(self):
         # scan (materialized via two-part) + an aggregate breaker over it.
         scan = dc.Node("TABLE_SCAN", 1826560, 114160, 4403775, {"Table": "lineitem"})

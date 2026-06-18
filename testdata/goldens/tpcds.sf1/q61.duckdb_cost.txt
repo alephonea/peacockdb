@@ -20,7 +20,7 @@ TOP_N: order_by=[promotional_sales.promotions ASC, all_sales.total ASC], top=100
                   CTE_SCAN: output_bytes=235928, output_rows=8426, materialized=0
                   PROJECTION: projections=[#0], output_bytes=1264, output_rows=158, materialized=0
                     FILTER: output_bytes=8848, output_rows=158, materialized=0
-                      TABLE_SCAN: table=promotion, projections=[p_promo_sk, p_channel_dmail, p_channel_email, p_channel_tv], output_bytes=16800, output_rows=300, materialized=16800, bytes_read=7036, rows_read=300
+                      TABLE_SCAN: table=promotion, projections=[p_promo_sk, p_channel_dmail, p_channel_email, p_channel_tv], output_bytes=16800, output_rows=300, materialized=16800, bytes_read=16800, rows_read=300
         UNGROUPED_AGGREGATE: aggregates=[sum(#0)], output_bytes=16, output_rows=1, materialized=12036
           PROJECTION: projections=[ss_ext_sales_price], output_bytes=12036, output_rows=3009, materialized=0
             HASH_JOIN: join_type=INNER, conditions=[ca_address_sk = c_current_addr_sk], output_bytes=36108, output_rows=3009, materialized=36108
@@ -29,9 +29,9 @@ TOP_N: order_by=[promotional_sales.promotions ASC, all_sales.total ASC], top=100
                 TABLE_SCAN: table=customer, projections=[c_customer_sk, c_current_addr_sk], output_bytes=1600000, output_rows=100000, materialized=1600000, bytes_read=1625000, rows_read=100000
                 PROJECTION: projections=[#1, #2, #3], output_bytes=168520, output_rows=8426, materialized=0
                   CTE_SCAN: output_bytes=235928, output_rows=8426, materialized=0
-duckdb_cost=46429101
+duckdb_cost=46438865
 materialization_total=21619356
-storage_read_total=24809745
+storage_read_total=24819509
 
 --- row-group pruning (storage reduction) ---
 store_sales  dyn_filter=[ss_sold_date_sk>=2451119 AND ss_sold_date_sk<=2451148 AND ss_store_sk>=1 AND ss_store_sk<=10 AND ss_item_sk>=11 AND ss_item_sk<=17995]  row_groups=3/24  rows=299924/2880404 (10.4%)  bytes_fetched=2786143/27824774 (10.0%)

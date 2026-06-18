@@ -11,7 +11,7 @@ CTE: output_bytes=0, output_rows=0, materialized=0
             FILTER: output_bytes=2920, output_rows=365, materialized=0
               TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_year=2002", output_bytes=2920, output_rows=365, materialized=2920, bytes_read=1187048, rows_read=73049
         FILTER: output_bytes=240, output_rows=10, materialized=0
-          TABLE_SCAN: table=store, projections=[s_store_sk, s_state], filters="s_state='TN'", output_bytes=288, output_rows=12, materialized=288, bytes_read=170, rows_read=12
+          TABLE_SCAN: table=store, projections=[s_store_sk, s_state], filters="s_state='TN'", output_bytes=288, output_rows=12, materialized=288, bytes_read=288, rows_read=12
   TOP_N: order_by=[foo.i_item_id ASC, foo.s_state ASC], top=100, output_bytes=6800, output_rows=100, materialized=0
     UNION: output_bytes=0, output_rows=10145, materialized=0
       PROJECTION: projections=[i_item_id, s_state, g_state, agg1, agg2, agg3, agg4], output_bytes=344896, output_rows=5072, materialized=0
@@ -26,9 +26,9 @@ CTE: output_bytes=0, output_rows=0, materialized=0
         UNGROUPED_AGGREGATE: aggregates=[avg(#0), avg(#1), avg(#2), avg(#3)], output_bytes=32, output_rows=1, materialized=149700
           PROJECTION: projections=[agg1, agg2, agg3, agg4], output_bytes=149700, output_rows=7485, materialized=0
             CTE_SCAN: output_bytes=389220, output_rows=7485, materialized=0
-duckdb_cost=205493124
+duckdb_cost=205493242
 materialization_total=72478636
-storage_read_total=133014488
+storage_read_total=133014606
 
 --- row-group pruning (storage reduction) ---
 item  dyn_filter=[i_item_sk>=1 AND i_item_sk<=18000]  row_groups=1/1  rows=18000/18000 (100.0%)  bytes_fetched=128816/128816 (100.0%)

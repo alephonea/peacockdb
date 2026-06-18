@@ -22,8 +22,8 @@ TOP_N: order_by=[x.w_warehouse_name ASC], top=100, output_bytes=2960, output_row
                                     TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_year, d_moy], filters="d_year=2001", output_bytes=8760, output_rows=365, materialized=8760, bytes_read=1780572, rows_read=73049
                                 PROJECTION: projections=[#0], output_bytes=16, output_rows=2, materialized=0
                                   FILTER: output_bytes=48, output_rows=2, materialized=0
-                                    TABLE_SCAN: table=ship_mode, projections=[sm_ship_mode_sk, sm_carrier], filters="optional: sm_carrier IN ('DHL', 'BARIAN')", output_bytes=480, output_rows=20, materialized=480, bytes_read=376, rows_read=20
-                            TABLE_SCAN: table=warehouse, projections=[w_warehouse_sk, w_warehouse_name, w_warehouse_sq_ft, w_city, w_county, w_state, w_country], output_bytes=480, output_rows=5, materialized=480, bytes_read=454, rows_read=5
+                                    TABLE_SCAN: table=ship_mode, projections=[sm_ship_mode_sk, sm_carrier], filters="optional: sm_carrier IN ('DHL', 'BARIAN')", output_bytes=480, output_rows=20, materialized=480, bytes_read=480, rows_read=20
+                            TABLE_SCAN: table=warehouse, projections=[w_warehouse_sk, w_warehouse_name, w_warehouse_sq_ft, w_city, w_county, w_state, w_country], output_bytes=480, output_rows=5, materialized=480, bytes_read=480, rows_read=5
               PROJECTION: projections=[w_warehouse_name, w_warehouse_sq_ft, w_city, w_county, w_state, w_country, ship_carriers, year_, jan_sales, feb_sales, mar_sales, apr_sales, may_sales, jun_sales, jul_sales, aug_sales, sep_sales, oct_sales, nov_sales, dec_sales, jan_net, feb_net, mar_net, apr_net, may_net, jun_net, jul_net, aug_net, sep_net, oct_net, nov_net, dec_net], output_bytes=2480, output_rows=5, materialized=0
                 PROJECTION: projections=[#0, __internal_decompress_integral_bigint(#1, 138504), __internal_decompress_string(#2), #3, __internal_decompress_string(#4), __internal_decompress_string(#5), __internal_decompress_integral_bigint(#6, 2001), #7, #8, #9, #10, #11, #12, #13, #14, #15, #16, #17, #18, #19, #20, #21, #22, #23, #24, #25, #26, #27, #28, #29, #30], output_bytes=2400, output_rows=5, materialized=0
                   HASH_GROUP_BY: groups=[#0, #1, #2, #3, #4, #5, #6], aggregates=[sum(#7), sum(#8), sum(#9), sum(#10), sum(#11), sum(#12), sum(#13), sum(#14), sum(#15), sum(#16), sum(#17), sum(#18), sum(#19), sum(#20), sum(#21), sum(#22), sum(#23), sum(#24), sum(#25), sum(#26), sum(#27), sum(#28), sum(#29), sum(#30)], output_bytes=2285, output_rows=5, materialized=4918691
@@ -41,11 +41,11 @@ TOP_N: order_by=[x.w_warehouse_name ASC], top=100, output_bytes=2960, output_row
                                     TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_year, d_moy], filters="d_year=2001", output_bytes=8760, output_rows=365, materialized=8760, bytes_read=1780572, rows_read=73049
                                 PROJECTION: projections=[#0], output_bytes=16, output_rows=2, materialized=0
                                   FILTER: output_bytes=48, output_rows=2, materialized=0
-                                    TABLE_SCAN: table=ship_mode, projections=[sm_ship_mode_sk, sm_carrier], filters="optional: sm_carrier IN ('DHL', 'BARIAN')", output_bytes=480, output_rows=20, materialized=480, bytes_read=376, rows_read=20
-                            TABLE_SCAN: table=warehouse, projections=[w_warehouse_sk, w_warehouse_name, w_warehouse_sq_ft, w_city, w_county, w_state, w_country], output_bytes=480, output_rows=5, materialized=480, bytes_read=454, rows_read=5
-duckdb_cost=133431732
+                                    TABLE_SCAN: table=ship_mode, projections=[sm_ship_mode_sk, sm_carrier], filters="optional: sm_carrier IN ('DHL', 'BARIAN')", output_bytes=480, output_rows=20, materialized=480, bytes_read=480, rows_read=20
+                            TABLE_SCAN: table=warehouse, projections=[w_warehouse_sk, w_warehouse_name, w_warehouse_sq_ft, w_city, w_county, w_state, w_country], output_bytes=480, output_rows=5, materialized=480, bytes_read=480, rows_read=5
+duckdb_cost=133431992
 materialization_total=73331648
-storage_read_total=60100084
+storage_read_total=60100344
 
 --- row-group pruning (storage reduction) ---
 time_dim  filter=[t_time>=30838 AND t_time<=59638]  dyn_filter=[t_time_sk>=40 AND t_time_sk<=86367]  row_groups=1/1  rows=86400/86400 (100.0%)  bytes_fetched=693146/693146 (100.0%)

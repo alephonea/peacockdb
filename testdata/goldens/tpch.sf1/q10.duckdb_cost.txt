@@ -9,11 +9,11 @@ TOP_N: order_by=[sum((tpch.main.lineitem.l_extendedprice * (1 - tpch.main.lineit
               HASH_JOIN: join_type=INNER, conditions=[c_custkey = o_custkey], output_bytes=5935176, output_rows=57069, materialized=5935176
                 HASH_JOIN: join_type=INNER, conditions=[c_nationkey = n_nationkey], output_bytes=14399904, output_rows=149999, materialized=14399904
                   TABLE_SCAN: table=customer, projections=[c_custkey, c_nationkey, c_name, c_acctbal, c_phone, c_address, c_comment], filters="c_custkey<=149999", output_bytes=12599916, output_rows=149999, materialized=12599916, bytes_read=26221655, rows_read=150000
-                  TABLE_SCAN: table=nation, projections=[n_nationkey, n_name], output_bytes=500, output_rows=25, materialized=500, bytes_read=381, rows_read=25
+                  TABLE_SCAN: table=nation, projections=[n_nationkey, n_name], output_bytes=500, output_rows=25, materialized=500, bytes_read=500, rows_read=25
                 TABLE_SCAN: table=orders, projections=[o_custkey, o_orderkey], filters="o_orderdate>='1993-10-01'::DATE AND (CAST(o_orderdate AS TIMESTAMP) < '1994-01-01 00:00:00'::TIMESTAMP)", output_bytes=913104, output_rows=57069, materialized=913104, bytes_read=2488320, rows_read=122880
-duckdb_cost=397426427
+duckdb_cost=397426546
 materialization_total=97911244
-storage_read_total=299515183
+storage_read_total=299515302
 
 --- row-group pruning (storage reduction) ---
 lineitem  filter=[l_returnflag='R']  dyn_filter=[l_orderkey>=3 AND l_orderkey<=5999909]  row_groups=49/49  rows=6001215/6001215 (100.0%)  bytes_fetched=64022269/64022269 (100.0%)

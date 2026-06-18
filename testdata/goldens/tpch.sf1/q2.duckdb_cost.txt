@@ -6,7 +6,7 @@ TOP_N: order_by=[tpch.main.supplier.s_acctbal DESC, tpch.main.nation.n_name ASC,
           HASH_JOIN: join_type=INNER, conditions=[s_nationkey = n_nationkey], output_bytes=222544, output_rows=1987, materialized=222544
             TABLE_SCAN: table=supplier, projections=[s_suppkey, s_nationkey, s_acctbal, s_name, s_address, s_phone, s_comment], output_bytes=840000, output_rows=10000, materialized=840000, bytes_read=1647966, rows_read=10000
             HASH_JOIN: join_type=INNER, conditions=[n_regionkey = r_regionkey], output_bytes=140, output_rows=5, materialized=140
-              TABLE_SCAN: table=nation, projections=[n_nationkey, n_regionkey, n_name], output_bytes=600, output_rows=25, materialized=600, bytes_read=485, rows_read=25
+              TABLE_SCAN: table=nation, projections=[n_nationkey, n_regionkey, n_name], output_bytes=600, output_rows=25, materialized=600, bytes_read=600, rows_read=25
               TABLE_SCAN: table=region, projections=[r_regionkey], filters="r_name='EUROPE'", output_bytes=4, output_rows=1, materialized=4, bytes_read=75, rows_read=5
           LEFT_DELIM_JOIN: join_type=LEFT, conditions=[p_partkey IS NOT DISTINCT FROM p_partkey], output_bytes=0, output_rows=0, materialized=3680
             HASH_JOIN: join_type=INNER, conditions=[ps_suppkey = s_suppkey], output_bytes=102720, output_rows=642, materialized=102720
@@ -28,9 +28,9 @@ TOP_N: order_by=[tpch.main.supplier.s_acctbal DESC, tpch.main.nation.n_name ASC,
                           PROJECTION: projections=[#0, #7, #10], output_bytes=31792, output_rows=1987, materialized=0
                             CTE_SCAN: output_bytes=222544, output_rows=1987, materialized=0
             HASH_GROUP_BY: groups=[#3], output_bytes=3680, output_rows=460, materialized=0
-duckdb_cost=99320358
+duckdb_cost=99320473
 materialization_total=40021832
-storage_read_total=59298526
+storage_read_total=59298641
 
 --- row-group pruning (storage reduction) ---
 supplier  dyn_filter=[s_nationkey>=6 AND s_nationkey<=23]  row_groups=1/1  rows=10000/10000 (100.0%)  bytes_fetched=792481/792481 (100.0%)

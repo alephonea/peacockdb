@@ -8,12 +8,12 @@ TOP_N: order_by=[tpcds.main.customer.c_customer_id ASC], top=100, output_bytes=5
           HASH_JOIN: join_type=INNER, conditions=[sr_cdemo_sk = c_current_cdemo_sk], output_bytes=8208, output_rows=114, materialized=8208
             TABLE_SCAN: table=store_returns, projections=[sr_cdemo_sk], filters="sr_cdemo_sk>=17 AND sr_cdemo_sk<=1920788", output_bytes=2221336, output_rows=277667, materialized=2221336, bytes_read=2338920, rows_read=287867
             HASH_JOIN: join_type=INNER, conditions=[c_current_addr_sk = ca_address_sk], output_bytes=68184, output_rows=947, materialized=68184
-              TABLE_SCAN: table=customer, projections=[c_current_addr_sk, c_current_cdemo_sk, c_current_hdemo_sk, c_customer_id, c_last_name, c_first_name], output_bytes=7200000, output_rows=100000, materialized=7200000, bytes_read=6417117, rows_read=100000
+              TABLE_SCAN: table=customer, projections=[c_current_addr_sk, c_current_cdemo_sk, c_current_hdemo_sk, c_customer_id, c_last_name, c_first_name], output_bytes=7200000, output_rows=100000, materialized=7200000, bytes_read=7200000, rows_read=100000
               TABLE_SCAN: table=customer_address, projections=[ca_address_sk], filters="ca_city='Edgewood'", output_bytes=3712, output_rows=464, materialized=3712, bytes_read=1046065, rows_read=50000
         TABLE_SCAN: table=income_band, projections=[ib_income_band_sk], filters="ib_lower_bound>=38128 AND ib_upper_bound<=88128", output_bytes=32, output_rows=4, materialized=32, bytes_read=409, rows_read=20
-duckdb_cost=50518459
+duckdb_cost=51301342
 materialization_total=24992448
-storage_read_total=25526011
+storage_read_total=26308894
 
 --- row-group pruning (storage reduction) ---
 customer_demographics  filter=[cd_demo_sk>=17 AND cd_demo_sk<=1920788]  dyn_filter=[cd_demo_sk>=72894 AND cd_demo_sk<=1902498]  row_groups=16/16  rows=1920800/1920800 (100.0%)  bytes_fetched=7688523/7688523 (100.0%)

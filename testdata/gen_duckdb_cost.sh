@@ -54,6 +54,19 @@ TESTDATA=${1:-"$(cd "$(dirname "$0")" && pwd)"}
 COST_PY="$(cd "$(dirname "$0")" && pwd)/duckdb_cost.py"
 [ -f "$COST_PY" ] || { echo "error: $COST_PY not found" >&2; exit 1; }
 
+# storage_read in the goldens is the DECODED Arrow size (pyarrow read_row_group().nbytes
+# of the surviving row groups' referenced columns), so it depends on pyarrow — pin it
+# next to the duckdb pin for reproducible goldens. Soft check (warn, don't fail): Arrow
+# buffer sizes are stable across minor versions, but a bump should be deliberate and
+# paired with a golden regen. Runs for both --gen and --extract-only (both decode).
+EXPECTED_PYARROW=${EXPECTED_PYARROW-"19.0.1"}
+if [ -n "$EXPECTED_PYARROW" ]; then
+  ACTUAL_PYARROW=$(python3 -c "import pyarrow; print(pyarrow.__version__)" 2>/dev/null || echo "missing")
+  if [ "$ACTUAL_PYARROW" != "$EXPECTED_PYARROW" ]; then
+    echo "warning: pyarrow $ACTUAL_PYARROW != pinned $EXPECTED_PYARROW — decoded storage_read goldens may shift; regenerate deliberately (or set EXPECTED_PYARROW= to skip)." >&2
+  fi
+fi
+
 # Run one query under JSON profiling. jfp=off disables join_filter_pushdown.
 profile() {  # db sqlfile jfp(on|off) out
   local db="$1" sqlfile="$2" jfp="$3" out="$4" dis=""

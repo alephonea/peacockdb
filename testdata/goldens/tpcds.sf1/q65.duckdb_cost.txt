@@ -14,14 +14,14 @@ TOP_N: order_by=[tpcds.main.store.s_store_name ASC, tpcds.main.item.i_item_desc 
           TABLE_SCAN: table=item, projections=[i_item_sk, i_item_desc, i_current_price, i_wholesale_cost, i_brand], output_bytes=864000, output_rows=18000, materialized=864000, bytes_read=2974785, rows_read=18000
           HASH_JOIN: join_type=INNER, conditions=[ss_store_sk = s_store_sk], output_bytes=3023832, output_rows=53997, materialized=3023832
             CTE_SCAN: output_bytes=1946176, output_rows=60818, materialized=0
-            TABLE_SCAN: table=store, projections=[s_store_sk, s_store_name], output_bytes=288, output_rows=12, materialized=288, bytes_read=197, rows_read=12
+            TABLE_SCAN: table=store, projections=[s_store_sk, s_store_name], output_bytes=288, output_rows=12, materialized=288, bytes_read=288, rows_read=12
         HASH_GROUP_BY: groups=[#0], aggregates=[avg(#1)], output_bytes=112, output_rows=7, materialized=1459632
           PROJECTION: projections=[ss_store_sk, revenue], output_bytes=1459632, output_rows=60818, materialized=0
             PROJECTION: projections=[ss_store_sk, revenue], output_bytes=1459632, output_rows=60818, materialized=0
               CTE_SCAN: output_bytes=1946176, output_rows=60818, materialized=0
-duckdb_cost=80215527
+duckdb_cost=80215618
 materialization_total=48976653
-storage_read_total=31238874
+storage_read_total=31238965
 
 --- row-group pruning (storage reduction) ---
 store_sales  dyn_filter=[ss_sold_date_sk>=2450816 AND ss_sold_date_sk<=2451179]  row_groups=6/24  rows=668564/2880404 (23.2%)  bytes_fetched=3096898/13466306 (23.0%)

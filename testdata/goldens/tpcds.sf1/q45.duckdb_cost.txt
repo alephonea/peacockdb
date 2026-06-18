@@ -8,7 +8,7 @@ TOP_N: order_by=[tpcds.main.customer_address.ca_zip ASC, tpcds.main.customer_add
               HASH_JOIN: join_type=MARK, conditions=["substring"(ca_zip, 1, 5) = #0], output_bytes=812022, output_rows=21369, materialized=812022
                 HASH_JOIN: join_type=MARK, conditions=[i_item_id = #0], output_bytes=790653, output_rows=21369, materialized=790813
                   HASH_JOIN: join_type=INNER, conditions=[ca_address_sk = c_current_addr_sk], output_bytes=1111188, output_rows=21369, materialized=1111188
-                    TABLE_SCAN: table=customer_address, projections=[ca_address_sk, ca_zip, ca_city], filters="optional: Dynamic Filter (ca_zip)", output_bytes=2000000, output_rows=50000, materialized=2000000, bytes_read=1494620, rows_read=50000
+                    TABLE_SCAN: table=customer_address, projections=[ca_address_sk, ca_zip, ca_city], filters="optional: Dynamic Filter (ca_zip)", output_bytes=2000000, output_rows=50000, materialized=2000000, bytes_read=2000000, rows_read=50000
                     HASH_JOIN: join_type=INNER, conditions=[c_customer_sk = ws_bill_customer_sk], output_bytes=598332, output_rows=21369, materialized=598332
                       TABLE_SCAN: table=customer, projections=[c_customer_sk, c_current_addr_sk], filters="c_customer_sk>=2", output_bytes=1599984, output_rows=99999, materialized=1599984, bytes_read=1625000, rows_read=100000
                       HASH_JOIN: join_type=INNER, conditions=[i_item_sk = ws_item_sk], output_bytes=598360, output_rows=21370, materialized=598360
@@ -23,9 +23,9 @@ TOP_N: order_by=[tpcds.main.customer_address.ca_zip ASC, tpcds.main.customer_add
                         TABLE_SCAN: table=item, projections=[i_item_sk, i_item_id], filters="optional: i_item_sk IN (2, 3, 5, 7, 11, 13, 17, 19, 23, 29)", output_bytes=432000, output_rows=18000, materialized=432000, bytes_read=506250, rows_read=18000
                         COLUMN_DATA_SCAN: output_bytes=80, output_rows=10, materialized=0
                 COLUMN_DATA_SCAN: output_bytes=144, output_rows=9, materialized=0
-duckdb_cost=23611931
+duckdb_cost=24117311
 materialization_total=12722599
-storage_read_total=10889332
+storage_read_total=11394712
 
 --- row-group pruning (storage reduction) ---
 customer_address  filter=[optional: Dynamic Filter (ca_zip)]  dyn_filter=[ca_address_sk>=37 AND ca_address_sk<=49997]  row_groups=1/1  rows=50000/50000 (100.0%)  bytes_fetched=364996/364996 (100.0%)

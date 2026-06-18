@@ -13,10 +13,10 @@ TOP_N: order_by=[tpcds.main.store.s_store_name ASC, tpcds.main.store.s_company_i
                     TABLE_SCAN: table=store_returns, projections=[sr_ticket_number, sr_item_sk, sr_returned_date_sk, sr_customer_sk], output_bytes=3932160, output_rows=122880, materialized=3932160, bytes_read=3993600, rows_read=122880
                     FILTER: output_bytes=248, output_rows=31, materialized=0
                       TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_year=2001 AND d_moy=8", output_bytes=248, output_rows=31, materialized=248, bytes_read=1780572, rows_read=73049
-              TABLE_SCAN: table=store, projections=[s_store_sk, s_store_name, s_company_id, s_street_number, s_street_name, s_street_type, s_suite_number, s_city, s_county, s_state, s_zip], filters="s_store_sk<=10", output_bytes=1600, output_rows=10, materialized=1600, bytes_read=1315, rows_read=12
-duckdb_cost=238186236
+              TABLE_SCAN: table=store, projections=[s_store_sk, s_store_name, s_company_id, s_street_number, s_street_name, s_street_type, s_suite_number, s_city, s_county, s_state, s_zip], filters="s_store_sk<=10", output_bytes=1600, output_rows=10, materialized=1600, bytes_read=1600, rows_read=12
+duckdb_cost=238186521
 materialization_total=114800810
-storage_read_total=123385426
+storage_read_total=123385711
 
 --- row-group pruning (storage reduction) ---
 date_dim  filter=[d_date_sk>=2450816 AND d_date_sk<=2452642]  dyn_filter=[d_date_sk>=2451943 AND d_date_sk<=2452149]  row_groups=1/1  rows=73049/73049 (100.0%)  bytes_fetched=292400/292400 (100.0%)

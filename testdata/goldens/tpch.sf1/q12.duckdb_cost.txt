@@ -6,13 +6,13 @@ PROJECTION: projections=[__internal_decompress_string(#0), #1, #2], output_bytes
           PROJECTION: projections=[l_shipmode, CASE  WHEN (((o_orderpriority = '1-URGENT') OR (o_orderpriority = '2-HIGH'))) THEN (1) ELSE 0 END, CASE  WHEN (((o_orderpriority != '1-URGENT') AND (o_orderpriority != '2-HIGH'))) THEN (1) ELSE 0 END], output_bytes=495808, output_rows=30988, materialized=0
             PROJECTION: projections=[#0, __internal_compress_string_ubigint(#1)], output_bytes=743712, output_rows=30988, materialized=0
               HASH_JOIN: join_type=INNER, conditions=[o_orderkey = l_orderkey], output_bytes=991616, output_rows=30988, materialized=1735328
-                TABLE_SCAN: table=orders, projections=[o_orderkey, o_orderpriority], output_bytes=36000000, output_rows=1500000, materialized=36000000, bytes_read=30787329, rows_read=1500000
+                TABLE_SCAN: table=orders, projections=[o_orderkey, o_orderpriority], output_bytes=36000000, output_rows=1500000, materialized=36000000, bytes_read=36000000, rows_read=1500000
                 PROJECTION: projections=[#0, #1], output_bytes=743712, output_rows=30988, materialized=0
                   FILTER: output_bytes=1115568, output_rows=30988, materialized=0
-                    TABLE_SCAN: table=lineitem, projections=[l_orderkey, l_shipmode, l_commitdate, l_receiptdate, l_shipdate], filters="optional: l_shipmode IN ('MAIL', 'SHIP') AND l_receiptdate>='1994-01-01'::DATE AND (CAST(l_receiptdate AS TIMESTAMP) < '1995-01-01 00:00:00'::TIMESTAMP)", output_bytes=32754384, output_rows=909844, materialized=32754384, bytes_read=31420445, rows_read=1105920
-duckdb_cost=133193374
+                    TABLE_SCAN: table=lineitem, projections=[l_orderkey, l_shipmode, l_commitdate, l_receiptdate, l_shipdate], filters="optional: l_shipmode IN ('MAIL', 'SHIP') AND l_receiptdate>='1994-01-01'::DATE AND (CAST(l_receiptdate AS TIMESTAMP) < '1995-01-01 00:00:00'::TIMESTAMP)", output_bytes=32754384, output_rows=909844, materialized=32754384, bytes_read=32754384, rows_read=1105920
+duckdb_cost=139739984
 materialization_total=70985600
-storage_read_total=62207774
+storage_read_total=68754384
 
 --- row-group pruning (storage reduction) ---
 orders  dyn_filter=[o_orderkey>=256 AND o_orderkey<=5999812]  row_groups=13/13  rows=1500000/1500000 (100.0%)  bytes_fetched=8249324/8249324 (100.0%)
