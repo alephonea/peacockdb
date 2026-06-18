@@ -325,6 +325,19 @@ class TestSections(unittest.TestCase):
         self.assertEqual(sc["out_rows"], 5)                         # output CAPPED at read (was 10)
         self.assertEqual(sc["out_bytes"], 5 * 32)                  # capped output (materialization)
 
+    def test_scan_cost_uses_decoded_bytes(self):
+        # When pruning carries bytes_fetched_decoded (Arrow in-memory size), the read
+        # term uses THAT (peacockdb units), not the compressed bytes_fetched.
+        scan = dc.Node("TABLE_SCAN", 320, 10, 1000, {"Table": "t"})
+        scan.rows_fetched = 5
+        scan.pruning = {"rows_fetched": 5, "bytes_fetched": 999,        # compressed (ignored by cost)
+                        "bytes_fetched_decoded": 4096}                  # decoded Arrow (used)
+        sc = dc.scan_cost(scan)
+        self.assertEqual(sc["bytes_read"], 4096)                       # decoded, not 999, not derived
+        # absent decoded -> falls back to derived rows_read x per_row
+        scan.pruning = {"rows_fetched": 5, "bytes_fetched": 999}
+        self.assertEqual(dc.scan_cost(scan)["bytes_read"], 5 * 32)
+
     def test_breakdown_section(self):
         # scan (materialized via two-part) + an aggregate breaker over it.
         scan = dc.Node("TABLE_SCAN", 1826560, 114160, 4403775, {"Table": "lineitem"})

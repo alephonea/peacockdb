@@ -4,15 +4,15 @@ TOP_N: order_by=[tpch.main.supplier.s_acctbal DESC, tpch.main.nation.n_name ASC,
       FILTER: output_bytes=80960, output_rows=460, materialized=0
         CTE: output_bytes=0, output_rows=0, materialized=0
           HASH_JOIN: join_type=INNER, conditions=[s_nationkey = n_nationkey], output_bytes=222544, output_rows=1987, materialized=222544
-            TABLE_SCAN: table=supplier, projections=[s_suppkey, s_nationkey, s_acctbal, s_name, s_address, s_phone, s_comment], output_bytes=840000, output_rows=10000, materialized=840000, bytes_read=792481, rows_read=10000
+            TABLE_SCAN: table=supplier, projections=[s_suppkey, s_nationkey, s_acctbal, s_name, s_address, s_phone, s_comment], output_bytes=840000, output_rows=10000, materialized=840000, bytes_read=1647966, rows_read=10000
             HASH_JOIN: join_type=INNER, conditions=[n_regionkey = r_regionkey], output_bytes=140, output_rows=5, materialized=140
-              TABLE_SCAN: table=nation, projections=[n_nationkey, n_regionkey, n_name], output_bytes=600, output_rows=25, materialized=600, bytes_read=478, rows_read=25
-              TABLE_SCAN: table=region, projections=[r_regionkey], filters="r_name='EUROPE'", output_bytes=4, output_rows=1, materialized=4, bytes_read=119, rows_read=5
+              TABLE_SCAN: table=nation, projections=[n_nationkey, n_regionkey, n_name], output_bytes=600, output_rows=25, materialized=600, bytes_read=485, rows_read=25
+              TABLE_SCAN: table=region, projections=[r_regionkey], filters="r_name='EUROPE'", output_bytes=4, output_rows=1, materialized=4, bytes_read=75, rows_read=5
           LEFT_DELIM_JOIN: join_type=LEFT, conditions=[p_partkey IS NOT DISTINCT FROM p_partkey], output_bytes=0, output_rows=0, materialized=3680
             HASH_JOIN: join_type=INNER, conditions=[ps_suppkey = s_suppkey], output_bytes=102720, output_rows=642, materialized=102720
               HASH_JOIN: join_type=INNER, conditions=[ps_partkey = p_partkey], output_bytes=143424, output_rows=2988, materialized=143424
-                TABLE_SCAN: table=partsupp, projections=[ps_partkey, ps_suppkey, ps_supplycost], output_bytes=19200000, output_rows=800000, materialized=19200000, bytes_read=6678651, rows_read=800000
-                TABLE_SCAN: table=part, projections=[p_partkey, p_mfgr], filters="p_size=15 AND suffix(p_type, 'BRASS')", output_bytes=17928, output_rows=747, materialized=17928, bytes_read=1028756, rows_read=200000
+                TABLE_SCAN: table=partsupp, projections=[ps_partkey, ps_suppkey, ps_supplycost], output_bytes=19200000, output_rows=800000, materialized=19200000, bytes_read=25800000, rows_read=800000
+                TABLE_SCAN: table=part, projections=[p_partkey, p_mfgr], filters="p_size=15 AND suffix(p_type, 'BRASS')", output_bytes=17928, output_rows=747, materialized=17928, bytes_read=6050000, rows_read=200000
               CTE_SCAN: output_bytes=222544, output_rows=1987, materialized=0
             HASH_JOIN: join_type=LEFT, conditions=[p_partkey IS NOT DISTINCT FROM p_partkey], output_bytes=112992, output_rows=642, materialized=120352
               COLUMN_DATA_SCAN: output_bytes=102720, output_rows=642, materialized=0
@@ -23,14 +23,14 @@ TOP_N: order_by=[tpch.main.supplier.s_acctbal DESC, tpch.main.nation.n_name ASC,
                       PROJECTION: projections=[__internal_compress_integral_uinteger(#0, 1), #1, #2, #3, #4], output_bytes=17976, output_rows=642, materialized=0
                         HASH_JOIN: join_type=INNER, conditions=[ps_suppkey = s_suppkey], output_bytes=20544, output_rows=642, materialized=52336
                           HASH_JOIN: join_type=INNER, conditions=[ps_partkey = p_partkey], output_bytes=58880, output_rows=1840, materialized=58880
-                            TABLE_SCAN: table=partsupp, projections=[ps_partkey, ps_suppkey, ps_supplycost], output_bytes=19200000, output_rows=800000, materialized=19200000, bytes_read=6678651, rows_read=800000
+                            TABLE_SCAN: table=partsupp, projections=[ps_partkey, ps_suppkey, ps_supplycost], output_bytes=19200000, output_rows=800000, materialized=19200000, bytes_read=25800000, rows_read=800000
                             DELIM_SCAN: output_bytes=0, output_rows=0, materialized=0
                           PROJECTION: projections=[#0, #7, #10], output_bytes=31792, output_rows=1987, materialized=0
                             CTE_SCAN: output_bytes=222544, output_rows=1987, materialized=0
             HASH_GROUP_BY: groups=[#3], output_bytes=3680, output_rows=460, materialized=0
-duckdb_cost=55200968
+duckdb_cost=99320358
 materialization_total=40021832
-storage_read_total=15179136
+storage_read_total=59298526
 
 --- row-group pruning (storage reduction) ---
 supplier  dyn_filter=[s_nationkey>=6 AND s_nationkey<=23]  row_groups=1/1  rows=10000/10000 (100.0%)  bytes_fetched=792481/792481 (100.0%)

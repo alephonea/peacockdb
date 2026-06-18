@@ -11,18 +11,18 @@ PROJECTION: projections=[__internal_decompress_string(#0), __internal_decompress
                     HASH_JOIN: join_type=INNER, conditions=[l_orderkey = o_orderkey], output_bytes=14053776, output_rows=319404, materialized=40107552
                       PROJECTION: projections=[#0, __internal_compress_integral_uinteger(#1, 1), #2, #3, #4, #5], output_bytes=14053776, output_rows=319404, materialized=0
                         HASH_JOIN: join_type=INNER, conditions=[l_partkey = p_partkey], output_bytes=15331392, output_rows=319404, materialized=15331392
-                          TABLE_SCAN: table=lineitem, projections=[l_suppkey, l_partkey, l_orderkey, l_extendedprice, l_discount, l_quantity], output_bytes=288058320, output_rows=6001215, materialized=288058320, bytes_read=108495865, rows_read=6001215
-                          TABLE_SCAN: table=part, projections=[p_partkey], filters="contains(p_name, 'green')", output_bytes=85312, output_rows=10664, materialized=85312, bytes_read=801259, rows_read=200000
+                          TABLE_SCAN: table=lineitem, projections=[l_suppkey, l_partkey, l_orderkey, l_extendedprice, l_discount, l_quantity], output_bytes=288058320, output_rows=6001215, materialized=288058320, bytes_read=434337936, rows_read=6001215
+                          TABLE_SCAN: table=part, projections=[p_partkey], filters="contains(p_name, 'green')", output_bytes=85312, output_rows=10664, materialized=85312, bytes_read=1625000, rows_read=200000
                       PROJECTION: projections=[__internal_compress_integral_uinteger(#0, 1), #1], output_bytes=12000000, output_rows=1500000, materialized=0
-                        TABLE_SCAN: table=orders, projections=[o_orderkey, o_orderdate], output_bytes=18000000, output_rows=1500000, materialized=18000000, bytes_read=7696933, rows_read=1500000
+                        TABLE_SCAN: table=orders, projections=[o_orderkey, o_orderdate], output_bytes=18000000, output_rows=1500000, materialized=18000000, bytes_read=18187500, rows_read=1500000
                   HASH_JOIN: join_type=INNER, conditions=[ps_suppkey = s_suppkey], output_bytes=32000000, output_rows=800000, materialized=32000000
-                    TABLE_SCAN: table=partsupp, projections=[ps_suppkey, ps_partkey, ps_supplycost], output_bytes=19200000, output_rows=800000, materialized=19200000, bytes_read=6678651, rows_read=800000
+                    TABLE_SCAN: table=partsupp, projections=[ps_suppkey, ps_partkey, ps_supplycost], output_bytes=19200000, output_rows=800000, materialized=19200000, bytes_read=25800000, rows_read=800000
                     HASH_JOIN: join_type=INNER, conditions=[s_nationkey = n_nationkey], output_bytes=240000, output_rows=10000, materialized=240000
-                      TABLE_SCAN: table=supplier, projections=[s_suppkey, s_nationkey], output_bytes=120000, output_rows=10000, materialized=120000, bytes_read=47418, rows_read=10000
-                      TABLE_SCAN: table=nation, projections=[n_nationkey, n_name], output_bytes=500, output_rows=25, materialized=500, bytes_read=398, rows_read=25
-duckdb_cost=575517259
+                      TABLE_SCAN: table=supplier, projections=[s_suppkey, s_nationkey], output_bytes=120000, output_rows=10000, materialized=120000, bytes_read=122500, rows_read=10000
+                      TABLE_SCAN: table=nation, projections=[n_nationkey, n_name], output_bytes=500, output_rows=25, materialized=500, bytes_read=381, rows_read=25
+duckdb_cost=931870052
 materialization_total=451796735
-storage_read_total=123720524
+storage_read_total=480073317
 
 --- row-group pruning (storage reduction) ---
 lineitem  dyn_filter=[l_partkey>=3 AND l_partkey<=199962]  row_groups=49/49  rows=6001215/6001215 (100.0%)  bytes_fetched=108495865/108495865 (100.0%)

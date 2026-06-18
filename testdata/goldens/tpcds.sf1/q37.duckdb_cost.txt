@@ -3,18 +3,18 @@ TOP_N: order_by=[tpcds.main.item.i_item_id ASC], top=100, output_bytes=36, outpu
     PROJECTION: projections=[i_item_id, i_item_desc, i_current_price], output_bytes=85176, output_rows=2366, materialized=0
       PROJECTION: projections=[__internal_compress_integral_usmallint(#0, 1), #1, #2, #3], output_bytes=89908, output_rows=2366, materialized=0
         HASH_JOIN: join_type=INNER, conditions=[cs_item_sk = i_item_sk], output_bytes=104104, output_rows=2366, materialized=104104
-          TABLE_SCAN: table=catalog_sales, projections=[cs_item_sk], output_bytes=11532384, output_rows=1441548, materialized=11532384, bytes_read=3009903, rows_read=1441548
+          TABLE_SCAN: table=catalog_sales, projections=[cs_item_sk], output_bytes=11532384, output_rows=1441548, materialized=11532384, bytes_read=11712578, rows_read=1441548
           HASH_JOIN: join_type=INNER, conditions=[inv_date_sk = d_date_sk], output_bytes=728, output_rows=14, materialized=1216
             HASH_JOIN: join_type=INNER, conditions=[inv_item_sk = i_item_sk], output_bytes=38168, output_rows=734, materialized=38256
-              TABLE_SCAN: table=inventory, projections=[inv_item_sk, inv_date_sk], filters="inv_quantity_on_hand>=100 AND inv_quantity_on_hand<=500", output_bytes=9830400, output_rows=614400, materialized=9830400, bytes_read=1351517, rows_read=614400
+              TABLE_SCAN: table=inventory, projections=[inv_item_sk, inv_date_sk], filters="inv_quantity_on_hand>=100 AND inv_quantity_on_hand<=500", output_bytes=9830400, output_rows=614400, materialized=9830400, bytes_read=12518400, rows_read=614400
               PROJECTION: projections=[#0, #1, #3, #4], output_bytes=88, output_rows=2, materialized=0
                 FILTER: output_bytes=104, output_rows=2, materialized=0
-                  TABLE_SCAN: table=item, projections=[i_current_price, i_item_sk, i_manufact_id, i_item_id, i_item_desc], filters="i_current_price>=68.00 AND i_current_price<=98.00 AND optional: i_manufact_id IN (677, 694, 808, 940)", output_bytes=32968, output_rows=634, materialized=32968, bytes_read=1148100, rows_read=18000
+                  TABLE_SCAN: table=item, projections=[i_current_price, i_item_sk, i_manufact_id, i_item_id, i_item_desc], filters="i_current_price>=68.00 AND i_current_price<=98.00 AND optional: i_manufact_id IN (677, 694, 808, 940)", output_bytes=32968, output_rows=634, materialized=32968, bytes_read=2825642, rows_read=18000
             FILTER: output_bytes=488, output_rows=61, materialized=0
-              TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_date>='2000-02-01'::DATE AND d_date<='2000-04-01'::DATE", output_bytes=488, output_rows=61, materialized=488, bytes_read=584645, rows_read=73049
-duckdb_cost=27719193
+              TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_date>='2000-02-01'::DATE AND d_date<='2000-04-01'::DATE", output_bytes=488, output_rows=61, materialized=488, bytes_read=885720, rows_read=73049
+duckdb_cost=49567368
 materialization_total=21625028
-storage_read_total=6094165
+storage_read_total=27942340
 
 --- row-group pruning (storage reduction) ---
 catalog_sales  dyn_filter=[cs_item_sk=7255]  row_groups=12/12  rows=1441548/1441548 (100.0%)  bytes_fetched=3009903/3009903 (100.0%)

@@ -2,31 +2,31 @@ TOP_N: order_by=[tpcds.main.customer_address.ca_country ASC, tpcds.main.customer
   HASH_GROUP_BY: groups=[#0, #1, #2, #3], aggregates=[avg(#4), avg(#5), avg(#6), avg(#7), avg(#8), avg(#9), avg(#10)], output_bytes=600360, output_rows=5003, materialized=157680
     PROJECTION: projections=[i_item_id, ca_country, ca_state, ca_county, CAST(cs_quantity AS DECIMAL(12,2)), CAST(cs_list_price AS DECIMAL(12,2)), CAST(cs_coupon_amt AS DECIMAL(12,2)), CAST(cs_sales_price AS DECIMAL(12,2)), CAST(cs_net_profit AS DECIMAL(12,2)), CAST(c_birth_year AS DECIMAL(12,2)), CAST(cd_dep_count AS DECIMAL(12,2))], output_bytes=157680, output_rows=1314, materialized=0
       HASH_JOIN: join_type=INNER, conditions=[i_item_sk = cs_item_sk], output_bytes=136656, output_rows=1314, materialized=136656
-        TABLE_SCAN: table=item, projections=[i_item_sk, i_item_id], output_bytes=432000, output_rows=18000, materialized=432000, bytes_read=128816, rows_read=18000
+        TABLE_SCAN: table=item, projections=[i_item_sk, i_item_id], output_bytes=432000, output_rows=18000, materialized=432000, bytes_read=506250, rows_read=18000
         HASH_JOIN: join_type=INNER, conditions=[cd_demo_sk = c_current_cdemo_sk], output_bytes=136656, output_rows=1314, materialized=136656
-          TABLE_SCAN: table=customer_demographics, projections=[cd_demo_sk], filters="cd_demo_sk>=17 AND cd_demo_sk<=1920788", output_bytes=15366176, output_rows=1920772, materialized=15366176, bytes_read=7688523, rows_read=1920800
+          TABLE_SCAN: table=customer_demographics, projections=[cd_demo_sk], filters="cd_demo_sk>=17 AND cd_demo_sk<=1920788", output_bytes=15366176, output_rows=1920772, materialized=15366176, bytes_read=15606500, rows_read=1920800
           HASH_JOIN: join_type=INNER, conditions=[ca_address_sk = c_current_addr_sk], output_bytes=137904, output_rows=1326, materialized=547656
             PROJECTION: projections=[#0, #1, #2, #3], output_bytes=409752, output_rows=7317, materialized=0
               FILTER: output_bytes=417069, output_rows=7317, materialized=0
                 HASH_JOIN: join_type=MARK, conditions=[ca_state = #0], output_bytes=2850000, output_rows=50000, materialized=2850000
-                  TABLE_SCAN: table=customer_address, projections=[ca_address_sk, ca_state, ca_country, ca_county], filters="optional: ca_state IN ('MS', 'IN', 'ND', 'OK', 'NM', 'VA', 'MS')", output_bytes=2800000, output_rows=50000, materialized=2800000, bytes_read=331995, rows_read=50000
+                  TABLE_SCAN: table=customer_address, projections=[ca_address_sk, ca_state, ca_country, ca_county], filters="optional: ca_state IN ('MS', 'IN', 'ND', 'OK', 'NM', 'VA', 'MS')", output_bytes=2800000, output_rows=50000, materialized=2800000, bytes_read=2429644, rows_read=50000
                   COLUMN_DATA_SCAN: output_bytes=112, output_rows=7, materialized=0
             HASH_JOIN: join_type=INNER, conditions=[c_customer_sk = cs_bill_customer_sk], output_bytes=609344, output_rows=9521, materialized=2136192
               PROJECTION: projections=[#0, #1, #2, #3], output_bytes=1526848, output_rows=47714, materialized=0
                 FILTER: output_bytes=1574562, output_rows=47714, materialized=0
                   HASH_JOIN: join_type=MARK, conditions=[c_birth_month = #0], output_bytes=3300000, output_rows=100000, materialized=3300000
-                    TABLE_SCAN: table=customer, projections=[c_customer_sk, c_current_cdemo_sk, c_current_addr_sk, c_birth_month, c_birth_year], filters="optional: c_birth_month IN (1, 2, 6, 8, 9, 12)", output_bytes=4000000, output_rows=100000, materialized=4000000, bytes_read=1457129, rows_read=100000
+                    TABLE_SCAN: table=customer, projections=[c_customer_sk, c_current_cdemo_sk, c_current_addr_sk, c_birth_month, c_birth_year], filters="optional: c_birth_month IN (1, 2, 6, 8, 9, 12)", output_bytes=4000000, output_rows=100000, materialized=4000000, bytes_read=4062500, rows_read=100000
                     COLUMN_DATA_SCAN: output_bytes=48, output_rows=6, materialized=0
               HASH_JOIN: join_type=INNER, conditions=[cd_demo_sk = cs_bill_cdemo_sk], output_bytes=949584, output_rows=19783, materialized=3144704
                 FILTER: output_bytes=2195120, output_rows=137195, materialized=0
-                  TABLE_SCAN: table=customer_demographics, projections=[cd_demo_sk, cd_dep_count], filters="cd_gender='F' AND cd_education_status='Unknown'", output_bytes=2195200, output_rows=137200, materialized=2195200, bytes_read=7734559, rows_read=1920800
+                  TABLE_SCAN: table=customer_demographics, projections=[cd_demo_sk, cd_dep_count], filters="cd_gender='F' AND cd_education_status='Unknown'", output_bytes=2195200, output_rows=137200, materialized=2195200, bytes_read=66885000, rows_read=1920800
                 HASH_JOIN: join_type=INNER, conditions=[cs_sold_date_sk = d_date_sk], output_bytes=15999368, output_rows=285703, materialized=16002288
-                  TABLE_SCAN: table=catalog_sales, projections=[cs_sold_date_sk, cs_item_sk, cs_bill_cdemo_sk, cs_bill_customer_sk, cs_quantity, cs_list_price, cs_coupon_amt, cs_sales_price, cs_net_profit], output_bytes=20643840, output_rows=368640, materialized=20643840, bytes_read=7240389, rows_read=368640
+                  TABLE_SCAN: table=catalog_sales, projections=[cs_sold_date_sk, cs_item_sk, cs_bill_cdemo_sk, cs_bill_customer_sk, cs_quantity, cs_list_price, cs_coupon_amt, cs_sales_price, cs_net_profit], output_bytes=20643840, output_rows=368640, materialized=20643840, bytes_read=38707200, rows_read=368640
                   FILTER: output_bytes=2920, output_rows=365, materialized=0
-                    TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_year=1998", output_bytes=2920, output_rows=365, materialized=2920, bytes_read=293872, rows_read=73049
-duckdb_cost=99327611
+                    TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_year=1998", output_bytes=2920, output_rows=365, materialized=2920, bytes_read=1187048, rows_read=73049
+duckdb_cost=203836470
 materialization_total=74452328
-storage_read_total=24875283
+storage_read_total=129384142
 
 --- row-group pruning (storage reduction) ---
 item  dyn_filter=[i_item_sk>=32 AND i_item_sk<=17980]  row_groups=1/1  rows=18000/18000 (100.0%)  bytes_fetched=128816/128816 (100.0%)

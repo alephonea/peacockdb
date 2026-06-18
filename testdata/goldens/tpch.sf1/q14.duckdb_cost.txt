@@ -2,11 +2,11 @@ PROJECTION: projections=[promo_revenue], output_bytes=8, output_rows=1, material
   UNGROUPED_AGGREGATE: aggregates=[sum(#0), sum(#1)], output_bytes=32, output_rows=1, materialized=1215728
     PROJECTION: projections=[CASE  WHEN (prefix(p_type, 'PROMO')) THEN ((l_extendedprice * (1.00 - l_discount))) ELSE 0.0000 END, (l_extendedprice * (1.00 - l_discount))], output_bytes=1215728, output_rows=75983, materialized=0
       HASH_JOIN: join_type=INNER, conditions=[l_partkey = p_partkey], output_bytes=2431456, output_rows=75983, materialized=2431456
-        TABLE_SCAN: table=lineitem, projections=[l_partkey, l_extendedprice, l_discount], filters="l_shipdate>='1995-09-01'::DATE AND (CAST(l_shipdate AS TIMESTAMP) < '1995-10-01 00:00:00'::TIMESTAMP)", output_bytes=1823592, output_rows=75983, materialized=1823592, bytes_read=2549378, rows_read=245760
-        TABLE_SCAN: table=part, projections=[p_partkey, p_type], output_bytes=4800000, output_rows=200000, materialized=4800000, bytes_read=1004712, rows_read=200000
-duckdb_cost=13824866
+        TABLE_SCAN: table=lineitem, projections=[l_partkey, l_extendedprice, l_discount], filters="l_shipdate>='1995-09-01'::DATE AND (CAST(l_shipdate AS TIMESTAMP) < '1995-10-01 00:00:00'::TIMESTAMP)", output_bytes=1823592, output_rows=75983, materialized=1823592, bytes_read=10844160, rows_read=245760
+        TABLE_SCAN: table=part, projections=[p_partkey, p_type], output_bytes=4800000, output_rows=200000, materialized=4800000, bytes_read=6544946, rows_read=200000
+duckdb_cost=27659882
 materialization_total=10270776
-storage_read_total=3554090
+storage_read_total=17389106
 
 --- row-group pruning (storage reduction) ---
 lineitem  filter=[l_shipdate>='1995-09-01'::DATE AND (CAST(l_shipdate AS TIMESTAMP) < '1995-10-01 00:00:00'::TIMESTAMP)]  dyn_filter=[l_partkey>=1 AND l_partkey<=200000]  row_groups=2/49  rows=245760/6001215 (4.1%)  bytes_fetched=2549378/62250293 (4.1%)

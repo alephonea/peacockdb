@@ -1,9 +1,9 @@
 UNGROUPED_AGGREGATE: aggregates=[sum_no_overflow(#0)], output_bytes=16, output_rows=1, materialized=913280
   PROJECTION: projections=[(l_extendedprice * l_discount)], output_bytes=913280, output_rows=114160, materialized=0
-    TABLE_SCAN: table=lineitem, projections=[l_discount, l_extendedprice], filters="l_shipdate>='1994-01-01'::DATE AND (CAST(l_shipdate AS TIMESTAMP) < '1995-01-01 00:00:00'::TIMESTAMP) AND l_discount>=0.05 AND l_discount<=0.07 AND l_quantity<24.00", output_bytes=1826560, output_rows=114160, materialized=1826560, bytes_read=6320366, rows_read=983040
-duckdb_cost=9060206
+    TABLE_SCAN: table=lineitem, projections=[l_discount, l_extendedprice], filters="l_shipdate>='1994-01-01'::DATE AND (CAST(l_shipdate AS TIMESTAMP) < '1995-01-01 00:00:00'::TIMESTAMP) AND l_discount>=0.05 AND l_discount<=0.07 AND l_quantity<24.00", output_bytes=1826560, output_rows=114160, materialized=1826560, bytes_read=51118080, rows_read=983040
+duckdb_cost=53857920
 materialization_total=2739840
-storage_read_total=6320366
+storage_read_total=51118080
 
 --- row-group pruning (storage reduction) ---
 lineitem  filter=[l_shipdate>='1994-01-01'::DATE AND (CAST(l_shipdate AS TIMESTAMP) < '1995-01-01 00:00:00'::TIMESTAMP) AND l_discount>=0.05 AND l_discount<=0.07 AND l_quantity<24.00]  row_groups=8/49  rows=983040/6001215 (16.4%)  bytes_fetched=6320366/38583845 (16.4%)

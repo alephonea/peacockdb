@@ -3,15 +3,15 @@ TOP_N: order_by=[count_star() ASC], top=100, output_bytes=8, output_rows=1, mate
     HASH_JOIN: join_type=INNER, conditions=[ss_store_sk = s_store_sk], output_bytes=20976, output_rows=874, materialized=20984
       HASH_JOIN: join_type=INNER, conditions=[ss_hdemo_sk = hd_demo_sk], output_bytes=87312, output_rows=5457, materialized=87312
         HASH_JOIN: join_type=INNER, conditions=[ss_sold_time_sk = t_time_sk], output_bytes=1348152, output_rows=56173, materialized=1362552
-          TABLE_SCAN: table=store_sales, projections=[ss_sold_time_sk, ss_hdemo_sk, ss_store_sk], output_bytes=69129696, output_rows=2880404, materialized=69129696, bytes_read=12481881, rows_read=2880404
+          TABLE_SCAN: table=store_sales, projections=[ss_sold_time_sk, ss_hdemo_sk, ss_store_sk], output_bytes=69129696, output_rows=2880404, materialized=69129696, bytes_read=70209849, rows_read=2880404
           FILTER: output_bytes=14400, output_rows=1800, materialized=0
-            TABLE_SCAN: table=time_dim, projections=[t_time_sk], filters="t_hour=20 AND t_minute>=30", output_bytes=14400, output_rows=1800, materialized=14400, bytes_read=347352, rows_read=86400
-        TABLE_SCAN: table=household_demographics, projections=[hd_demo_sk], filters="hd_dep_count=7", output_bytes=5760, output_rows=720, materialized=5760, bytes_read=29747, rows_read=7200
+            TABLE_SCAN: table=time_dim, projections=[t_time_sk], filters="t_hour=20 AND t_minute>=30", output_bytes=14400, output_rows=1800, materialized=14400, bytes_read=2106000, rows_read=86400
+        TABLE_SCAN: table=household_demographics, projections=[hd_demo_sk], filters="hd_dep_count=7", output_bytes=5760, output_rows=720, materialized=5760, bytes_read=117000, rows_read=7200
       FILTER: output_bytes=8, output_rows=1, materialized=0
-        TABLE_SCAN: table=store, projections=[s_store_sk], filters="s_store_name='ese'", output_bytes=8, output_rows=1, materialized=8, bytes_read=217, rows_read=12
-duckdb_cost=83500893
+        TABLE_SCAN: table=store, projections=[s_store_sk], filters="s_store_name='ese'", output_bytes=8, output_rows=1, materialized=8, bytes_read=197, rows_read=12
+duckdb_cost=143074742
 materialization_total=70641696
-storage_read_total=12859197
+storage_read_total=72433046
 
 --- row-group pruning (storage reduction) ---
 store_sales  dyn_filter=[ss_sold_time_sk>=73800 AND ss_sold_time_sk<=75599 AND ss_hdemo_sk>=840 AND ss_hdemo_sk<=6959 AND ss_store_sk=4]  row_groups=24/24  rows=2880404/2880404 (100.0%)  bytes_fetched=12481881/12481881 (100.0%)

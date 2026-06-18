@@ -11,15 +11,15 @@ PROJECTION: projections=[#0, #1, #2, #3, #4, #5, #6, #7], output_bytes=11200, ou
                     HASH_JOIN: join_type=INNER, conditions=[ss_store_sk = s_store_sk], output_bytes=3738420, output_rows=40635, materialized=3738420
                       HASH_JOIN: join_type=INNER, conditions=[ss_item_sk = i_item_sk], output_bytes=2828936, output_rows=41602, materialized=2905544
                         HASH_JOIN: join_type=INNER, conditions=[ss_sold_date_sk = d_date_sk], output_bytes=15234352, output_rows=544084, materialized=15240192
-                          TABLE_SCAN: table=store_sales, projections=[ss_item_sk, ss_sold_date_sk, ss_store_sk, ss_sales_price], output_bytes=18719792, output_rows=668564, materialized=18719792, bytes_read=3104031, rows_read=668564
+                          TABLE_SCAN: table=store_sales, projections=[ss_item_sk, ss_sold_date_sk, ss_store_sk, ss_sales_price], output_bytes=18719792, output_rows=668564, materialized=18719792, bytes_read=27076844, rows_read=668564
                           FILTER: output_bytes=5840, output_rows=365, materialized=0
-                            TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_moy], filters="d_year=1999", output_bytes=5840, output_rows=365, materialized=5840, bytes_read=294237, rows_read=73049
+                            TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_moy], filters="d_year=1999", output_bytes=5840, output_rows=365, materialized=5840, bytes_read=1780572, rows_read=73049
                         FILTER: output_bytes=76608, output_rows=1368, materialized=0
-                          TABLE_SCAN: table=item, projections=[i_item_sk, i_category, i_class, i_brand], filters="((i_category IN ('Books', 'Electronics', 'Sports')) OR (i_category IN ('Men', 'Jewelry', 'Women'))) AND ((i_class IN ('computers', 'stereo', 'football')) OR (i_class IN ('shirts', 'birdal', 'dresses')))", output_bytes=76608, output_rows=1368, materialized=76608, bytes_read=127523, rows_read=18000
-                      TABLE_SCAN: table=store, projections=[s_store_sk, s_store_name, s_company_name], filters="s_store_sk<=10", output_bytes=400, output_rows=10, materialized=400, bytes_read=271, rows_read=12
-duckdb_cost=47653129
+                          TABLE_SCAN: table=item, projections=[i_item_sk, i_category, i_class, i_brand], filters="((i_category IN ('Books', 'Electronics', 'Sports')) OR (i_category IN ('Men', 'Jewelry', 'Women'))) AND ((i_class IN ('computers', 'stereo', 'football')) OR (i_class IN ('shirts', 'birdal', 'dresses')))", output_bytes=76608, output_rows=1368, materialized=76608, bytes_read=905400, rows_read=18000
+                      TABLE_SCAN: table=store, projections=[s_store_sk, s_store_name, s_company_name], filters="s_store_sk<=10", output_bytes=400, output_rows=10, materialized=400, bytes_read=329, rows_read=12
+duckdb_cost=73890212
 materialization_total=44127067
-storage_read_total=3526062
+storage_read_total=29763145
 
 --- row-group pruning (storage reduction) ---
 store_sales  dyn_filter=[ss_item_sk>=2 AND ss_item_sk<=17989 AND ss_sold_date_sk>=2451180 AND ss_sold_date_sk<=2451544 AND ss_store_sk>=1 AND ss_store_sk<=10]  row_groups=6/24  rows=668564/2880404 (23.2%)  bytes_fetched=3104031/13466306 (23.1%)

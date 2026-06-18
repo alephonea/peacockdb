@@ -4,23 +4,23 @@ ORDER_BY: order_by=[custsale.cntrycode ASC], output_bytes=280, output_rows=7, ma
       PROJECTION: projections=[cntrycode, c_acctbal], output_bytes=153216, output_rows=6384, materialized=0
         RIGHT_DELIM_JOIN: join_type=RIGHT_ANTI, conditions=[c_custkey IS NOT DISTINCT FROM c_custkey], output_bytes=0, output_rows=0, materialized=152000
           NESTED_LOOP_JOIN: join_type=INNER, conditions=[CAST(c_acctbal AS DOUBLE) > SUBQUERY], output_bytes=760000, output_rows=19000, materialized=760008
-            TABLE_SCAN: table=customer, projections=[c_phone, c_acctbal, c_custkey], filters="("substring"(c_phone, 1, 2) IN ('13', '31', '23', '29', '30', '18', '17'))", output_bytes=1344480, output_rows=42015, materialized=1344480, bytes_read=3121171, rows_read=150000
+            TABLE_SCAN: table=customer, projections=[c_phone, c_acctbal, c_custkey], filters="("substring"(c_phone, 1, 2) IN ('13', '31', '23', '29', '30', '18', '17'))", output_bytes=1344480, output_rows=42015, materialized=1344480, bytes_read=6468750, rows_read=150000
             PROJECTION: projections=[CASE  WHEN ((#1 > 1)) THEN ("error"('More than one row returned by a subquery used as an expression - scalar subqueries can only return a single row., Use "SET scalar_subquery_error_on_multiple_rows=false" to revert to previous behavior of returning a random row.')) ELSE #0 END], output_bytes=8, output_rows=1, materialized=0
               UNGROUPED_AGGREGATE: aggregates=["first"(#0), count_star()], output_bytes=16, output_rows=1, materialized=8
                 PROJECTION: projections=[#0], output_bytes=8, output_rows=1, materialized=0
                   UNGROUPED_AGGREGATE: aggregates=[avg(#0)], output_bytes=8, output_rows=1, materialized=304960
                     PROJECTION: projections=[c_acctbal], output_bytes=304960, output_rows=38120, materialized=0
-                      TABLE_SCAN: table=customer, projections=[c_acctbal], filters="c_acctbal>0.00 AND ("substring"(c_phone, 1, 2) IN ('13', '31', '23', '29', '30', '18', '17'))", output_bytes=304960, output_rows=38120, materialized=304960, bytes_read=741360, rows_read=150000
+                      TABLE_SCAN: table=customer, projections=[c_acctbal], filters="c_acctbal>0.00 AND ("substring"(c_phone, 1, 2) IN ('13', '31', '23', '29', '30', '18', '17'))", output_bytes=304960, output_rows=38120, materialized=304960, bytes_read=2400000, rows_read=150000
           HASH_JOIN: join_type=RIGHT_ANTI, conditions=[c_custkey IS NOT DISTINCT FROM c_custkey], output_bytes=153216, output_rows=6384, materialized=1673768
             PROJECTION: projections=[c_custkey], output_bytes=1520552, output_rows=190069, materialized=0
               HASH_JOIN: join_type=INNER, conditions=[o_custkey = c_custkey], output_bytes=3041104, output_rows=190069, materialized=3041104
-                TABLE_SCAN: table=orders, projections=[o_custkey], output_bytes=12000000, output_rows=1500000, materialized=12000000, bytes_read=6904039, rows_read=1500000
+                TABLE_SCAN: table=orders, projections=[o_custkey], output_bytes=12000000, output_rows=1500000, materialized=12000000, bytes_read=12187500, rows_read=1500000
                 DELIM_SCAN: output_bytes=0, output_rows=0, materialized=0
             DUMMY_SCAN: output_bytes=0, output_rows=0, materialized=0
           HASH_GROUP_BY: groups=[#2], output_bytes=152000, output_rows=19000, materialized=0
-duckdb_cost=30501354
+duckdb_cost=40791034
 materialization_total=19734784
-storage_read_total=10766570
+storage_read_total=21056250
 
 --- row-group pruning (storage reduction) ---
 customer  filter=[("substring"(c_phone, 1, 2) IN ('13', '31', '23', '29', '30', '18', '17'))]  row_groups=2/2  rows=150000/150000 (100.0%)  bytes_fetched=3121171/3121171 (100.0%)

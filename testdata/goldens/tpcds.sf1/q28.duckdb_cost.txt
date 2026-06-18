@@ -9,35 +9,35 @@ PROJECTION: projections=[B1_LP, B1_CNT, B1_CNTD, B2_LP, B2_CNT, B2_CNTD, B3_LP, 
                 PROJECTION: projections=[ss_list_price, ss_list_price, ss_list_price], output_bytes=437448, output_rows=36454, materialized=0
                   PROJECTION: projections=[#0], output_bytes=145816, output_rows=36454, materialized=0
                     FILTER: output_bytes=437448, output_rows=36454, materialized=0
-                      TABLE_SCAN: table=store_sales, projections=[ss_list_price, ss_coupon_amt, ss_wholesale_cost], filters="ss_quantity>=21 AND ss_quantity<=25", output_bytes=1647048, output_rows=137254, materialized=1647048, bytes_read=20214042, rows_read=2880404
+                      TABLE_SCAN: table=store_sales, projections=[ss_list_price, ss_coupon_amt, ss_wholesale_cost], filters="ss_quantity>=21 AND ss_quantity<=25", output_bytes=1647048, output_rows=137254, materialized=1647048, bytes_read=162742828, rows_read=2880404
               UNGROUPED_AGGREGATE: aggregates=[avg(#0), count(#1), count(DISTINCT #2)], output_bytes=24, output_rows=1, materialized=361116
                 PROJECTION: projections=[ss_list_price, ss_list_price, ss_list_price], output_bytes=361116, output_rows=30093, materialized=0
                   PROJECTION: projections=[#0], output_bytes=120372, output_rows=30093, materialized=0
                     FILTER: output_bytes=361116, output_rows=30093, materialized=0
-                      TABLE_SCAN: table=store_sales, projections=[ss_list_price, ss_coupon_amt, ss_wholesale_cost], filters="ss_quantity>=26 AND ss_quantity<=30", output_bytes=1645872, output_rows=137156, materialized=1645872, bytes_read=20214042, rows_read=2880404
+                      TABLE_SCAN: table=store_sales, projections=[ss_list_price, ss_coupon_amt, ss_wholesale_cost], filters="ss_quantity>=26 AND ss_quantity<=30", output_bytes=1645872, output_rows=137156, materialized=1645872, bytes_read=162742828, rows_read=2880404
             UNGROUPED_AGGREGATE: aggregates=[avg(#0), count(#1), count(DISTINCT #2)], output_bytes=24, output_rows=1, materialized=381912
               PROJECTION: projections=[ss_list_price, ss_list_price, ss_list_price], output_bytes=381912, output_rows=31826, materialized=0
                 PROJECTION: projections=[#0], output_bytes=127304, output_rows=31826, materialized=0
                   FILTER: output_bytes=381912, output_rows=31826, materialized=0
-                    TABLE_SCAN: table=store_sales, projections=[ss_list_price, ss_coupon_amt, ss_wholesale_cost], filters="ss_quantity>=16 AND ss_quantity<=20", output_bytes=1655316, output_rows=137943, materialized=1655316, bytes_read=20214042, rows_read=2880404
+                    TABLE_SCAN: table=store_sales, projections=[ss_list_price, ss_coupon_amt, ss_wholesale_cost], filters="ss_quantity>=16 AND ss_quantity<=20", output_bytes=1655316, output_rows=137943, materialized=1655316, bytes_read=162742828, rows_read=2880404
           UNGROUPED_AGGREGATE: aggregates=[avg(#0), count(#1), count(DISTINCT #2)], output_bytes=24, output_rows=1, materialized=339180
             PROJECTION: projections=[ss_list_price, ss_list_price, ss_list_price], output_bytes=339180, output_rows=28265, materialized=0
               PROJECTION: projections=[#0], output_bytes=113060, output_rows=28265, materialized=0
                 FILTER: output_bytes=339180, output_rows=28265, materialized=0
-                  TABLE_SCAN: table=store_sales, projections=[ss_list_price, ss_coupon_amt, ss_wholesale_cost], filters="ss_quantity>=11 AND ss_quantity<=15", output_bytes=1643700, output_rows=136975, materialized=1643700, bytes_read=20214042, rows_read=2880404
+                  TABLE_SCAN: table=store_sales, projections=[ss_list_price, ss_coupon_amt, ss_wholesale_cost], filters="ss_quantity>=11 AND ss_quantity<=15", output_bytes=1643700, output_rows=136975, materialized=1643700, bytes_read=162742828, rows_read=2880404
         UNGROUPED_AGGREGATE: aggregates=[avg(#0), count(#1), count(DISTINCT #2)], output_bytes=24, output_rows=1, materialized=426624
           PROJECTION: projections=[ss_list_price, ss_list_price, ss_list_price], output_bytes=426624, output_rows=35552, materialized=0
             PROJECTION: projections=[#0], output_bytes=142208, output_rows=35552, materialized=0
               FILTER: output_bytes=426624, output_rows=35552, materialized=0
-                TABLE_SCAN: table=store_sales, projections=[ss_list_price, ss_coupon_amt, ss_wholesale_cost], filters="ss_quantity>=6 AND ss_quantity<=10", output_bytes=1650768, output_rows=137564, materialized=1650768, bytes_read=20214042, rows_read=2880404
+                TABLE_SCAN: table=store_sales, projections=[ss_list_price, ss_coupon_amt, ss_wholesale_cost], filters="ss_quantity>=6 AND ss_quantity<=10", output_bytes=1650768, output_rows=137564, materialized=1650768, bytes_read=162742828, rows_read=2880404
       UNGROUPED_AGGREGATE: aggregates=[avg(#0), count(#1), count(DISTINCT #2)], output_bytes=24, output_rows=1, materialized=440496
         PROJECTION: projections=[ss_list_price, ss_list_price, ss_list_price], output_bytes=440496, output_rows=36708, materialized=0
           PROJECTION: projections=[#0], output_bytes=146832, output_rows=36708, materialized=0
             FILTER: output_bytes=440496, output_rows=36708, materialized=0
-              TABLE_SCAN: table=store_sales, projections=[ss_list_price, ss_coupon_amt, ss_wholesale_cost], filters="ss_quantity>=0 AND ss_quantity<=5", output_bytes=1653372, output_rows=137781, materialized=1653372, bytes_read=20214042, rows_read=2880404
-duckdb_cost=133567728
+              TABLE_SCAN: table=store_sales, projections=[ss_list_price, ss_coupon_amt, ss_wholesale_cost], filters="ss_quantity>=0 AND ss_quantity<=5", output_bytes=1653372, output_rows=137781, materialized=1653372, bytes_read=162742828, rows_read=2880404
+duckdb_cost=988740444
 materialization_total=12283476
-storage_read_total=121284252
+storage_read_total=976456968
 
 --- row-group pruning (storage reduction) ---
 store_sales  filter=[ss_quantity>=21 AND ss_quantity<=25]  row_groups=24/24  rows=2880404/2880404 (100.0%)  bytes_fetched=20214042/20214042 (100.0%)

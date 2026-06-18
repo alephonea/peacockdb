@@ -9,16 +9,16 @@ PROJECTION: projections=[__internal_decompress_string(#0), #1, __internal_decomp
                 FILTER: output_bytes=5322330, output_rows=118274, materialized=0
                   HASH_JOIN: join_type=MARK, conditions=[ps_suppkey = #0], output_bytes=5324580, output_rows=118324, materialized=5324580
                     HASH_JOIN: join_type=INNER, conditions=[ps_partkey = p_partkey], output_bytes=5206256, output_rows=118324, materialized=6507820
-                      TABLE_SCAN: table=partsupp, projections=[ps_partkey, ps_suppkey], output_bytes=12800000, output_rows=800000, materialized=12800000, bytes_read=3088265, rows_read=800000
+                      TABLE_SCAN: table=partsupp, projections=[ps_partkey, ps_suppkey], output_bytes=12800000, output_rows=800000, materialized=12800000, bytes_read=13000000, rows_read=800000
                       PROJECTION: projections=[#0, #1, #2, #3], output_bytes=1301564, output_rows=29581, materialized=0
                         FILTER: output_bytes=1331145, output_rows=29581, materialized=0
                           HASH_JOIN: join_type=MARK, conditions=[p_size = #0], output_bytes=8350470, output_rows=185566, materialized=8350470
-                            TABLE_SCAN: table=part, projections=[p_partkey, p_brand, p_type, p_size], filters="p_brand!='Brand#45' AND (NOT prefix(p_type, 'MEDIUM POLISHED')) AND optional: p_size IN (3, 9, 14, 19, 23, 36, 45, 49)", output_bytes=8164904, output_rows=185566, materialized=8164904, bytes_read=1282407, rows_read=200000
+                            TABLE_SCAN: table=part, projections=[p_partkey, p_brand, p_type, p_size], filters="p_brand!='Brand#45' AND (NOT prefix(p_type, 'MEDIUM POLISHED')) AND optional: p_size IN (3, 9, 14, 19, 23, 36, 45, 49)", output_bytes=8164904, output_rows=185566, materialized=8164904, bytes_read=9769946, rows_read=200000
                             COLUMN_DATA_SCAN: output_bytes=32, output_rows=8, materialized=0
-                    TABLE_SCAN: table=supplier, projections=[s_suppkey], filters="(s_comment ~~ '%Customer%Complaints%')", output_bytes=32, output_rows=4, materialized=32, bytes_read=40825, rows_read=10000
-duckdb_cost=51159411
+                    TABLE_SCAN: table=supplier, projections=[s_suppkey], filters="(s_comment ~~ '%Customer%Complaints%')", output_bytes=32, output_rows=4, materialized=32, bytes_read=81250, rows_read=10000
+duckdb_cost=69599110
 materialization_total=46747914
-storage_read_total=4411497
+storage_read_total=22851196
 
 --- row-group pruning (storage reduction) ---
 partsupp  dyn_filter=[ps_partkey>=4 AND ps_partkey<=199998]  row_groups=7/7  rows=800000/800000 (100.0%)  bytes_fetched=3088265/3088265 (100.0%)

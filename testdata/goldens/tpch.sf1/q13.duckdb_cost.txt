@@ -7,11 +7,11 @@ ORDER_BY: order_by=[count_star() DESC, c_orders.c_count DESC], output_bytes=672,
             PROJECTION: projections=[c_custkey, o_orderkey], output_bytes=18411624, output_rows=1534302, materialized=0
               PROJECTION: projections=[#0, __internal_compress_integral_uinteger(#1, 1)], output_bytes=18411624, output_rows=1534302, materialized=0
                 HASH_JOIN: join_type=RIGHT, conditions=[o_custkey = c_custkey], output_bytes=24548832, output_rows=1534302, materialized=24548832
-                  TABLE_SCAN: table=orders, projections=[o_custkey, o_orderkey], filters="(o_comment !~~ '%special%requests%')", output_bytes=23748768, output_rows=1484298, materialized=23748768, bytes_read=14583325, rows_read=1500000
-                  TABLE_SCAN: table=customer, projections=[c_custkey], output_bytes=1200000, output_rows=150000, materialized=1200000, bytes_read=601155, rows_read=150000
-duckdb_cost=84294376
+                  TABLE_SCAN: table=orders, projections=[o_custkey, o_orderkey], filters="(o_comment !~~ '%special%requests%')", output_bytes=23748768, output_rows=1484298, materialized=23748768, bytes_read=24375000, rows_read=1500000
+                  TABLE_SCAN: table=customer, projections=[c_custkey], output_bytes=1200000, output_rows=150000, materialized=1200000, bytes_read=1218750, rows_read=150000
+duckdb_cost=94703646
 materialization_total=69109896
-storage_read_total=15184480
+storage_read_total=25593750
 
 --- row-group pruning (storage reduction) ---
 orders  filter=[(o_comment !~~ '%special%requests%')]  dyn_filter=[o_custkey>=1 AND o_custkey<=150000]  row_groups=13/13  rows=1500000/1500000 (100.0%)  bytes_fetched=14583325/14583325 (100.0%)

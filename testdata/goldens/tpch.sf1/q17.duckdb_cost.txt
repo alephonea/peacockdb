@@ -5,8 +5,8 @@ PROJECTION: projections=[avg_yearly], output_bytes=8, output_rows=1, materialize
         FILTER: output_bytes=14088, output_rows=587, materialized=0
           RIGHT_DELIM_JOIN: join_type=RIGHT, conditions=[p_partkey IS NOT DISTINCT FROM p_partkey], output_bytes=0, output_rows=0, materialized=1632
             HASH_JOIN: join_type=INNER, conditions=[l_partkey = p_partkey], output_bytes=194816, output_rows=6088, materialized=194816
-              TABLE_SCAN: table=lineitem, projections=[l_partkey, l_quantity, l_extendedprice], output_bytes=144029160, output_rows=6001215, materialized=144029160, bytes_read=63739148, rows_read=6001215
-              TABLE_SCAN: table=part, projections=[p_partkey], filters="p_brand='Brand#23' AND p_container='MED BOX'", output_bytes=1632, output_rows=204, materialized=1632, bytes_read=1079076, rows_read=200000
+              TABLE_SCAN: table=lineitem, projections=[l_partkey, l_quantity, l_extendedprice], output_bytes=144029160, output_rows=6001215, materialized=144029160, bytes_read=240798752, rows_read=6001215
+              TABLE_SCAN: table=part, projections=[p_partkey], filters="p_brand='Brand#23' AND p_container='MED BOX'", output_bytes=1632, output_rows=204, materialized=1632, bytes_read=6339971, rows_read=200000
             HASH_JOIN: join_type=RIGHT, conditions=[p_partkey IS NOT DISTINCT FROM p_partkey], output_bytes=146112, output_rows=6088, materialized=149376
               PROJECTION: projections=[(0.2 * avg(l_quantity)), p_partkey], output_bytes=3264, output_rows=204, materialized=0
                 PROJECTION: projections=[__internal_decompress_integral_bigint(#0, 1), #1], output_bytes=3264, output_rows=204, materialized=0
@@ -14,13 +14,13 @@ PROJECTION: projections=[avg_yearly], output_bytes=8, output_rows=1, materialize
                     PROJECTION: projections=[p_partkey, l_quantity], output_bytes=73056, output_rows=6088, materialized=0
                       PROJECTION: projections=[__internal_compress_integral_uinteger(#0, 1), #1, #2], output_bytes=121760, output_rows=6088, materialized=0
                         HASH_JOIN: join_type=INNER, conditions=[l_partkey = p_partkey], output_bytes=146112, output_rows=6088, materialized=146112
-                          TABLE_SCAN: table=lineitem, projections=[l_partkey, l_quantity], output_bytes=96019440, output_rows=6001215, materialized=96019440, bytes_read=32744134, rows_read=6001215
+                          TABLE_SCAN: table=lineitem, projections=[l_partkey, l_quantity], output_bytes=96019440, output_rows=6001215, materialized=96019440, bytes_read=144779312, rows_read=6001215
                           DELIM_SCAN: output_bytes=0, output_rows=0, materialized=0
               DUMMY_SCAN: output_bytes=0, output_rows=0, materialized=0
             HASH_GROUP_BY: groups=[#0], output_bytes=1632, output_rows=204, materialized=0
-duckdb_cost=338182278
+duckdb_cost=632537955
 materialization_total=240619920
-storage_read_total=97562358
+storage_read_total=391918035
 
 --- row-group pruning (storage reduction) ---
 lineitem  dyn_filter=[l_partkey>=2409 AND l_partkey<=199510]  row_groups=49/49  rows=6001215/6001215 (100.0%)  bytes_fetched=63739148/63739148 (100.0%)

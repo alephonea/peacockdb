@@ -7,18 +7,18 @@ PROJECTION: projections=[__internal_decompress_string(#0), #1], output_bytes=160
             PROJECTION: projections=[__internal_compress_string_uhugeint(#2), #0, #1, __internal_compress_integral_usmallint(#3, 1), __internal_compress_integral_utinyint(#4, 0)], output_bytes=253505, output_rows=7243, materialized=0
               HASH_JOIN: join_type=INNER, conditions=[c_nationkey = s_nationkey, l_suppkey = s_suppkey], output_bytes=318692, output_rows=7243, materialized=318692
                 HASH_JOIN: join_type=INNER, conditions=[l_orderkey = o_orderkey], output_bytes=8099608, output_rows=184082, materialized=8099608
-                  TABLE_SCAN: table=lineitem, projections=[l_orderkey, l_suppkey, l_extendedprice, l_discount], output_bytes=192038880, output_rows=6001215, materialized=192038880, bytes_read=75751731, rows_read=6001215
+                  TABLE_SCAN: table=lineitem, projections=[l_orderkey, l_suppkey, l_extendedprice, l_discount], output_bytes=192038880, output_rows=6001215, materialized=192038880, bytes_read=289558624, rows_read=6001215
                   HASH_JOIN: join_type=INNER, conditions=[o_custkey = c_custkey], output_bytes=1288224, output_rows=46008, materialized=1288224
-                    TABLE_SCAN: table=orders, projections=[o_custkey, o_orderkey], filters="o_orderdate>='1994-01-01'::DATE AND (CAST(o_orderdate AS TIMESTAMP) < '1995-01-01 00:00:00'::TIMESTAMP)", output_bytes=3641552, output_rows=227597, materialized=3641552, bytes_read=3587959, rows_read=368640
+                    TABLE_SCAN: table=orders, projections=[o_custkey, o_orderkey], filters="o_orderdate>='1994-01-01'::DATE AND (CAST(o_orderdate AS TIMESTAMP) < '1995-01-01 00:00:00'::TIMESTAMP)", output_bytes=3641552, output_rows=227597, materialized=3641552, bytes_read=7464960, rows_read=368640
                     HASH_JOIN: join_type=INNER, conditions=[c_nationkey = n_nationkey], output_bytes=845124, output_rows=30183, materialized=845124
-                      TABLE_SCAN: table=customer, projections=[c_custkey, c_nationkey], filters="c_custkey<=149999", output_bytes=1799988, output_rows=149999, materialized=1799988, bytes_read=695814, rows_read=150000
+                      TABLE_SCAN: table=customer, projections=[c_custkey, c_nationkey], filters="c_custkey<=149999", output_bytes=1799988, output_rows=149999, materialized=1799988, bytes_read=1837500, rows_read=150000
                       HASH_JOIN: join_type=INNER, conditions=[n_regionkey = r_regionkey], output_bytes=120, output_rows=5, materialized=120
-                        TABLE_SCAN: table=nation, projections=[n_nationkey, n_regionkey, n_name], output_bytes=600, output_rows=25, materialized=600, bytes_read=478, rows_read=25
-                        TABLE_SCAN: table=region, projections=[r_regionkey], filters="r_name='ASIA'", output_bytes=4, output_rows=1, materialized=4, bytes_read=119, rows_read=5
-                TABLE_SCAN: table=supplier, projections=[s_suppkey, s_nationkey], output_bytes=120000, output_rows=10000, materialized=120000, bytes_read=47418, rows_read=10000
-duckdb_cost=288410303
+                        TABLE_SCAN: table=nation, projections=[n_nationkey, n_regionkey, n_name], output_bytes=600, output_rows=25, materialized=600, bytes_read=485, rows_read=25
+                        TABLE_SCAN: table=region, projections=[r_regionkey], filters="r_name='ASIA'", output_bytes=4, output_rows=1, materialized=4, bytes_read=75, rows_read=5
+                TABLE_SCAN: table=supplier, projections=[s_suppkey, s_nationkey], output_bytes=120000, output_rows=10000, materialized=120000, bytes_read=122500, rows_read=10000
+duckdb_cost=507310928
 materialization_total=208326784
-storage_read_total=80083519
+storage_read_total=298984144
 
 --- row-group pruning (storage reduction) ---
 lineitem  dyn_filter=[l_orderkey>=66 AND l_orderkey<=5999426]  row_groups=49/49  rows=6001215/6001215 (100.0%)  bytes_fetched=75751731/75751731 (100.0%)

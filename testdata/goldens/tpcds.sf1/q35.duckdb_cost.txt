@@ -11,18 +11,18 @@ TOP_N: order_by=[ca.ca_state ASC, tpcds.main.customer_demographics.cd_gender ASC
                     LEFT_DELIM_JOIN: join_type=SEMI, conditions=[c_customer_sk IS NOT DISTINCT FROM c_customer_sk], output_bytes=0, output_rows=0, materialized=772496
                       HASH_JOIN: join_type=INNER, conditions=[c_current_addr_sk = ca_address_sk], output_bytes=7338712, output_rows=96562, materialized=7338712
                         HASH_JOIN: join_type=INNER, conditions=[cd_demo_sk = c_current_cdemo_sk], output_bytes=6566216, output_rows=96562, materialized=6566216
-                          TABLE_SCAN: table=customer_demographics, projections=[cd_demo_sk, cd_gender, cd_marital_status, cd_dep_count, cd_dep_employed_count, cd_dep_college_count], filters="cd_demo_sk>=17 AND cd_demo_sk<=1920788", output_bytes=115246320, output_rows=1920772, materialized=115246320, bytes_read=7752400, rows_read=1920800
-                          TABLE_SCAN: table=customer, projections=[c_current_addr_sk, c_current_cdemo_sk, c_customer_sk], output_bytes=2400000, output_rows=100000, materialized=2400000, bytes_read=1309745, rows_read=100000
-                        TABLE_SCAN: table=customer_address, projections=[ca_address_sk, ca_state], output_bytes=1200000, output_rows=50000, materialized=1200000, bytes_read=241055, rows_read=50000
+                          TABLE_SCAN: table=customer_demographics, projections=[cd_demo_sk, cd_gender, cd_marital_status, cd_dep_count, cd_dep_employed_count, cd_dep_college_count], filters="cd_demo_sk>=17 AND cd_demo_sk<=1920788", output_bytes=115246320, output_rows=1920772, materialized=115246320, bytes_read=73950800, rows_read=1920800
+                          TABLE_SCAN: table=customer, projections=[c_current_addr_sk, c_current_cdemo_sk, c_customer_sk], output_bytes=2400000, output_rows=100000, materialized=2400000, bytes_read=2437500, rows_read=100000
+                        TABLE_SCAN: table=customer_address, projections=[ca_address_sk, ca_state], output_bytes=1200000, output_rows=50000, materialized=1200000, bytes_read=709400, rows_read=50000
                       HASH_JOIN: join_type=SEMI, conditions=[c_customer_sk IS NOT DISTINCT FROM c_customer_sk], output_bytes=1725504, output_rows=22704, materialized=4041288
                         COLUMN_DATA_SCAN: output_bytes=7338712, output_rows=96562, materialized=0
                         PROJECTION: projections=[c_customer_sk], output_bytes=2315784, output_rows=289473, materialized=0
                           HASH_JOIN: join_type=INNER, conditions=[c_customer_sk = ss_customer_sk], output_bytes=4631568, output_rows=289473, materialized=4631568
                             DELIM_SCAN: output_bytes=0, output_rows=0, materialized=0
                             HASH_JOIN: join_type=INNER, conditions=[ss_sold_date_sk = d_date_sk], output_bytes=4911024, output_rows=306939, materialized=4913216
-                              TABLE_SCAN: table=store_sales, projections=[ss_customer_sk, ss_sold_date_sk], output_bytes=8730944, output_rows=545684, materialized=8730944, bytes_read=1186350, rows_read=545684
+                              TABLE_SCAN: table=store_sales, projections=[ss_customer_sk, ss_sold_date_sk], output_bytes=8730944, output_rows=545684, materialized=8730944, bytes_read=8867366, rows_read=545684
                               FILTER: output_bytes=2192, output_rows=274, materialized=0
-                                TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_year=2002 AND d_qoy<4", output_bytes=2192, output_rows=274, materialized=2192, bytes_read=294080, rows_read=73049
+                                TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_year=2002 AND d_qoy<4", output_bytes=2192, output_rows=274, materialized=2192, bytes_read=1780572, rows_read=73049
                       HASH_GROUP_BY: groups=[#5], output_bytes=772496, output_rows=96562, materialized=0
                     HASH_JOIN: join_type=MARK, conditions=[c_customer_sk IS NOT DISTINCT FROM c_customer_sk], output_bytes=1748208, output_rows=22704, materialized=1894736
                       COLUMN_DATA_SCAN: output_bytes=1725504, output_rows=22704, materialized=0
@@ -30,9 +30,9 @@ TOP_N: order_by=[ca.ca_state ASC, tpcds.main.customer_demographics.cd_gender ASC
                         HASH_JOIN: join_type=INNER, conditions=[c_customer_sk = ws_bill_customer_sk], output_bytes=293056, output_rows=18316, materialized=293056
                           DELIM_SCAN: output_bytes=0, output_rows=0, materialized=0
                           HASH_JOIN: join_type=INNER, conditions=[ws_sold_date_sk = d_date_sk], output_bytes=1263408, output_rows=78963, materialized=1265600
-                            TABLE_SCAN: table=web_sales, projections=[ws_bill_customer_sk, ws_sold_date_sk], output_bytes=3645824, output_rows=227864, materialized=3645824, bytes_read=486318, rows_read=227864
+                            TABLE_SCAN: table=web_sales, projections=[ws_bill_customer_sk, ws_sold_date_sk], output_bytes=3645824, output_rows=227864, materialized=3645824, bytes_read=3702790, rows_read=227864
                             FILTER: output_bytes=2192, output_rows=274, materialized=0
-                              TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_year=2002 AND d_qoy<4", output_bytes=2192, output_rows=274, materialized=2192, bytes_read=294080, rows_read=73049
+                              TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_year=2002 AND d_qoy<4", output_bytes=2192, output_rows=274, materialized=2192, bytes_read=1780572, rows_read=73049
                     HASH_GROUP_BY: groups=[#5], output_bytes=181632, output_rows=22704, materialized=0
                   HASH_JOIN: join_type=MARK, conditions=[c_customer_sk IS NOT DISTINCT FROM c_customer_sk], output_bytes=1589280, output_rows=22704, materialized=1872944
                     COLUMN_DATA_SCAN: output_bytes=1748208, output_rows=22704, materialized=0
@@ -40,13 +40,13 @@ TOP_N: order_by=[ca.ca_state ASC, tpcds.main.customer_demographics.cd_gender ASC
                       HASH_JOIN: join_type=INNER, conditions=[c_customer_sk = cs_ship_customer_sk], output_bytes=567328, output_rows=35458, materialized=567328
                         DELIM_SCAN: output_bytes=0, output_rows=0, materialized=0
                         HASH_JOIN: join_type=INNER, conditions=[cs_sold_date_sk = d_date_sk], output_bytes=2546448, output_rows=159153, materialized=2548640
-                          TABLE_SCAN: table=catalog_sales, projections=[cs_ship_customer_sk, cs_sold_date_sk], output_bytes=3932160, output_rows=245760, materialized=3932160, bytes_read=552166, rows_read=245760
+                          TABLE_SCAN: table=catalog_sales, projections=[cs_ship_customer_sk, cs_sold_date_sk], output_bytes=3932160, output_rows=245760, materialized=3932160, bytes_read=3993600, rows_read=245760
                           FILTER: output_bytes=2192, output_rows=274, materialized=0
-                            TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_year=2002 AND d_qoy<4", output_bytes=2192, output_rows=274, materialized=2192, bytes_read=294080, rows_read=73049
+                            TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_year=2002 AND d_qoy<4", output_bytes=2192, output_rows=274, materialized=2192, bytes_read=1780572, rows_read=73049
                   HASH_GROUP_BY: groups=[#5], output_bytes=181632, output_rows=22704, materialized=0
-duckdb_cost=185808480
+duckdb_cost=272401378
 materialization_total=173398206
-storage_read_total=12410274
+storage_read_total=99003172
 
 --- row-group pruning (storage reduction) ---
 customer_demographics  filter=[cd_demo_sk>=17 AND cd_demo_sk<=1920788]  dyn_filter=[cd_demo_sk>=17 AND cd_demo_sk<=1920788]  row_groups=16/16  rows=1920800/1920800 (100.0%)  bytes_fetched=7752400/7752400 (100.0%)

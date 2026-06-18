@@ -8,28 +8,28 @@ CTE: output_bytes=0, output_rows=0, materialized=0
               HASH_JOIN: join_type=INNER, conditions=[c_current_addr_sk = ca_address_sk], output_bytes=9719216, output_rows=93454, materialized=9719216
                 HASH_JOIN: join_type=INNER, conditions=[c_current_hdemo_sk = hd_demo_sk], output_bytes=5981056, output_rows=93454, materialized=5981056
                   HASH_JOIN: join_type=INNER, conditions=[cd_demo_sk = c_current_cdemo_sk], output_bytes=5257728, output_rows=93888, materialized=5257728
-                    TABLE_SCAN: table=customer_demographics, projections=[cd_demo_sk, cd_marital_status], filters="cd_demo_sk>=17 AND cd_demo_sk<=1920788", output_bytes=46098528, output_rows=1920772, materialized=46098528, bytes_read=7724509, rows_read=1920800
+                    TABLE_SCAN: table=customer_demographics, projections=[cd_demo_sk, cd_marital_status], filters="cd_demo_sk>=17 AND cd_demo_sk<=1920788", output_bytes=46098528, output_rows=1920772, materialized=46098528, bytes_read=25210500, rows_read=1920800
                     HASH_JOIN: join_type=INNER, conditions=[c_first_shipto_date_sk = d_date_sk], output_bytes=4547328, output_rows=94736, materialized=4547328
                       HASH_JOIN: join_type=INNER, conditions=[c_first_sales_date_sk = d_date_sk], output_bytes=4631136, output_rows=96482, materialized=4631136
-                        TABLE_SCAN: table=customer, projections=[c_customer_sk, c_current_cdemo_sk, c_current_hdemo_sk, c_current_addr_sk, c_first_sales_date_sk, c_first_shipto_date_sk], output_bytes=4800000, output_rows=100000, materialized=4800000, bytes_read=1836035, rows_read=100000
-                        TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_year], filters="d_date_sk>=2448998 AND d_date_sk<=2452648", output_bytes=58416, output_rows=3651, materialized=58416, bytes_read=293872, rows_read=73049
-                      TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_year], filters="d_date_sk>=2449028 AND d_date_sk<=2452678", output_bytes=58416, output_rows=3651, materialized=58416, bytes_read=293872, rows_read=73049
+                        TABLE_SCAN: table=customer, projections=[c_customer_sk, c_current_cdemo_sk, c_current_hdemo_sk, c_current_addr_sk, c_first_sales_date_sk, c_first_shipto_date_sk], output_bytes=4800000, output_rows=100000, materialized=4800000, bytes_read=4875000, rows_read=100000
+                        TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_year], filters="d_date_sk>=2448998 AND d_date_sk<=2452648", output_bytes=58416, output_rows=3651, materialized=58416, bytes_read=1187048, rows_read=73049
+                      TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_year], filters="d_date_sk>=2449028 AND d_date_sk<=2452678", output_bytes=58416, output_rows=3651, materialized=58416, bytes_read=1187048, rows_read=73049
                   HASH_JOIN: join_type=INNER, conditions=[hd_income_band_sk = ib_income_band_sk], output_bytes=115200, output_rows=7200, materialized=115200
-                    TABLE_SCAN: table=household_demographics, projections=[hd_demo_sk, hd_income_band_sk], output_bytes=115200, output_rows=7200, materialized=115200, bytes_read=30029, rows_read=7200
-                    TABLE_SCAN: table=income_band, projections=[ib_income_band_sk], output_bytes=160, output_rows=20, materialized=160, bytes_read=165, rows_read=20
-                TABLE_SCAN: table=customer_address, projections=[ca_address_sk, ca_street_number, ca_street_name, ca_city, ca_zip], output_bytes=3600000, output_rows=50000, materialized=3600000, bytes_read=560008, rows_read=50000
+                    TABLE_SCAN: table=household_demographics, projections=[hd_demo_sk, hd_income_band_sk], output_bytes=115200, output_rows=7200, materialized=115200, bytes_read=117000, rows_read=7200
+                    TABLE_SCAN: table=income_band, projections=[ib_income_band_sk], output_bytes=160, output_rows=20, materialized=160, bytes_read=163, rows_read=20
+                TABLE_SCAN: table=customer_address, projections=[ca_address_sk, ca_street_number, ca_street_name, ca_city, ca_zip], output_bytes=3600000, output_rows=50000, materialized=3600000, bytes_read=2469934, rows_read=50000
               HASH_JOIN: join_type=INNER, conditions=[ss_hdemo_sk = hd_demo_sk], output_bytes=9000, output_rows=50, materialized=9000
                 HASH_JOIN: join_type=INNER, conditions=[ss_store_sk = s_store_sk], output_bytes=8600, output_rows=50, materialized=8600
                   HASH_JOIN: join_type=INNER, conditions=[ss_promo_sk = p_promo_sk], output_bytes=7800, output_rows=50, materialized=7800
                     HASH_JOIN: join_type=INNER, conditions=[ca_address_sk = ss_addr_sk], output_bytes=7800, output_rows=50, materialized=7800
-                      TABLE_SCAN: table=customer_address, projections=[ca_address_sk, ca_street_number, ca_street_name, ca_city, ca_zip], output_bytes=3600000, output_rows=50000, materialized=3600000, bytes_read=560008, rows_read=50000
+                      TABLE_SCAN: table=customer_address, projections=[ca_address_sk, ca_street_number, ca_street_name, ca_city, ca_zip], output_bytes=3600000, output_rows=50000, materialized=3600000, bytes_read=2469934, rows_read=50000
                       HASH_JOIN: join_type=INNER, conditions=[cd_demo_sk = ss_cdemo_sk], output_bytes=5000, output_rows=50, materialized=5000
-                        TABLE_SCAN: table=customer_demographics, projections=[cd_demo_sk, cd_marital_status], filters="cd_demo_sk>=15 AND cd_demo_sk<=1920797", output_bytes=46098792, output_rows=1920783, materialized=46098792, bytes_read=7724509, rows_read=1920800
+                        TABLE_SCAN: table=customer_demographics, projections=[cd_demo_sk, cd_marital_status], filters="cd_demo_sk>=15 AND cd_demo_sk<=1920797", output_bytes=46098792, output_rows=1920783, materialized=46098792, bytes_read=25210500, rows_read=1920800
                         HASH_JOIN: join_type=INNER, conditions=[ss_sold_date_sk = d_date_sk], output_bytes=4876, output_rows=53, materialized=16572
                           HASH_JOIN: join_type=INNER, conditions=[ss_item_sk = i_item_sk, ss_ticket_number = sr_ticket_number], output_bytes=15548, output_rows=169, materialized=15548
-                            TABLE_SCAN: table=store_sales, projections=[ss_store_sk, ss_sold_date_sk, ss_customer_sk, ss_cdemo_sk, ss_hdemo_sk, ss_addr_sk, ss_item_sk, ss_ticket_number, ss_promo_sk, ss_wholesale_cost, ss_list_price, ss_coupon_amt], output_bytes=107768976, output_rows=1282964, materialized=107768976, bytes_read=26103775, rows_read=1282964
+                            TABLE_SCAN: table=store_sales, projections=[ss_store_sk, ss_sold_date_sk, ss_customer_sk, ss_cdemo_sk, ss_hdemo_sk, ss_addr_sk, ss_item_sk, ss_ticket_number, ss_promo_sk, ss_wholesale_cost, ss_list_price, ss_coupon_amt], output_bytes=107768976, output_rows=1282964, materialized=107768976, bytes_read=155880132, rows_read=1282964
                             HASH_JOIN: join_type=INNER, conditions=[sr_item_sk = i_item_sk], output_bytes=5408, output_rows=169, materialized=5408
-                              TABLE_SCAN: table=store_returns, projections=[sr_item_sk, sr_ticket_number], output_bytes=4605872, output_rows=287867, materialized=4605872, bytes_read=2008673, rows_read=287867
+                              TABLE_SCAN: table=store_returns, projections=[sr_item_sk, sr_ticket_number], output_bytes=4605872, output_rows=287867, materialized=4605872, bytes_read=4677840, rows_read=287867
                               HASH_JOIN: join_type=INNER, conditions=[cs_item_sk = i_item_sk], output_bytes=264, output_rows=11, materialized=137808
                                 PROJECTION: projections=[#0], output_bytes=137256, output_rows=17157, materialized=0
                                   FILTER: output_bytes=686280, output_rows=17157, materialized=0
@@ -38,20 +38,20 @@ CTE: output_bytes=0, output_rows=0, materialized=0
                                         PROJECTION: projections=[cs_item_sk, cs_ext_list_price, ((cr_refunded_cash + cr_reversed_charge) + cr_store_credit)], output_bytes=1440670, output_rows=144067, materialized=0
                                           PROJECTION: projections=[__internal_compress_integral_usmallint(#0, 1), #1, #2, #3, #4], output_bytes=2593206, output_rows=144067, materialized=0
                                             HASH_JOIN: join_type=INNER, conditions=[cs_item_sk = cr_item_sk, cs_order_number = cr_order_number], output_bytes=3457608, output_rows=144067, materialized=3457608
-                                              TABLE_SCAN: table=catalog_sales, projections=[cs_item_sk, cs_order_number, cs_ext_list_price], filters="cs_order_number>=2", output_bytes=28830880, output_rows=1441544, materialized=28830880, bytes_read=11971742, rows_read=1441548
-                                              TABLE_SCAN: table=catalog_returns, projections=[cr_item_sk, cr_order_number, cr_refunded_cash, cr_reversed_charge, cr_store_credit], output_bytes=4033876, output_rows=144067, materialized=4033876, bytes_read=2588832, rows_read=144067
+                                              TABLE_SCAN: table=catalog_sales, projections=[cs_item_sk, cs_order_number, cs_ext_list_price], filters="cs_order_number>=2", output_bytes=28830880, output_rows=1441544, materialized=28830880, bytes_read=46670118, rows_read=1441548
+                                              TABLE_SCAN: table=catalog_returns, projections=[cr_item_sk, cr_order_number, cr_refunded_cash, cr_reversed_charge, cr_store_credit], output_bytes=4033876, output_rows=144067, materialized=4033876, bytes_read=9310333, rows_read=144067
                                 PROJECTION: projections=[#0, #1], output_bytes=288, output_rows=12, materialized=0
                                   FILTER: output_bytes=300, output_rows=12, materialized=0
                                     HASH_JOIN: join_type=MARK, conditions=[i_color = #0], output_bytes=4125, output_rows=165, materialized=4125
-                                      TABLE_SCAN: table=item, projections=[i_item_sk, i_color, i_product_name], filters="optional: i_color IN ('purple', 'burlywood', 'indian', 'spring', 'floral', 'medium') AND i_current_price>=65.00 AND i_current_price<=74.00", output_bytes=6600, output_rows=165, materialized=6600, bytes_read=251915, rows_read=18000
+                                      TABLE_SCAN: table=item, projections=[i_item_sk, i_color, i_product_name], filters="optional: i_color IN ('purple', 'burlywood', 'indian', 'spring', 'floral', 'medium') AND i_current_price>=65.00 AND i_current_price<=74.00", output_bytes=6600, output_rows=165, materialized=6600, bytes_read=1005786, rows_read=18000
                                       COLUMN_DATA_SCAN: output_bytes=96, output_rows=6, materialized=0
                           FILTER: output_bytes=11696, output_rows=731, materialized=0
-                            TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_year], filters="optional: d_year=1999 OR d_year=2000", output_bytes=1168784, output_rows=73049, materialized=1168784, bytes_read=293872, rows_read=73049
-                    TABLE_SCAN: table=promotion, projections=[p_promo_sk], output_bytes=2400, output_rows=300, materialized=2400, bytes_read=1993, rows_read=300
-                  TABLE_SCAN: table=store, projections=[s_store_sk, s_store_name, s_zip], filters="s_store_sk<=10", output_bytes=400, output_rows=10, materialized=400, bytes_read=285, rows_read=12
+                            TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_year], filters="optional: d_year=1999 OR d_year=2000", output_bytes=1168784, output_rows=73049, materialized=1168784, bytes_read=1187048, rows_read=73049
+                    TABLE_SCAN: table=promotion, projections=[p_promo_sk], output_bytes=2400, output_rows=300, materialized=2400, bytes_read=2438, rows_read=300
+                  TABLE_SCAN: table=store, projections=[s_store_sk, s_store_name, s_zip], filters="s_store_sk<=10", output_bytes=400, output_rows=10, materialized=400, bytes_read=305, rows_read=12
                 HASH_JOIN: join_type=INNER, conditions=[hd_income_band_sk = ib_income_band_sk], output_bytes=115200, output_rows=7200, materialized=115200
-                  TABLE_SCAN: table=household_demographics, projections=[hd_demo_sk, hd_income_band_sk], output_bytes=115200, output_rows=7200, materialized=115200, bytes_read=30029, rows_read=7200
-                  TABLE_SCAN: table=income_band, projections=[ib_income_band_sk], output_bytes=160, output_rows=20, materialized=160, bytes_read=165, rows_read=20
+                  TABLE_SCAN: table=household_demographics, projections=[hd_demo_sk, hd_income_band_sk], output_bytes=115200, output_rows=7200, materialized=115200, bytes_read=117000, rows_read=7200
+                  TABLE_SCAN: table=income_band, projections=[ib_income_band_sk], output_bytes=160, output_rows=20, materialized=160, bytes_read=163, rows_read=20
   ORDER_BY: order_by=[cs1.product_name ASC, cs1.store_name ASC, cs2.cnt ASC, cs1.s1 ASC, cs2.s1 ASC], output_bytes=608, output_rows=2, materialized=608
     PROJECTION: projections=[product_name, store_name, store_zip, b_street_number, b_street_name, b_city, b_zip, c_street_number, c_street_name, c_city, c_zip, cs1syear, cs1cnt, s11, s21, s31, s12, s22, s32, syear, cnt], output_bytes=608, output_rows=2, materialized=0
       HASH_JOIN: join_type=INNER, conditions=[item_sk = item_sk, store_name = store_name, store_zip = store_zip, cnt >= cnt], output_bytes=608, output_rows=2, materialized=9992
@@ -60,9 +60,9 @@ CTE: output_bytes=0, output_rows=0, materialized=0
         PROJECTION: projections=[#1, #2, #3, #12, #13, #14, #15, #16], output_bytes=208, output_rows=2, materialized=0
           FILTER: output_bytes=496, output_rows=2, materialized=0
             CTE_SCAN: output_bytes=9672, output_rows=39, materialized=0
-duckdb_cost=348744586
+duckdb_cost=568048588
 materialization_total=286470298
-storage_read_total=62274288
+storage_read_total=281578290
 
 --- row-group pruning (storage reduction) ---
 customer_demographics  filter=[cd_demo_sk>=17 AND cd_demo_sk<=1920788]  dyn_filter=[cd_demo_sk>=17 AND cd_demo_sk<=1920788]  row_groups=16/16  rows=1920800/1920800 (100.0%)  bytes_fetched=7724509/7724509 (100.0%)

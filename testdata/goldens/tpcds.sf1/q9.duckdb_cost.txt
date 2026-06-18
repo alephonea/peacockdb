@@ -3,50 +3,50 @@ PROJECTION: projections=[bucket1, bucket2, bucket3, bucket4, bucket5], output_by
     CROSS_PRODUCT: output_bytes=64, output_rows=1, materialized=64
       CROSS_PRODUCT: output_bytes=32, output_rows=1, materialized=32
         CROSS_PRODUCT: output_bytes=16, output_rows=1, materialized=24
-          TABLE_SCAN: table=reason, filters="r_reason_sk=1", output_bytes=8, output_rows=1, materialized=8, bytes_read=257, rows_read=35
+          TABLE_SCAN: table=reason, filters="r_reason_sk=1", output_bytes=8, output_rows=1, materialized=8, bytes_read=285, rows_read=35
           PROJECTION: projections=[CASE  WHEN ((#1 > 1)) THEN ("error"('More than one row returned by a subquery used as an expression - scalar subqueries can only return a single row., Use "SET scalar_subquery_error_on_multiple_rows=false" to revert to previous behavior of returning a random row.')) ELSE #0 END], output_bytes=8, output_rows=1, materialized=0
             UNGROUPED_AGGREGATE: aggregates=["first"(#0), count_star()], output_bytes=16, output_rows=1, materialized=8
               PROJECTION: projections=[#0], output_bytes=8, output_rows=1, materialized=0
                 UNGROUPED_AGGREGATE: aggregates=[count_star()], output_bytes=8, output_rows=1, materialized=4402104
-                  TABLE_SCAN: table=store_sales, filters="ss_quantity>=1 AND ss_quantity<=20", output_bytes=4402104, output_rows=550263, materialized=4402104, bytes_read=2592768, rows_read=2880404
+                  TABLE_SCAN: table=store_sales, filters="ss_quantity>=1 AND ss_quantity<=20", output_bytes=4402104, output_rows=550263, materialized=4402104, bytes_read=23403283, rows_read=2880404
         CROSS_PRODUCT: output_bytes=16, output_rows=1, materialized=32
           PROJECTION: projections=[CASE  WHEN ((#1 > 1)) THEN ("error"('More than one row returned by a subquery used as an expression - scalar subqueries can only return a single row., Use "SET scalar_subquery_error_on_multiple_rows=false" to revert to previous behavior of returning a random row.')) ELSE #0 END], output_bytes=8, output_rows=1, materialized=0
             UNGROUPED_AGGREGATE: aggregates=["first"(#0), count_star()], output_bytes=16, output_rows=1, materialized=8
               PROJECTION: projections=[#0], output_bytes=8, output_rows=1, materialized=0
                 UNGROUPED_AGGREGATE: aggregates=[avg(#0)], output_bytes=8, output_rows=1, materialized=2201052
                   PROJECTION: projections=[ss_ext_discount_amt], output_bytes=2201052, output_rows=550263, materialized=0
-                    TABLE_SCAN: table=store_sales, projections=[ss_ext_discount_amt], filters="ss_quantity>=1 AND ss_quantity<=20", output_bytes=2201052, output_rows=550263, materialized=2201052, bytes_read=7188462, rows_read=2880404
+                    TABLE_SCAN: table=store_sales, projections=[ss_ext_discount_amt], filters="ss_quantity>=1 AND ss_quantity<=20", output_bytes=2201052, output_rows=550263, materialized=2201052, bytes_read=69849798, rows_read=2880404
           PROJECTION: projections=[CASE  WHEN ((#1 > 1)) THEN ("error"('More than one row returned by a subquery used as an expression - scalar subqueries can only return a single row., Use "SET scalar_subquery_error_on_multiple_rows=false" to revert to previous behavior of returning a random row.')) ELSE #0 END], output_bytes=8, output_rows=1, materialized=0
             UNGROUPED_AGGREGATE: aggregates=["first"(#0), count_star()], output_bytes=16, output_rows=1, materialized=8
               PROJECTION: projections=[#0], output_bytes=8, output_rows=1, materialized=0
                 UNGROUPED_AGGREGATE: aggregates=[avg(#0)], output_bytes=8, output_rows=1, materialized=2201052
                   PROJECTION: projections=[ss_net_paid], output_bytes=2201052, output_rows=550263, materialized=0
-                    TABLE_SCAN: table=store_sales, projections=[ss_net_paid], filters="ss_quantity>=1 AND ss_quantity<=20", output_bytes=2201052, output_rows=550263, materialized=2201052, bytes_read=13759159, rows_read=2880404
+                    TABLE_SCAN: table=store_sales, projections=[ss_net_paid], filters="ss_quantity>=1 AND ss_quantity<=20", output_bytes=2201052, output_rows=550263, materialized=2201052, bytes_read=69849798, rows_read=2880404
       CROSS_PRODUCT: output_bytes=32, output_rows=1, materialized=32
         CROSS_PRODUCT: output_bytes=16, output_rows=1, materialized=32
           PROJECTION: projections=[CASE  WHEN ((#1 > 1)) THEN ("error"('More than one row returned by a subquery used as an expression - scalar subqueries can only return a single row., Use "SET scalar_subquery_error_on_multiple_rows=false" to revert to previous behavior of returning a random row.')) ELSE #0 END], output_bytes=8, output_rows=1, materialized=0
             UNGROUPED_AGGREGATE: aggregates=["first"(#0), count_star()], output_bytes=16, output_rows=1, materialized=8
               PROJECTION: projections=[#0], output_bytes=8, output_rows=1, materialized=0
                 UNGROUPED_AGGREGATE: aggregates=[count_star()], output_bytes=8, output_rows=1, materialized=4391528
-                  TABLE_SCAN: table=store_sales, filters="ss_quantity>=21 AND ss_quantity<=40", output_bytes=4391528, output_rows=548941, materialized=4391528, bytes_read=2592768, rows_read=2880404
+                  TABLE_SCAN: table=store_sales, filters="ss_quantity>=21 AND ss_quantity<=40", output_bytes=4391528, output_rows=548941, materialized=4391528, bytes_read=23403283, rows_read=2880404
           PROJECTION: projections=[CASE  WHEN ((#1 > 1)) THEN ("error"('More than one row returned by a subquery used as an expression - scalar subqueries can only return a single row., Use "SET scalar_subquery_error_on_multiple_rows=false" to revert to previous behavior of returning a random row.')) ELSE #0 END], output_bytes=8, output_rows=1, materialized=0
             UNGROUPED_AGGREGATE: aggregates=["first"(#0), count_star()], output_bytes=16, output_rows=1, materialized=8
               PROJECTION: projections=[#0], output_bytes=8, output_rows=1, materialized=0
                 UNGROUPED_AGGREGATE: aggregates=[avg(#0)], output_bytes=8, output_rows=1, materialized=2195764
                   PROJECTION: projections=[ss_ext_discount_amt], output_bytes=2195764, output_rows=548941, materialized=0
-                    TABLE_SCAN: table=store_sales, projections=[ss_ext_discount_amt], filters="ss_quantity>=21 AND ss_quantity<=40", output_bytes=2195764, output_rows=548941, materialized=2195764, bytes_read=7188462, rows_read=2880404
+                    TABLE_SCAN: table=store_sales, projections=[ss_ext_discount_amt], filters="ss_quantity>=21 AND ss_quantity<=40", output_bytes=2195764, output_rows=548941, materialized=2195764, bytes_read=69849798, rows_read=2880404
         CROSS_PRODUCT: output_bytes=16, output_rows=1, materialized=32
           PROJECTION: projections=[CASE  WHEN ((#1 > 1)) THEN ("error"('More than one row returned by a subquery used as an expression - scalar subqueries can only return a single row., Use "SET scalar_subquery_error_on_multiple_rows=false" to revert to previous behavior of returning a random row.')) ELSE #0 END], output_bytes=8, output_rows=1, materialized=0
             UNGROUPED_AGGREGATE: aggregates=["first"(#0), count_star()], output_bytes=16, output_rows=1, materialized=8
               PROJECTION: projections=[#0], output_bytes=8, output_rows=1, materialized=0
                 UNGROUPED_AGGREGATE: aggregates=[avg(#0)], output_bytes=8, output_rows=1, materialized=2195764
                   PROJECTION: projections=[ss_net_paid], output_bytes=2195764, output_rows=548941, materialized=0
-                    TABLE_SCAN: table=store_sales, projections=[ss_net_paid], filters="ss_quantity>=21 AND ss_quantity<=40", output_bytes=2195764, output_rows=548941, materialized=2195764, bytes_read=13759159, rows_read=2880404
+                    TABLE_SCAN: table=store_sales, projections=[ss_net_paid], filters="ss_quantity>=21 AND ss_quantity<=40", output_bytes=2195764, output_rows=548941, materialized=2195764, bytes_read=69849798, rows_read=2880404
           PROJECTION: projections=[CASE  WHEN ((#1 > 1)) THEN ("error"('More than one row returned by a subquery used as an expression - scalar subqueries can only return a single row., Use "SET scalar_subquery_error_on_multiple_rows=false" to revert to previous behavior of returning a random row.')) ELSE #0 END], output_bytes=8, output_rows=1, materialized=0
             UNGROUPED_AGGREGATE: aggregates=["first"(#0), count_star()], output_bytes=16, output_rows=1, materialized=8
               PROJECTION: projections=[#0], output_bytes=8, output_rows=1, materialized=0
                 UNGROUPED_AGGREGATE: aggregates=[count_star()], output_bytes=8, output_rows=1, materialized=4398264
-                  TABLE_SCAN: table=store_sales, filters="ss_quantity>=41 AND ss_quantity<=60", output_bytes=4398264, output_rows=549783, materialized=4398264, bytes_read=2592768, rows_read=2880404
+                  TABLE_SCAN: table=store_sales, filters="ss_quantity>=41 AND ss_quantity<=60", output_bytes=4398264, output_rows=549783, materialized=4398264, bytes_read=23403283, rows_read=2880404
     CROSS_PRODUCT: output_bytes=64, output_rows=1, materialized=64
       CROSS_PRODUCT: output_bytes=32, output_rows=1, materialized=32
         CROSS_PRODUCT: output_bytes=16, output_rows=1, materialized=32
@@ -55,25 +55,25 @@ PROJECTION: projections=[bucket1, bucket2, bucket3, bucket4, bucket5], output_by
               PROJECTION: projections=[#0], output_bytes=8, output_rows=1, materialized=0
                 UNGROUPED_AGGREGATE: aggregates=[avg(#0)], output_bytes=8, output_rows=1, materialized=2199132
                   PROJECTION: projections=[ss_ext_discount_amt], output_bytes=2199132, output_rows=549783, materialized=0
-                    TABLE_SCAN: table=store_sales, projections=[ss_ext_discount_amt], filters="ss_quantity>=41 AND ss_quantity<=60", output_bytes=2199132, output_rows=549783, materialized=2199132, bytes_read=7188462, rows_read=2880404
+                    TABLE_SCAN: table=store_sales, projections=[ss_ext_discount_amt], filters="ss_quantity>=41 AND ss_quantity<=60", output_bytes=2199132, output_rows=549783, materialized=2199132, bytes_read=69849798, rows_read=2880404
           PROJECTION: projections=[CASE  WHEN ((#1 > 1)) THEN ("error"('More than one row returned by a subquery used as an expression - scalar subqueries can only return a single row., Use "SET scalar_subquery_error_on_multiple_rows=false" to revert to previous behavior of returning a random row.')) ELSE #0 END], output_bytes=8, output_rows=1, materialized=0
             UNGROUPED_AGGREGATE: aggregates=["first"(#0), count_star()], output_bytes=16, output_rows=1, materialized=8
               PROJECTION: projections=[#0], output_bytes=8, output_rows=1, materialized=0
                 UNGROUPED_AGGREGATE: aggregates=[avg(#0)], output_bytes=8, output_rows=1, materialized=2199132
                   PROJECTION: projections=[ss_net_paid], output_bytes=2199132, output_rows=549783, materialized=0
-                    TABLE_SCAN: table=store_sales, projections=[ss_net_paid], filters="ss_quantity>=41 AND ss_quantity<=60", output_bytes=2199132, output_rows=549783, materialized=2199132, bytes_read=13759159, rows_read=2880404
+                    TABLE_SCAN: table=store_sales, projections=[ss_net_paid], filters="ss_quantity>=41 AND ss_quantity<=60", output_bytes=2199132, output_rows=549783, materialized=2199132, bytes_read=69849798, rows_read=2880404
         CROSS_PRODUCT: output_bytes=16, output_rows=1, materialized=32
           PROJECTION: projections=[CASE  WHEN ((#1 > 1)) THEN ("error"('More than one row returned by a subquery used as an expression - scalar subqueries can only return a single row., Use "SET scalar_subquery_error_on_multiple_rows=false" to revert to previous behavior of returning a random row.')) ELSE #0 END], output_bytes=8, output_rows=1, materialized=0
             UNGROUPED_AGGREGATE: aggregates=["first"(#0), count_star()], output_bytes=16, output_rows=1, materialized=8
               PROJECTION: projections=[#0], output_bytes=8, output_rows=1, materialized=0
                 UNGROUPED_AGGREGATE: aggregates=[count_star()], output_bytes=8, output_rows=1, materialized=4403776
-                  TABLE_SCAN: table=store_sales, filters="ss_quantity>=61 AND ss_quantity<=80", output_bytes=4403776, output_rows=550472, materialized=4403776, bytes_read=2592768, rows_read=2880404
+                  TABLE_SCAN: table=store_sales, filters="ss_quantity>=61 AND ss_quantity<=80", output_bytes=4403776, output_rows=550472, materialized=4403776, bytes_read=23403283, rows_read=2880404
           PROJECTION: projections=[CASE  WHEN ((#1 > 1)) THEN ("error"('More than one row returned by a subquery used as an expression - scalar subqueries can only return a single row., Use "SET scalar_subquery_error_on_multiple_rows=false" to revert to previous behavior of returning a random row.')) ELSE #0 END], output_bytes=8, output_rows=1, materialized=0
             UNGROUPED_AGGREGATE: aggregates=["first"(#0), count_star()], output_bytes=16, output_rows=1, materialized=8
               PROJECTION: projections=[#0], output_bytes=8, output_rows=1, materialized=0
                 UNGROUPED_AGGREGATE: aggregates=[avg(#0)], output_bytes=8, output_rows=1, materialized=2201888
                   PROJECTION: projections=[ss_ext_discount_amt], output_bytes=2201888, output_rows=550472, materialized=0
-                    TABLE_SCAN: table=store_sales, projections=[ss_ext_discount_amt], filters="ss_quantity>=61 AND ss_quantity<=80", output_bytes=2201888, output_rows=550472, materialized=2201888, bytes_read=7188462, rows_read=2880404
+                    TABLE_SCAN: table=store_sales, projections=[ss_ext_discount_amt], filters="ss_quantity>=61 AND ss_quantity<=80", output_bytes=2201888, output_rows=550472, materialized=2201888, bytes_read=69849798, rows_read=2880404
       CROSS_PRODUCT: output_bytes=32, output_rows=1, materialized=32
         CROSS_PRODUCT: output_bytes=16, output_rows=1, materialized=32
           PROJECTION: projections=[CASE  WHEN ((#1 > 1)) THEN ("error"('More than one row returned by a subquery used as an expression - scalar subqueries can only return a single row., Use "SET scalar_subquery_error_on_multiple_rows=false" to revert to previous behavior of returning a random row.')) ELSE #0 END], output_bytes=8, output_rows=1, materialized=0
@@ -81,28 +81,28 @@ PROJECTION: projections=[bucket1, bucket2, bucket3, bucket4, bucket5], output_by
               PROJECTION: projections=[#0], output_bytes=8, output_rows=1, materialized=0
                 UNGROUPED_AGGREGATE: aggregates=[avg(#0)], output_bytes=8, output_rows=1, materialized=2201888
                   PROJECTION: projections=[ss_net_paid], output_bytes=2201888, output_rows=550472, materialized=0
-                    TABLE_SCAN: table=store_sales, projections=[ss_net_paid], filters="ss_quantity>=61 AND ss_quantity<=80", output_bytes=2201888, output_rows=550472, materialized=2201888, bytes_read=13759159, rows_read=2880404
+                    TABLE_SCAN: table=store_sales, projections=[ss_net_paid], filters="ss_quantity>=61 AND ss_quantity<=80", output_bytes=2201888, output_rows=550472, materialized=2201888, bytes_read=69849798, rows_read=2880404
           PROJECTION: projections=[CASE  WHEN ((#1 > 1)) THEN ("error"('More than one row returned by a subquery used as an expression - scalar subqueries can only return a single row., Use "SET scalar_subquery_error_on_multiple_rows=false" to revert to previous behavior of returning a random row.')) ELSE #0 END], output_bytes=8, output_rows=1, materialized=0
             UNGROUPED_AGGREGATE: aggregates=["first"(#0), count_star()], output_bytes=16, output_rows=1, materialized=8
               PROJECTION: projections=[#0], output_bytes=8, output_rows=1, materialized=0
                 UNGROUPED_AGGREGATE: aggregates=[count_star()], output_bytes=8, output_rows=1, materialized=4408856
-                  TABLE_SCAN: table=store_sales, filters="ss_quantity>=81 AND ss_quantity<=100", output_bytes=4408856, output_rows=551107, materialized=4408856, bytes_read=2592768, rows_read=2880404
+                  TABLE_SCAN: table=store_sales, filters="ss_quantity>=81 AND ss_quantity<=100", output_bytes=4408856, output_rows=551107, materialized=4408856, bytes_read=23403283, rows_read=2880404
         CROSS_PRODUCT: output_bytes=16, output_rows=1, materialized=32
           PROJECTION: projections=[CASE  WHEN ((#1 > 1)) THEN ("error"('More than one row returned by a subquery used as an expression - scalar subqueries can only return a single row., Use "SET scalar_subquery_error_on_multiple_rows=false" to revert to previous behavior of returning a random row.')) ELSE #0 END], output_bytes=8, output_rows=1, materialized=0
             UNGROUPED_AGGREGATE: aggregates=["first"(#0), count_star()], output_bytes=16, output_rows=1, materialized=8
               PROJECTION: projections=[#0], output_bytes=8, output_rows=1, materialized=0
                 UNGROUPED_AGGREGATE: aggregates=[avg(#0)], output_bytes=8, output_rows=1, materialized=2204428
                   PROJECTION: projections=[ss_ext_discount_amt], output_bytes=2204428, output_rows=551107, materialized=0
-                    TABLE_SCAN: table=store_sales, projections=[ss_ext_discount_amt], filters="ss_quantity>=81 AND ss_quantity<=100", output_bytes=2204428, output_rows=551107, materialized=2204428, bytes_read=7188462, rows_read=2880404
+                    TABLE_SCAN: table=store_sales, projections=[ss_ext_discount_amt], filters="ss_quantity>=81 AND ss_quantity<=100", output_bytes=2204428, output_rows=551107, materialized=2204428, bytes_read=69849798, rows_read=2880404
           PROJECTION: projections=[CASE  WHEN ((#1 > 1)) THEN ("error"('More than one row returned by a subquery used as an expression - scalar subqueries can only return a single row., Use "SET scalar_subquery_error_on_multiple_rows=false" to revert to previous behavior of returning a random row.')) ELSE #0 END], output_bytes=8, output_rows=1, materialized=0
             UNGROUPED_AGGREGATE: aggregates=["first"(#0), count_star()], output_bytes=16, output_rows=1, materialized=8
               PROJECTION: projections=[#0], output_bytes=8, output_rows=1, materialized=0
                 UNGROUPED_AGGREGATE: aggregates=[avg(#0)], output_bytes=8, output_rows=1, materialized=2204428
                   PROJECTION: projections=[ss_net_paid], output_bytes=2204428, output_rows=551107, materialized=0
-                    TABLE_SCAN: table=store_sales, projections=[ss_net_paid], filters="ss_quantity>=81 AND ss_quantity<=100", output_bytes=2204428, output_rows=551107, materialized=2204428, bytes_read=13759159, rows_read=2880404
-duckdb_cost=205721074
+                    TABLE_SCAN: table=store_sales, projections=[ss_net_paid], filters="ss_quantity>=81 AND ss_quantity<=100", output_bytes=2204428, output_rows=551107, materialized=2204428, bytes_read=69849798, rows_read=2880404
+duckdb_cost=903533552
 materialization_total=88018872
-storage_read_total=117702202
+storage_read_total=815514680
 
 --- row-group pruning (storage reduction) ---
 reason  filter=[r_reason_sk=1]  row_groups=1/1  rows=35/35 (100.0%)  bytes_fetched=257/257 (100.0%)

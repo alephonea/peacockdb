@@ -6,13 +6,13 @@ TOP_N: order_by=[dt.d_year ASC, sum(tpcds.main.store_sales.ss_ext_sales_price) D
           PROJECTION: projections=[__internal_compress_integral_utinyint(#1, 2000), #0, #2, __internal_compress_integral_uinteger(#3, 1001001)], output_bytes=37425, output_rows=1497, materialized=0
             HASH_JOIN: join_type=INNER, conditions=[ss_item_sk = i_item_sk], output_bytes=53892, output_rows=1497, materialized=53892
               HASH_JOIN: join_type=INNER, conditions=[ss_sold_date_sk = d_date_sk], output_bytes=1775120, output_rows=88756, materialized=1775600
-                TABLE_SCAN: table=store_sales, projections=[ss_sold_date_sk, ss_item_sk, ss_ext_sales_price], output_bytes=5998480, output_rows=299924, materialized=5998480, bytes_read=1683061, rows_read=299924
+                TABLE_SCAN: table=store_sales, projections=[ss_sold_date_sk, ss_item_sk, ss_ext_sales_price], output_bytes=5998480, output_rows=299924, materialized=5998480, bytes_read=9710041, rows_read=299924
                 FILTER: output_bytes=480, output_rows=30, materialized=0
-                  TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_year], filters="d_moy=11 AND d_year=2000", output_bytes=480, output_rows=30, materialized=480, bytes_read=294237, rows_read=73049
-              TABLE_SCAN: table=item, projections=[i_item_sk, i_brand, i_brand_id], filters="i_manager_id=1", output_bytes=10272, output_rows=321, materialized=10272, bytes_read=144435, rows_read=18000
-duckdb_cost=10003114
+                  TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_year], filters="d_moy=11 AND d_year=2000", output_bytes=480, output_rows=30, materialized=480, bytes_read=1780572, rows_read=73049
+              TABLE_SCAN: table=item, projections=[i_item_sk, i_brand, i_brand_id], filters="i_manager_id=1", output_bytes=10272, output_rows=321, materialized=10272, bytes_read=803893, rows_read=18000
+duckdb_cost=20175887
 materialization_total=7881381
-storage_read_total=2121733
+storage_read_total=12294506
 
 --- row-group pruning (storage reduction) ---
 store_sales  dyn_filter=[ss_sold_date_sk>=2451850 AND ss_sold_date_sk<=2451879 AND ss_item_sk>=114 AND ss_item_sk<=18000]  row_groups=3/24  rows=299924/2880404 (10.4%)  bytes_fetched=1683061/17087272 (9.8%)

@@ -9,22 +9,22 @@ PROJECTION: projections=[__internal_decompress_integral_bigint(#0, 1992), #1], o
                 PROJECTION: projections=[o_year, volume, nation], output_bytes=83296, output_rows=2603, materialized=0
                   HASH_JOIN: join_type=INNER, conditions=[s_nationkey = n_nationkey], output_bytes=93708, output_rows=2603, materialized=93708
                     HASH_JOIN: join_type=INNER, conditions=[s_suppkey = l_suppkey], output_bytes=62472, output_rows=2603, materialized=62472
-                      TABLE_SCAN: table=supplier, projections=[s_suppkey, s_nationkey], output_bytes=120000, output_rows=10000, materialized=120000, bytes_read=47418, rows_read=10000
+                      TABLE_SCAN: table=supplier, projections=[s_suppkey, s_nationkey], output_bytes=120000, output_rows=10000, materialized=120000, bytes_read=122500, rows_read=10000
                       HASH_JOIN: join_type=INNER, conditions=[c_nationkey = n_nationkey], output_bytes=93708, output_rows=2603, materialized=93708
                         HASH_JOIN: join_type=INNER, conditions=[c_custkey = o_custkey], output_bytes=428448, output_rows=13389, materialized=428448
-                          TABLE_SCAN: table=customer, projections=[c_custkey, c_nationkey], filters="c_custkey<=149999", output_bytes=1799988, output_rows=149999, materialized=1799988, bytes_read=695814, rows_read=150000
+                          TABLE_SCAN: table=customer, projections=[c_custkey, c_nationkey], filters="c_custkey<=149999", output_bytes=1799988, output_rows=149999, materialized=1799988, bytes_read=1837500, rows_read=150000
                           HASH_JOIN: join_type=INNER, conditions=[o_orderkey = l_orderkey], output_bytes=482004, output_rows=13389, materialized=482004
-                            TABLE_SCAN: table=orders, projections=[o_orderkey, o_custkey, o_orderdate], filters="o_orderdate>='1995-01-01'::DATE AND o_orderdate<='1996-12-31'::DATE", output_bytes=9145260, output_rows=457263, materialized=9145260, bytes_read=5979924, rows_read=614400
+                            TABLE_SCAN: table=orders, projections=[o_orderkey, o_custkey, o_orderdate], filters="o_orderdate>='1995-01-01'::DATE AND o_orderdate<='1996-12-31'::DATE", output_bytes=9145260, output_rows=457263, materialized=9145260, bytes_read=12441600, rows_read=614400
                             HASH_JOIN: join_type=INNER, conditions=[l_partkey = p_partkey], output_bytes=1747720, output_rows=43693, materialized=1747720
-                              TABLE_SCAN: table=lineitem, projections=[l_partkey, l_suppkey, l_orderkey, l_extendedprice, l_discount], output_bytes=240048600, output_rows=6001215, materialized=240048600, bytes_read=103957022, rows_read=6001215
-                              TABLE_SCAN: table=part, projections=[p_partkey], filters="p_type='ECONOMY ANODIZED STEEL'", output_bytes=11608, output_rows=1451, materialized=11608, bytes_read=1004712, rows_read=200000
+                              TABLE_SCAN: table=lineitem, projections=[l_partkey, l_suppkey, l_orderkey, l_extendedprice, l_discount], output_bytes=240048600, output_rows=6001215, materialized=240048600, bytes_read=338318496, rows_read=6001215
+                              TABLE_SCAN: table=part, projections=[p_partkey], filters="p_type='ECONOMY ANODIZED STEEL'", output_bytes=11608, output_rows=1451, materialized=11608, bytes_read=6544946, rows_read=200000
                         HASH_JOIN: join_type=INNER, conditions=[n_regionkey = r_regionkey], output_bytes=40, output_rows=5, materialized=40
-                          TABLE_SCAN: table=nation, projections=[n_nationkey, n_regionkey], output_bytes=200, output_rows=25, materialized=200, bytes_read=205, rows_read=25
-                          TABLE_SCAN: table=region, projections=[r_regionkey], filters="r_name='AMERICA'", output_bytes=4, output_rows=1, materialized=4, bytes_read=119, rows_read=5
-                    TABLE_SCAN: table=nation, projections=[n_nationkey, n_name], output_bytes=500, output_rows=25, materialized=500, bytes_read=398, rows_read=25
-duckdb_cost=365764141
+                          TABLE_SCAN: table=nation, projections=[n_nationkey, n_regionkey], output_bytes=200, output_rows=25, materialized=200, bytes_read=208, rows_read=25
+                          TABLE_SCAN: table=region, projections=[r_regionkey], filters="r_name='AMERICA'", output_bytes=4, output_rows=1, materialized=4, bytes_read=75, rows_read=5
+                    TABLE_SCAN: table=nation, projections=[n_nationkey, n_name], output_bytes=500, output_rows=25, materialized=500, bytes_read=381, rows_read=25
+duckdb_cost=613344235
 materialization_total=254078529
-storage_read_total=111685612
+storage_read_total=359265706
 
 --- row-group pruning (storage reduction) ---
 supplier  dyn_filter=[s_suppkey>=14 AND s_suppkey<=9999 AND s_nationkey>=0 AND s_nationkey<=24]  row_groups=1/1  rows=10000/10000 (100.0%)  bytes_fetched=47418/47418 (100.0%)

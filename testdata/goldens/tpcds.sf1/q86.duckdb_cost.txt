@@ -7,13 +7,13 @@ PROJECTION: projections=[#0, #1, #2, #3, #4], output_bytes=6400, output_rows=100
             PROJECTION: projections=[i_category, i_class, ws_net_paid], output_bytes=5118480, output_rows=142180, materialized=0
               HASH_JOIN: join_type=INNER, conditions=[ws_item_sk = i_item_sk], output_bytes=5118480, output_rows=142180, materialized=5118480
                 HASH_JOIN: join_type=INNER, conditions=[ws_sold_date_sk = d_date_sk], output_bytes=2843600, output_rows=142180, materialized=2846528
-                  TABLE_SCAN: table=web_sales, projections=[ws_sold_date_sk, ws_item_sk, ws_net_paid], output_bytes=4915200, output_rows=245760, materialized=4915200, bytes_read=1518147, rows_read=245760
+                  TABLE_SCAN: table=web_sales, projections=[ws_sold_date_sk, ws_item_sk, ws_net_paid], output_bytes=4915200, output_rows=245760, materialized=4915200, bytes_read=7956480, rows_read=245760
                   FILTER: output_bytes=2928, output_rows=366, materialized=0
-                    TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_month_seq>=1200 AND d_month_seq<=1211", output_bytes=2928, output_rows=366, materialized=2928, bytes_read=309271, rows_read=73049
-                TABLE_SCAN: table=item, projections=[i_item_sk, i_category, i_class], output_bytes=720000, output_rows=18000, materialized=720000, bytes_read=99614, rows_read=18000
-duckdb_cost=20673120
+                    TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_month_seq>=1200 AND d_month_seq<=1211", output_bytes=2928, output_rows=366, materialized=2928, bytes_read=1187048, rows_read=73049
+                TABLE_SCAN: table=item, projections=[i_item_sk, i_category, i_class], output_bytes=720000, output_rows=18000, materialized=720000, bytes_read=540257, rows_read=18000
+duckdb_cost=28429873
 materialization_total=18746088
-storage_read_total=1927032
+storage_read_total=9683785
 
 --- row-group pruning (storage reduction) ---
 web_sales  dyn_filter=[ws_sold_date_sk>=2451545 AND ws_sold_date_sk<=2451910 AND ws_item_sk>=1 AND ws_item_sk<=18000]  row_groups=2/6  rows=245760/719384 (34.2%)  bytes_fetched=1518147/4412972 (34.4%)

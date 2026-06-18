@@ -5,13 +5,13 @@ TOP_N: order_by=[tpcds.main.store.s_store_name ASC, tpcds.main.store.s_store_id 
         PROJECTION: projections=[#1, #0, __internal_compress_string_ubigint(#2), #3], output_bytes=23811040, output_rows=541160, materialized=0
           HASH_JOIN: join_type=INNER, conditions=[ss_store_sk = s_store_sk], output_bytes=28140320, output_rows=541160, materialized=28140320
             HASH_JOIN: join_type=INNER, conditions=[ss_sold_date_sk = d_date_sk], output_bytes=15511160, output_rows=553970, materialized=15519944
-              TABLE_SCAN: table=store_sales, projections=[ss_sold_date_sk, ss_store_sk, ss_sales_price], output_bytes=15828880, output_rows=791444, materialized=15828880, bytes_read=2071761, rows_read=791444
+              TABLE_SCAN: table=store_sales, projections=[ss_sold_date_sk, ss_store_sk, ss_sales_price], output_bytes=15828880, output_rows=791444, materialized=15828880, bytes_read=25623001, rows_read=791444
               FILTER: output_bytes=8784, output_rows=366, materialized=0
-                TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_day_name], filters="d_year=2000", output_bytes=8784, output_rows=366, materialized=8784, bytes_read=295377, rows_read=73049
-            TABLE_SCAN: table=store, projections=[s_store_sk, s_store_name, s_store_id], filters="s_store_sk<=10", output_bytes=400, output_rows=10, materialized=400, bytes_read=289, rows_read=12
-duckdb_cost=90006939
+                TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_day_name], filters="d_year=2000", output_bytes=8784, output_rows=366, materialized=8784, bytes_read=2001023, rows_read=73049
+            TABLE_SCAN: table=store, projections=[s_store_sk, s_store_name, s_store_id], filters="s_store_sk<=10", output_bytes=400, output_rows=10, materialized=400, bytes_read=437, rows_read=12
+duckdb_cost=115263973
 materialization_total=87639512
-storage_read_total=2367427
+storage_read_total=27624461
 
 --- row-group pruning (storage reduction) ---
 store_sales  dyn_filter=[ss_sold_date_sk>=2451545 AND ss_sold_date_sk<=2451910 AND ss_store_sk>=1 AND ss_store_sk<=10]  row_groups=7/24  rows=791444/2880404 (27.5%)  bytes_fetched=2071761/7558464 (27.4%)

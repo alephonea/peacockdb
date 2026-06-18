@@ -7,14 +7,14 @@ TOP_N: order_by=[dw2.i_category ASC, dw2.i_class ASC, dw2.i_brand ASC, dw2.i_pro
             HASH_JOIN: join_type=INNER, conditions=[ss_item_sk = i_item_sk], output_bytes=62774560, output_rows=541160, materialized=62774560
               HASH_JOIN: join_type=INNER, conditions=[ss_store_sk = s_store_sk], output_bytes=32469600, output_rows=541160, materialized=32469600
                 HASH_JOIN: join_type=INNER, conditions=[ss_sold_date_sk = d_date_sk], output_bytes=28806440, output_rows=553970, materialized=28818152
-                  TABLE_SCAN: table=store_sales, projections=[ss_sold_date_sk, ss_item_sk, ss_store_sk, ss_sales_price, ss_quantity], output_bytes=28491984, output_rows=791444, materialized=28491984, bytes_read=4401539, rows_read=791444
+                  TABLE_SCAN: table=store_sales, projections=[ss_sold_date_sk, ss_item_sk, ss_store_sk, ss_sales_price, ss_quantity], output_bytes=28491984, output_rows=791444, materialized=28491984, bytes_read=38483967, rows_read=791444
                   FILTER: output_bytes=11712, output_rows=366, materialized=0
-                    TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_year, d_qoy, d_moy], filters="d_month_seq>=1200 AND d_month_seq<=1211", output_bytes=11712, output_rows=366, materialized=11712, bytes_read=311316, rows_read=73049
-                TABLE_SCAN: table=store, projections=[s_store_sk, s_store_id], filters="s_store_sk<=10", output_bytes=240, output_rows=10, materialized=240, bytes_read=180, rows_read=12
-              TABLE_SCAN: table=item, projections=[i_item_sk, i_category, i_class, i_brand, i_product_name], output_bytes=1296000, output_rows=18000, materialized=1296000, bytes_read=251188, rows_read=18000
-duckdb_cost=284528343
+                    TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_year, d_qoy, d_moy], filters="d_month_seq>=1200 AND d_month_seq<=1211", output_bytes=11712, output_rows=366, materialized=11712, bytes_read=2967620, rows_read=73049
+                TABLE_SCAN: table=store, projections=[s_store_sk, s_store_id], filters="s_store_sk<=10", output_bytes=240, output_rows=10, materialized=240, bytes_read=338, rows_read=12
+              TABLE_SCAN: table=item, projections=[i_item_sk, i_category, i_class, i_brand, i_product_name], output_bytes=1296000, output_rows=18000, materialized=1296000, bytes_read=1303700, rows_read=18000
+duckdb_cost=322319745
 materialization_total=279564120
-storage_read_total=4964223
+storage_read_total=42755625
 
 --- row-group pruning (storage reduction) ---
 store_sales  dyn_filter=[ss_sold_date_sk>=2451545 AND ss_sold_date_sk<=2451910 AND ss_item_sk>=1 AND ss_item_sk<=18000 AND ss_store_sk>=1 AND ss_store_sk<=10]  row_groups=7/24  rows=791444/2880404 (27.5%)  bytes_fetched=4401539/16059074 (27.4%)

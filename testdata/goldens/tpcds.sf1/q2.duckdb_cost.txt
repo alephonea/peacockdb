@@ -5,23 +5,23 @@ CTE: output_bytes=0, output_rows=0, materialized=0
         PROJECTION: projections=[#0, __internal_compress_integral_usmallint(#1, 1), #2], output_bytes=47378232, output_rows=2153556, materialized=0
           HASH_JOIN: join_type=INNER, conditions=[sold_date_sk = d_date_sk], output_bytes=60299568, output_rows=2153556, materialized=60299568
             UNION: output_bytes=0, output_rows=2160932, materialized=0
-              TABLE_SCAN: table=web_sales, projections=[ws_sold_date_sk, ws_ext_sales_price], output_bytes=8632608, output_rows=719384, materialized=8632608, bytes_read=2892598, rows_read=719384
-              TABLE_SCAN: table=catalog_sales, projections=[cs_sold_date_sk, cs_ext_sales_price], output_bytes=17298576, output_rows=1441548, materialized=17298576, bytes_read=5769620, rows_read=1441548
-            TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_week_seq, d_day_name], filters="d_date_sk>=2450815 AND d_date_sk<=2452648", output_bytes=58688, output_rows=1834, materialized=58688, bytes_read=367059, rows_read=73049
+              TABLE_SCAN: table=web_sales, projections=[ws_sold_date_sk, ws_ext_sales_price], output_bytes=8632608, output_rows=719384, materialized=8632608, bytes_read=17445062, rows_read=719384
+              TABLE_SCAN: table=catalog_sales, projections=[cs_sold_date_sk, cs_ext_sales_price], output_bytes=17298576, output_rows=1441548, materialized=17298576, bytes_read=34957540, rows_read=1441548
+            TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_week_seq, d_day_name], filters="d_date_sk>=2450815 AND d_date_sk<=2452648", output_bytes=58688, output_rows=1834, materialized=58688, bytes_read=2001023, rows_read=73049
   ORDER_BY: order_by=[y.d_week_seq1 ASC], output_bytes=160832, output_rows=2513, materialized=160832
     PROJECTION: projections=[d_week_seq1, r1, r2, r3, r4, r5, r6, round((CAST(sat_sales1 AS DOUBLE) / CAST(sat_sales2 AS DOUBLE)), 2)], output_bytes=160832, output_rows=2513, materialized=0
       HASH_JOIN: join_type=INNER, conditions=[d_week_seq1 = (d_week_seq2 - 53)], output_bytes=583016, output_rows=2513, materialized=670616
         PROJECTION: projections=[d_week_seq1, sun_sales1, mon_sales1, tue_sales1, wed_sales1, thu_sales1, fri_sales1, sat_sales1], output_bytes=43800, output_rows=365, materialized=0
           HASH_JOIN: join_type=INNER, conditions=[d_week_seq = d_week_seq], output_bytes=46720, output_rows=365, materialized=46720
             CTE_SCAN: output_bytes=31560, output_rows=263, materialized=0
-            TABLE_SCAN: table=date_dim, projections=[d_week_seq], filters="d_year=2001", output_bytes=2920, output_rows=365, materialized=2920, bytes_read=74626, rows_read=73049
+            TABLE_SCAN: table=date_dim, projections=[d_week_seq], filters="d_year=2001", output_bytes=2920, output_rows=365, materialized=2920, bytes_read=1187048, rows_read=73049
         PROJECTION: projections=[d_week_seq2, sun_sales2, mon_sales2, tue_sales2, wed_sales2, thu_sales2, fri_sales2, sat_sales2], output_bytes=43800, output_rows=365, materialized=0
           HASH_JOIN: join_type=INNER, conditions=[d_week_seq = d_week_seq], output_bytes=46720, output_rows=365, materialized=46720
             CTE_SCAN: output_bytes=31560, output_rows=263, materialized=0
-            TABLE_SCAN: table=date_dim, projections=[d_week_seq], filters="d_year=2002", output_bytes=2920, output_rows=365, materialized=2920, bytes_read=74626, rows_read=73049
-duckdb_cost=161005377
+            TABLE_SCAN: table=date_dim, projections=[d_week_seq], filters="d_year=2002", output_bytes=2920, output_rows=365, materialized=2920, bytes_read=1187048, rows_read=73049
+duckdb_cost=208604569
 materialization_total=151826848
-storage_read_total=9178529
+storage_read_total=56777721
 
 --- row-group pruning (storage reduction) ---
 web_sales  dyn_filter=[ws_sold_date_sk>=2450815 AND ws_sold_date_sk<=2452648]  row_groups=6/6  rows=719384/719384 (100.0%)  bytes_fetched=2892598/2892598 (100.0%)

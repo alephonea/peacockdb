@@ -6,13 +6,13 @@ TOP_N: order_by=[dt.d_year ASC, sum(tpcds.main.store_sales.ss_ext_sales_price) D
           PROJECTION: projections=[__internal_compress_integral_utinyint(#0, 1900), #1, #2, __internal_compress_integral_uinteger(#3, 1001001)], output_bytes=24275, output_rows=971, materialized=0
             HASH_JOIN: join_type=INNER, conditions=[d_date_sk = ss_sold_date_sk], output_bytes=34956, output_rows=971, materialized=37356
               FILTER: output_bytes=2400, output_rows=150, materialized=0
-                TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_year], filters="d_moy=11 AND optional: Dynamic Filter (d_year)", output_bytes=96000, output_rows=6000, materialized=96000, bytes_read=294237, rows_read=73049
+                TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_year], filters="d_moy=11 AND optional: Dynamic Filter (d_year)", output_bytes=96000, output_rows=6000, materialized=96000, bytes_read=1780572, rows_read=73049
               HASH_JOIN: join_type=INNER, conditions=[ss_item_sk = i_item_sk], output_bytes=239616, output_rows=6656, materialized=239616
-                TABLE_SCAN: table=store_sales, projections=[ss_sold_date_sk, ss_item_sk, ss_ext_sales_price], output_bytes=57608080, output_rows=2880404, materialized=57608080, bytes_read=17087272, rows_read=2880404
-                TABLE_SCAN: table=item, projections=[i_item_sk, i_brand, i_brand_id], filters="i_manufact_id=128", output_bytes=1248, output_rows=39, materialized=1248, bytes_read=154802, rows_read=18000
-duckdb_cost=75547158
+                TABLE_SCAN: table=store_sales, projections=[ss_sold_date_sk, ss_item_sk, ss_ext_sales_price], output_bytes=57608080, output_rows=2880404, materialized=57608080, bytes_read=93253081, rows_read=2880404
+                TABLE_SCAN: table=item, projections=[i_item_sk, i_brand, i_brand_id], filters="i_manufact_id=128", output_bytes=1248, output_rows=39, materialized=1248, bytes_read=803893, rows_read=18000
+duckdb_cost=153848393
 materialization_total=58010847
-storage_read_total=17536311
+storage_read_total=95837546
 
 --- row-group pruning (storage reduction) ---
 date_dim  filter=[d_moy=11 AND optional: Dynamic Filter (d_year)]  dyn_filter=[d_date_sk>=2450816 AND d_date_sk<=2452642]  row_groups=1/1  rows=73049/73049 (100.0%)  bytes_fetched=294237/294237 (100.0%)

@@ -7,28 +7,28 @@ TOP_N: order_by=[count_star() DESC, tpcds.main.item.i_item_desc ASC, tpcds.main.
             HASH_JOIN: join_type=LEFT, conditions=[cs_promo_sk = p_promo_sk], output_bytes=129536, output_rows=2024, materialized=129536
               HASH_JOIN: join_type=INNER, conditions=[inv_warehouse_sk = w_warehouse_sk], output_bytes=129536, output_rows=2024, materialized=129536
                 HASH_JOIN: join_type=INNER, conditions=[inv_item_sk = cs_item_sk, inv_date_sk = d_date_sk, CAST(inv_quantity_on_hand AS BIGINT) < cs_quantity], output_bytes=113344, output_rows=2024, materialized=113344
-                  TABLE_SCAN: table=inventory, projections=[inv_item_sk, inv_warehouse_sk, inv_date_sk, inv_quantity_on_hand], output_bytes=68812800, output_rows=2457600, materialized=68812800, bytes_read=5464409, rows_read=2457600
+                  TABLE_SCAN: table=inventory, projections=[inv_item_sk, inv_warehouse_sk, inv_date_sk, inv_quantity_on_hand], output_bytes=68812800, output_rows=2457600, materialized=68812800, bytes_read=70041600, rows_read=2457600
                   HASH_JOIN: join_type=INNER, conditions=[d_week_seq = d_week_seq], output_bytes=3892672, output_rows=60823, materialized=3892672
-                    TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_week_seq], filters="d_date_sk>=2450815 AND d_date_sk<=2452635", output_bytes=29136, output_rows=1821, materialized=29136, bytes_read=365554, rows_read=73049
+                    TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_week_seq], filters="d_date_sk>=2450815 AND d_date_sk<=2452635", output_bytes=29136, output_rows=1821, materialized=29136, bytes_read=1187048, rows_read=73049
                     HASH_JOIN: join_type=INNER, conditions=[i_item_sk = cs_item_sk], output_bytes=486584, output_rows=8689, materialized=486584
-                      TABLE_SCAN: table=item, projections=[i_item_sk, i_item_desc], output_bytes=432000, output_rows=18000, materialized=432000, bytes_read=1026705, rows_read=18000
+                      TABLE_SCAN: table=item, projections=[i_item_sk, i_item_desc], output_bytes=432000, output_rows=18000, materialized=432000, bytes_read=2029142, rows_read=18000
                       HASH_JOIN: join_type=INNER, conditions=[d_date_sk = cs_ship_date_sk, d_date > (d_date + 5)], output_bytes=451828, output_rows=8689, materialized=451828
-                        TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_date], filters="d_date_sk>=2450817 AND d_date_sk<=2452737", output_bytes=23052, output_rows=1921, materialized=23052, bytes_read=584645, rows_read=73049
+                        TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_date], filters="d_date_sk>=2450817 AND d_date_sk<=2452737", output_bytes=23052, output_rows=1921, materialized=23052, bytes_read=885720, rows_read=73049
                         HASH_JOIN: join_type=INNER, conditions=[cd_demo_sk = cs_bill_cdemo_sk], output_bytes=546240, output_rows=9104, materialized=3619464
                           FILTER: output_bytes=3073224, output_rows=384153, materialized=0
-                            TABLE_SCAN: table=customer_demographics, projections=[cd_demo_sk], filters="cd_marital_status='D'", output_bytes=3073280, output_rows=384160, materialized=3073280, bytes_read=7724509, rows_read=1920800
+                            TABLE_SCAN: table=customer_demographics, projections=[cd_demo_sk], filters="cd_marital_status='D'", output_bytes=3073280, output_rows=384160, materialized=3073280, bytes_read=25210500, rows_read=1920800
                           HASH_JOIN: join_type=INNER, conditions=[cs_bill_hdemo_sk = hd_demo_sk], output_bytes=3131876, output_rows=46057, materialized=3131876
                             HASH_JOIN: join_type=INNER, conditions=[cs_sold_date_sk = d_date_sk], output_bytes=19422568, output_rows=285626, materialized=19429868
-                              TABLE_SCAN: table=catalog_sales, projections=[cs_item_sk, cs_bill_cdemo_sk, cs_bill_hdemo_sk, cs_sold_date_sk, cs_ship_date_sk, cs_promo_sk, cs_order_number, cs_quantity], output_bytes=23592960, output_rows=368640, materialized=23592960, bytes_read=4262399, rows_read=368640
+                              TABLE_SCAN: table=catalog_sales, projections=[cs_item_sk, cs_bill_cdemo_sk, cs_bill_hdemo_sk, cs_sold_date_sk, cs_ship_date_sk, cs_promo_sk, cs_order_number, cs_quantity], output_bytes=23592960, output_rows=368640, materialized=23592960, bytes_read=23961600, rows_read=368640
                               FILTER: output_bytes=7300, output_rows=365, materialized=0
-                                TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_week_seq, d_date], filters="d_year=1999", output_bytes=7300, output_rows=365, materialized=7300, bytes_read=659271, rows_read=73049
-                            TABLE_SCAN: table=household_demographics, projections=[hd_demo_sk], filters="hd_buy_potential='>10000'", output_bytes=9600, output_rows=1200, materialized=9600, bytes_read=29767, rows_read=7200
-                TABLE_SCAN: table=warehouse, projections=[w_warehouse_sk, w_warehouse_name], output_bytes=120, output_rows=5, materialized=120, bytes_read=173, rows_read=5
-              TABLE_SCAN: table=promotion, projections=[p_promo_sk], output_bytes=2400, output_rows=300, materialized=2400, bytes_read=1993, rows_read=300
-            TABLE_SCAN: table=catalog_returns, projections=[cr_item_sk, cr_order_number], output_bytes=2305072, output_rows=144067, materialized=2305072, bytes_read=943450, rows_read=144067
-duckdb_cost=151110487
+                                TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_week_seq, d_date], filters="d_year=1999", output_bytes=7300, output_rows=365, materialized=7300, bytes_read=2072768, rows_read=73049
+                            TABLE_SCAN: table=household_demographics, projections=[hd_demo_sk], filters="hd_buy_potential='>10000'", output_bytes=9600, output_rows=1200, materialized=9600, bytes_read=141300, rows_read=7200
+                TABLE_SCAN: table=warehouse, projections=[w_warehouse_sk, w_warehouse_name], output_bytes=120, output_rows=5, materialized=120, bytes_read=133, rows_read=5
+              TABLE_SCAN: table=promotion, projections=[p_promo_sk], output_bytes=2400, output_rows=300, materialized=2400, bytes_read=2438, rows_read=300
+            TABLE_SCAN: table=catalog_returns, projections=[cr_item_sk, cr_order_number], output_bytes=2305072, output_rows=144067, materialized=2305072, bytes_read=2341090, rows_read=144067
+duckdb_cost=257920951
 materialization_total=130047612
-storage_read_total=21062875
+storage_read_total=127873339
 
 --- row-group pruning (storage reduction) ---
 inventory  dyn_filter=[inv_item_sk>=1 AND inv_item_sk<=17998 AND inv_warehouse_sk>=1 AND inv_warehouse_sk<=5 AND inv_date_sk>=2451177 AND inv_date_sk<=2451547 AND inv_quantity_on_hand<=100]  row_groups=20/96  rows=2457600/11745000 (20.9%)  bytes_fetched=5464409/26111430 (20.9%)

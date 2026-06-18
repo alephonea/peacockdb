@@ -5,15 +5,15 @@ TOP_N: order_by=[sum((tpch.main.lineitem.l_extendedprice * (1 - tpch.main.lineit
         PROJECTION: projections=[c_custkey, c_name, c_acctbal, c_phone, n_name, c_address, c_comment, (l_extendedprice * (1.00 - l_discount))], output_bytes=11470500, output_rows=114705, materialized=0
           PROJECTION: projections=[#0, #1, __internal_compress_integral_uinteger(#2, 1), #3, #4, __internal_compress_string_uhugeint(#5), #6, #7, __internal_compress_string_uhugeint(#8)], output_bytes=12388140, output_rows=114705, materialized=0
             HASH_JOIN: join_type=INNER, conditions=[l_orderkey = o_orderkey], output_bytes=12846960, output_rows=114705, materialized=12846960
-              TABLE_SCAN: table=lineitem, projections=[l_orderkey, l_extendedprice, l_discount], filters="l_returnflag='R'", output_bytes=35492880, output_rows=1478870, materialized=35492880, bytes_read=64022269, rows_read=6001215
+              TABLE_SCAN: table=lineitem, projections=[l_orderkey, l_extendedprice, l_discount], filters="l_returnflag='R'", output_bytes=35492880, output_rows=1478870, materialized=35492880, bytes_read=270804827, rows_read=6001215
               HASH_JOIN: join_type=INNER, conditions=[c_custkey = o_custkey], output_bytes=5935176, output_rows=57069, materialized=5935176
                 HASH_JOIN: join_type=INNER, conditions=[c_nationkey = n_nationkey], output_bytes=14399904, output_rows=149999, materialized=14399904
-                  TABLE_SCAN: table=customer, projections=[c_custkey, c_nationkey, c_name, c_acctbal, c_phone, c_address, c_comment], filters="c_custkey<=149999", output_bytes=12599916, output_rows=149999, materialized=12599916, bytes_read=12328643, rows_read=150000
-                  TABLE_SCAN: table=nation, projections=[n_nationkey, n_name], output_bytes=500, output_rows=25, materialized=500, bytes_read=398, rows_read=25
-                TABLE_SCAN: table=orders, projections=[o_custkey, o_orderkey], filters="o_orderdate>='1993-10-01'::DATE AND (CAST(o_orderdate AS TIMESTAMP) < '1994-01-01 00:00:00'::TIMESTAMP)", output_bytes=913104, output_rows=57069, materialized=913104, bytes_read=1196181, rows_read=122880
-duckdb_cost=175458735
+                  TABLE_SCAN: table=customer, projections=[c_custkey, c_nationkey, c_name, c_acctbal, c_phone, c_address, c_comment], filters="c_custkey<=149999", output_bytes=12599916, output_rows=149999, materialized=12599916, bytes_read=26221655, rows_read=150000
+                  TABLE_SCAN: table=nation, projections=[n_nationkey, n_name], output_bytes=500, output_rows=25, materialized=500, bytes_read=381, rows_read=25
+                TABLE_SCAN: table=orders, projections=[o_custkey, o_orderkey], filters="o_orderdate>='1993-10-01'::DATE AND (CAST(o_orderdate AS TIMESTAMP) < '1994-01-01 00:00:00'::TIMESTAMP)", output_bytes=913104, output_rows=57069, materialized=913104, bytes_read=2488320, rows_read=122880
+duckdb_cost=397426427
 materialization_total=97911244
-storage_read_total=77547491
+storage_read_total=299515183
 
 --- row-group pruning (storage reduction) ---
 lineitem  filter=[l_returnflag='R']  dyn_filter=[l_orderkey>=3 AND l_orderkey<=5999909]  row_groups=49/49  rows=6001215/6001215 (100.0%)  bytes_fetched=64022269/64022269 (100.0%)

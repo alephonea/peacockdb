@@ -9,20 +9,20 @@ PROJECTION: projections=[__internal_decompress_string(#0), __internal_decompress
                 FILTER: output_bytes=308048, output_rows=5924, materialized=0
                   HASH_JOIN: join_type=INNER, conditions=[o_custkey = c_custkey], output_bytes=609596, output_rows=11723, materialized=609596
                     HASH_JOIN: join_type=INNER, conditions=[o_orderkey = l_orderkey], output_bytes=6410932, output_rows=145703, materialized=6410932
-                      TABLE_SCAN: table=orders, projections=[o_orderkey, o_custkey], output_bytes=24000000, output_rows=1500000, materialized=24000000, bytes_read=14583325, rows_read=1500000
+                      TABLE_SCAN: table=orders, projections=[o_orderkey, o_custkey], output_bytes=24000000, output_rows=1500000, materialized=24000000, bytes_read=24375000, rows_read=1500000
                       HASH_JOIN: join_type=INNER, conditions=[l_suppkey = s_suppkey], output_bytes=6410932, output_rows=145703, materialized=6410932
-                        TABLE_SCAN: table=lineitem, projections=[l_suppkey, l_orderkey, l_shipdate, l_extendedprice, l_discount], filters="l_shipdate>='1995-01-01'::DATE AND l_shipdate<='1996-12-31'::DATE", output_bytes=65824200, output_rows=1828450, materialized=65824200, bytes_read=24822368, rows_read=1966080
+                        TABLE_SCAN: table=lineitem, projections=[l_suppkey, l_orderkey, l_shipdate, l_extendedprice, l_discount], filters="l_shipdate>='1995-01-01'::DATE AND l_shipdate<='1996-12-31'::DATE", output_bytes=65824200, output_rows=1828450, materialized=65824200, bytes_read=102727680, rows_read=1966080
                         HASH_JOIN: join_type=INNER, conditions=[s_nationkey = n_nationkey], output_bytes=19152, output_rows=798, materialized=19192
-                          TABLE_SCAN: table=supplier, projections=[s_suppkey, s_nationkey], output_bytes=120000, output_rows=10000, materialized=120000, bytes_read=47418, rows_read=10000
+                          TABLE_SCAN: table=supplier, projections=[s_suppkey, s_nationkey], output_bytes=120000, output_rows=10000, materialized=120000, bytes_read=122500, rows_read=10000
                           FILTER: output_bytes=40, output_rows=2, materialized=0
-                            TABLE_SCAN: table=nation, projections=[n_nationkey, n_name], filters="optional: n_name='FRANCE' OR n_name='GERMANY'", output_bytes=500, output_rows=25, materialized=500, bytes_read=398, rows_read=25
+                            TABLE_SCAN: table=nation, projections=[n_nationkey, n_name], filters="optional: n_name='FRANCE' OR n_name='GERMANY'", output_bytes=500, output_rows=25, materialized=500, bytes_read=381, rows_read=25
                     HASH_JOIN: join_type=INNER, conditions=[c_nationkey = n_nationkey], output_bytes=288192, output_rows=12008, materialized=288232
-                      TABLE_SCAN: table=customer, projections=[c_custkey, c_nationkey], filters="c_custkey<=149999", output_bytes=1799988, output_rows=149999, materialized=1799988, bytes_read=695814, rows_read=150000
+                      TABLE_SCAN: table=customer, projections=[c_custkey, c_nationkey], filters="c_custkey<=149999", output_bytes=1799988, output_rows=149999, materialized=1799988, bytes_read=1837500, rows_read=150000
                       FILTER: output_bytes=40, output_rows=2, materialized=0
-                        TABLE_SCAN: table=nation, projections=[n_nationkey, n_name], filters="optional: n_name='GERMANY' OR n_name='FRANCE'", output_bytes=500, output_rows=25, materialized=500, bytes_read=398, rows_read=25
-duckdb_cost=145876873
+                        TABLE_SCAN: table=nation, projections=[n_nationkey, n_name], filters="optional: n_name='GERMANY' OR n_name='FRANCE'", output_bytes=500, output_rows=25, materialized=500, bytes_read=381, rows_read=25
+duckdb_cost=234790594
 materialization_total=105727152
-storage_read_total=40149721
+storage_read_total=129063442
 
 --- row-group pruning (storage reduction) ---
 orders  dyn_filter=[o_orderkey>=4 AND o_orderkey<=5999971 AND o_custkey>=18 AND o_custkey<=149993]  row_groups=13/13  rows=1500000/1500000 (100.0%)  bytes_fetched=14583325/14583325 (100.0%)

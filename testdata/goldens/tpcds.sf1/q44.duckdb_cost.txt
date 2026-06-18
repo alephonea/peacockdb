@@ -5,10 +5,10 @@ TOP_N: order_by=[asceding.rnk ASC], top=100, output_bytes=400, output_rows=10, m
         HASH_GROUP_BY: groups=[#0], aggregates=[avg(#1)], output_bytes=179990, output_rows=17999, materialized=2750658
           PROJECTION: projections=[ss_item_sk, ss_net_profit], output_bytes=2750658, output_rows=458443, materialized=0
             PROJECTION: projections=[__internal_compress_integral_usmallint(#0, 1), #1], output_bytes=2750658, output_rows=458443, materialized=0
-              TABLE_SCAN: table=store_sales, projections=[ss_item_sk, ss_net_profit], filters="ss_store_sk=4", output_bytes=5501316, output_rows=458443, materialized=5501316, bytes_read=18281960, rows_read=2880404
+              TABLE_SCAN: table=store_sales, projections=[ss_item_sk, ss_net_profit], filters="ss_store_sk=4", output_bytes=5501316, output_rows=458443, materialized=5501316, bytes_read=93253081, rows_read=2880404
       HASH_JOIN: join_type=INNER, conditions=[rnk = rnk], output_bytes=800, output_rows=10, materialized=800
         HASH_JOIN: join_type=INNER, conditions=[i_item_sk = item_sk], output_bytes=400, output_rows=10, materialized=560
-          TABLE_SCAN: table=item, projections=[i_item_sk, i_product_name], output_bytes=432000, output_rows=18000, materialized=432000, bytes_read=196503, rows_read=18000
+          TABLE_SCAN: table=item, projections=[i_item_sk, i_product_name], output_bytes=432000, output_rows=18000, materialized=432000, bytes_read=544550, rows_read=18000
           PROJECTION: projections=[#0, #2], output_bytes=160, output_rows=10, materialized=0
             FILTER: output_bytes=240, output_rows=10, materialized=0
               PROJECTION: projections=[#0, #1, #2], output_bytes=177648, output_rows=7402, materialized=0
@@ -24,9 +24,9 @@ TOP_N: order_by=[asceding.rnk ASC], top=100, output_bytes=400, output_rows=10, m
                                 PERFECT_HASH_GROUP_BY: groups=[#0], aggregates=[avg(#1)], output_bytes=9, output_rows=1, materialized=53855
                                   PROJECTION: projections=[ss_store_sk, ss_net_profit], output_bytes=53855, output_rows=10771, materialized=0
                                     PROJECTION: projections=[__internal_compress_integral_utinyint(#0, 4), #1], output_bytes=53855, output_rows=10771, materialized=0
-                                      TABLE_SCAN: table=store_sales, projections=[ss_store_sk, ss_net_profit], filters="ss_store_sk=4 AND (ss_addr_sk IS NULL)", output_bytes=129252, output_rows=10771, materialized=129252, bytes_read=12374118, rows_read=2880404
+                                      TABLE_SCAN: table=store_sales, projections=[ss_store_sk, ss_net_profit], filters="ss_store_sk=4 AND (ss_addr_sk IS NULL)", output_bytes=129252, output_rows=10771, materialized=129252, bytes_read=69849798, rows_read=2880404
         HASH_JOIN: join_type=INNER, conditions=[i_item_sk = item_sk], output_bytes=400, output_rows=10, materialized=560
-          TABLE_SCAN: table=item, projections=[i_item_sk, i_product_name], output_bytes=432000, output_rows=18000, materialized=432000, bytes_read=196503, rows_read=18000
+          TABLE_SCAN: table=item, projections=[i_item_sk, i_product_name], output_bytes=432000, output_rows=18000, materialized=432000, bytes_read=544550, rows_read=18000
           PROJECTION: projections=[#0, #2], output_bytes=160, output_rows=10, materialized=0
             FILTER: output_bytes=240, output_rows=10, materialized=0
               PROJECTION: projections=[#0, #1, #2], output_bytes=177648, output_rows=7402, materialized=0
@@ -42,10 +42,10 @@ TOP_N: order_by=[asceding.rnk ASC], top=100, output_bytes=400, output_rows=10, m
                                 PERFECT_HASH_GROUP_BY: groups=[#0], aggregates=[avg(#1)], output_bytes=9, output_rows=1, materialized=53855
                                   PROJECTION: projections=[ss_store_sk, ss_net_profit], output_bytes=53855, output_rows=10771, materialized=0
                                     PROJECTION: projections=[__internal_compress_integral_utinyint(#0, 4), #1], output_bytes=53855, output_rows=10771, materialized=0
-                                      TABLE_SCAN: table=store_sales, projections=[ss_store_sk, ss_net_profit], filters="ss_store_sk=4 AND (ss_addr_sk IS NULL)", output_bytes=129252, output_rows=10771, materialized=129252, bytes_read=12374118, rows_read=2880404
-duckdb_cost=53499902
+                                      TABLE_SCAN: table=store_sales, projections=[ss_store_sk, ss_net_profit], filters="ss_store_sk=4 AND (ss_addr_sk IS NULL)", output_bytes=129252, output_rows=10771, materialized=129252, bytes_read=69849798, rows_read=2880404
+duckdb_cost=244118477
 materialization_total=10076700
-storage_read_total=43423202
+storage_read_total=234041777
 
 --- row-group pruning (storage reduction) ---
 store_sales  filter=[ss_store_sk=4]  row_groups=24/24  rows=2880404/2880404 (100.0%)  bytes_fetched=18281960/18281960 (100.0%)

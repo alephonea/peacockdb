@@ -9,11 +9,11 @@ CTE: output_bytes=0, output_rows=0, materialized=0
                 HASH_JOIN: join_type=INNER, conditions=[inv_item_sk = i_item_sk], output_bytes=18720000, output_rows=360000, materialized=18720000
                   HASH_JOIN: join_type=INNER, conditions=[inv_warehouse_sk = w_warehouse_sk], output_bytes=15840000, output_rows=360000, materialized=15840000
                     HASH_JOIN: join_type=INNER, conditions=[inv_date_sk = d_date_sk], output_bytes=10080000, output_rows=360000, materialized=10080944
-                      TABLE_SCAN: table=inventory, projections=[inv_item_sk, inv_warehouse_sk, inv_date_sk, inv_quantity_on_hand], output_bytes=13762560, output_rows=491520, materialized=13762560, bytes_read=1102409, rows_read=491520
+                      TABLE_SCAN: table=inventory, projections=[inv_item_sk, inv_warehouse_sk, inv_date_sk, inv_quantity_on_hand], output_bytes=13762560, output_rows=491520, materialized=13762560, bytes_read=14008320, rows_read=491520
                       FILTER: output_bytes=944, output_rows=59, materialized=0
-                        TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_moy], filters="d_year=2001", output_bytes=5840, output_rows=365, materialized=5840, bytes_read=294237, rows_read=73049
-                    TABLE_SCAN: table=warehouse, projections=[w_warehouse_sk, w_warehouse_name], output_bytes=120, output_rows=5, materialized=120, bytes_read=173, rows_read=5
-                  TABLE_SCAN: table=item, projections=[i_item_sk], output_bytes=144000, output_rows=18000, materialized=144000, bytes_read=72838, rows_read=18000
+                        TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_moy], filters="d_year=2001", output_bytes=5840, output_rows=365, materialized=5840, bytes_read=1780572, rows_read=73049
+                    TABLE_SCAN: table=warehouse, projections=[w_warehouse_sk, w_warehouse_name], output_bytes=120, output_rows=5, materialized=120, bytes_read=133, rows_read=5
+                  TABLE_SCAN: table=item, projections=[i_item_sk], output_bytes=144000, output_rows=18000, materialized=144000, bytes_read=146250, rows_read=18000
   ORDER_BY: order_by=[inv1.w_warehouse_sk ASC, inv1.i_item_sk ASC, inv1.d_moy ASC, inv1.mean ASC, inv1.cov ASC, inv2.d_moy ASC, inv2.mean ASC, inv2.cov ASC], output_bytes=19440, output_rows=243, materialized=19440
     PROJECTION: projections=[wsk1, isk1, dmoy1, mean1, cov1, w_warehouse_sk, i_item_sk, d_moy, mean, cov], output_bytes=19440, output_rows=243, materialized=0
       HASH_JOIN: join_type=INNER, conditions=[i_item_sk = i_item_sk, w_warehouse_sk = w_warehouse_sk], output_bytes=15552, output_rows=243, materialized=265552
@@ -21,9 +21,9 @@ CTE: output_bytes=0, output_rows=0, materialized=0
           CTE_SCAN: output_bytes=250000, output_rows=6250, materialized=0
         FILTER: output_bytes=126800, output_rows=3170, materialized=0
           CTE_SCAN: output_bytes=250000, output_rows=6250, materialized=0
-duckdb_cost=71828113
+duckdb_cost=86293731
 materialization_total=70358456
-storage_read_total=1469657
+storage_read_total=15935275
 
 --- row-group pruning (storage reduction) ---
 inventory  dyn_filter=[inv_item_sk>=1 AND inv_item_sk<=18000 AND inv_warehouse_sk>=1 AND inv_warehouse_sk<=5 AND inv_date_sk>=2451911 AND inv_date_sk<=2451969]  row_groups=4/96  rows=491520/11745000 (4.2%)  bytes_fetched=1102409/26111430 (4.2%)

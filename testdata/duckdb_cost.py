@@ -23,9 +23,12 @@ both + their sum):
   - materialization_total = Σ node_materialized (pipeline-breaker model; a SCAN
     contributes its OUTPUT only — post-static, capped at read). Streaming -> 0;
     build/join breakers -> children/own output (double-count-avoided as before).
-  - storage_read_total = Σ scan bytes_read = the ACTUAL compressed parquet bytes of
-    the surviving row groups (post pass1-static ∩ pass2-dynamic min/max pruning) —
-    the SAME number the row-group-pruning section reports as bytes_fetched.
+  - storage_read_total = Σ scan bytes_read = the DECODED Arrow (in-memory) bytes of the
+    surviving row groups' referenced columns (post pass1-static ∩ pass2-dynamic min/max
+    pruning), in the SAME units as peacockdb's GpuScanExec output_bytes so the
+    duckdb-vs-peacockdb cost ratio is apples-to-apples (IMPORTANT-1). The row-group-
+    pruning section separately reports bytes_fetched in COMPRESSED parquet bytes (the
+    storage/disk-IO-reduction metric).
   - duckdb_cost = materialization_total + storage_read_total.
 read >= output always (a scan can't output more than it read; output capped at
 rows_fetched). threads=1 throughout for reproducibility.
@@ -366,7 +369,8 @@ def compute_pruning(parquet_path: str, ref_cols: set, ranges: dict) -> Optional[
     except ImportError:
         return None
     try:
-        md = pq.ParquetFile(parquet_path).metadata
+        pf = pq.ParquetFile(parquet_path)
+        md = pf.metadata
     except Exception:
         return None
     names = [md.schema.column(i).name for i in range(md.num_columns)]
@@ -391,7 +395,25 @@ def compute_pruning(parquet_path: str, ref_cols: set, ranges: dict) -> Optional[
                 mn = mx = None
             cols[name] = {"min": mn, "max": mx, "compressed": col.total_compressed_size}
         rowgroups.append({"num_rows": rg.num_rows, "cols": cols})
-    return compute_pruning_from_rowgroups(rowgroups, set(ref_cols), ranges)
+    result = compute_pruning_from_rowgroups(rowgroups, set(ref_cols), ranges)
+
+    # DECODED (Arrow in-memory) bytes of the surviving row groups' referenced columns —
+    # the cost's storage-read term, in the SAME units as peacockdb's GpuScanExec
+    # output_bytes (Arrow nbytes: Decimal128=16B, Date32=4B, int64=8B, double=8B, string
+    # = offsets+content, + validity), so the duckdb-vs-peacockdb ratio is apples-to-apples
+    # (IMPORTANT-1). Distinct from bytes_fetched, which stays COMPRESSED parquet bytes for
+    # the storage(disk-IO)-reduction section. Read only the surviving groups' ref columns.
+    ref_in_file = [c for c in ref_cols if c in idx]
+    survivors = [i for i, rg in enumerate(rowgroups) if rowgroup_survives(rg["cols"], ranges)]
+    decoded = 0
+    if ref_in_file:
+        for i in survivors:
+            try:
+                decoded += pf.read_row_group(i, columns=ref_in_file).nbytes
+            except Exception:
+                return result  # leave bytes_fetched_decoded absent -> scan_cost falls back
+    result["bytes_fetched_decoded"] = decoded
+    return result
 
 
 def annotation(node: Node) -> str:
@@ -459,15 +481,18 @@ def scan_cost(node: Node) -> tuple[int, int, int]:
     smaller; without the cap that's unphysical (output > read). So the same pruning is
     applied to both terms.
 
-    READ term = the ACTUAL compressed parquet bytes of the surviving row groups
-    (pruning['bytes_fetched']) when pruning was computed — i.e. the cost's storage-read
-    number is the SAME measured value the row-group-pruning section reports. Falls back
-    to the derived rows_read × output-row-width only when no parquet stats are
-    available. OUTPUT term stays decoded (post-filter materialized). Returns a dict."""
+    READ term = the DECODED Arrow (in-memory) bytes of the surviving row groups'
+    referenced columns (pruning['bytes_fetched_decoded']) — the SAME units as
+    peacockdb's GpuScanExec output_bytes, so the duckdb-vs-peacockdb cost ratio is
+    apples-to-apples (IMPORTANT-1; dmitry). NOT the compressed parquet bytes
+    (pruning['bytes_fetched'] — that stays the storage/disk-IO-reduction metric in the
+    row-group-pruning section). Falls back to the derived rows_read × output-row-width
+    only when no parquet stats are available. OUTPUT term is decoded post-filter
+    materialized (already in the same units). Returns a dict."""
     rows_read = node.rows_fetched if node.rows_fetched is not None else node.rows_scanned
     per_row = (node.output_bytes / node.output_rows) if node.output_rows else 0
-    if node.pruning is not None:
-        bytes_read = node.pruning["bytes_fetched"]     # ACTUAL compressed storage read
+    if node.pruning is not None and node.pruning.get("bytes_fetched_decoded") is not None:
+        bytes_read = node.pruning["bytes_fetched_decoded"]  # DECODED Arrow read (peacockdb units)
     else:
         bytes_read = int(rows_read * per_row)          # derived fallback (no parquet)
     out_rows = min(node.output_rows, rows_read)        # can't output more than read
@@ -477,8 +502,9 @@ def scan_cost(node: Node) -> tuple[int, int, int]:
 
 
 def scan_bytes_read(node: Node) -> int:
-    """Storage-read component of a scan (post-prune compressed bytes). SEPARATE,
-    weightable total — NOT part of node_materialized (avoids double-counting)."""
+    """Storage-read component of a scan (post-prune DECODED Arrow bytes, peacockdb
+    units). SEPARATE, weightable total — NOT part of node_materialized (avoids
+    double-counting)."""
     return scan_cost(node)["bytes_read"] if node.op in SCAN_OPS else 0
 
 

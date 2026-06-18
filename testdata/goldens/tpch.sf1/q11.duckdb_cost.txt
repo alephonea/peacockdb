@@ -2,10 +2,10 @@ ORDER_BY: order_by=[sum((tpch.main.partsupp.ps_supplycost * tpch.main.partsupp.p
   PROJECTION: projections=[ps_partkey, value], output_bytes=662496, output_rows=27604, materialized=0
     CTE: output_bytes=0, output_rows=0, materialized=0
       HASH_JOIN: join_type=INNER, conditions=[ps_suppkey = s_suppkey], output_bytes=1520640, output_rows=31680, materialized=1520640
-        TABLE_SCAN: table=partsupp, projections=[ps_suppkey, ps_partkey, ps_supplycost, ps_availqty], output_bytes=25600000, output_rows=800000, materialized=25600000, bytes_read=8362805, rows_read=800000
+        TABLE_SCAN: table=partsupp, projections=[ps_suppkey, ps_partkey, ps_supplycost, ps_availqty], output_bytes=25600000, output_rows=800000, materialized=25600000, bytes_read=32300000, rows_read=800000
         HASH_JOIN: join_type=INNER, conditions=[s_nationkey = n_nationkey], output_bytes=6336, output_rows=396, materialized=6336
-          TABLE_SCAN: table=supplier, projections=[s_suppkey, s_nationkey], output_bytes=120000, output_rows=10000, materialized=120000, bytes_read=47418, rows_read=10000
-          TABLE_SCAN: table=nation, projections=[n_nationkey], filters="n_name='GERMANY'", output_bytes=4, output_rows=1, materialized=4, bytes_read=398, rows_read=25
+          TABLE_SCAN: table=supplier, projections=[s_suppkey, s_nationkey], output_bytes=120000, output_rows=10000, materialized=120000, bytes_read=122500, rows_read=10000
+          TABLE_SCAN: table=nation, projections=[n_nationkey], filters="n_name='GERMANY'", output_bytes=4, output_rows=1, materialized=4, bytes_read=381, rows_read=25
       NESTED_LOOP_JOIN: join_type=INNER, conditions=[CAST(sum((CAST(ps_supplycost AS DECIMAL(34,2)) * CAST(ps_availqty AS DECIMAL(34,0)))) AS DECIMAL(38,8)) > SUBQUERY], output_bytes=1104160, output_rows=27604, materialized=1819808
         HASH_GROUP_BY: groups=[#0], aggregates=[sum(#1)], output_bytes=715632, output_rows=29818, materialized=760320
           PROJECTION: projections=[ps_partkey, (CAST(ps_supplycost AS DECIMAL(34,2)) * CAST(ps_availqty AS DECIMAL(34,0)))], output_bytes=760320, output_rows=31680, materialized=0
@@ -18,9 +18,9 @@ ORDER_BY: order_by=[sum((tpch.main.partsupp.ps_supplycost * tpch.main.partsupp.p
                   PROJECTION: projections=[(CAST(ps_supplycost AS DECIMAL(34,2)) * CAST(ps_availqty AS DECIMAL(34,0)))], output_bytes=506880, output_rows=31680, materialized=0
                     PROJECTION: projections=[#0, #2, #3, #4, #5, #6], output_bytes=1267200, output_rows=31680, materialized=0
                       CTE_SCAN: output_bytes=1520640, output_rows=31680, materialized=0
-duckdb_cost=39407121
+duckdb_cost=63419381
 materialization_total=30996500
-storage_read_total=8410621
+storage_read_total=32422881
 
 --- row-group pruning (storage reduction) ---
 partsupp  dyn_filter=[ps_suppkey>=33 AND ps_suppkey<=9990]  row_groups=7/7  rows=800000/800000 (100.0%)  bytes_fetched=8362805/8362805 (100.0%)

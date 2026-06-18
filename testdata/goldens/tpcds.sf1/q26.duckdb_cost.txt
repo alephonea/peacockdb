@@ -2,21 +2,21 @@ TOP_N: order_by=[tpcds.main.item.i_item_id ASC], top=100, output_bytes=4800, out
   HASH_GROUP_BY: groups=[#0], aggregates=[avg(#1), avg(#2), avg(#3), avg(#4)], output_bytes=153648, output_rows=3201, materialized=145152
     PROJECTION: projections=[i_item_id, cs_quantity, cs_list_price, cs_coupon_amt, cs_sales_price], output_bytes=145152, output_rows=4032, materialized=0
       HASH_JOIN: join_type=INNER, conditions=[i_item_sk = cs_item_sk], output_bytes=145152, output_rows=4032, materialized=145152
-        TABLE_SCAN: table=item, projections=[i_item_sk, i_item_id], filters="optional: Dynamic Filter (i_item_id)", output_bytes=432000, output_rows=18000, materialized=432000, bytes_read=128816, rows_read=18000
+        TABLE_SCAN: table=item, projections=[i_item_sk, i_item_id], filters="optional: Dynamic Filter (i_item_id)", output_bytes=432000, output_rows=18000, materialized=432000, bytes_read=506250, rows_read=18000
         HASH_JOIN: join_type=INNER, conditions=[cs_promo_sk = p_promo_sk], output_bytes=145152, output_rows=4032, materialized=147544
           HASH_JOIN: join_type=INNER, conditions=[cd_demo_sk = cs_bill_cdemo_sk], output_bytes=178200, output_rows=4050, materialized=397720
             FILTER: output_bytes=219520, output_rows=27440, materialized=0
-              TABLE_SCAN: table=customer_demographics, projections=[cd_demo_sk], filters="cd_gender='M' AND cd_marital_status='S' AND cd_education_status='College'", output_bytes=219520, output_rows=27440, materialized=219520, bytes_read=7768785, rows_read=1920800
+              TABLE_SCAN: table=customer_demographics, projections=[cd_demo_sk], filters="cd_gender='M' AND cd_marital_status='S' AND cd_education_status='College'", output_bytes=219520, output_rows=27440, materialized=219520, bytes_read=60882500, rows_read=1920800
             HASH_JOIN: join_type=INNER, conditions=[cs_sold_date_sk = d_date_sk], output_bytes=14953276, output_rows=287563, materialized=14956204
-              TABLE_SCAN: table=catalog_sales, projections=[cs_sold_date_sk, cs_item_sk, cs_bill_cdemo_sk, cs_promo_sk, cs_quantity, cs_list_price, cs_coupon_amt, cs_sales_price], output_bytes=19169280, output_rows=368640, materialized=19169280, bytes_read=5372139, rows_read=368640
+              TABLE_SCAN: table=catalog_sales, projections=[cs_sold_date_sk, cs_item_sk, cs_bill_cdemo_sk, cs_promo_sk, cs_quantity, cs_list_price, cs_coupon_amt, cs_sales_price], output_bytes=19169280, output_rows=368640, materialized=19169280, bytes_read=32808960, rows_read=368640
               FILTER: output_bytes=2928, output_rows=366, materialized=0
-                TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_year=2000", output_bytes=2928, output_rows=366, materialized=2928, bytes_read=293872, rows_read=73049
+                TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_year=2000", output_bytes=2928, output_rows=366, materialized=2928, bytes_read=1187048, rows_read=73049
           PROJECTION: projections=[#0], output_bytes=2392, output_rows=299, materialized=0
             FILTER: output_bytes=11960, output_rows=299, materialized=0
-              TABLE_SCAN: table=promotion, projections=[p_promo_sk, p_channel_email, p_channel_event], output_bytes=12000, output_rows=300, materialized=12000, bytes_read=2138, rows_read=300
-duckdb_cost=49346898
+              TABLE_SCAN: table=promotion, projections=[p_promo_sk, p_channel_email, p_channel_event], output_bytes=12000, output_rows=300, materialized=12000, bytes_read=5505, rows_read=300
+duckdb_cost=131171411
 materialization_total=35781148
-storage_read_total=13565750
+storage_read_total=95390263
 
 --- row-group pruning (storage reduction) ---
 item  filter=[optional: Dynamic Filter (i_item_id)]  dyn_filter=[i_item_sk>=2 AND i_item_sk<=17996]  row_groups=1/1  rows=18000/18000 (100.0%)  bytes_fetched=128816/128816 (100.0%)

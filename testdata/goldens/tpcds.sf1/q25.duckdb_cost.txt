@@ -4,26 +4,26 @@ TOP_N: order_by=[tpcds.main.item.i_item_id ASC, tpcds.main.item.i_item_desc ASC,
       PROJECTION: projections=[i_item_id, i_item_desc, s_store_id, s_store_name, ss_net_profit, sr_net_loss, cs_net_profit], output_bytes=68, output_rows=1, materialized=0
         PROJECTION: projections=[#0, __internal_compress_string_ubigint(#1), #4, #6, #5, #2, #3], output_bytes=68, output_rows=1, materialized=0
           HASH_JOIN: join_type=INNER, conditions=[s_store_sk = ss_store_sk], output_bytes=76, output_rows=1, materialized=76
-            TABLE_SCAN: table=store, projections=[s_store_sk, s_store_id, s_store_name], filters="s_store_sk<=10", output_bytes=400, output_rows=10, materialized=400, bytes_read=289, rows_read=12
+            TABLE_SCAN: table=store, projections=[s_store_sk, s_store_id, s_store_name], filters="s_store_sk<=10", output_bytes=400, output_rows=10, materialized=400, bytes_read=437, rows_read=12
             HASH_JOIN: join_type=INNER, conditions=[i_item_sk = ss_item_sk], output_bytes=52, output_rows=1, materialized=52
-              TABLE_SCAN: table=item, projections=[i_item_sk, i_item_id, i_item_desc], output_bytes=720000, output_rows=18000, materialized=720000, bytes_read=1082683, rows_read=18000
+              TABLE_SCAN: table=item, projections=[i_item_sk, i_item_id, i_item_desc], output_bytes=720000, output_rows=18000, materialized=720000, bytes_read=2389142, rows_read=18000
               HASH_JOIN: join_type=INNER, conditions=[ss_sold_date_sk = d_date_sk], output_bytes=36, output_rows=1, materialized=276
                 HASH_JOIN: join_type=INNER, conditions=[ss_item_sk = cs_item_sk, ss_customer_sk = cs_bill_customer_sk, ss_ticket_number = sr_ticket_number], output_bytes=108, output_rows=3, materialized=108
-                  TABLE_SCAN: table=store_sales, projections=[ss_sold_date_sk, ss_item_sk, ss_store_sk, ss_customer_sk, ss_ticket_number, ss_net_profit], filters="ss_customer_sk>=2", output_bytes=7789936, output_rows=177044, materialized=7789936, bytes_read=1931535, rows_read=177044
+                  TABLE_SCAN: table=store_sales, projections=[ss_sold_date_sk, ss_item_sk, ss_store_sk, ss_customer_sk, ss_ticket_number, ss_net_profit], filters="ss_customer_sk>=2", output_bytes=7789936, output_rows=177044, materialized=7789936, bytes_read=10047250, rows_read=177044
                   HASH_JOIN: join_type=INNER, conditions=[cs_item_sk = sr_item_sk, cs_bill_customer_sk = sr_customer_sk], output_bytes=96, output_rows=3, materialized=96
                     HASH_JOIN: join_type=INNER, conditions=[cs_sold_date_sk = d_date_sk], output_bytes=4201792, output_rows=150064, materialized=4203504
-                      TABLE_SCAN: table=catalog_sales, projections=[cs_bill_customer_sk, cs_item_sk, cs_sold_date_sk, cs_net_profit], filters="cs_bill_customer_sk>=2", output_bytes=6881280, output_rows=245760, materialized=6881280, bytes_read=2040177, rows_read=245760
+                      TABLE_SCAN: table=catalog_sales, projections=[cs_bill_customer_sk, cs_item_sk, cs_sold_date_sk, cs_net_profit], filters="cs_bill_customer_sk>=2", output_bytes=6881280, output_rows=245760, materialized=6881280, bytes_read=9922560, rows_read=245760
                       FILTER: output_bytes=1712, output_rows=214, materialized=0
-                        TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_moy>=4 AND d_moy<=10 AND d_year=2001", output_bytes=1712, output_rows=214, materialized=1712, bytes_read=294237, rows_read=73049
+                        TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_moy>=4 AND d_moy<=10 AND d_year=2001", output_bytes=1712, output_rows=214, materialized=1712, bytes_read=1780572, rows_read=73049
                     HASH_JOIN: join_type=INNER, conditions=[sr_returned_date_sk = d_date_sk], output_bytes=935496, output_rows=25986, materialized=937208
-                      TABLE_SCAN: table=store_returns, projections=[sr_customer_sk, sr_item_sk, sr_ticket_number, sr_returned_date_sk, sr_net_loss], output_bytes=4423680, output_rows=122880, materialized=4423680, bytes_read=1871647, rows_read=122880
+                      TABLE_SCAN: table=store_returns, projections=[sr_customer_sk, sr_item_sk, sr_ticket_number, sr_returned_date_sk, sr_net_loss], output_bytes=4423680, output_rows=122880, materialized=4423680, bytes_read=5975040, rows_read=122880
                       FILTER: output_bytes=1712, output_rows=214, materialized=0
-                        TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_moy>=4 AND d_moy<=10 AND d_year=2001", output_bytes=1712, output_rows=214, materialized=1712, bytes_read=294237, rows_read=73049
+                        TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_moy>=4 AND d_moy<=10 AND d_year=2001", output_bytes=1712, output_rows=214, materialized=1712, bytes_read=1780572, rows_read=73049
                 FILTER: output_bytes=240, output_rows=30, materialized=0
-                  TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_moy=4 AND d_year=2001", output_bytes=240, output_rows=30, materialized=240, bytes_read=294237, rows_read=73049
-duckdb_cost=32769502
+                  TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_moy=4 AND d_year=2001", output_bytes=240, output_rows=30, materialized=240, bytes_read=1780572, rows_read=73049
+duckdb_cost=58636605
 materialization_total=24960460
-storage_read_total=7809042
+storage_read_total=33676145
 
 --- row-group pruning (storage reduction) ---
 store  filter=[s_store_sk<=10]  dyn_filter=[s_store_sk=2]  row_groups=1/1  rows=12/12 (100.0%)  bytes_fetched=289/289 (100.0%)

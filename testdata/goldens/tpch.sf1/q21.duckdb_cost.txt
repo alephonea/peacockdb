@@ -4,19 +4,19 @@ TOP_N: order_by=[count_star() DESC, tpch.main.supplier.s_name ASC], top=100, out
       LEFT_DELIM_JOIN: join_type=ANTI, conditions=[l_suppkey IS NOT DISTINCT FROM l_suppkey, l_orderkey IS NOT DISTINCT FROM l_orderkey], output_bytes=0, output_rows=0, materialized=1169312
         LEFT_DELIM_JOIN: join_type=SEMI, conditions=[l_suppkey IS NOT DISTINCT FROM l_suppkey, l_orderkey IS NOT DISTINCT FROM l_orderkey], output_bytes=0, output_rows=0, materialized=1213824
           HASH_JOIN: join_type=INNER, conditions=[o_orderkey = l_orderkey], output_bytes=3034840, output_rows=75871, materialized=3034840
-            TABLE_SCAN: table=orders, projections=[o_orderkey], filters="o_orderstatus='F'", output_bytes=5835304, output_rows=729413, materialized=5835304, bytes_read=7698610, rows_read=1500000
+            TABLE_SCAN: table=orders, projections=[o_orderkey], filters="o_orderstatus='F'", output_bytes=5835304, output_rows=729413, materialized=5835304, bytes_read=19687500, rows_read=1500000
             HASH_JOIN: join_type=INNER, conditions=[l_suppkey = s_suppkey], output_bytes=5015648, output_rows=156739, materialized=65708384
               PROJECTION: projections=[#0, #1], output_bytes=60692736, output_rows=3793296, materialized=0
                 FILTER: output_bytes=91039104, output_rows=3793296, materialized=0
-                  TABLE_SCAN: table=lineitem, projections=[l_suppkey, l_orderkey, l_receiptdate, l_commitdate], output_bytes=144029160, output_rows=6001215, materialized=144029160, bytes_read=53121040, rows_read=6001215
+                  TABLE_SCAN: table=lineitem, projections=[l_suppkey, l_orderkey, l_receiptdate, l_commitdate], output_bytes=144029160, output_rows=6001215, materialized=144029160, bytes_read=145529464, rows_read=6001215
               HASH_JOIN: join_type=INNER, conditions=[s_nationkey = n_nationkey], output_bytes=11508, output_rows=411, materialized=11508
-                TABLE_SCAN: table=supplier, projections=[s_suppkey, s_nationkey, s_name], output_bytes=280000, output_rows=10000, materialized=280000, bytes_read=97661, rows_read=10000
-                TABLE_SCAN: table=nation, projections=[n_nationkey], filters="n_name='SAUDI ARABIA'", output_bytes=4, output_rows=1, materialized=4, bytes_read=398, rows_read=25
+                TABLE_SCAN: table=supplier, projections=[s_suppkey, s_nationkey, s_name], output_bytes=280000, output_rows=10000, materialized=280000, bytes_read=342500, rows_read=10000
+                TABLE_SCAN: table=nation, projections=[n_nationkey], filters="n_name='SAUDI ARABIA'", output_bytes=4, output_rows=1, materialized=4, bytes_read=381, rows_read=25
           HASH_JOIN: join_type=SEMI, conditions=[l_suppkey IS NOT DISTINCT FROM l_suppkey, l_orderkey IS NOT DISTINCT FROM l_orderkey], output_bytes=2338848, output_rows=73089, materialized=7176544
             COLUMN_DATA_SCAN: output_bytes=3034840, output_rows=75871, materialized=0
             PROJECTION: projections=[l_suppkey, l_orderkey], output_bytes=4837696, output_rows=302356, materialized=0
               HASH_JOIN: join_type=INNER, conditions=[l_orderkey = l_orderkey, l_suppkey != l_suppkey], output_bytes=4837696, output_rows=302356, materialized=4837696
-                TABLE_SCAN: table=lineitem, projections=[l_orderkey, l_suppkey], output_bytes=96019440, output_rows=6001215, materialized=96019440, bytes_read=41727344, rows_read=6001215
+                TABLE_SCAN: table=lineitem, projections=[l_orderkey, l_suppkey], output_bytes=96019440, output_rows=6001215, materialized=96019440, bytes_read=97519744, rows_read=6001215
                 DELIM_SCAN: output_bytes=0, output_rows=0, materialized=0
           HASH_GROUP_BY: groups=[#2, #1], output_bytes=1213824, output_rows=75864, materialized=0
         HASH_JOIN: join_type=ANTI, conditions=[l_suppkey IS NOT DISTINCT FROM l_suppkey, l_orderkey IS NOT DISTINCT FROM l_orderkey], output_bytes=66256, output_rows=4141, materialized=3120800
@@ -25,12 +25,12 @@ TOP_N: order_by=[count_star() DESC, tpch.main.supplier.s_name ASC], top=100, out
             HASH_JOIN: join_type=INNER, conditions=[l_orderkey = l_orderkey, l_suppkey != l_suppkey], output_bytes=3054544, output_rows=190909, materialized=63747280
               PROJECTION: projections=[#0, #1], output_bytes=60692736, output_rows=3793296, materialized=0
                 FILTER: output_bytes=91039104, output_rows=3793296, materialized=0
-                  TABLE_SCAN: table=lineitem, projections=[l_orderkey, l_suppkey, l_receiptdate, l_commitdate], output_bytes=144029160, output_rows=6001215, materialized=144029160, bytes_read=53121040, rows_read=6001215
+                  TABLE_SCAN: table=lineitem, projections=[l_orderkey, l_suppkey, l_receiptdate, l_commitdate], output_bytes=144029160, output_rows=6001215, materialized=144029160, bytes_read=145529464, rows_read=6001215
               DELIM_SCAN: output_bytes=0, output_rows=0, materialized=0
         HASH_GROUP_BY: groups=[#1, #0], output_bytes=1169312, output_rows=73082, materialized=0
-duckdb_cost=696055469
+duckdb_cost=948898429
 materialization_total=540289376
-storage_read_total=155766093
+storage_read_total=408609053
 
 --- row-group pruning (storage reduction) ---
 orders  filter=[o_orderstatus='F']  dyn_filter=[o_orderkey>=1 AND o_orderkey<=6000000]  row_groups=13/13  rows=1500000/1500000 (100.0%)  bytes_fetched=7698610/7698610 (100.0%)

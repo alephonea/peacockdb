@@ -5,29 +5,29 @@ TOP_N: order_by=[count(DISTINCT cs1.cs_order_number) ASC], top=100, output_bytes
         RIGHT_DELIM_JOIN: join_type=RIGHT_SEMI, conditions=[cs_warehouse_sk IS NOT DISTINCT FROM cs_warehouse_sk, cs_order_number IS NOT DISTINCT FROM cs_order_number], output_bytes=0, output_rows=0, materialized=25792
           HASH_JOIN: join_type=INNER, conditions=[d_date_sk = cs_ship_date_sk], output_bytes=75456, output_rows=2358, materialized=75944
             FILTER: output_bytes=488, output_rows=61, materialized=0
-              TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_date>='2002-02-01'::DATE AND d_date<='2002-04-02'::DATE", output_bytes=488, output_rows=61, materialized=488, bytes_read=584645, rows_read=73049
+              TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_date>='2002-02-01'::DATE AND d_date<='2002-04-02'::DATE", output_bytes=488, output_rows=61, materialized=488, bytes_read=885720, rows_read=73049
             HASH_JOIN: join_type=INNER, conditions=[cs_call_center_sk = cc_call_center_sk], output_bytes=2798520, output_rows=69963, materialized=2798520
               HASH_JOIN: join_type=INNER, conditions=[cs_ship_addr_sk = ca_address_sk], output_bytes=3366192, output_rows=70129, materialized=3366192
-                TABLE_SCAN: table=catalog_sales, projections=[cs_ship_date_sk, cs_ship_addr_sk, cs_call_center_sk, cs_order_number, cs_warehouse_sk, cs_ext_ship_cost, cs_net_profit], output_bytes=69194304, output_rows=1441548, materialized=69194304, bytes_read=20463420, rows_read=1441548
-                TABLE_SCAN: table=customer_address, projections=[ca_address_sk], filters="ca_state='GA'", output_bytes=19568, output_rows=2446, materialized=19568, bytes_read=241055, rows_read=50000
-              TABLE_SCAN: table=call_center, projections=[cc_call_center_sk], filters="cc_county='Williamson County'", output_bytes=48, output_rows=6, materialized=48, bytes_read=128, rows_read=6
+                TABLE_SCAN: table=catalog_sales, projections=[cs_ship_date_sk, cs_ship_addr_sk, cs_call_center_sk, cs_order_number, cs_warehouse_sk, cs_ext_ship_cost, cs_net_profit], output_bytes=69194304, output_rows=1441548, materialized=69194304, bytes_read=104872620, rows_read=1441548
+                TABLE_SCAN: table=customer_address, projections=[ca_address_sk], filters="ca_state='GA'", output_bytes=19568, output_rows=2446, materialized=19568, bytes_read=709400, rows_read=50000
+              TABLE_SCAN: table=call_center, projections=[cc_call_center_sk], filters="cc_county='Williamson County'", output_bytes=48, output_rows=6, materialized=48, bytes_read=175, rows_read=6
           HASH_JOIN: join_type=RIGHT_SEMI, conditions=[cs_warehouse_sk IS NOT DISTINCT FROM cs_warehouse_sk, cs_order_number IS NOT DISTINCT FROM cs_order_number], output_bytes=37728, output_rows=2358, materialized=227968
             PROJECTION: projections=[cs_warehouse_sk, cs_order_number], output_bytes=190240, output_rows=11890, materialized=0
               HASH_JOIN: join_type=INNER, conditions=[cs_order_number = cs_order_number, cs_warehouse_sk != cs_warehouse_sk], output_bytes=190240, output_rows=11890, materialized=190240
-                TABLE_SCAN: table=catalog_sales, projections=[cs_order_number, cs_warehouse_sk], output_bytes=5370048, output_rows=335628, materialized=5370048, bytes_read=898142, rows_read=335628
+                TABLE_SCAN: table=catalog_sales, projections=[cs_order_number, cs_warehouse_sk], output_bytes=5370048, output_rows=335628, materialized=5370048, bytes_read=5453956, rows_read=335628
                 DELIM_SCAN: output_bytes=0, output_rows=0, materialized=0
             DUMMY_SCAN: output_bytes=0, output_rows=0, materialized=0
           HASH_GROUP_BY: groups=[#2, #1], output_bytes=25792, output_rows=1612, materialized=0
         HASH_JOIN: join_type=RIGHT_ANTI, conditions=[cs_order_number IS NOT DISTINCT FROM cs_order_number], output_bytes=13600, output_rows=850, materialized=18168
           PROJECTION: projections=[cs_order_number], output_bytes=4568, output_rows=571, materialized=0
             HASH_JOIN: join_type=INNER, conditions=[cr_order_number = cs_order_number], output_bytes=9136, output_rows=571, materialized=9136
-              TABLE_SCAN: table=catalog_returns, projections=[cr_order_number], output_bytes=1152536, output_rows=144067, materialized=1152536, bytes_read=565211, rows_read=144067
+              TABLE_SCAN: table=catalog_returns, projections=[cr_order_number], output_bytes=1152536, output_rows=144067, materialized=1152536, bytes_read=1170545, rows_read=144067
               DELIM_SCAN: output_bytes=0, output_rows=0, materialized=0
           DUMMY_SCAN: output_bytes=0, output_rows=0, materialized=0
         HASH_GROUP_BY: groups=[#0], output_bytes=4856, output_rows=607, materialized=0
-duckdb_cost=105220049
+duckdb_cost=195559864
 materialization_total=82467448
-storage_read_total=22752601
+storage_read_total=113092416
 
 --- row-group pruning (storage reduction) ---
 date_dim  filter=[d_date>='2002-02-01'::DATE AND d_date<='2002-04-02'::DATE]  dyn_filter=[d_date_sk>=2450818 AND d_date_sk<=2452735]  row_groups=1/1  rows=73049/73049 (100.0%)  bytes_fetched=584645/584645 (100.0%)

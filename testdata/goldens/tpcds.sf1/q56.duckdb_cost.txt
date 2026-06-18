@@ -6,47 +6,47 @@ TOP_N: order_by=[sum(tmp1.total_sales) ASC, tmp1.i_item_id ASC], top=100, output
           PROJECTION: projections=[i_item_id, ss_ext_sales_price], output_bytes=9560, output_rows=478, materialized=0
             HASH_JOIN: join_type=INNER, conditions=[i_item_sk = ss_item_sk], output_bytes=9560, output_rows=478, materialized=9560
               HASH_JOIN: join_type=SEMI, conditions=[i_item_id = #0], output_bytes=27288, output_rows=1137, materialized=35288
-                TABLE_SCAN: table=item, projections=[i_item_id, i_item_sk], output_bytes=432000, output_rows=18000, materialized=432000, bytes_read=128816, rows_read=18000
+                TABLE_SCAN: table=item, projections=[i_item_id, i_item_sk], output_bytes=432000, output_rows=18000, materialized=432000, bytes_read=506250, rows_read=18000
                 PROJECTION: projections=[#1], output_bytes=8000, output_rows=500, materialized=0
                   FILTER: output_bytes=16000, output_rows=500, materialized=0
-                    TABLE_SCAN: table=item, projections=[i_color, i_item_id], filters="optional: i_color IN ('slate', 'blanched', 'burnished')", output_bytes=576000, output_rows=18000, materialized=576000, bytes_read=73001, rows_read=18000
+                    TABLE_SCAN: table=item, projections=[i_color, i_item_id], filters="optional: i_color IN ('slate', 'blanched', 'burnished')", output_bytes=576000, output_rows=18000, materialized=576000, bytes_read=530986, rows_read=18000
               HASH_JOIN: join_type=INNER, conditions=[ss_addr_sk = ca_address_sk], output_bytes=169740, output_rows=8487, materialized=169740
                 HASH_JOIN: join_type=INNER, conditions=[ss_sold_date_sk = d_date_sk], output_bytes=682780, output_rows=24385, materialized=683004
-                  TABLE_SCAN: table=store_sales, projections=[ss_item_sk, ss_sold_date_sk, ss_addr_sk, ss_ext_sales_price], output_bytes=4957232, output_rows=177044, materialized=4957232, bytes_read=1336706, rows_read=177044
+                  TABLE_SCAN: table=store_sales, projections=[ss_item_sk, ss_sold_date_sk, ss_addr_sk, ss_ext_sales_price], output_bytes=4957232, output_rows=177044, materialized=4957232, bytes_read=7170284, rows_read=177044
                   FILTER: output_bytes=224, output_rows=28, materialized=0
-                    TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_year=2001 AND d_moy=2", output_bytes=224, output_rows=28, materialized=224, bytes_read=294237, rows_read=73049
-                TABLE_SCAN: table=customer_address, projections=[ca_address_sk], filters="ca_gmt_offset=-5.00", output_bytes=145968, output_rows=18246, materialized=145968, bytes_read=222544, rows_read=50000
+                    TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_year=2001 AND d_moy=2", output_bytes=224, output_rows=28, materialized=224, bytes_read=1780572, rows_read=73049
+                TABLE_SCAN: table=customer_address, projections=[ca_address_sk], filters="ca_gmt_offset=-5.00", output_bytes=145968, output_rows=18246, materialized=145968, bytes_read=1212500, rows_read=50000
         HASH_GROUP_BY: groups=[#0], aggregates=[sum(#1)], output_bytes=6368, output_rows=199, materialized=4920
           PROJECTION: projections=[i_item_id, cs_ext_sales_price], output_bytes=4920, output_rows=246, materialized=0
             HASH_JOIN: join_type=RIGHT_SEMI, conditions=[#0 = i_item_id], output_bytes=4920, output_rows=246, materialized=12920
               PROJECTION: projections=[#1], output_bytes=8000, output_rows=500, materialized=0
                 FILTER: output_bytes=16000, output_rows=500, materialized=0
-                  TABLE_SCAN: table=item, projections=[i_color, i_item_id], filters="optional: i_color IN ('slate', 'blanched', 'burnished')", output_bytes=576000, output_rows=18000, materialized=576000, bytes_read=73001, rows_read=18000
+                  TABLE_SCAN: table=item, projections=[i_color, i_item_id], filters="optional: i_color IN ('slate', 'blanched', 'burnished')", output_bytes=576000, output_rows=18000, materialized=576000, bytes_read=530986, rows_read=18000
               HASH_JOIN: join_type=INNER, conditions=[i_item_sk = cs_item_sk], output_bytes=95000, output_rows=4750, materialized=95000
-                TABLE_SCAN: table=item, projections=[i_item_id, i_item_sk], output_bytes=432000, output_rows=18000, materialized=432000, bytes_read=128816, rows_read=18000
+                TABLE_SCAN: table=item, projections=[i_item_id, i_item_sk], output_bytes=432000, output_rows=18000, materialized=432000, bytes_read=506250, rows_read=18000
                 HASH_JOIN: join_type=INNER, conditions=[cs_bill_addr_sk = ca_address_sk], output_bytes=95000, output_rows=4750, materialized=95000
                   HASH_JOIN: join_type=INNER, conditions=[cs_sold_date_sk = d_date_sk], output_bytes=355376, output_rows=12692, materialized=355600
-                    TABLE_SCAN: table=catalog_sales, projections=[cs_item_sk, cs_sold_date_sk, cs_bill_addr_sk, cs_ext_sales_price], output_bytes=3440640, output_rows=122880, materialized=3440640, bytes_read=1014512, rows_read=122880
+                    TABLE_SCAN: table=catalog_sales, projections=[cs_item_sk, cs_sold_date_sk, cs_bill_addr_sk, cs_ext_sales_price], output_bytes=3440640, output_rows=122880, materialized=3440640, bytes_read=4976640, rows_read=122880
                     FILTER: output_bytes=224, output_rows=28, materialized=0
-                      TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_year=2001 AND d_moy=2", output_bytes=224, output_rows=28, materialized=224, bytes_read=294237, rows_read=73049
-                  TABLE_SCAN: table=customer_address, projections=[ca_address_sk], filters="ca_gmt_offset=-5.00", output_bytes=145968, output_rows=18246, materialized=145968, bytes_read=222544, rows_read=50000
+                      TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_year=2001 AND d_moy=2", output_bytes=224, output_rows=28, materialized=224, bytes_read=1780572, rows_read=73049
+                  TABLE_SCAN: table=customer_address, projections=[ca_address_sk], filters="ca_gmt_offset=-5.00", output_bytes=145968, output_rows=18246, materialized=145968, bytes_read=1212500, rows_read=50000
         HASH_GROUP_BY: groups=[#0], aggregates=[sum(#1)], output_bytes=3392, output_rows=106, materialized=2420
           PROJECTION: projections=[i_item_id, ws_ext_sales_price], output_bytes=2420, output_rows=121, materialized=0
             HASH_JOIN: join_type=RIGHT_SEMI, conditions=[#0 = i_item_id], output_bytes=2420, output_rows=121, materialized=10420
               PROJECTION: projections=[#1], output_bytes=8000, output_rows=500, materialized=0
                 FILTER: output_bytes=16000, output_rows=500, materialized=0
-                  TABLE_SCAN: table=item, projections=[i_color, i_item_id], filters="optional: i_color IN ('slate', 'blanched', 'burnished')", output_bytes=576000, output_rows=18000, materialized=576000, bytes_read=73001, rows_read=18000
+                  TABLE_SCAN: table=item, projections=[i_color, i_item_id], filters="optional: i_color IN ('slate', 'blanched', 'burnished')", output_bytes=576000, output_rows=18000, materialized=576000, bytes_read=530986, rows_read=18000
               HASH_JOIN: join_type=INNER, conditions=[i_item_sk = ws_item_sk], output_bytes=46980, output_rows=2349, materialized=46980
-                TABLE_SCAN: table=item, projections=[i_item_id, i_item_sk], output_bytes=432000, output_rows=18000, materialized=432000, bytes_read=128816, rows_read=18000
+                TABLE_SCAN: table=item, projections=[i_item_id, i_item_sk], output_bytes=432000, output_rows=18000, materialized=432000, bytes_read=506250, rows_read=18000
                 HASH_JOIN: join_type=INNER, conditions=[ca_address_sk = ws_bill_addr_sk], output_bytes=46980, output_rows=2349, materialized=46980
-                  TABLE_SCAN: table=customer_address, projections=[ca_address_sk], filters="ca_gmt_offset=-5.00", output_bytes=145968, output_rows=18246, materialized=145968, bytes_read=222544, rows_read=50000
+                  TABLE_SCAN: table=customer_address, projections=[ca_address_sk], filters="ca_gmt_offset=-5.00", output_bytes=145968, output_rows=18246, materialized=145968, bytes_read=1212500, rows_read=50000
                   HASH_JOIN: join_type=INNER, conditions=[ws_sold_date_sk = d_date_sk], output_bytes=194152, output_rows=6934, materialized=194376
-                    TABLE_SCAN: table=web_sales, projections=[ws_item_sk, ws_sold_date_sk, ws_bill_addr_sk, ws_ext_sales_price], output_bytes=3440640, output_rows=122880, materialized=3440640, bytes_read=1014862, rows_read=122880
+                    TABLE_SCAN: table=web_sales, projections=[ws_item_sk, ws_sold_date_sk, ws_bill_addr_sk, ws_ext_sales_price], output_bytes=3440640, output_rows=122880, materialized=3440640, bytes_read=4976640, rows_read=122880
                     FILTER: output_bytes=224, output_rows=28, materialized=0
-                      TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_year=2001 AND d_moy=2", output_bytes=224, output_rows=28, materialized=224, bytes_read=294237, rows_read=73049
-duckdb_cost=22627402
+                      TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_year=2001 AND d_moy=2", output_bytes=224, output_rows=28, materialized=224, bytes_read=1780572, rows_read=73049
+duckdb_cost=46320016
 materialization_total=17105528
-storage_read_total=5521874
+storage_read_total=29214488
 
 --- row-group pruning (storage reduction) ---
 item  dyn_filter=[i_item_id>='AAAAAAAAAAFCAAAA' AND i_item_id<='AAAAAAAAPLOAAAAA' AND i_item_sk>=7 AND i_item_sk<=17999]  row_groups=1/1  rows=18000/18000 (100.0%)  bytes_fetched=128816/128816 (100.0%)

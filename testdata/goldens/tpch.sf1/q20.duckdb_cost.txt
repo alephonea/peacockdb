@@ -4,8 +4,8 @@ ORDER_BY: order_by=[tpch.main.supplier.s_name ASC], output_bytes=5952, output_ro
       FILTER: output_bytes=186656, output_rows=5833, materialized=0
         RIGHT_DELIM_JOIN: join_type=RIGHT, conditions=[ps_suppkey IS NOT DISTINCT FROM ps_suppkey, ps_partkey IS NOT DISTINCT FROM ps_partkey], output_bytes=0, output_rows=0, materialized=136128
           HASH_JOIN: join_type=SEMI, conditions=[ps_partkey = #0], output_bytes=204192, output_rows=8508, materialized=204192
-            TABLE_SCAN: table=partsupp, projections=[ps_partkey, ps_availqty, ps_suppkey], output_bytes=19200000, output_rows=800000, materialized=19200000, bytes_read=4772419, rows_read=800000
-            TABLE_SCAN: table=part, projections=[p_partkey], filters="p_name>='forest' AND p_name<'foresu'", output_bytes=17016, output_rows=2127, materialized=17016, bytes_read=3472749, rows_read=200000
+            TABLE_SCAN: table=partsupp, projections=[ps_partkey, ps_availqty, ps_suppkey], output_bytes=19200000, output_rows=800000, materialized=19200000, bytes_read=19500000, rows_read=800000
+            TABLE_SCAN: table=part, projections=[p_partkey], filters="p_name>='forest' AND p_name<'foresu'", output_bytes=17016, output_rows=2127, materialized=17016, bytes_read=8975221, rows_read=200000
           HASH_JOIN: join_type=RIGHT, conditions=[ps_suppkey IS NOT DISTINCT FROM ps_suppkey, ps_partkey IS NOT DISTINCT FROM ps_partkey], output_bytes=272256, output_rows=8508, materialized=459232
             PROJECTION: projections=[(0.5 * sum(l_quantity)), ps_suppkey, ps_partkey], output_bytes=186976, output_rows=5843, materialized=0
               PROJECTION: projections=[__internal_decompress_integral_bigint(#0, 1), __internal_decompress_integral_bigint(#1, 1), #2], output_bytes=186976, output_rows=5843, materialized=0
@@ -13,16 +13,16 @@ ORDER_BY: order_by=[tpch.main.supplier.s_name ASC], output_bytes=5952, output_ro
                   PROJECTION: projections=[ps_suppkey, ps_partkey, l_quantity], output_bytes=136374, output_rows=9741, materialized=0
                     PROJECTION: projections=[__internal_compress_integral_uinteger(#0, 1), __internal_compress_integral_usmallint(#1, 1), #2, #3, #4], output_bytes=292230, output_rows=9741, materialized=0
                       HASH_JOIN: join_type=INNER, conditions=[l_partkey = ps_partkey, l_suppkey = ps_suppkey], output_bytes=389640, output_rows=9741, materialized=389640
-                        TABLE_SCAN: table=lineitem, projections=[l_partkey, l_suppkey, l_quantity], filters="l_shipdate>='1994-01-01'::DATE AND (CAST(l_shipdate AS TIMESTAMP) < '1995-01-01 00:00:00'::TIMESTAMP)", output_bytes=21826920, output_rows=909455, materialized=21826920, bytes_read=7412586, rows_read=983040
+                        TABLE_SCAN: table=lineitem, projections=[l_partkey, l_suppkey, l_quantity], filters="l_shipdate>='1994-01-01'::DATE AND (CAST(l_shipdate AS TIMESTAMP) < '1995-01-01 00:00:00'::TIMESTAMP)", output_bytes=21826920, output_rows=909455, materialized=21826920, bytes_read=35635200, rows_read=983040
                         DELIM_SCAN: output_bytes=0, output_rows=0, materialized=0
             DUMMY_SCAN: output_bytes=0, output_rows=0, materialized=0
           HASH_GROUP_BY: groups=[#2, #0], output_bytes=136128, output_rows=8508, materialized=0
     HASH_JOIN: join_type=INNER, conditions=[s_nationkey = n_nationkey], output_bytes=18128, output_rows=412, materialized=18128
-      TABLE_SCAN: table=supplier, projections=[s_suppkey, s_nationkey, s_name, s_address], output_bytes=440000, output_rows=10000, materialized=440000, bytes_read=382407, rows_read=10000
-      TABLE_SCAN: table=nation, projections=[n_nationkey], filters="n_name='CANADA'", output_bytes=4, output_rows=1, materialized=4, bytes_read=398, rows_read=25
-duckdb_cost=58926761
+      TABLE_SCAN: table=supplier, projections=[s_suppkey, s_nationkey, s_name, s_address], output_bytes=440000, output_rows=10000, materialized=440000, bytes_read=632271, rows_read=10000
+      TABLE_SCAN: table=nation, projections=[n_nationkey], filters="n_name='CANADA'", output_bytes=4, output_rows=1, materialized=4, bytes_read=381, rows_read=25
+duckdb_cost=107629275
 materialization_total=42886202
-storage_read_total=16040559
+storage_read_total=64743073
 
 --- row-group pruning (storage reduction) ---
 partsupp  dyn_filter=[ps_partkey>=5 AND ps_partkey<=199879]  row_groups=7/7  rows=800000/800000 (100.0%)  bytes_fetched=4772419/4772419 (100.0%)

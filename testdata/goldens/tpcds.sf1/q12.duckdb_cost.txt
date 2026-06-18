@@ -8,14 +8,14 @@ TOP_N: order_by=[tpcds.main.item.i_category ASC, tpcds.main.item.i_class ASC, tp
               PROJECTION: projections=[#0, __internal_compress_string_uhugeint(#1), #2, #3, __internal_compress_string_uhugeint(#4), #5], output_bytes=144504, output_rows=2007, materialized=0
                 HASH_JOIN: join_type=INNER, conditions=[ws_item_sk = i_item_sk], output_bytes=144504, output_rows=2007, materialized=549052
                   HASH_JOIN: join_type=INNER, conditions=[ws_sold_date_sk = d_date_sk], output_bytes=133860, output_rows=6693, materialized=134108
-                    TABLE_SCAN: table=web_sales, projections=[ws_item_sk, ws_sold_date_sk, ws_ext_sales_price], output_bytes=2457600, output_rows=122880, materialized=2457600, bytes_read=747044, rows_read=122880
+                    TABLE_SCAN: table=web_sales, projections=[ws_item_sk, ws_sold_date_sk, ws_ext_sales_price], output_bytes=2457600, output_rows=122880, materialized=2457600, bytes_read=3978240, rows_read=122880
                     FILTER: output_bytes=248, output_rows=31, materialized=0
-                      TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_date>='1999-02-22'::DATE AND d_date<='1999-03-24'::DATE", output_bytes=248, output_rows=31, materialized=248, bytes_read=584645, rows_read=73049
+                      TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_date>='1999-02-22'::DATE AND d_date<='1999-03-24'::DATE", output_bytes=248, output_rows=31, materialized=248, bytes_read=885720, rows_read=73049
                   FILTER: output_bytes=404548, output_rows=5323, materialized=0
-                    TABLE_SCAN: table=item, projections=[i_item_sk, i_category, i_item_id, i_item_desc, i_class, i_current_price], filters="optional: i_category IN ('Sports', 'Books', 'Home')", output_bytes=1368000, output_rows=18000, materialized=1368000, bytes_read=1147848, rows_read=18000
-duckdb_cost=7380681
+                    TABLE_SCAN: table=item, projections=[i_item_sk, i_category, i_item_id, i_item_desc, i_class, i_current_price], filters="optional: i_category IN ('Sports', 'Books', 'Home')", output_bytes=1368000, output_rows=18000, materialized=1368000, bytes_read=3073399, rows_read=18000
+duckdb_cost=12838503
 materialization_total=4901144
-storage_read_total=2479537
+storage_read_total=7937359
 
 --- row-group pruning (storage reduction) ---
 web_sales  dyn_filter=[ws_item_sk>=3 AND ws_item_sk<=18000 AND ws_sold_date_sk>=2451232 AND ws_sold_date_sk<=2451262]  row_groups=1/6  rows=122880/719384 (17.1%)  bytes_fetched=747044/4412978 (16.9%)
