@@ -14,16 +14,16 @@ CTE: output_bytes=0, output_rows=0, materialized=0
             TABLE_SCAN: table=date_dim, projections=[d_week_seq], filters="d_month_seq>=1212 AND d_month_seq<=1223", output_bytes=2920, output_rows=365, materialized=2920, bytes_read=1187048, rows_read=73049
             HASH_JOIN: join_type=INNER, conditions=[ss_store_sk = s_store_sk], output_bytes=238944, output_rows=1572, materialized=238944
               CTE_SCAN: output_bytes=234752, output_rows=1834, materialized=0
-              TABLE_SCAN: table=store, projections=[s_store_sk, s_store_name, s_store_id], output_bytes=480, output_rows=12, materialized=480, bytes_read=480, rows_read=12
+              TABLE_SCAN: table=store, projections=[s_store_sk, s_store_name, s_store_id], output_bytes=480, output_rows=12, materialized=480, bytes_read=437, rows_read=12
         PROJECTION: projections=[d_week_seq2, s_store_id2, sun_sales2, mon_sales2, tue_sales2, wed_sales2, thu_sales2, fri_sales2, sat_sales2], output_bytes=297840, output_rows=2190, materialized=0
           HASH_JOIN: join_type=INNER, conditions=[d_week_seq = d_week_seq], output_bytes=315360, output_rows=2190, materialized=315360
             TABLE_SCAN: table=date_dim, projections=[d_week_seq], filters="d_month_seq>=1224 AND d_month_seq<=1235", output_bytes=2920, output_rows=365, materialized=2920, bytes_read=1187048, rows_read=73049
             HASH_JOIN: join_type=INNER, conditions=[ss_store_sk = s_store_sk], output_bytes=213792, output_rows=1572, materialized=213792
               CTE_SCAN: output_bytes=234752, output_rows=1834, materialized=0
               TABLE_SCAN: table=store, projections=[s_store_sk, s_store_id], output_bytes=288, output_rows=12, materialized=288, bytes_read=338, rows_read=12
-duckdb_cost=346842184
+duckdb_cost=346842141
 materialization_total=249213166
-storage_read_total=97629018
+storage_read_total=97628975
 
 --- row-group pruning (storage reduction) ---
 store_sales  dyn_filter=[ss_sold_date_sk>=2450816 AND ss_sold_date_sk<=2452642]  row_groups=24/24  rows=2880404/2880404 (100.0%)  bytes_fetched=7558464/7558464 (100.0%)

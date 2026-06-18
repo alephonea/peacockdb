@@ -30,8 +30,10 @@ both + their sum):
     pruning section separately reports bytes_fetched in COMPRESSED parquet bytes (the
     storage/disk-IO-reduction metric).
   - duckdb_cost = materialization_total + storage_read_total.
-read >= output always (a scan can't output more than it read; output capped at
-rows_fetched). threads=1 throughout for reproducibility.
+bytes_read (decoded Arrow, read basis) and out_bytes/materialization (DuckDB
+result_set_size, output basis) are DIFFERENT measurement bases, so bytes_read < out_bytes
+can legitimately occur on small scans and is NOT clamped (dmitry, option c). out_rows IS
+capped at rows_read (same basis = row counts). threads=1 throughout for reproducibility.
 """
 
 from __future__ import annotations
@@ -459,52 +461,44 @@ def annotation(node: Node) -> str:
     return ", ".join(parts)
 
 
-def scan_cost(node: Node) -> tuple[int, int, int]:
-    """TABLE_SCAN two-part cost -> (bytes_read, rows_read, materialized).
+def scan_cost(node: Node) -> dict:
+    """TABLE_SCAN cost terms -> {rows_read, bytes_read, out_rows, out_bytes}.
 
-    bytes_read is DERIVED (rows_read × output-row width), not a measured storage
-    byte count. KNOWN LIMITATION: when output_rows == 0 (an empty post-filter
-    result, e.g. a fully-pruned scan) the per-row width is unknown, so bytes_read
-    collapses to 0 and the scan contributes only its (0-byte) output — i.e. a
-    fully-selective scan is under-weighted here. Acceptable for a provisional,
-    directional proxy; revisit with a schema-derived min width when the model is
-    refined.
+    rows_read is the POST-PRUNE scan size: `rows_fetched` (rows in the surviving row
+    groups under the pass1-static ∩ pass2-dynamic min/max bounds) when pruning was
+    computed, else the post-static `operator_rows_scanned`. So duckdb_cost credits the
+    deterministic row-group pruning from BOTH inputs.
 
-    rows_read is the POST-PRUNE scan size: `rows_fetched` (surviving row groups under
-    the static ∩ dynamic min/max bounds) when pruning was computed, else the post-
-    static `operator_rows_scanned`. So duckdb_cost credits the deterministic row-group
-    pruning from BOTH inputs (pass-1 static + pass-2 dynamic bounds).
+    bytes_read = the DECODED Arrow (in-memory) bytes of those surviving row groups'
+    referenced columns (pruning['bytes_fetched_decoded']) — the READ basis, in the SAME
+    units as peacockdb's GpuScanExec output_bytes so the duckdb-vs-peacockdb cost ratio
+    is apples-to-apples (IMPORTANT-1; dmitry). Falls back to the derived rows_read ×
+    output-row-width only when no parquet stats are available. (NOT the compressed
+    parquet bytes — pruning['bytes_fetched'] stays the storage/disk-IO-reduction metric
+    in the row-group-pruning section.)
 
-    The OUTPUT term is capped at the read term — a scan can't output more rows than it
-    read. For a dynamic-filter fact with no static filter (e.g. q1 store_returns),
-    pass-1's post-static output_rows is the FULL table while the post-prune read is
-    smaller; without the cap that's unphysical (output > read). So the same pruning is
-    applied to both terms.
+    TWO MEASUREMENT BASES — bytes_read is NOT clamped to output. bytes_read is the Arrow
+    read size; out_bytes / materialization use DuckDB's result_set_size (output basis).
+    Because these are DIFFERENT bases, bytes_read < out_bytes can LEGITIMATELY occur on
+    small (dim-table) scans — an artifact of comparing two systems' byte accounting, NOT
+    a bug, left UNCLAMPED (dmitry, option c). read>=output is a real invariant only
+    WITHIN one basis, so it is NOT asserted across the read(Arrow)/output(DuckDB) seam.
 
-    READ term = the DECODED Arrow (in-memory) bytes of the surviving row groups'
-    referenced columns (pruning['bytes_fetched_decoded']) — the SAME units as
-    peacockdb's GpuScanExec output_bytes, so the duckdb-vs-peacockdb cost ratio is
-    apples-to-apples (IMPORTANT-1; dmitry). NOT the compressed parquet bytes
-    (pruning['bytes_fetched'] — that stays the storage/disk-IO-reduction metric in the
-    row-group-pruning section). Falls back to the derived rows_read × output-row-width
-    only when no parquet stats are available.
-
-    read >= output: a scan can't output more than it read. ENFORCED by a byte-level
-    max-clamp (not just the row-level cap), because the two terms now meet at the scan
-    on DIFFERENT byte bases — the READ term is pyarrow Arrow-nbytes (dense in-memory)
-    while the OUTPUT term is DuckDB's result_set_size estimate. For ~6% of scans (tiny
-    dim tables, e.g. q76 dim out 432,000 vs decoded read 326,349) the decoded read came
-    out below the DuckDB-basis output, so the row-level cap alone left output > read;
-    the max-clamp restores the invariant. Returns a dict."""
+    out_rows IS capped at rows_read — that cap is within ONE basis (row counts), so it's
+    a real invariant: a scan can't output more rows than the surviving groups hold. It
+    bites BY DESIGN for dynamic-filter facts (pass-1 JFP-off emits full cardinality while
+    rows_read applies the pass-2 dynamic bounds -> output_rows > rows_read) — that case is
+    silent. compute_scan_pruning WARNS only when output_rows > rows_read with NO dynamic
+    filter, which means static bound-extraction over-pruned a row group DuckDB kept (a
+    real bug). Returns a dict."""
     rows_read = node.rows_fetched if node.rows_fetched is not None else node.rows_scanned
     per_row = (node.output_bytes / node.output_rows) if node.output_rows else 0
-    out_rows = min(node.output_rows, rows_read)        # can't output more ROWS than read
-    out_bytes = int(out_rows * per_row)
     if node.pruning is not None and node.pruning.get("bytes_fetched_decoded") is not None:
         bytes_read = node.pruning["bytes_fetched_decoded"]  # DECODED Arrow read (peacockdb units)
     else:
         bytes_read = int(rows_read * per_row)          # derived fallback (no parquet)
-    bytes_read = max(bytes_read, out_bytes)            # read >= output at BYTE level (two-basis seam)
+    out_rows = min(node.output_rows, rows_read)        # row-count cap (same basis); warned when it bites
+    out_bytes = int(out_rows * per_row)
     return {"rows_read": rows_read, "bytes_read": bytes_read,
             "out_rows": out_rows, "out_bytes": out_bytes}
 
@@ -558,8 +552,8 @@ def format_node_line(node: Node, depth: int, warn) -> str:
         fields.append(ann)
     if node.op in SCAN_OPS:
         sc = scan_cost(node)
-        # output (materialization) is post-prune-capped (read >= output); bytes_read/
-        # rows_read are the POST-PRUNE storage read (rows_fetched when pruned).
+        # output (materialization) is row-capped at the read rows; bytes_read (decoded
+        # Arrow) and rows_read are the POST-PRUNE storage read (rows_fetched when pruned).
         fields.append(f"output_bytes={sc['out_bytes']}")
         fields.append(f"output_rows={sc['out_rows']}")
         fields.append(f"materialized={node_materialized(node, warn)}")  # = output (scan)
@@ -697,6 +691,19 @@ def compute_scan_pruning(root: Node, dynamic_filters: Optional[list],
             s.rows_fetched = p["rows_fetched"]   # post-prune -> feeds scan_cost
         elif ranges:
             warn(f"{table}: parquet stats unreadable -> no-prune (100%)")
+
+        # ROW-cap anomaly warn (same basis = row counts, so a real invariant). Physical
+        # truth per scan: no filter -> output_rows == read; static-only -> output_rows
+        # <= read (post-static rows can't exceed the surviving groups' rows); dynamic ->
+        # output_rows > read EXPECTED (pass1 JFP-off emits full cardinality while
+        # rows_fetched applies the pass2 dynamic bounds) — by design, NOT warned. So
+        # output_rows > read WITHOUT a dynamic filter means our static bound-extraction
+        # pruned a row group DuckDB actually kept (over-prune bug) -> warn.
+        eff_read = s.rows_fetched if s.rows_fetched is not None else s.rows_scanned
+        if not s.dyn_filter and eff_read is not None and s.output_rows > eff_read:
+            warn(f"{table}: output_rows {s.output_rows} > post-prune read rows {eff_read} "
+                 f"with NO dynamic filter — static bound-extraction likely pruned a row "
+                 f"group DuckDB kept (over-prune bug); out_rows capped.")
 
     # CROSS-CHECK: each fact scan's OBSERVED dynamic *_date_sk bound should equal the
     # min/max(d_date_sk) of a sibling FILTERED date_dim. Reconstruct the date_dim

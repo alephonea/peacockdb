@@ -6,10 +6,10 @@ UNGROUPED_AGGREGATE: aggregates=[sum(#0)], output_bytes=16, output_rows=1, mater
           PROJECTION: projections=[#0, #1, #3, #4], output_bytes=6860064, output_rows=214377, materialized=0
             FILTER: output_bytes=10290096, output_rows=214377, materialized=0
               TABLE_SCAN: table=lineitem, projections=[l_partkey, l_quantity, l_shipmode, l_extendedprice, l_discount], filters="optional: l_shipmode IN ('AIR', 'AIR REG') AND l_shipinstruct='DELIVER IN PERSON'", output_bytes=72002304, output_rows=1500048, materialized=72002304, bytes_read=482551355, rows_read=6001215
-          TABLE_SCAN: table=part, projections=[p_partkey, p_brand, p_container, p_size], output_bytes=8800000, output_rows=200000, materialized=8800000, bytes_read=8800000, rows_read=200000
-duckdb_cost=591877311
+          TABLE_SCAN: table=part, projections=[p_partkey, p_brand, p_container, p_size], output_bytes=8800000, output_rows=200000, materialized=8800000, bytes_read=7164971, rows_read=200000
+duckdb_cost=590242282
 materialization_total=100525956
-storage_read_total=491351355
+storage_read_total=489716326
 
 --- row-group pruning (storage reduction) ---
 lineitem  filter=[optional: l_shipmode IN ('AIR', 'AIR REG') AND l_shipinstruct='DELIVER IN PERSON']  dyn_filter=[l_partkey>=1 AND l_partkey<=200000]  row_groups=49/49  rows=6001215/6001215 (100.0%)  bytes_fetched=71328477/71328477 (100.0%)

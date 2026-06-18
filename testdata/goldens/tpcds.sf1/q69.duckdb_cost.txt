@@ -8,12 +8,12 @@ TOP_N: order_by=[tpcds.main.customer_demographics.cd_gender ASC, tpcds.main.cust
               LEFT_DELIM_JOIN: join_type=ANTI, conditions=[c_customer_sk IS NOT DISTINCT FROM c_customer_sk], output_bytes=0, output_rows=0, materialized=5000
                 LEFT_DELIM_JOIN: join_type=SEMI, conditions=[c_customer_sk IS NOT DISTINCT FROM c_customer_sk], output_bytes=0, output_rows=0, materialized=75680
                   HASH_JOIN: join_type=INNER, conditions=[cd_demo_sk = c_current_cdemo_sk], output_bytes=756800, output_rows=9460, materialized=756800
-                    TABLE_SCAN: table=customer_demographics, projections=[cd_demo_sk, cd_gender, cd_marital_status, cd_education_status, cd_purchase_estimate, cd_credit_rating], filters="cd_demo_sk>=17 AND cd_demo_sk<=1920788", output_bytes=153661760, output_rows=1920772, materialized=153661760, bytes_read=153661760, rows_read=1920800
+                    TABLE_SCAN: table=customer_demographics, projections=[cd_demo_sk, cd_gender, cd_marital_status, cd_education_status, cd_purchase_estimate, cd_credit_rating], filters="cd_demo_sk>=17 AND cd_demo_sk<=1920788", output_bytes=153661760, output_rows=1920772, materialized=153661760, bytes_read=97617800, rows_read=1920800
                     HASH_JOIN: join_type=INNER, conditions=[c_current_addr_sk = ca_address_sk], output_bytes=235368, output_rows=9807, materialized=274496
                       TABLE_SCAN: table=customer, projections=[c_current_addr_sk, c_current_cdemo_sk, c_customer_sk], output_bytes=2400000, output_rows=100000, materialized=2400000, bytes_read=2437500, rows_read=100000
                       PROJECTION: projections=[#0], output_bytes=39128, output_rows=4891, materialized=0
                         FILTER: output_bytes=117384, output_rows=4891, materialized=0
-                          TABLE_SCAN: table=customer_address, projections=[ca_address_sk, ca_state], filters="optional: ca_state IN ('KY', 'GA', 'NM')", output_bytes=1200000, output_rows=50000, materialized=1200000, bytes_read=1200000, rows_read=50000
+                          TABLE_SCAN: table=customer_address, projections=[ca_address_sk, ca_state], filters="optional: ca_state IN ('KY', 'GA', 'NM')", output_bytes=1200000, output_rows=50000, materialized=1200000, bytes_read=709400, rows_read=50000
                   HASH_JOIN: join_type=SEMI, conditions=[c_customer_sk IS NOT DISTINCT FROM c_customer_sk], output_bytes=50000, output_rows=625, materialized=106512
                     COLUMN_DATA_SCAN: output_bytes=756800, output_rows=9460, materialized=0
                     PROJECTION: projections=[c_customer_sk], output_bytes=56512, output_rows=7064, materialized=0
@@ -44,9 +44,9 @@ TOP_N: order_by=[tpcds.main.customer_demographics.cd_gender ASC, tpcds.main.cust
                         TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_year=2001 AND d_moy>=4 AND d_moy<=6", output_bytes=728, output_rows=91, materialized=728, bytes_read=1780572, rows_read=73049
                     DELIM_SCAN: output_bytes=0, output_rows=0, materialized=0
               HASH_GROUP_BY: groups=[#5], output_bytes=4888, output_rows=611, materialized=0
-duckdb_cost=337326910
+duckdb_cost=280792350
 materialization_total=167815368
-storage_read_total=169511542
+storage_read_total=112976982
 
 --- row-group pruning (storage reduction) ---
 customer_demographics  filter=[cd_demo_sk>=17 AND cd_demo_sk<=1920788]  dyn_filter=[cd_demo_sk>=91 AND cd_demo_sk<=1920561]  row_groups=16/16  rows=1920800/1920800 (100.0%)  bytes_fetched=7778139/7778139 (100.0%)

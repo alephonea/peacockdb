@@ -19,10 +19,10 @@ PROJECTION: projections=[__internal_decompress_string(#0), __internal_decompress
                     TABLE_SCAN: table=partsupp, projections=[ps_suppkey, ps_partkey, ps_supplycost], output_bytes=19200000, output_rows=800000, materialized=19200000, bytes_read=25800000, rows_read=800000
                     HASH_JOIN: join_type=INNER, conditions=[s_nationkey = n_nationkey], output_bytes=240000, output_rows=10000, materialized=240000
                       TABLE_SCAN: table=supplier, projections=[s_suppkey, s_nationkey], output_bytes=120000, output_rows=10000, materialized=120000, bytes_read=122500, rows_read=10000
-                      TABLE_SCAN: table=nation, projections=[n_nationkey, n_name], output_bytes=500, output_rows=25, materialized=500, bytes_read=500, rows_read=25
-duckdb_cost=931870171
+                      TABLE_SCAN: table=nation, projections=[n_nationkey, n_name], output_bytes=500, output_rows=25, materialized=500, bytes_read=381, rows_read=25
+duckdb_cost=931870052
 materialization_total=451796735
-storage_read_total=480073436
+storage_read_total=480073317
 
 --- row-group pruning (storage reduction) ---
 lineitem  dyn_filter=[l_partkey>=3 AND l_partkey<=199962]  row_groups=49/49  rows=6001215/6001215 (100.0%)  bytes_fetched=108495865/108495865 (100.0%)

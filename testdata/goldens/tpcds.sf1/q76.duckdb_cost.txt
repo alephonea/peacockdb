@@ -9,22 +9,22 @@ TOP_N: order_by=[foo.channel ASC, foo.col_name ASC, foo.d_year ASC, foo.d_qoy AS
                 HASH_JOIN: join_type=INNER, conditions=[ss_sold_date_sk = d_date_sk], output_bytes=1806840, output_rows=64530, materialized=1806840
                   TABLE_SCAN: table=store_sales, projections=[ss_sold_date_sk, ss_item_sk, ss_ext_sales_price], filters="(ss_store_sk IS NULL)", output_bytes=2589220, output_rows=129461, materialized=2589220, bytes_read=93253081, rows_read=2880404
                   TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_year, d_qoy], filters="d_date_sk>=2450816 AND d_date_sk<=2452642", output_bytes=43848, output_rows=1827, materialized=43848, bytes_read=1780572, rows_read=73049
-                TABLE_SCAN: table=item, projections=[i_item_sk, i_category], output_bytes=432000, output_rows=18000, materialized=432000, bytes_read=432000, rows_read=18000
+                TABLE_SCAN: table=item, projections=[i_item_sk, i_category], output_bytes=432000, output_rows=18000, materialized=432000, bytes_read=326349, rows_read=18000
             PROJECTION: projections=[channel, col_name, d_year, d_qoy, i_category, ext_sales_price], output_bytes=5508, output_rows=81, materialized=0
               HASH_JOIN: join_type=INNER, conditions=[ws_item_sk = i_item_sk], output_bytes=2916, output_rows=81, materialized=2916
                 HASH_JOIN: join_type=INNER, conditions=[ws_sold_date_sk = d_date_sk], output_bytes=2268, output_rows=81, materialized=2268
                   TABLE_SCAN: table=web_sales, projections=[ws_sold_date_sk, ws_item_sk, ws_ext_sales_price], filters="(ws_ship_customer_sk IS NULL)", output_bytes=3400, output_rows=170, materialized=3400, bytes_read=23290057, rows_read=719384
                   TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_year, d_qoy], filters="d_date_sk>=2450816 AND d_date_sk<=2452642", output_bytes=43848, output_rows=1827, materialized=43848, bytes_read=1780572, rows_read=73049
-                TABLE_SCAN: table=item, projections=[i_item_sk, i_category], output_bytes=432000, output_rows=18000, materialized=432000, bytes_read=432000, rows_read=18000
+                TABLE_SCAN: table=item, projections=[i_item_sk, i_category], output_bytes=432000, output_rows=18000, materialized=432000, bytes_read=326349, rows_read=18000
             PROJECTION: projections=[channel, col_name, d_year, d_qoy, i_category, ext_sales_price], output_bytes=239360, output_rows=3520, materialized=0
               HASH_JOIN: join_type=INNER, conditions=[cs_item_sk = i_item_sk], output_bytes=126720, output_rows=3520, materialized=126720
                 HASH_JOIN: join_type=INNER, conditions=[cs_sold_date_sk = d_date_sk], output_bytes=98560, output_rows=3520, materialized=98560
                   TABLE_SCAN: table=catalog_sales, projections=[cs_sold_date_sk, cs_item_sk, cs_ext_sales_price], filters="(cs_ship_addr_sk IS NULL)", output_bytes=142440, output_rows=7122, materialized=142440, bytes_read=46670118, rows_read=1441548
                   TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_year, d_qoy], filters="d_date_sk>=2450815 AND d_date_sk<=2452648", output_bytes=44016, output_rows=1834, materialized=44016, bytes_read=1780572, rows_read=73049
-                TABLE_SCAN: table=item, projections=[i_item_sk, i_category], output_bytes=432000, output_rows=18000, materialized=432000, bytes_read=432000, rows_read=18000
-duckdb_cost=181552858
+                TABLE_SCAN: table=item, projections=[i_item_sk, i_category], output_bytes=432000, output_rows=18000, materialized=432000, bytes_read=326349, rows_read=18000
+duckdb_cost=181235905
 materialization_total=11701886
-storage_read_total=169850972
+storage_read_total=169534019
 
 --- row-group pruning (storage reduction) ---
 store_sales  filter=[(ss_store_sk IS NULL)]  dyn_filter=[ss_sold_date_sk>=2450816 AND ss_sold_date_sk<=2452642 AND ss_item_sk>=1 AND ss_item_sk<=18000]  row_groups=24/24  rows=2880404/2880404 (100.0%)  bytes_fetched=17087272/17087272 (100.0%)

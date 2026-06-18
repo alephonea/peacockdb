@@ -23,12 +23,12 @@ TOP_N: order_by=[tpcds.main.store.s_store_name ASC], top=100, output_bytes=160, 
                                 PROJECTION: projections=[ca_zip], output_bytes=379016, output_rows=47377, materialized=0
                                   PROJECTION: projections=[__internal_compress_string_ubigint(#0), __internal_compress_integral_usmallint(#1, 1)], output_bytes=473770, output_rows=47377, materialized=0
                                     HASH_JOIN: join_type=INNER, conditions=[ca_address_sk = c_current_addr_sk], output_bytes=1137048, output_rows=47377, materialized=1137048
-                                      TABLE_SCAN: table=customer_address, projections=[ca_address_sk, ca_zip], output_bytes=1200000, output_rows=50000, materialized=1200000, bytes_read=1200000, rows_read=50000
+                                      TABLE_SCAN: table=customer_address, projections=[ca_address_sk, ca_zip], output_bytes=1200000, output_rows=50000, materialized=1200000, bytes_read=854805, rows_read=50000
                                       TABLE_SCAN: table=customer, projections=[c_current_addr_sk], filters="c_preferred_cust_flag='Y'", output_bytes=379016, output_rows=47377, materialized=379016, bytes_read=1321574, rows_read=100000
-              TABLE_SCAN: table=store, projections=[s_store_sk, s_zip, s_store_name], filters="s_store_sk<=10", output_bytes=400, output_rows=10, materialized=400, bytes_read=400, rows_read=12
-duckdb_cost=27216658
+              TABLE_SCAN: table=store, projections=[s_store_sk, s_zip, s_store_name], filters="s_store_sk<=10", output_bytes=400, output_rows=10, materialized=400, bytes_read=305, rows_read=12
+duckdb_cost=26871368
 materialization_total=12755516
-storage_read_total=14461142
+storage_read_total=14115852
 
 --- row-group pruning (storage reduction) ---
 store_sales  dyn_filter=[ss_store_sk>=1 AND ss_store_sk<=10 AND ss_sold_date_sk>=2450906 AND ss_sold_date_sk<=2450996]  row_groups=3/24  rows=299924/2880404 (10.4%)  bytes_fetched=1212446/12388542 (9.8%)

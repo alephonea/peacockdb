@@ -5,15 +5,15 @@ CTE: output_bytes=0, output_rows=0, materialized=0
         PROJECTION: projections=[c_last_name, c_first_name, s_store_name, ca_state, s_state, i_color, i_current_price, i_manager_id, i_units, i_size, ss_net_paid], output_bytes=6596, output_rows=68, materialized=0
           PROJECTION: projections=[__internal_compress_string_uhugeint(#0), #1, __internal_compress_integral_utinyint(#2, 1), __internal_compress_string_ubigint(#3), __internal_compress_string_uhugeint(#4), #5, __internal_compress_string_ubigint(#9), __internal_compress_string_uinteger(#10), __internal_compress_string_uinteger(#8), __internal_compress_string_uhugeint(#6), __internal_compress_string_uhugeint(#7)], output_bytes=6596, output_rows=68, materialized=0
             HASH_JOIN: join_type=INNER, conditions=[i_item_sk = ss_item_sk], output_bytes=9792, output_rows=68, materialized=9792
-              TABLE_SCAN: table=item, projections=[i_item_sk, i_color, i_current_price, i_manager_id, i_units, i_size], output_bytes=1224000, output_rows=18000, materialized=1224000, bytes_read=1224000, rows_read=18000
+              TABLE_SCAN: table=item, projections=[i_item_sk, i_color, i_current_price, i_manager_id, i_units, i_size], output_bytes=1224000, output_rows=18000, materialized=1224000, bytes_read=1055463, rows_read=18000
               HASH_JOIN: join_type=INNER, conditions=[sr_item_sk = ss_item_sk, sr_ticket_number = ss_ticket_number], output_bytes=7344, output_rows=68, materialized=7344
                 TABLE_SCAN: table=store_returns, projections=[sr_ticket_number, sr_item_sk], output_bytes=4605872, output_rows=287867, materialized=4605872, bytes_read=4677840, rows_read=287867
                 HASH_JOIN: join_type=INNER, conditions=[ss_customer_sk = c_customer_sk, ss_store_sk = s_store_sk], output_bytes=60400, output_rows=604, materialized=60400
                   TABLE_SCAN: table=store_sales, projections=[ss_ticket_number, ss_item_sk, ss_customer_sk, ss_store_sk, ss_net_paid], output_bytes=103694544, output_rows=2880404, materialized=103694544, bytes_read=140059647, rows_read=2880404
                   HASH_JOIN: join_type=INNER, conditions=[c_current_addr_sk = ca_address_sk, c_birth_country != upper(ca_country)], output_bytes=21696, output_rows=226, materialized=21696
-                    TABLE_SCAN: table=customer, projections=[c_customer_sk, c_current_addr_sk, c_birth_country, c_last_name, c_first_name], output_bytes=6400000, output_rows=100000, materialized=6400000, bytes_read=6400000, rows_read=100000
+                    TABLE_SCAN: table=customer, projections=[c_customer_sk, c_current_addr_sk, c_birth_country, c_last_name, c_first_name], output_bytes=6400000, output_rows=100000, materialized=6400000, bytes_read=4858050, rows_read=100000
                     HASH_JOIN: join_type=INNER, conditions=[ca_zip = s_zip], output_bytes=10400, output_rows=130, materialized=10568
-                      TABLE_SCAN: table=customer_address, projections=[ca_address_sk, ca_country, ca_zip, ca_state], output_bytes=2800000, output_rows=50000, materialized=2800000, bytes_read=2800000, rows_read=50000
+                      TABLE_SCAN: table=customer_address, projections=[ca_address_sk, ca_country, ca_zip, ca_state], output_bytes=2800000, output_rows=50000, materialized=2800000, bytes_read=1994380, rows_read=50000
                       FILTER: output_bytes=168, output_rows=3, materialized=0
                         TABLE_SCAN: table=store, projections=[s_store_sk, s_zip, s_store_name, s_state], filters="s_market_id=8", output_bytes=168, output_rows=3, materialized=168, bytes_read=475, rows_read=12
   ORDER_BY: order_by=[ssales.c_last_name ASC, ssales.c_first_name ASC, ssales.s_store_name ASC], output_bytes=64, output_rows=1, materialized=64
@@ -30,9 +30,9 @@ CTE: output_bytes=0, output_rows=0, materialized=0
                 UNGROUPED_AGGREGATE: aggregates=[avg(#0)], output_bytes=8, output_rows=1, materialized=1088
                   PROJECTION: projections=[netpaid], output_bytes=1088, output_rows=68, materialized=0
                     CTE_SCAN: output_bytes=5440, output_rows=68, materialized=0
-duckdb_cost=274004310
+duckdb_cost=271488203
 materialization_total=118842348
-storage_read_total=155161962
+storage_read_total=152645855
 
 --- row-group pruning (storage reduction) ---
 item  dyn_filter=[i_item_sk>=304 AND i_item_sk<=17456]  row_groups=1/1  rows=18000/18000 (100.0%)  bytes_fetched=163937/163937 (100.0%)

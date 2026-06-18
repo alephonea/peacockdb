@@ -16,13 +16,13 @@ TOP_N: order_by=[i1.i_product_name ASC], top=100, output_bytes=64, output_rows=4
                           HASH_JOIN: join_type=INNER, conditions=[i_manufact = i_manufact], output_bytes=64, output_rows=2, materialized=192
                             PROJECTION: projections=[#0], output_bytes=128, output_rows=8, materialized=0
                               FILTER: output_bytes=640, output_rows=8, materialized=0
-                                TABLE_SCAN: table=item, projections=[i_manufact, i_category, i_color, i_units, i_size], output_bytes=1440000, output_rows=18000, materialized=1440000, bytes_read=1440000, rows_read=18000
+                                TABLE_SCAN: table=item, projections=[i_manufact, i_category, i_color, i_units, i_size], output_bytes=1440000, output_rows=18000, materialized=1440000, bytes_read=930748, rows_read=18000
                             DELIM_SCAN: output_bytes=0, output_rows=0, materialized=0
                   DELIM_SCAN: output_bytes=0, output_rows=0, materialized=0
             HASH_GROUP_BY: groups=[#0], output_bytes=2144, output_rows=134, materialized=0
-duckdb_cost=3721630
+duckdb_cost=3212378
 materialization_total=1459144
-storage_read_total=2262486
+storage_read_total=1753234
 
 --- row-group pruning (storage reduction) ---
 item  filter=[i_manufact_id>=738 AND i_manufact_id<=778]  row_groups=1/1  rows=18000/18000 (100.0%)  bytes_fetched=180157/180157 (100.0%)

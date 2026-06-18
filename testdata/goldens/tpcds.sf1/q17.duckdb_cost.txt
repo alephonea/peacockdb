@@ -20,15 +20,15 @@ TOP_N: order_by=[tpcds.main.item.i_item_id ASC, tpcds.main.item.i_item_desc ASC,
                       FILTER: output_bytes=2192, output_rows=274, materialized=0
                         PROJECTION: projections=[#0], output_bytes=2192, output_rows=274, materialized=0
                           FILTER: output_bytes=6576, output_rows=274, materialized=0
-                            TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_quarter_name], filters="optional: d_quarter_name IN ('2001Q1', '2001Q2', '2001Q3')", output_bytes=1753176, output_rows=73049, materialized=1753176, bytes_read=1753176, rows_read=73049
+                            TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_quarter_name], filters="optional: d_quarter_name IN ('2001Q1', '2001Q2', '2001Q3')", output_bytes=1753176, output_rows=73049, materialized=1753176, bytes_read=1324014, rows_read=73049
                 FILTER: output_bytes=2192, output_rows=274, materialized=0
                   PROJECTION: projections=[#0], output_bytes=2192, output_rows=274, materialized=0
                     FILTER: output_bytes=6576, output_rows=274, materialized=0
-                      TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_quarter_name], filters="optional: d_quarter_name IN ('2001Q1', '2001Q2', '2001Q3')", output_bytes=1753176, output_rows=73049, materialized=1753176, bytes_read=1753176, rows_read=73049
-              TABLE_SCAN: table=store, projections=[s_store_sk, s_state], filters="s_store_sk<=10", output_bytes=240, output_rows=10, materialized=240, bytes_read=240, rows_read=12
-duckdb_cost=78892486
+                      TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_quarter_name], filters="optional: d_quarter_name IN ('2001Q1', '2001Q2', '2001Q3')", output_bytes=1753176, output_rows=73049, materialized=1753176, bytes_read=1324014, rows_read=73049
+              TABLE_SCAN: table=store, projections=[s_store_sk, s_state], filters="s_store_sk<=10", output_bytes=240, output_rows=10, materialized=240, bytes_read=170, rows_read=12
+duckdb_cost=78034092
 materialization_total=40078640
-storage_read_total=38813846
+storage_read_total=37955452
 
 --- row-group pruning (storage reduction) ---
 catalog_sales  filter=[cs_bill_customer_sk>=2]  dyn_filter=[cs_bill_customer_sk>=14 AND cs_bill_customer_sk<=99919 AND cs_item_sk>=3 AND cs_item_sk<=17999 AND cs_sold_date_sk>=2451911 AND cs_sold_date_sk<=2452184]  row_groups=3/12  rows=368640/1441548 (25.6%)  bytes_fetched=1915769/7539289 (25.4%)

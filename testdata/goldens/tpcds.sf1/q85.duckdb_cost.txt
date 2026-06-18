@@ -6,11 +6,11 @@ TOP_N: order_by=[main."substring"(tpcds.main.reason.r_reason_desc, 1, 20) ASC, a
           HASH_JOIN: join_type=INNER, conditions=[ws_web_page_sk = wp_web_page_sk], output_bytes=40, output_rows=1, materialized=40
             HASH_JOIN: join_type=INNER, conditions=[wr_reason_sk = r_reason_sk], output_bytes=40, output_rows=1, materialized=40
               HASH_JOIN: join_type=INNER, conditions=[cd_demo_sk = wr_returning_cdemo_sk, cd_education_status = cd_education_status, cd_marital_status = cd_marital_status], output_bytes=72, output_rows=1, materialized=144
-                TABLE_SCAN: table=customer_demographics, projections=[cd_demo_sk, cd_marital_status, cd_education_status], filters="cd_demo_sk>=24 AND cd_demo_sk<=1920785", output_bytes=4915200, output_rows=122880, materialized=4915200, bytes_read=4915200, rows_read=122880
+                TABLE_SCAN: table=customer_demographics, projections=[cd_demo_sk, cd_marital_status, cd_education_status], filters="cd_demo_sk>=24 AND cd_demo_sk<=1920785", output_bytes=4915200, output_rows=122880, materialized=4915200, bytes_read=3280540, rows_read=122880
                 PROJECTION: projections=[#0, #1, #2, #3, #4, #5, #6, #8], output_bytes=72, output_rows=1, materialized=0
                   FILTER: output_bytes=76, output_rows=1, materialized=0
                     HASH_JOIN: join_type=INNER, conditions=[cd_demo_sk = wr_refunded_cdemo_sk], output_bytes=9424, output_rows=124, materialized=16080
-                      TABLE_SCAN: table=customer_demographics, projections=[cd_demo_sk, cd_marital_status, cd_education_status], filters="cd_demo_sk>=24 AND cd_demo_sk<=1920785", output_bytes=76830480, output_rows=1920762, materialized=76830480, bytes_read=76830480, rows_read=1920800
+                      TABLE_SCAN: table=customer_demographics, projections=[cd_demo_sk, cd_marital_status, cd_education_status], filters="cd_demo_sk>=24 AND cd_demo_sk<=1920785", output_bytes=76830480, output_rows=1920762, materialized=76830480, bytes_read=51278500, rows_read=1920800
                       PROJECTION: projections=[#1, #2, #3, #4, #5, #6, #7, #9], output_bytes=6656, output_rows=128, materialized=0
                         FILTER: output_bytes=9216, output_rows=128, materialized=0
                           HASH_JOIN: join_type=INNER, conditions=[ca_address_sk = wr_refunded_addr_sk], output_bytes=939960, output_rows=13055, materialized=939960
@@ -23,9 +23,9 @@ TOP_N: order_by=[main."substring"(tpcds.main.reason.r_reason_desc, 1, 20) ASC, a
                                   TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_year=2000", output_bytes=2928, output_rows=366, materialized=2928, bytes_read=1187048, rows_read=73049
               TABLE_SCAN: table=reason, projections=[r_reason_sk, r_reason_desc], output_bytes=840, output_rows=35, materialized=840, bytes_read=1003, rows_read=35
             TABLE_SCAN: table=web_page, projections=[wp_web_page_sk], output_bytes=480, output_rows=60, materialized=480, bytes_read=488, rows_read=60
-duckdb_cost=215569620
+duckdb_cost=188382980
 materialization_total=107406560
-storage_read_total=108163060
+storage_read_total=80976420
 
 --- row-group pruning (storage reduction) ---
 customer_demographics  filter=[cd_demo_sk>=24 AND cd_demo_sk<=1920785]  dyn_filter=[cd_demo_sk=1037564 AND cd_marital_status='S' AND cd_education_status='College']  row_groups=1/16  rows=122880/1920800 (6.4%)  bytes_fetched=495409/7744906 (6.4%)

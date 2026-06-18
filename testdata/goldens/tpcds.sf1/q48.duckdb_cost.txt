@@ -3,7 +3,7 @@ UNGROUPED_AGGREGATE: aggregates=[sum(#0)], output_bytes=16, output_rows=1, mater
     PROJECTION: projections=[#3], output_bytes=4360, output_rows=545, materialized=0
       FILTER: output_bytes=23980, output_rows=545, materialized=0
         HASH_JOIN: join_type=INNER, conditions=[cd_demo_sk = ss_cdemo_sk], output_bytes=1405140, output_rows=31935, materialized=1405140
-          TABLE_SCAN: table=customer_demographics, projections=[cd_demo_sk, cd_marital_status, cd_education_status], filters="cd_demo_sk>=15 AND cd_demo_sk<=1920797", output_bytes=76831320, output_rows=1920783, materialized=76831320, bytes_read=76831320, rows_read=1920800
+          TABLE_SCAN: table=customer_demographics, projections=[cd_demo_sk, cd_marital_status, cd_education_status], filters="cd_demo_sk>=15 AND cd_demo_sk<=1920797", output_bytes=76831320, output_rows=1920783, materialized=76831320, bytes_read=51278500, rows_read=1920800
           HASH_JOIN: join_type=INNER, conditions=[ss_store_sk = s_store_sk], output_bytes=896364, output_rows=32013, materialized=1797432
             PROJECTION: projections=[#0, #1, #2, #4], output_bytes=901068, output_rows=32181, materialized=0
               FILTER: output_bytes=1544688, output_rows=32181, materialized=0
@@ -14,9 +14,9 @@ UNGROUPED_AGGREGATE: aggregates=[sum(#0)], output_bytes=16, output_rows=1, mater
                       TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_year=2000", output_bytes=2928, output_rows=366, materialized=2928, bytes_read=1187048, rows_read=73049
                   TABLE_SCAN: table=customer_address, projections=[ca_address_sk, ca_state], filters="ca_country='United States'", output_bytes=1163400, output_rows=48475, materialized=1163400, bytes_read=1545825, rows_read=50000
             TABLE_SCAN: table=store, projections=[s_store_sk], filters="s_store_sk<=10", output_bytes=80, output_rows=10, materialized=80, bytes_read=98, rows_read=12
-duckdb_cost=308184508
+duckdb_cost=282631688
 materialization_total=170943732
-storage_read_total=137240776
+storage_read_total=111687956
 
 --- row-group pruning (storage reduction) ---
 customer_demographics  filter=[cd_demo_sk>=15 AND cd_demo_sk<=1920797]  dyn_filter=[cd_demo_sk>=407 AND cd_demo_sk<=1920631]  row_groups=16/16  rows=1920800/1920800 (100.0%)  bytes_fetched=7744906/7744906 (100.0%)

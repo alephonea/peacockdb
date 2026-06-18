@@ -15,14 +15,14 @@ PROJECTION: projections=[__internal_decompress_string(#0), __internal_decompress
                         HASH_JOIN: join_type=INNER, conditions=[s_nationkey = n_nationkey], output_bytes=19152, output_rows=798, materialized=19192
                           TABLE_SCAN: table=supplier, projections=[s_suppkey, s_nationkey], output_bytes=120000, output_rows=10000, materialized=120000, bytes_read=122500, rows_read=10000
                           FILTER: output_bytes=40, output_rows=2, materialized=0
-                            TABLE_SCAN: table=nation, projections=[n_nationkey, n_name], filters="optional: n_name='FRANCE' OR n_name='GERMANY'", output_bytes=500, output_rows=25, materialized=500, bytes_read=500, rows_read=25
+                            TABLE_SCAN: table=nation, projections=[n_nationkey, n_name], filters="optional: n_name='FRANCE' OR n_name='GERMANY'", output_bytes=500, output_rows=25, materialized=500, bytes_read=381, rows_read=25
                     HASH_JOIN: join_type=INNER, conditions=[c_nationkey = n_nationkey], output_bytes=288192, output_rows=12008, materialized=288232
                       TABLE_SCAN: table=customer, projections=[c_custkey, c_nationkey], filters="c_custkey<=149999", output_bytes=1799988, output_rows=149999, materialized=1799988, bytes_read=1837500, rows_read=150000
                       FILTER: output_bytes=40, output_rows=2, materialized=0
-                        TABLE_SCAN: table=nation, projections=[n_nationkey, n_name], filters="optional: n_name='GERMANY' OR n_name='FRANCE'", output_bytes=500, output_rows=25, materialized=500, bytes_read=500, rows_read=25
-duckdb_cost=234790832
+                        TABLE_SCAN: table=nation, projections=[n_nationkey, n_name], filters="optional: n_name='GERMANY' OR n_name='FRANCE'", output_bytes=500, output_rows=25, materialized=500, bytes_read=381, rows_read=25
+duckdb_cost=234790594
 materialization_total=105727152
-storage_read_total=129063680
+storage_read_total=129063442
 
 --- row-group pruning (storage reduction) ---
 orders  dyn_filter=[o_orderkey>=4 AND o_orderkey<=5999971 AND o_custkey>=18 AND o_custkey<=149993]  row_groups=13/13  rows=1500000/1500000 (100.0%)  bytes_fetched=14583325/14583325 (100.0%)

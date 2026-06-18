@@ -12,7 +12,7 @@ CTE: output_bytes=0, output_rows=0, materialized=0
                       TABLE_SCAN: table=store_sales, projections=[ss_customer_sk, ss_sold_date_sk, ss_ext_list_price, ss_ext_discount_amt], output_bytes=30791136, output_rows=1282964, materialized=30791136, bytes_read=62223756, rows_read=1282964
                       FILTER: output_bytes=11680, output_rows=730, materialized=0
                         TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_year], filters="optional: d_year=2001 OR d_year=2002", output_bytes=1168784, output_rows=73049, materialized=1168784, bytes_read=1187048, rows_read=73049
-                    TABLE_SCAN: table=customer, projections=[c_customer_sk, c_customer_id, c_first_name, c_last_name, c_preferred_cust_flag, c_birth_country, c_login, c_email_address], output_bytes=12000000, output_rows=100000, materialized=12000000, bytes_read=12000000, rows_read=100000
+                    TABLE_SCAN: table=customer, projections=[c_customer_sk, c_customer_id, c_first_name, c_last_name, c_preferred_cust_flag, c_birth_country, c_login, c_email_address], output_bytes=12000000, output_rows=100000, materialized=12000000, bytes_read=10028188, rows_read=100000
     PROJECTION: projections=[customer_id, customer_first_name, customer_last_name, customer_preferred_cust_flag, dyear, year_total, sale_type], output_bytes=2371616, output_rows=22804, materialized=0
       PROJECTION: projections=[#0, #1, #2, #3, #7, #8], output_bytes=2006752, output_rows=22804, materialized=0
         FILTER: output_bytes=3101344, output_rows=22804, materialized=0
@@ -21,7 +21,7 @@ CTE: output_bytes=0, output_rows=0, materialized=0
               PROJECTION: projections=[c_customer_id, c_first_name, c_last_name, c_preferred_cust_flag, c_birth_country, c_login, c_email_address, d_year, (ws_ext_list_price - ws_ext_discount_amt)], output_bytes=25186239, output_rows=289497, materialized=0
                 PROJECTION: projections=[#0, __internal_compress_string_uhugeint(#1), __internal_compress_string_uhugeint(#2), __internal_compress_string_utinyint(#3), #4, __internal_compress_string_utinyint(#5), #6, #7, #8, __internal_compress_integral_utinyint(#9, 1900)], output_bytes=26344227, output_rows=289497, materialized=0
                   HASH_JOIN: join_type=INNER, conditions=[c_customer_sk = ws_bill_customer_sk], output_bytes=37055616, output_rows=289497, materialized=37055616
-                    TABLE_SCAN: table=customer, projections=[c_customer_sk, c_customer_id, c_first_name, c_last_name, c_preferred_cust_flag, c_birth_country, c_login, c_email_address], filters="c_customer_sk>=2", output_bytes=11999880, output_rows=99999, materialized=11999880, bytes_read=11999880, rows_read=100000
+                    TABLE_SCAN: table=customer, projections=[c_customer_sk, c_customer_id, c_first_name, c_last_name, c_preferred_cust_flag, c_birth_country, c_login, c_email_address], filters="c_customer_sk>=2", output_bytes=11999880, output_rows=99999, materialized=11999880, bytes_read=10028188, rows_read=100000
                     HASH_JOIN: join_type=INNER, conditions=[ws_sold_date_sk = d_date_sk], output_bytes=6948576, output_rows=289524, materialized=6960256
                       TABLE_SCAN: table=web_sales, projections=[ws_bill_customer_sk, ws_sold_date_sk, ws_ext_list_price, ws_ext_discount_amt], output_bytes=8417856, output_rows=350744, materialized=8417856, bytes_read=17011084, rows_read=350744
                       FILTER: output_bytes=11680, output_rows=730, materialized=0
@@ -43,9 +43,9 @@ CTE: output_bytes=0, output_rows=0, materialized=0
           PROJECTION: projections=[#0, #5], output_bytes=360064, output_rows=11252, materialized=0
             FILTER: output_bytes=1170208, output_rows=11252, materialized=0
               CTE_SCAN: output_bytes=10285808, output_rows=98902, materialized=0
-duckdb_cost=503215273
+duckdb_cost=499271769
 materialization_total=397606457
-storage_read_total=105608816
+storage_read_total=101665312
 
 --- row-group pruning (storage reduction) ---
 store_sales  dyn_filter=[ss_customer_sk>=1 AND ss_customer_sk<=100000 AND ss_sold_date_sk>=2451911 AND ss_sold_date_sk<=2452640]  row_groups=11/24  rows=1282964/2880404 (44.5%)  bytes_fetched=9652389/22007367 (43.9%)

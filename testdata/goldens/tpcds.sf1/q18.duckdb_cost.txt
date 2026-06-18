@@ -9,7 +9,7 @@ TOP_N: order_by=[tpcds.main.customer_address.ca_country ASC, tpcds.main.customer
             PROJECTION: projections=[#0, #1, #2, #3], output_bytes=409752, output_rows=7317, materialized=0
               FILTER: output_bytes=417069, output_rows=7317, materialized=0
                 HASH_JOIN: join_type=MARK, conditions=[ca_state = #0], output_bytes=2850000, output_rows=50000, materialized=2850000
-                  TABLE_SCAN: table=customer_address, projections=[ca_address_sk, ca_state, ca_country, ca_county], filters="optional: ca_state IN ('MS', 'IN', 'ND', 'OK', 'NM', 'VA', 'MS')", output_bytes=2800000, output_rows=50000, materialized=2800000, bytes_read=2800000, rows_read=50000
+                  TABLE_SCAN: table=customer_address, projections=[ca_address_sk, ca_state, ca_country, ca_county], filters="optional: ca_state IN ('MS', 'IN', 'ND', 'OK', 'NM', 'VA', 'MS')", output_bytes=2800000, output_rows=50000, materialized=2800000, bytes_read=2429644, rows_read=50000
                   COLUMN_DATA_SCAN: output_bytes=112, output_rows=7, materialized=0
             HASH_JOIN: join_type=INNER, conditions=[c_customer_sk = cs_bill_customer_sk], output_bytes=609344, output_rows=9521, materialized=2136192
               PROJECTION: projections=[#0, #1, #2, #3], output_bytes=1526848, output_rows=47714, materialized=0
@@ -24,9 +24,9 @@ TOP_N: order_by=[tpcds.main.customer_address.ca_country ASC, tpcds.main.customer
                   TABLE_SCAN: table=catalog_sales, projections=[cs_sold_date_sk, cs_item_sk, cs_bill_cdemo_sk, cs_bill_customer_sk, cs_quantity, cs_list_price, cs_coupon_amt, cs_sales_price, cs_net_profit], output_bytes=20643840, output_rows=368640, materialized=20643840, bytes_read=38707200, rows_read=368640
                   FILTER: output_bytes=2920, output_rows=365, materialized=0
                     TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_year=1998", output_bytes=2920, output_rows=365, materialized=2920, bytes_read=1187048, rows_read=73049
-duckdb_cost=204206826
+duckdb_cost=203836470
 materialization_total=74452328
-storage_read_total=129754498
+storage_read_total=129384142
 
 --- row-group pruning (storage reduction) ---
 item  dyn_filter=[i_item_sk>=32 AND i_item_sk<=17980]  row_groups=1/1  rows=18000/18000 (100.0%)  bytes_fetched=128816/128816 (100.0%)

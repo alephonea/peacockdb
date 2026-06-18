@@ -10,7 +10,7 @@ TOP_N: order_by=[tpcds.main.customer_demographics.cd_gender ASC, tpcds.main.cust
                   LEFT_DELIM_JOIN: join_type=MARK, conditions=[c_customer_sk IS NOT DISTINCT FROM c_customer_sk], output_bytes=0, output_rows=0, materialized=736
                     LEFT_DELIM_JOIN: join_type=SEMI, conditions=[c_customer_sk IS NOT DISTINCT FROM c_customer_sk], output_bytes=0, output_rows=0, materialized=7176
                       HASH_JOIN: join_type=INNER, conditions=[cd_demo_sk = c_current_cdemo_sk], output_bytes=89700, output_rows=897, materialized=89700
-                        TABLE_SCAN: table=customer_demographics, projections=[cd_demo_sk, cd_gender, cd_marital_status, cd_education_status, cd_purchase_estimate, cd_credit_rating, cd_dep_count, cd_dep_employed_count, cd_dep_college_count], filters="cd_demo_sk>=17 AND cd_demo_sk<=1920788", output_bytes=192077200, output_rows=1920772, materialized=192077200, bytes_read=192077200, rows_read=1920800
+                        TABLE_SCAN: table=customer_demographics, projections=[cd_demo_sk, cd_gender, cd_marital_status, cd_education_status, cd_purchase_estimate, cd_credit_rating, cd_dep_count, cd_dep_employed_count, cd_dep_college_count], filters="cd_demo_sk>=17 AND cd_demo_sk<=1920788", output_bytes=192077200, output_rows=1920772, materialized=192077200, bytes_read=136754100, rows_read=1920800
                         HASH_JOIN: join_type=INNER, conditions=[c_current_addr_sk = ca_address_sk], output_bytes=22368, output_rows=932, materialized=26040
                           TABLE_SCAN: table=customer, projections=[c_current_addr_sk, c_current_cdemo_sk, c_customer_sk], output_bytes=2400000, output_rows=100000, materialized=2400000, bytes_read=2437500, rows_read=100000
                           PROJECTION: projections=[#0], output_bytes=3672, output_rows=459, materialized=0
@@ -48,9 +48,9 @@ TOP_N: order_by=[tpcds.main.customer_demographics.cd_gender ASC, tpcds.main.cust
                             TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_year=2002 AND d_moy>=1 AND d_moy<=4", output_bytes=960, output_rows=120, materialized=960, bytes_read=1780572, rows_read=73049
                         DELIM_SCAN: output_bytes=0, output_rows=0, materialized=0
                   HASH_GROUP_BY: groups=[#8], output_bytes=736, output_rows=92, materialized=0
-duckdb_cost=418116917
+duckdb_cost=362793817
 materialization_total=208103066
-storage_read_total=210013851
+storage_read_total=154690751
 
 --- row-group pruning (storage reduction) ---
 customer_demographics  filter=[cd_demo_sk>=17 AND cd_demo_sk<=1920788]  dyn_filter=[cd_demo_sk>=2324 AND cd_demo_sk<=1920669]  row_groups=16/16  rows=1920800/1920800 (100.0%)  bytes_fetched=7782151/7782151 (100.0%)

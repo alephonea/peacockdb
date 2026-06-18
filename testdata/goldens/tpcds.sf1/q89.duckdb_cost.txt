@@ -16,10 +16,10 @@ PROJECTION: projections=[#0, #1, #2, #3, #4, #5, #6, #7], output_bytes=11200, ou
                             TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_moy], filters="d_year=1999", output_bytes=5840, output_rows=365, materialized=5840, bytes_read=1780572, rows_read=73049
                         FILTER: output_bytes=76608, output_rows=1368, materialized=0
                           TABLE_SCAN: table=item, projections=[i_item_sk, i_category, i_class, i_brand], filters="((i_category IN ('Books', 'Electronics', 'Sports')) OR (i_category IN ('Men', 'Jewelry', 'Women'))) AND ((i_class IN ('computers', 'stereo', 'football')) OR (i_class IN ('shirts', 'birdal', 'dresses')))", output_bytes=76608, output_rows=1368, materialized=76608, bytes_read=905400, rows_read=18000
-                      TABLE_SCAN: table=store, projections=[s_store_sk, s_store_name, s_company_name], filters="s_store_sk<=10", output_bytes=400, output_rows=10, materialized=400, bytes_read=400, rows_read=12
-duckdb_cost=73890283
+                      TABLE_SCAN: table=store, projections=[s_store_sk, s_store_name, s_company_name], filters="s_store_sk<=10", output_bytes=400, output_rows=10, materialized=400, bytes_read=329, rows_read=12
+duckdb_cost=73890212
 materialization_total=44127067
-storage_read_total=29763216
+storage_read_total=29763145
 
 --- row-group pruning (storage reduction) ---
 store_sales  dyn_filter=[ss_item_sk>=2 AND ss_item_sk<=17989 AND ss_sold_date_sk>=2451180 AND ss_sold_date_sk<=2451544 AND ss_store_sk>=1 AND ss_store_sk<=10]  row_groups=6/24  rows=668564/2880404 (23.2%)  bytes_fetched=3104031/13466306 (23.1%)
