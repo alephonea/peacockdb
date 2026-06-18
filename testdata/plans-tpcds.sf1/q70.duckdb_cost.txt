@@ -1,0 +1,29 @@
+PROJECTION: projections=[#0, #1, #2, #3, #4], output_bytes=192, output_rows=3, materialized=0
+  TOP_N: order_by=[(GROUPING(tpcds.main.store.s_state) + GROUPING(tpcds.main.store.s_county)) DESC, #5 ASC, rank() OVER (PARTITION BY (GROUPING(tpcds.main.store.s_state) + GROUPING(tpcds.main.store.s_county)), CASE  WHEN ((GROUPING(tpcds.main.store.s_county) = 0)) THEN (tpcds.main.store.s_state) ELSE NULL END ORDER BY sum(tpcds.main.store_sales.ss_net_profit) DESC) ASC], top=100, output_bytes=240, output_rows=3, materialized=240
+    PROJECTION: projections=[total_sum, s_state, s_county, lochierarchy, rank_within_parent, CASE  WHEN (((GROUPING(tpcds.main.store.s_state) + GROUPING(tpcds.main.store.s_county)) = 0)) THEN (s_state) ELSE NULL END], output_bytes=240, output_rows=3, materialized=0
+      PROJECTION: projections=[#0, #1, #2, #3, #4, #5, #6, #7, #8, #9, #10], output_bytes=336, output_rows=3, materialized=0
+        WINDOW: output_bytes=336, output_rows=3, materialized=312
+          HASH_GROUP_BY: groups=[#0, #1], aggregates=[sum(#2)], output_bytes=312, output_rows=3, materialized=19481760
+            PROJECTION: projections=[s_state, s_county, ss_net_profit], output_bytes=19481760, output_rows=541160, materialized=0
+              HASH_JOIN: join_type=INNER, conditions=[ss_store_sk = s_store_sk], output_bytes=19481760, output_rows=541160, materialized=19481760
+                HASH_JOIN: join_type=INNER, conditions=[ss_sold_date_sk = d_date_sk], output_bytes=6493920, output_rows=541160, materialized=6495384
+                  TABLE_SCAN: table=store_sales, projections=[ss_sold_date_sk, ss_store_sk, ss_net_profit], output_bytes=6493920, output_rows=541160, materialized=41058768, bytes_read_est=34564848, rows_read=2880404
+                  FILTER: output_bytes=1464, output_rows=366, materialized=0
+                    TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_month_seq>=1200 AND d_month_seq<=1211", output_bytes=1464, output_rows=366, materialized=293660, bytes_read_est=292196, rows_read=73049
+                HASH_JOIN: join_type=SEMI, conditions=[s_state = #0], output_bytes=360, output_rows=10, materialized=376
+                  TABLE_SCAN: table=store, projections=[s_store_sk, s_state, s_county], filters="s_store_sk<=10", output_bytes=360, output_rows=10, materialized=792, bytes_read_est=432, rows_read=12
+                  PROJECTION: projections=[#0], output_bytes=16, output_rows=1, materialized=0
+                    FILTER: output_bytes=40, output_rows=1, materialized=0
+                      PROJECTION: projections=[#0, #1, #2], output_bytes=40, output_rows=1, materialized=0
+                        WINDOW: output_bytes=40, output_rows=1, materialized=32
+                          PROJECTION: projections=[__internal_decompress_string(#0), #1], output_bytes=32, output_rows=1, materialized=0
+                            HASH_GROUP_BY: groups=[#0], aggregates=[sum(#1)], output_bytes=20, output_rows=1, materialized=4329280
+                              PROJECTION: projections=[s_state, ss_net_profit], output_bytes=4329280, output_rows=541160, materialized=0
+                                PROJECTION: projections=[#0, __internal_compress_string_uinteger(#1)], output_bytes=4329280, output_rows=541160, materialized=0
+                                  HASH_JOIN: join_type=INNER, conditions=[ss_store_sk = s_store_sk], output_bytes=10823200, output_rows=541160, materialized=10823200
+                                    HASH_JOIN: join_type=INNER, conditions=[ss_sold_date_sk = d_date_sk], output_bytes=6493920, output_rows=541160, materialized=6495384
+                                      TABLE_SCAN: table=store_sales, projections=[ss_sold_date_sk, ss_store_sk, ss_net_profit], output_bytes=6493920, output_rows=541160, materialized=41058768, bytes_read_est=34564848, rows_read=2880404
+                                      FILTER: output_bytes=1464, output_rows=366, materialized=0
+                                        TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_month_seq>=1200 AND d_month_seq<=1211", output_bytes=1464, output_rows=366, materialized=293660, bytes_read_est=292196, rows_read=73049
+                                    TABLE_SCAN: table=store, projections=[s_store_sk, s_state], filters="s_store_sk<=10", output_bytes=200, output_rows=10, materialized=440, bytes_read_est=240, rows_read=12
+duckdb_cost=149813816

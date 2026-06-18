@@ -1,0 +1,19 @@
+PROJECTION: projections=[__internal_decompress_string(#0), #1], output_bytes=120, output_rows=5, materialized=0
+  ORDER_BY: order_by=[tpch.main.orders.o_orderpriority ASC], output_bytes=120, output_rows=5, materialized=120
+    PROJECTION: projections=[__internal_compress_string_hugeint(#0), #1], output_bytes=120, output_rows=5, materialized=0
+      PROJECTION: projections=[__internal_decompress_string(#0), #1], output_bytes=120, output_rows=5, materialized=0
+        HASH_GROUP_BY: groups=[#0], aggregates=[count_star()], output_bytes=120, output_rows=5, materialized=840368
+          PROJECTION: projections=[o_orderpriority], output_bytes=840368, output_rows=52523, materialized=0
+            PROJECTION: projections=[__internal_compress_string_hugeint(#0)], output_bytes=840368, output_rows=52523, materialized=0
+              RIGHT_DELIM_JOIN: join_type=RIGHT_SEMI, conditions=[o_orderkey IS NOT DISTINCT FROM o_orderkey], output_bytes=0, output_rows=0, materialized=457744
+                TABLE_SCAN: table=orders, projections=[o_orderkey, o_orderpriority], filters="o_orderdate>='1993-07-01'::DATE AND o_orderdate<'1993-10-01'::DATE", output_bytes=1373232, output_rows=57218, materialized=37373232, bytes_read_est=36000000, rows_read=1500000
+                HASH_JOIN: join_type=RIGHT_SEMI, conditions=[o_orderkey IS NOT DISTINCT FROM o_orderkey], output_bytes=840368, output_rows=52523, materialized=1999320
+                  PROJECTION: projections=[o_orderkey], output_bytes=1158952, output_rows=144869, materialized=0
+                    HASH_JOIN: join_type=INNER, conditions=[l_orderkey = o_orderkey], output_bytes=2317904, output_rows=144869, materialized=32663272
+                      PROJECTION: projections=[#0], output_bytes=30345368, output_rows=3793171, materialized=0
+                        FILTER: output_bytes=60690736, output_rows=3793171, materialized=0
+                          TABLE_SCAN: table=lineitem, projections=[l_orderkey, l_commitdate, l_receiptdate], output_bytes=96016336, output_rows=6001021, materialized=192035776, bytes_read_est=96019440, rows_read=6001215
+                      DELIM_SCAN: output_bytes=0, output_rows=0, materialized=0
+                  DUMMY_SCAN: output_bytes=0, output_rows=0, materialized=0
+                HASH_GROUP_BY: groups=[#0], output_bytes=457744, output_rows=57218, materialized=0
+duckdb_cost=265369832

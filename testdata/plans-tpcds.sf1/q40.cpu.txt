@@ -1,24 +1,25 @@
-SortExec: output_bytes=52
-  ProjectionExec: output_bytes=268
-    AggregateExec: output_bytes=268
-      ProjectionExec: output_bytes=8017
-        CoalesceBatchesExec: output_bytes=8017
-          HashJoinExec: output_bytes=8017
-            CoalesceBatchesExec: output_bytes=504
-              FilterExec: output_bytes=504
-                ParquetExec: output_bytes=602656
-            ProjectionExec: output_bytes=410840
-              CoalesceBatchesExec: output_bytes=410840
-                HashJoinExec: output_bytes=410840
-                  CoalesceBatchesExec: output_bytes=4692
-                    FilterExec: output_bytes=4692
-                      ParquetExec: output_bytes=78750
-                  ProjectionExec: output_bytes=12372212
-                    CoalesceBatchesExec: output_bytes=12372212
-                      HashJoinExec: output_bytes=12372212
-                        ParquetExec: output_bytes=22
-                        ProjectionExec: output_bytes=18199546
-                          CoalesceBatchesExec: output_bytes=18199546
-                            HashJoinExec: output_bytes=18199596
-                              ParquetExec: output_bytes=1206563
-                              ParquetExec: output_bytes=23965738
+GpuSortExec: expr=[w_state@0 ASC NULLS LAST, i_item_id@1 ASC NULLS LAST], fetch=100, output_bytes=5860, output_rows=100
+  GpuProjectExec: expr=[w_state@0 as w_state, i_item_id@1 as i_item_id, sum(CASE WHEN date_dim.d_date < Utf8("2000-03-11") THEN catalog_sales.cs_sales_price - coalesce(catalog_returns.cr_refunded_cash,Int64(0)) ELSE Int64(0) END)@2 as sales_before, sum(CASE WHEN date_dim.d_date >= Utf8("2000-03-11") THEN catalog_sales.cs_sales_price - coalesce(catalog_returns.cr_refunded_cash,Int64(0)) ELSE Int64(0) END)@3 as sales_after], output_bytes=31306, output_rows=535
+    GpuAggregateExec: group_by=[w_state, i_item_id], aggr=[sum(CASE WHEN date_dim.d_date < Utf8("2000-03-11") THEN catalog_sales.cs_sales_price - coalesce(catalog_returns.cr_refunded_cash,Int64(0)) ELSE Int64(0) END), sum(CASE WHEN date_dim.d_date >= Utf8("2000-03-11") THEN catalog_sales.cs_sales_price - coalesce(catalog_returns.cr_refunded_cash,Int64(0)) ELSE Int64(0) END)], output_bytes=31306, output_rows=535
+      GpuProjectExec: expr=[d_date@0 as __common_expr_1, cs_sales_price@1 as cs_sales_price, cr_refunded_cash@2 as cr_refunded_cash, w_state@3 as w_state, i_item_id@4 as i_item_id], output_bytes=108539, output_rows=1733
+        GpuCoalesceBatchesExec: target_batch_size=10324440, output_bytes=108539, output_rows=1733
+          GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, cs_sold_date_sk@0)], projection=[1, 3, 4, 5, 6], output_bytes=108539, output_rows=1733
+            GpuCoalesceBatchesExec: target_batch_size=10324440, output_bytes=504, output_rows=61
+              GpuFilterExec: predicate=d_date@1 >= 2000-02-10 AND d_date@1 <= 2000-04-10, output_bytes=504, output_rows=61
+                GpuScanExec: table=date_dim, projections=[d_date_sk, d_date], batch_size=10324440, output_bytes=602656, output_rows=73049
+            GpuProjectExec: expr=[cs_sold_date_sk@1 as cs_sold_date_sk, cs_sales_price@2 as cs_sales_price, cr_refunded_cash@3 as cr_refunded_cash, w_state@4 as w_state, i_item_id@0 as i_item_id], output_bytes=5562988, output_rows=88830
+              GpuCoalesceBatchesExec: target_batch_size=10324440, output_bytes=5562988, output_rows=88830
+                GpuHashJoinExec: join_type=Inner, on=[(i_item_sk@0, cs_item_sk@1)], projection=[1, 2, 4, 5, 6], output_bytes=5563068, output_rows=88830
+                  GpuCoalesceBatchesExec: target_batch_size=10324440, output_bytes=26776, output_rows=1104
+                    GpuFilterExec: predicate=i_current_price@2 >= Some(99),7,2 AND i_current_price@2 <= Some(149),7,2, projection=[0, 1], output_bytes=26776, output_rows=1104
+                      GpuScanExec: table=item, projections=[i_item_sk, i_item_id, i_current_price], batch_size=10324440, output_bytes=726754, output_rows=18000
+                  GpuProjectExec: expr=[cs_sold_date_sk@1 as cs_sold_date_sk, cs_item_sk@2 as cs_item_sk, cs_sales_price@3 as cs_sales_price, cr_refunded_cash@4 as cr_refunded_cash, w_state@0 as w_state], output_bytes=66881658, output_rows=1434459
+                    GpuCoalesceBatchesExec: target_batch_size=10324440, output_bytes=66881658, output_rows=1434459
+                      GpuHashJoinExec: join_type=Inner, on=[(w_warehouse_sk@0, cs_warehouse_sk@1)], projection=[1, 2, 4, 5, 6], output_bytes=66882358, output_rows=1434459
+                        GpuScanExec: table=warehouse, projections=[w_warehouse_sk, w_state], batch_size=10324440, output_bytes=56, output_rows=5
+                        GpuProjectExec: expr=[cs_sold_date_sk@1 as cs_sold_date_sk, cs_warehouse_sk@2 as cs_warehouse_sk, cs_item_sk@3 as cs_item_sk, cs_sales_price@4 as cs_sales_price, cr_refunded_cash@0 as cr_refunded_cash], output_bytes=64329082, output_rows=1441548
+                          GpuCoalesceBatchesExec: target_batch_size=10324440, output_bytes=64329082, output_rows=1441548
+                            GpuHashJoinExec: join_type=Right, on=[(cr_order_number@1, cs_order_number@3), (cr_item_sk@0, cs_item_sk@2)], projection=[2, 3, 4, 5, 7], output_bytes=64329132, output_rows=1441548
+                              GpuScanExec: table=catalog_returns, projections=[cr_item_sk, cr_order_number, cr_refunded_cash], batch_size=10324440, output_bytes=3511635, output_rows=144067
+                              GpuScanExec: table=catalog_sales, projections=[cs_sold_date_sk, cs_warehouse_sk, cs_item_sk, cs_order_number, cs_sales_price], batch_size=10324440, output_bytes=47030506, output_rows=1441548
+peacockdb_cost=462642270

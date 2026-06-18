@@ -228,3 +228,99 @@ jobs:
       - name: Cleanup remote run directory
         if: always()
         run: ssh -o ConnectTimeout=10 gpu "rm -rf $REMOTE_DIR" || true
+
+  # GPU coverage + cost-ratio report (Task 6). Pure CPU/dry: reads only the
+  # committed goldens (.cpu.txt = PeacockDB cost, .duckdb_cost.txt = DuckDB
+  # oracle) and the test skip list — no GPU, no verda, no executor build. On a
+  # PR it upserts a single comment; on master it publishes to GitHub Pages.
+  cost-report:
+    name: Cost report (coverage + ratio)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      # Guard the extractor + report logic on every PR (before generating), so a
+      # broken classifier/normalizer fails CI fast. python3 is preinstalled.
+      - name: DuckDB extraction unit tests (Python)
+        run: python3 testdata/test_duckdb_cost.py
+
+      - name: cost-report unit tests (Rust)
+        run: cargo test -p cost-report
+
+      - name: Generate report
+        env:
+          # Golden cell links point at the code version the report was generated
+          # from: the PR head commit on PRs (GITHUB_SHA is the merge ref there),
+          # the pushed commit on master. GITHUB_REPOSITORY is read for the slug.
+          REPORT_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: |
+          mkdir -p report
+          # Live "Full report" link only on the master run that deploys Pages;
+          # on PRs the page isn't published for this change yet (would 404).
+          PUBLISHED=
+          if [ "$GITHUB_EVENT_NAME" = "push" ] && [ "$GITHUB_REF" = "refs/heads/master" ]; then
+            PUBLISHED=--published
+          fi
+          cargo run -p cost-report -- $PUBLISHED \
+            --sha "$REPORT_SHA" \
+            --generated-at "$(TZ='America/Los_Angeles' date '+%Y-%m-%d %H:%M %Z')" \
+            --html report/index.html --md "$RUNNER_TEMP/pr_comment.md"
+
+      # PR: upsert exactly one comment, keyed on the hidden sentinel. Restricted
+      # to same-repo PRs — fork PRs get a read-only token, so a comment write
+      # would fail; the Pages publish on master is the canonical artifact.
+      - name: Upsert PR comment
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync(process.env.RUNNER_TEMP + '/pr_comment.md', 'utf8');
+            const sentinel = '<!-- peacockdb-cost-report -->';
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number, per_page: 100,
+            });
+            const existing = comments.find(c => c.body && c.body.includes(sentinel));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }
+
+      # On master, hand report/ to the deploy-pages job as the Pages artifact.
+      - name: Upload Pages artifact
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: report
+
+  # Publish the report to GitHub Pages (https://asymptote-tech.github.io/peacockdb/).
+  # Separate job so the github-pages environment (and its master-only deployment
+  # rules) never applies to PR runs.
+  deploy-pages:
+    name: Deploy cost report to Pages
+    needs: cost-report
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    # One in-flight Pages deployment at a time; don't cancel a running deploy.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deploy
+        uses: actions/deploy-pages@v4

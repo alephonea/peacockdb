@@ -1,0 +1,30 @@
+TOP_N: order_by=[count_star() DESC, tpcds.main.item.i_item_desc ASC, tpcds.main.warehouse.w_warehouse_name ASC, d1.d_week_seq ASC], top=100, output_bytes=7600, output_rows=100, materialized=152608
+  PROJECTION: projections=[#0, #1, __internal_decompress_integral_integer(#2, 1), #3, #4, #5], output_bytes=152608, output_rows=2008, materialized=0
+    HASH_GROUP_BY: groups=[#0, #1, #2], aggregates=[sum(#3), sum(#4), count_star()], output_bytes=148592, output_rows=2008, materialized=85008
+      PROJECTION: projections=[i_item_desc, w_warehouse_name, d_week_seq, CASE  WHEN ((p_promo_sk IS NULL)) THEN (1) ELSE 0 END, CASE  WHEN ((p_promo_sk IS NOT NULL)) THEN (1) ELSE 0 END], output_bytes=85008, output_rows=2024, materialized=0
+        PROJECTION: projections=[__internal_compress_integral_usmallint(#1, 1), #0, #2, #3, __internal_compress_integral_usmallint(#4, 1), #5], output_bytes=89056, output_rows=2024, materialized=0
+          HASH_JOIN: join_type=LEFT, conditions=[cs_item_sk = cr_item_sk, cs_order_number = cr_order_number], output_bytes=97152, output_rows=2024, materialized=97152
+            HASH_JOIN: join_type=LEFT, conditions=[cs_promo_sk = p_promo_sk], output_bytes=97152, output_rows=2024, materialized=97152
+              HASH_JOIN: join_type=INNER, conditions=[inv_warehouse_sk = w_warehouse_sk], output_bytes=97152, output_rows=2024, materialized=97152
+                HASH_JOIN: join_type=INNER, conditions=[inv_item_sk = cs_item_sk, inv_date_sk = d_date_sk, inv_quantity_on_hand < cs_quantity], output_bytes=72864, output_rows=2024, materialized=2505784
+                  TABLE_SCAN: table=inventory, projections=[inv_item_sk, inv_warehouse_sk, inv_date_sk, inv_quantity_on_hand], filters="inv_quantity_on_hand<=100", output_bytes=3660992, output_rows=228812, materialized=191580992, bytes_read_est=187920000, rows_read=11745000
+                  FILTER: output_bytes=2432920, output_rows=60823, materialized=0
+                    HASH_JOIN: join_type=INNER, conditions=[d_week_seq = d_week_seq], output_bytes=2432920, output_rows=60823, materialized=2432920
+                      TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_week_seq], output_bytes=2968, output_rows=371, materialized=587360, bytes_read_est=584392, rows_read=73049
+                      HASH_JOIN: join_type=INNER, conditions=[i_item_sk = cs_item_sk], output_bytes=312804, output_rows=8689, materialized=312804
+                        TABLE_SCAN: table=item, projections=[i_item_sk, i_item_desc], output_bytes=359960, output_rows=17998, materialized=719960, bytes_read_est=360000, rows_read=18000
+                        HASH_JOIN: join_type=INNER, conditions=[cs_bill_hdemo_sk = hd_demo_sk], output_bytes=208536, output_rows=8689, materialized=208536
+                          HASH_JOIN: join_type=INNER, conditions=[cd_demo_sk = cs_bill_cdemo_sk], output_bytes=1544060, output_rows=55145, materialized=3080612
+                            FILTER: output_bytes=1536552, output_rows=384138, materialized=0
+                              TABLE_SCAN: table=customer_demographics, projections=[cd_demo_sk], filters="cd_marital_status='D'", output_bytes=1536552, output_rows=384138, materialized=9219752, bytes_read_est=7683200, rows_read=1920800
+                            HASH_JOIN: join_type=INNER, conditions=[cs_ship_date_sk = d_date_sk, cs_sold_date_sk = d_date_sk], output_bytes=7626556, output_rows=272377, materialized=17627556
+                              TABLE_SCAN: table=catalog_sales, projections=[cs_item_sk, cs_bill_cdemo_sk, cs_bill_hdemo_sk, cs_sold_date_sk, cs_ship_date_sk, cs_promo_sk, cs_order_number, cs_quantity], output_bytes=9116448, output_rows=284889, materialized=55245984, bytes_read_est=46129536, rows_read=1441548
+                              PIECEWISE_MERGE_JOIN: output_bytes=10001000, output_rows=500050, materialized=19748
+                                TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_date], filters="d_date_sk>=2450817 AND d_date_sk<=2452737", output_bytes=15368, output_rows=1921, materialized=599760, bytes_read_est=584392, rows_read=73049
+                                FILTER: output_bytes=4380, output_rows=365, materialized=0
+                                  TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_week_seq, d_date], filters="d_year=1999", output_bytes=4380, output_rows=365, materialized=880968, bytes_read_est=876588, rows_read=73049
+                          TABLE_SCAN: table=household_demographics, projections=[hd_demo_sk], filters="hd_buy_potential='>10000'", output_bytes=4800, output_rows=1200, materialized=33600, bytes_read_est=28800, rows_read=7200
+                TABLE_SCAN: table=warehouse, projections=[w_warehouse_sk, w_warehouse_name], output_bytes=100, output_rows=5, materialized=200, bytes_read_est=100, rows_read=5
+              TABLE_SCAN: table=promotion, projections=[p_promo_sk], output_bytes=1200, output_rows=300, materialized=2400, bytes_read_est=1200, rows_read=300
+            TABLE_SCAN: table=catalog_returns, projections=[cr_item_sk, cr_order_number], output_bytes=1152536, output_rows=144067, materialized=2305072, bytes_read_est=1152536, rows_read=144067
+duckdb_cost=287893080

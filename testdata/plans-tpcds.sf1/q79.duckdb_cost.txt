@@ -1,0 +1,21 @@
+TOP_N: order_by=[tpcds.main.customer.c_last_name ASC, tpcds.main.customer.c_first_name ASC, main."substring"(ms.s_city, 1, 30) ASC, ms.profit ASC, ms.ss_ticket_number ASC], top=100, output_bytes=8400, output_rows=100, materialized=589680
+  PROJECTION: projections=[c_last_name, c_first_name, "substring"(s_city, 1, 30), ss_ticket_number, amt, profit], output_bytes=589680, output_rows=7020, materialized=0
+    HASH_JOIN: join_type=INNER, conditions=[c_customer_sk = ss_customer_sk], output_bytes=589680, output_rows=7020, materialized=1008952
+      TABLE_SCAN: table=customer, projections=[c_customer_sk, c_last_name, c_first_name], output_bytes=3599784, output_rows=99994, materialized=7199784, bytes_read_est=3600000, rows_read=100000
+      PROJECTION: projections=[ss_ticket_number, ss_customer_sk, s_city, amt, profit], output_bytes=419272, output_rows=7487, materialized=0
+        PROJECTION: projections=[#0, #1, __internal_decompress_integral_integer(#2, 1), __internal_decompress_string(#3), #4, #5], output_bytes=449220, output_rows=7487, materialized=0
+          HASH_GROUP_BY: groups=[#0, #1, #2, #3], aggregates=[sum(#4), sum(#5)], output_bytes=434246, output_rows=7487, materialized=2553808
+            PROJECTION: projections=[ss_ticket_number, ss_customer_sk, ss_addr_sk, s_city, ss_coupon_amt, ss_net_profit], output_bytes=2553808, output_rows=75112, materialized=0
+              PROJECTION: projections=[#0, #1, __internal_compress_integral_usmallint(#2, 1), #3, #4, __internal_compress_string_hugeint(#5), __internal_compress_integral_usmallint(#6, 1)], output_bytes=2704032, output_rows=75112, materialized=0
+                HASH_JOIN: join_type=INNER, conditions=[ss_hdemo_sk = hd_demo_sk], output_bytes=3004480, output_rows=75112, materialized=3016000
+                  HASH_JOIN: join_type=INNER, conditions=[ss_store_sk = s_store_sk], output_bytes=6355280, output_rows=158882, materialized=6355460
+                    HASH_JOIN: join_type=INNER, conditions=[ss_sold_date_sk = d_date_sk], output_bytes=6137920, output_rows=191810, materialized=6138548
+                      TABLE_SCAN: table=store_sales, projections=[ss_sold_date_sk, ss_store_sk, ss_hdemo_sk, ss_ticket_number, ss_customer_sk, ss_addr_sk, ss_coupon_amt, ss_net_profit], output_bytes=42867744, output_rows=1339617, materialized=135040672, bytes_read_est=92172928, rows_read=2880404
+                      FILTER: output_bytes=628, output_rows=157, materialized=0
+                        TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_dow=1 AND d_year>=1999 AND d_year<=2001", output_bytes=628, output_rows=157, materialized=292824, bytes_read_est=292196, rows_read=73049
+                    FILTER: output_bytes=180, output_rows=9, materialized=0
+                      TABLE_SCAN: table=store, projections=[s_store_sk, s_city], filters="s_number_employees>=200 AND s_number_employees<=295", output_bytes=220, output_rows=11, materialized=460, bytes_read_est=240, rows_read=12
+                  PROJECTION: projections=[#0], output_bytes=11520, output_rows=2880, materialized=0
+                    FILTER: output_bytes=34560, output_rows=2880, materialized=0
+                      TABLE_SCAN: table=household_demographics, projections=[hd_demo_sk, hd_dep_count, hd_vehicle_count], output_bytes=86400, output_rows=7200, materialized=172800, bytes_read_est=86400, rows_read=7200
+duckdb_cost=162368988

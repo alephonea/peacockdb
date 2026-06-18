@@ -1,0 +1,26 @@
+PROJECTION: projections=[__internal_decompress_integral_bigint(#0, 1), #1], output_bytes=662496, output_rows=27604, materialized=0
+  ORDER_BY: order_by=[sum((tpch.main.partsupp.ps_supplycost * tpch.main.partsupp.ps_availqty)) DESC], output_bytes=552080, output_rows=27604, materialized=552080
+    PROJECTION: projections=[__internal_compress_integral_uinteger(#0, 1), #1], output_bytes=552080, output_rows=27604, materialized=0
+      PROJECTION: projections=[ps_partkey, value], output_bytes=662496, output_rows=27604, materialized=0
+        NESTED_LOOP_JOIN: join_type=INNER, conditions=[CAST(sum((CAST(ps_supplycost AS DECIMAL(34,2)) * CAST(ps_availqty AS DECIMAL(34,0)))) AS DECIMAL(38,8)) > SUBQUERY], output_bytes=1104160, output_rows=27604, materialized=1819808
+          PROJECTION: projections=[__internal_decompress_integral_bigint(#0, 1), #1], output_bytes=715632, output_rows=29818, materialized=0
+            HASH_GROUP_BY: groups=[#0], aggregates=[sum(#1)], output_bytes=596360, output_rows=29818, materialized=633600
+              PROJECTION: projections=[ps_partkey, (CAST(ps_supplycost AS DECIMAL(34,2)) * CAST(ps_availqty AS DECIMAL(34,0)))], output_bytes=633600, output_rows=31680, materialized=0
+                PROJECTION: projections=[__internal_compress_integral_usmallint(#0, 1), __internal_compress_integral_uinteger(#1, 1), #2, #3, __internal_compress_integral_usmallint(#4, 1), __internal_compress_integral_utinyint(#5, 0), __internal_compress_integral_utinyint(#6, 0)], output_bytes=823680, output_rows=31680, materialized=0
+                  HASH_JOIN: join_type=INNER, conditions=[ps_suppkey = s_suppkey], output_bytes=1520640, output_rows=31680, materialized=1520640
+                    TABLE_SCAN: table=partsupp, projections=[ps_suppkey, ps_partkey, ps_supplycost, ps_availqty], output_bytes=25492480, output_rows=796640, materialized=51092480, bytes_read_est=25600000, rows_read=800000
+                    HASH_JOIN: join_type=INNER, conditions=[s_nationkey = n_nationkey], output_bytes=6336, output_rows=396, materialized=6336
+                      TABLE_SCAN: table=supplier, projections=[s_suppkey, s_nationkey], output_bytes=4752, output_rows=396, materialized=124752, bytes_read_est=120000, rows_read=10000
+                      TABLE_SCAN: table=nation, projections=[n_nationkey], filters="n_name='GERMANY'", output_bytes=4, output_rows=1, materialized=104, bytes_read_est=100, rows_read=25
+          PROJECTION: projections=[CASE  WHEN ((#1 > 1)) THEN (error('More than one row returned by a subquery used as an expression - scalar subqueries can only return a single row., Use "SET scalar_subquery_error_on_multiple_rows=false" to revert to previous behavior of returning a random row.')) ELSE #0 END], output_bytes=16, output_rows=1, materialized=0
+            UNGROUPED_AGGREGATE: aggregates=["first"(#0), count_star()], output_bytes=24, output_rows=1, materialized=16
+              PROJECTION: projections=[#0], output_bytes=16, output_rows=1, materialized=0
+                PROJECTION: projections=[(sum((CAST(ps_supplycost AS DECIMAL(34,2)) * CAST(ps_availqty AS DECIMAL(34,0)))) * 0.000002)], output_bytes=16, output_rows=1, materialized=0
+                  UNGROUPED_AGGREGATE: aggregates=[sum(#0)], output_bytes=16, output_rows=1, materialized=506880
+                    PROJECTION: projections=[(CAST(ps_supplycost AS DECIMAL(34,2)) * CAST(ps_availqty AS DECIMAL(34,0)))], output_bytes=506880, output_rows=31680, materialized=0
+                      HASH_JOIN: join_type=INNER, conditions=[ps_suppkey = s_suppkey], output_bytes=1267200, output_rows=31680, materialized=1267200
+                        TABLE_SCAN: table=partsupp, projections=[ps_suppkey, ps_supplycost, ps_availqty], output_bytes=19119360, output_rows=796640, materialized=38319360, bytes_read_est=19200000, rows_read=800000
+                        HASH_JOIN: join_type=INNER, conditions=[s_nationkey = n_nationkey], output_bytes=6336, output_rows=396, materialized=6336
+                          TABLE_SCAN: table=supplier, projections=[s_suppkey, s_nationkey], output_bytes=4752, output_rows=396, materialized=124752, bytes_read_est=120000, rows_read=10000
+                          TABLE_SCAN: table=nation, projections=[n_nationkey], filters="n_name='GERMANY'", output_bytes=4, output_rows=1, materialized=104, bytes_read_est=100, rows_read=25
+duckdb_cost=95974448

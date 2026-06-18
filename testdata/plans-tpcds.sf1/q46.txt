@@ -11,7 +11,7 @@ GpuSortPreservingMergeExec: [c_last_name@0 ASC, c_first_name@1 ASC, ca_city@2 AS
                     GpuCoalesceBatchesExec: target_batch_size=6391320
                       GpuRepartitionExec: partitioning=Hash([c_customer_sk@0], 8), input_partitions=8
                         GpuRepartitionExec: partitioning=RoundRobinBatch(8), input_partitions=1
-                          GpuScanExec: batch_size=6391320
+                          GpuScanExec: table=customer, projections=[c_customer_sk, c_current_addr_sk, c_first_name, c_last_name], batch_size=6391320
                     GpuCoalesceBatchesExec: target_batch_size=6391320
                       GpuRepartitionExec: partitioning=Hash([ss_customer_sk@1], 8), input_partitions=8
                         GpuProjectExec: expr=[ss_ticket_number@0 as ss_ticket_number, ss_customer_sk@1 as ss_customer_sk, ca_city@3 as bought_city, sum(store_sales.ss_coupon_amt)@4 as amt, sum(store_sales.ss_net_profit)@5 as profit]
@@ -25,7 +25,7 @@ GpuSortPreservingMergeExec: [c_last_name@0 ASC, c_first_name@1 ASC, ca_city@2 AS
                                         GpuCoalesceBatchesExec: target_batch_size=6391320
                                           GpuRepartitionExec: partitioning=Hash([ca_address_sk@0], 8), input_partitions=8
                                             GpuRepartitionExec: partitioning=RoundRobinBatch(8), input_partitions=1
-                                              GpuScanExec: batch_size=6391320
+                                              GpuScanExec: table=customer_address, projections=[ca_address_sk, ca_city], batch_size=6391320
                                         GpuCoalesceBatchesExec: target_batch_size=6391320
                                           GpuRepartitionExec: partitioning=Hash([ss_addr_sk@1], 8), input_partitions=8
                                             GpuCoalesceBatchesExec: target_batch_size=6391320
@@ -35,7 +35,7 @@ GpuSortPreservingMergeExec: [c_last_name@0 ASC, c_first_name@1 ASC, ca_city@2 AS
                                                     GpuCoalesceBatchesExec: target_batch_size=6391320
                                                       GpuFilterExec: predicate=hd_dep_count@1 = 4 OR hd_vehicle_count@2 = 3, projection=[0]
                                                         GpuRepartitionExec: partitioning=RoundRobinBatch(8), input_partitions=1
-                                                          GpuScanExec: batch_size=6391320
+                                                          GpuScanExec: table=household_demographics, projections=[hd_demo_sk, hd_dep_count, hd_vehicle_count], batch_size=6391320
                                                 GpuCoalesceBatchesExec: target_batch_size=6391320
                                                   GpuRepartitionExec: partitioning=Hash([ss_hdemo_sk@1], 8), input_partitions=8
                                                     GpuCoalesceBatchesExec: target_batch_size=6391320
@@ -45,7 +45,7 @@ GpuSortPreservingMergeExec: [c_last_name@0 ASC, c_first_name@1 ASC, ca_city@2 AS
                                                             GpuCoalesceBatchesExec: target_batch_size=6391320
                                                               GpuFilterExec: predicate=s_city@1 = Fairview OR s_city@1 = Midway, projection=[0]
                                                                 GpuRepartitionExec: partitioning=RoundRobinBatch(8), input_partitions=1
-                                                                  GpuScanExec: batch_size=6391320
+                                                                  GpuScanExec: table=store, projections=[s_store_sk, s_city], batch_size=6391320
                                                         GpuCoalesceBatchesExec: target_batch_size=6391320
                                                           GpuRepartitionExec: partitioning=Hash([ss_store_sk@3], 8), input_partitions=8
                                                             GpuCoalesceBatchesExec: target_batch_size=6391320
@@ -55,14 +55,14 @@ GpuSortPreservingMergeExec: [c_last_name@0 ASC, c_first_name@1 ASC, ca_city@2 AS
                                                                     GpuCoalesceBatchesExec: target_batch_size=6391320
                                                                       GpuFilterExec: predicate=(d_dow@2 = 6 OR d_dow@2 = 0) AND (d_year@1 = 1999 OR d_year@1 = 2000 OR d_year@1 = 2001), projection=[0]
                                                                         GpuRepartitionExec: partitioning=RoundRobinBatch(8), input_partitions=1
-                                                                          GpuScanExec: batch_size=6391320
+                                                                          GpuScanExec: table=date_dim, projections=[d_date_sk, d_year, d_dow], batch_size=6391320
                                                                 GpuCoalesceBatchesExec: target_batch_size=6391320
                                                                   GpuRepartitionExec: partitioning=Hash([ss_sold_date_sk@0], 8), input_partitions=8
-                                                                    GpuScanExec: batch_size=6391320
+                                                                    GpuScanExec: table=store_sales, projections=[ss_sold_date_sk, ss_customer_sk, ss_hdemo_sk, ss_addr_sk, ss_store_sk, ss_ticket_number, ss_coupon_amt, ss_net_profit], batch_size=6391320
           GpuCoalesceBatchesExec: target_batch_size=6391320
             GpuRepartitionExec: partitioning=Hash([ca_address_sk@0], 8), input_partitions=8
               GpuRepartitionExec: partitioning=RoundRobinBatch(8), input_partitions=1
-                GpuScanExec: batch_size=6391320
+                GpuScanExec: table=customer_address, projections=[ca_address_sk, ca_city], batch_size=6391320
 --- memory ---
 total_estimate_cost=7308
 GpuSortPreservingMergeExec: row_width=164, subtree_max_row_bytes=336, estimate_input_bytes=164, estimate_output_bytes=164, estimate_cost=328

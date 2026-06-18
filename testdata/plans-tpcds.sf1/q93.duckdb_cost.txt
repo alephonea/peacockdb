@@ -1,0 +1,10 @@
+TOP_N: order_by=[sum(t.act_sales) ASC, t.ss_customer_sk ASC], top=100, output_bytes=2000, output_rows=100, materialized=143380
+  HASH_GROUP_BY: groups=[#0], aggregates=[sum(#1)], output_bytes=143380, output_rows=7169, materialized=95004
+    PROJECTION: projections=[ss_customer_sk, act_sales], output_bytes=95004, output_rows=7917, materialized=0
+      PROJECTION: projections=[ss_customer_sk, act_sales], output_bytes=95004, output_rows=7917, materialized=0
+        HASH_JOIN: join_type=INNER, conditions=[sr_reason_sk = r_reason_sk], output_bytes=158340, output_rows=7917, materialized=158340
+          HASH_JOIN: join_type=LEFT, conditions=[ss_item_sk = sr_item_sk, ss_ticket_number = sr_ticket_number], output_bytes=57608080, output_rows=2880404, materialized=57608080
+            TABLE_SCAN: table=store_sales, projections=[ss_item_sk, ss_ticket_number, ss_customer_sk, ss_quantity, ss_sales_price], output_bytes=57608080, output_rows=2880404, materialized=115216160, bytes_read_est=57608080, rows_read=2880404
+            TABLE_SCAN: table=store_returns, projections=[sr_item_sk, sr_ticket_number, sr_reason_sk, sr_return_quantity], output_bytes=4605872, output_rows=287867, materialized=9211744, bytes_read_est=4605872, rows_read=287867
+          TABLE_SCAN: table=reason, projections=[r_reason_sk], filters="r_reason_desc='reason 28'", output_bytes=4, output_rows=1, materialized=144, bytes_read_est=140, rows_read=35
+duckdb_cost=182432852

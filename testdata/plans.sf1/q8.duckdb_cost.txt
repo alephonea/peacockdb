@@ -1,0 +1,25 @@
+PROJECTION: projections=[__internal_decompress_integral_bigint(#0, 1992), #1], output_bytes=32, output_rows=2, materialized=0
+  ORDER_BY: order_by=[all_nations.o_year ASC], output_bytes=18, output_rows=2, materialized=18
+    PROJECTION: projections=[__internal_compress_integral_utinyint(#0, 1992), #1], output_bytes=18, output_rows=2, materialized=0
+      PROJECTION: projections=[o_year, mkt_share], output_bytes=32, output_rows=2, materialized=0
+        PROJECTION: projections=[__internal_decompress_integral_bigint(#0, 1992), #1, #2], output_bytes=80, output_rows=2, materialized=0
+          PERFECT_HASH_GROUP_BY: groups=[#0], aggregates=[sum(#1), sum(#2)], output_bytes=66, output_rows=2, materialized=44251
+            PROJECTION: projections=[o_year, CASE  WHEN ((nation = 'BRAZIL')) THEN (volume) ELSE 0.0000 END, volume], output_bytes=44251, output_rows=2603, materialized=0
+              PROJECTION: projections=[__internal_compress_integral_utinyint(#0, 1992), #1, #2], output_bytes=65075, output_rows=2603, materialized=0
+                PROJECTION: projections=[o_year, volume, nation], output_bytes=83296, output_rows=2603, materialized=0
+                  HASH_JOIN: join_type=INNER, conditions=[s_nationkey = n_nationkey], output_bytes=93708, output_rows=2603, materialized=93708
+                    HASH_JOIN: join_type=INNER, conditions=[s_suppkey = l_suppkey], output_bytes=62472, output_rows=2603, materialized=62472
+                      TABLE_SCAN: table=supplier, projections=[s_suppkey, s_nationkey], output_bytes=119832, output_rows=9986, materialized=239832, bytes_read_est=120000, rows_read=10000
+                      HASH_JOIN: join_type=INNER, conditions=[c_nationkey = n_nationkey], output_bytes=93708, output_rows=2603, materialized=93708
+                        HASH_JOIN: join_type=INNER, conditions=[c_custkey = o_custkey], output_bytes=410272, output_rows=12821, materialized=410272
+                          TABLE_SCAN: table=customer, projections=[c_custkey, c_nationkey], filters="c_custkey<=149999", output_bytes=1728624, output_rows=144052, materialized=3528624, bytes_read_est=1800000, rows_read=150000
+                          HASH_JOIN: join_type=INNER, conditions=[o_orderkey = l_orderkey], output_bytes=482004, output_rows=13389, materialized=482004
+                            TABLE_SCAN: table=orders, projections=[o_orderkey, o_custkey, o_orderdate], filters="o_orderdate>='1995-01-01'::DATE AND o_orderdate<='1996-12-31'::DATE", output_bytes=9145120, output_rows=457256, materialized=39145120, bytes_read_est=30000000, rows_read=1500000
+                            HASH_JOIN: join_type=INNER, conditions=[l_partkey = p_partkey], output_bytes=1747720, output_rows=43693, materialized=1747720
+                              TABLE_SCAN: table=lineitem, projections=[l_partkey, l_suppkey, l_orderkey, l_extendedprice, l_discount], output_bytes=239801720, output_rows=5995043, materialized=479850320, bytes_read_est=240048600, rows_read=6001215
+                              TABLE_SCAN: table=part, projections=[p_partkey], filters="p_type='ECONOMY ANODIZED STEEL'", output_bytes=11608, output_rows=1451, materialized=1611608, bytes_read_est=1600000, rows_read=200000
+                        HASH_JOIN: join_type=INNER, conditions=[n_regionkey = r_regionkey], output_bytes=40, output_rows=5, materialized=40
+                          TABLE_SCAN: table=nation, projections=[n_nationkey, n_regionkey], output_bytes=40, output_rows=5, materialized=240, bytes_read_est=200, rows_read=25
+                          TABLE_SCAN: table=region, projections=[r_regionkey], filters="r_name='AMERICA'", output_bytes=4, output_rows=1, materialized=24, bytes_read_est=20, rows_read=5
+                    TABLE_SCAN: table=nation, projections=[n_nationkey, n_name], output_bytes=500, output_rows=25, materialized=1000, bytes_read_est=500, rows_read=25
+duckdb_cost=527310961

@@ -4,7 +4,7 @@ GpuAggregateExec: group_by=[], aggr=[count(*)]
       GpuProjectExec: expr=[]
         GpuCoalesceBatchesExec: target_batch_size=67108864
           GpuFilterExec: predicate=c_acctbal@0 > Some(0),15,2
-            GpuScanExec: batch_size=67108864
+            GpuScanExec: table=customer, projections=[c_acctbal], batch_size=67108864
 --- memory ---
 total_estimate_cost=138
 GpuAggregateExec: row_width=8, subtree_max_row_bytes=32, estimate_input_bytes=8, estimate_output_bytes=8, estimate_cost=16

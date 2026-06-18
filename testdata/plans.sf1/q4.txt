@@ -11,12 +11,12 @@ GpuSortPreservingMergeExec: [o_orderpriority@0 ASC NULLS LAST]
                     GpuRepartitionExec: partitioning=Hash([o_orderkey@0], 8), input_partitions=8
                       GpuCoalesceBatchesExec: target_batch_size=25565281
                         GpuFilterExec: predicate=o_orderdate@1 >= 1993-07-01 AND o_orderdate@1 < 1993-10-01, projection=[0, 2]
-                          GpuScanExec: batch_size=25565281
+                          GpuScanExec: table=orders, projections=[o_orderkey, o_orderdate, o_orderpriority], batch_size=25565281
                   GpuCoalesceBatchesExec: target_batch_size=25565281
                     GpuRepartitionExec: partitioning=Hash([l_orderkey@0], 8), input_partitions=8
                       GpuCoalesceBatchesExec: target_batch_size=25565281
                         GpuFilterExec: predicate=l_receiptdate@2 > l_commitdate@1, projection=[0]
-                          GpuScanExec: batch_size=25565281
+                          GpuScanExec: table=lineitem, projections=[l_orderkey, l_commitdate, l_receiptdate], batch_size=25565281
 --- memory ---
 total_estimate_cost=1152
 GpuSortPreservingMergeExec: row_width=40, subtree_max_row_bytes=84, estimate_input_bytes=40, estimate_output_bytes=40, estimate_cost=80

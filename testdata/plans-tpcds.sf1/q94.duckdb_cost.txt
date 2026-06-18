@@ -1,0 +1,27 @@
+TOP_N: order_by=[count(DISTINCT ws1.ws_order_number) ASC], top=100, output_bytes=40, output_rows=1, materialized=40
+  UNGROUPED_AGGREGATE: aggregates=[count(DISTINCT #0), sum(#1), sum(#2)], output_bytes=40, output_rows=1, materialized=480
+    PROJECTION: projections=[ws_order_number, ws_ext_ship_cost, ws_net_profit], output_bytes=480, output_rows=40, materialized=0
+      RIGHT_DELIM_JOIN: join_type=RIGHT_ANTI, conditions=[ws_order_number IS NOT DISTINCT FROM ws_order_number], output_bytes=0, output_rows=0, materialized=400
+        RIGHT_DELIM_JOIN: join_type=RIGHT_SEMI, conditions=[ws_order_number IS NOT DISTINCT FROM ws_order_number, ws_warehouse_sk IS NOT DISTINCT FROM ws_warehouse_sk], output_bytes=0, output_rows=0, materialized=1032
+          HASH_JOIN: join_type=INNER, conditions=[ws_web_site_sk = web_site_sk], output_bytes=2700, output_rows=135, materialized=2700
+            HASH_JOIN: join_type=INNER, conditions=[ws_ship_date_sk = d_date_sk], output_bytes=8304, output_rows=346, materialized=8548
+              HASH_JOIN: join_type=INNER, conditions=[ws_ship_addr_sk = ca_address_sk], output_bytes=9688, output_rows=346, materialized=9688
+                TABLE_SCAN: table=web_sales, projections=[ws_ship_date_sk, ws_ship_addr_sk, ws_web_site_sk, ws_order_number, ws_warehouse_sk, ws_ext_ship_cost, ws_net_profit], output_bytes=281736, output_rows=10062, materialized=20424488, bytes_read_est=20142752, rows_read=719384
+                TABLE_SCAN: table=customer_address, projections=[ca_address_sk], filters="ca_state='IL'", output_bytes=6384, output_rows=1596, materialized=206384, bytes_read_est=200000, rows_read=50000
+              FILTER: output_bytes=244, output_rows=61, materialized=0
+                TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_date>='1999-02-01'::DATE AND d_date<='1999-04-02'::DATE", output_bytes=244, output_rows=61, materialized=292440, bytes_read_est=292196, rows_read=73049
+            TABLE_SCAN: table=web_site, projections=[web_site_sk], filters="web_company_name='pri'", output_bytes=16, output_rows=4, materialized=136, bytes_read_est=120, rows_read=30
+          HASH_JOIN: join_type=RIGHT_SEMI, conditions=[ws_order_number IS NOT DISTINCT FROM ws_order_number, ws_warehouse_sk IS NOT DISTINCT FROM ws_warehouse_sk], output_bytes=1620, output_rows=135, materialized=1620
+            HASH_JOIN: join_type=INNER, conditions=[ws_order_number = ws_order_number, ws_warehouse_sk != ws_warehouse_sk], output_bytes=9288, output_rows=1161, materialized=9288
+              TABLE_SCAN: table=web_sales, projections=[ws_order_number, ws_warehouse_sk], output_bytes=5750264, output_rows=718783, materialized=11505336, bytes_read_est=5755072, rows_read=719384
+              DELIM_SCAN: output_bytes=0, output_rows=0, materialized=0
+            DUMMY_SCAN: output_bytes=0, output_rows=0, materialized=0
+          HASH_GROUP_BY: groups=[#0, #1], output_bytes=1032, output_rows=129, materialized=0
+        HASH_JOIN: join_type=RIGHT_ANTI, conditions=[ws_order_number IS NOT DISTINCT FROM ws_order_number], output_bytes=480, output_rows=40, materialized=920
+          PROJECTION: projections=[ws_order_number], output_bytes=440, output_rows=110, materialized=0
+            HASH_JOIN: join_type=INNER, conditions=[wr_order_number = ws_order_number], output_bytes=880, output_rows=110, materialized=880
+              TABLE_SCAN: table=web_returns, projections=[wr_order_number], output_bytes=286400, output_rows=71600, materialized=573016, bytes_read_est=286616, rows_read=71654
+              DELIM_SCAN: output_bytes=0, output_rows=0, materialized=0
+          DUMMY_SCAN: output_bytes=0, output_rows=0, materialized=0
+        HASH_GROUP_BY: groups=[#0], output_bytes=400, output_rows=100, materialized=0
+duckdb_cost=33037396

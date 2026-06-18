@@ -1,0 +1,34 @@
+TOP_N: order_by=[tpch.main.supplier.s_acctbal DESC, tpch.main.nation.n_name ASC, tpch.main.supplier.s_name ASC, tpch.main.part.p_partkey ASC], top=100, output_bytes=11200, output_rows=100, materialized=51520
+  PROJECTION: projections=[s_acctbal, s_name, n_name, p_partkey, p_mfgr, s_address, s_phone, s_comment], output_bytes=51520, output_rows=460, materialized=0
+    PROJECTION: projections=[#2, #3, #4, #5, #6, #7, #8, #9], output_bytes=51520, output_rows=460, materialized=0
+      FILTER: output_bytes=58880, output_rows=460, materialized=0
+        RIGHT_DELIM_JOIN: join_type=RIGHT, conditions=[p_partkey IS NOT DISTINCT FROM p_partkey], output_bytes=0, output_rows=0, materialized=3680
+          HASH_JOIN: join_type=INNER, conditions=[ps_suppkey = s_suppkey], output_bytes=77040, output_rows=642, materialized=77040
+            HASH_JOIN: join_type=INNER, conditions=[ps_partkey = p_partkey], output_bytes=119480, output_rows=2987, materialized=137408
+              TABLE_SCAN: table=partsupp, projections=[ps_partkey, ps_suppkey, ps_supplycost], output_bytes=19138224, output_rows=797426, materialized=38338224, bytes_read_est=19200000, rows_read=800000
+              PROJECTION: projections=[#0, #2], output_bytes=17928, output_rows=747, materialized=0
+                FILTER: output_bytes=29880, output_rows=747, materialized=0
+                  TABLE_SCAN: table=part, projections=[p_partkey, p_type, p_mfgr], filters="p_size=15", output_bytes=156280, output_rows=3907, materialized=8156280, bytes_read_est=8000000, rows_read=200000
+            HASH_JOIN: join_type=INNER, conditions=[s_nationkey = n_nationkey], output_bytes=190752, output_rows=1987, materialized=190752
+              TABLE_SCAN: table=supplier, projections=[s_suppkey, s_nationkey, s_acctbal, s_name, s_address, s_phone, s_comment], output_bytes=602280, output_rows=7170, materialized=1442280, bytes_read_est=840000, rows_read=10000
+              HASH_JOIN: join_type=INNER, conditions=[n_regionkey = r_regionkey], output_bytes=120, output_rows=5, materialized=120
+                TABLE_SCAN: table=nation, projections=[n_nationkey, n_regionkey, n_name], output_bytes=120, output_rows=5, materialized=720, bytes_read_est=600, rows_read=25
+                TABLE_SCAN: table=region, projections=[r_regionkey], filters="r_name='EUROPE'", output_bytes=4, output_rows=1, materialized=24, bytes_read_est=20, rows_read=5
+          HASH_JOIN: join_type=RIGHT, conditions=[p_partkey IS NOT DISTINCT FROM p_partkey], output_bytes=82176, output_rows=642, materialized=89536
+            PROJECTION: projections=[min(ps_supplycost), p_partkey], output_bytes=7360, output_rows=460, materialized=0
+              PROJECTION: projections=[__internal_decompress_integral_bigint(#0, 1), #1], output_bytes=7360, output_rows=460, materialized=0
+                HASH_GROUP_BY: groups=[#0], aggregates=[min(#1)], output_bytes=5520, output_rows=460, materialized=7704
+                  PROJECTION: projections=[p_partkey, ps_supplycost], output_bytes=7704, output_rows=642, materialized=0
+                    PROJECTION: projections=[__internal_compress_integral_uinteger(#0, 1), #1, __internal_compress_integral_usmallint(#2, 1), __internal_compress_integral_utinyint(#3, 0), __internal_compress_integral_utinyint(#4, 0)], output_bytes=10272, output_rows=642, materialized=0
+                      HASH_JOIN: join_type=INNER, conditions=[ps_suppkey = s_suppkey], output_bytes=20544, output_rows=642, materialized=20544
+                        HASH_JOIN: join_type=INNER, conditions=[ps_partkey = p_partkey], output_bytes=58880, output_rows=1840, materialized=58880
+                          TABLE_SCAN: table=partsupp, projections=[ps_partkey, ps_suppkey, ps_supplycost], output_bytes=19114704, output_rows=796446, materialized=38314704, bytes_read_est=19200000, rows_read=800000
+                          DELIM_SCAN: output_bytes=0, output_rows=0, materialized=0
+                        HASH_JOIN: join_type=INNER, conditions=[s_nationkey = n_nationkey], output_bytes=31792, output_rows=1987, materialized=31792
+                          TABLE_SCAN: table=supplier, projections=[s_suppkey, s_nationkey], output_bytes=86040, output_rows=7170, materialized=206040, bytes_read_est=120000, rows_read=10000
+                          HASH_JOIN: join_type=INNER, conditions=[n_regionkey = r_regionkey], output_bytes=40, output_rows=5, materialized=40
+                            TABLE_SCAN: table=nation, projections=[n_nationkey, n_regionkey], output_bytes=40, output_rows=5, materialized=240, bytes_read_est=200, rows_read=25
+                            TABLE_SCAN: table=region, projections=[r_regionkey], filters="r_name='EUROPE'", output_bytes=4, output_rows=1, materialized=24, bytes_read_est=20, rows_read=5
+            DUMMY_SCAN: output_bytes=0, output_rows=0, materialized=0
+          HASH_GROUP_BY: groups=[#1], output_bytes=3680, output_rows=460, materialized=0
+duckdb_cost=87127552

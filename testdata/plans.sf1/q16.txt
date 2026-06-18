@@ -16,7 +16,7 @@ GpuSortPreservingMergeExec: [supplier_cnt@3 DESC, p_brand@0 ASC NULLS LAST, p_ty
                               GpuCoalesceBatchesExec: target_batch_size=12782640
                                 GpuFilterExec: predicate=s_comment@1 LIKE %Customer%Complaints%, projection=[0]
                                   GpuRepartitionExec: partitioning=RoundRobinBatch(8), input_partitions=1
-                                    GpuScanExec: batch_size=12782640
+                                    GpuScanExec: table=supplier, projections=[s_suppkey, s_comment], batch_size=12782640
                           GpuCoalesceBatchesExec: target_batch_size=12782640
                             GpuRepartitionExec: partitioning=Hash([ps_suppkey@0], 8), input_partitions=8
                               GpuProjectExec: expr=[ps_suppkey@3 as ps_suppkey, p_brand@0 as p_brand, p_type@1 as p_type, p_size@2 as p_size]
@@ -27,10 +27,10 @@ GpuSortPreservingMergeExec: [supplier_cnt@3 DESC, p_brand@0 ASC NULLS LAST, p_ty
                                         GpuCoalesceBatchesExec: target_batch_size=12782640
                                           GpuFilterExec: predicate=p_brand@1 != Brand#45 AND p_type@2 NOT LIKE MEDIUM POLISHED% AND (p_size@3 = 49 OR p_size@3 = 14 OR p_size@3 = 23 OR p_size@3 = 45 OR p_size@3 = 19 OR p_size@3 = 3 OR p_size@3 = 36 OR p_size@3 = 9)
                                             GpuRepartitionExec: partitioning=RoundRobinBatch(8), input_partitions=1
-                                              GpuScanExec: batch_size=12782640
+                                              GpuScanExec: table=part, projections=[p_partkey, p_brand, p_type, p_size], batch_size=12782640
                                     GpuCoalesceBatchesExec: target_batch_size=12782640
                                       GpuRepartitionExec: partitioning=Hash([ps_partkey@0], 8), input_partitions=8
-                                        GpuScanExec: batch_size=12782640
+                                        GpuScanExec: table=partsupp, projections=[ps_partkey, ps_suppkey], batch_size=12782640
 --- memory ---
 total_estimate_cost=3892
 GpuSortPreservingMergeExec: row_width=76, subtree_max_row_bytes=168, estimate_input_bytes=76, estimate_output_bytes=76, estimate_cost=152

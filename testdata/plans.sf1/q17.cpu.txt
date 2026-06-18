@@ -1,14 +1,15 @@
-ProjectionExec: output_bytes=9
-  AggregateExec: output_bytes=1
-    CoalesceBatchesExec: output_bytes=74
-      HashJoinExec: output_bytes=82
-        ProjectionExec: output_bytes=50987
-          CoalesceBatchesExec: output_bytes=50987
-            HashJoinExec: output_bytes=51041
-              CoalesceBatchesExec: output_bytes=1658
-                FilterExec: output_bytes=1659
-                  ParquetExec: output_bytes=1675000
-              ParquetExec: output_bytes=50260176
-        ProjectionExec: output_bytes=1650000
-          AggregateExec: output_bytes=1650000
-            ParquetExec: output_bytes=49510024
+GpuProjectExec: expr=[CAST(sum(lineitem.l_extendedprice)@0 AS Float64) / 7 as avg_yearly], output_bytes=9, output_rows=1
+  GpuAggregateExec: group_by=[], aggr=[sum(lineitem.l_extendedprice)], output_bytes=17, output_rows=1
+    GpuCoalesceBatchesExec: target_batch_size=24403223, output_bytes=9466, output_rows=587
+      GpuHashJoinExec: join_type=Inner, on=[(p_partkey@2, l_partkey@1)], filter=CAST(l_quantity@0 AS Decimal128(30, 15)) < Float64(0.2) * avg(lineitem.l_quantity)@1, projection=[1], output_bytes=9474, output_rows=587
+        GpuProjectExec: expr=[l_quantity@1 as l_quantity, l_extendedprice@2 as l_extendedprice, p_partkey@0 as p_partkey], output_bytes=245803, output_rows=6088
+          GpuCoalesceBatchesExec: target_batch_size=24403223, output_bytes=245803, output_rows=6088
+            GpuHashJoinExec: join_type=Inner, on=[(p_partkey@0, l_partkey@0)], projection=[0, 2, 3], output_bytes=245857, output_rows=6088
+              GpuCoalesceBatchesExec: target_batch_size=24403223, output_bytes=1658, output_rows=204
+                GpuFilterExec: predicate=p_brand@1 = Brand#23 AND p_container@2 = MED BOX, projection=[0], output_bytes=1659, output_rows=204
+                  GpuScanExec: table=part, projections=[p_partkey, p_brand, p_container], batch_size=24403223, output_bytes=6389987, output_rows=200000
+              GpuScanExec: table=lineitem, projections=[l_partkey, l_quantity, l_extendedprice], batch_size=24403223, output_bytes=242299056, output_rows=6001215
+        GpuProjectExec: expr=[CAST(0.2 * CAST(avg(lineitem.l_quantity)@1 AS Float64) AS Decimal128(30, 15)) as Float64(0.2) * avg(lineitem.l_quantity), l_partkey@0 as l_partkey], output_bytes=4850000, output_rows=200000
+          GpuAggregateExec: group_by=[l_partkey], aggr=[avg(lineitem.l_quantity)], output_bytes=4850000, output_rows=200000
+            GpuScanExec: table=lineitem, projections=[l_partkey, l_quantity], batch_size=24403223, output_bytes=145529464, output_rows=6001215
+peacockdb_cost=404678253

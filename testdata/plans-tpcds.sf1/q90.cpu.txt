@@ -1,41 +1,42 @@
-SortExec: output_bytes=1
-  ProjectionExec: output_bytes=1
-    GpuCrossJoinExec: output_bytes=18
-      ProjectionExec: output_bytes=9
-        AggregateExec: output_bytes=9
-          ProjectionExec: output_bytes=0
-            CoalesceBatchesExec: output_bytes=934
-              HashJoinExec: output_bytes=934
-                CoalesceBatchesExec: output_bytes=5
-                  FilterExec: output_bytes=5
-                    ParquetExec: output_bytes=496
-                CoalesceBatchesExec: output_bytes=26235
-                  HashJoinExec: output_bytes=26235
-                    CoalesceBatchesExec: output_bytes=29700
-                      FilterExec: output_bytes=29700
-                        ParquetExec: output_bytes=712800
-                    CoalesceBatchesExec: output_bytes=583350
-                      HashJoinExec: output_bytes=583354
-                        CoalesceBatchesExec: output_bytes=2970
-                          FilterExec: output_bytes=2970
-                            ParquetExec: output_bytes=59400
-                        ParquetExec: output_bytes=8902377
-      ProjectionExec: output_bytes=9
-        AggregateExec: output_bytes=9
-          ProjectionExec: output_bytes=0
-            CoalesceBatchesExec: output_bytes=1660
-              HashJoinExec: output_bytes=1660
-                CoalesceBatchesExec: output_bytes=5
-                  FilterExec: output_bytes=5
-                    ParquetExec: output_bytes=496
-                CoalesceBatchesExec: output_bytes=44253
-                  HashJoinExec: output_bytes=44253
-                    CoalesceBatchesExec: output_bytes=29700
-                      FilterExec: output_bytes=29700
-                        ParquetExec: output_bytes=712800
-                    CoalesceBatchesExec: output_bytes=583350
-                      HashJoinExec: output_bytes=583354
-                        CoalesceBatchesExec: output_bytes=2970
-                          FilterExec: output_bytes=2970
-                            ParquetExec: output_bytes=59400
-                        ParquetExec: output_bytes=8902377
+GpuSortExec: expr=[am_pm_ratio@0 ASC NULLS LAST], fetch=100, output_bytes=17, output_rows=1
+  GpuProjectExec: expr=[CASE WHEN pmc@1 = 0 THEN None,23,8 ELSE CAST(amc@0 AS Decimal128(15, 4)) / CAST(pmc@1 AS Decimal128(15, 4)) END as am_pm_ratio], output_bytes=17, output_rows=1
+    GpuCrossJoinExec, output_bytes=18, output_rows=1
+      GpuProjectExec: expr=[count(*)@0 as amc], output_bytes=9, output_rows=1
+        GpuAggregateExec: group_by=[], aggr=[count(*)], output_bytes=9, output_rows=1
+          GpuProjectExec: expr=[], output_bytes=0, output_rows=113
+            GpuCoalesceBatchesExec: target_batch_size=67108864, output_bytes=934, output_rows=113
+              GpuHashJoinExec: join_type=Inner, on=[(wp_web_page_sk@0, ws_web_page_sk@0)], output_bytes=934, output_rows=113
+                GpuCoalesceBatchesExec: target_batch_size=67108864, output_bytes=5, output_rows=1
+                  GpuFilterExec: predicate=wp_char_count@1 >= 5000 AND wp_char_count@1 <= 5200, projection=[0], output_bytes=5, output_rows=1
+                    GpuScanExec: table=web_page, projections=[wp_web_page_sk, wp_char_count], batch_size=67108864, output_bytes=496, output_rows=60
+                GpuCoalesceBatchesExec: target_batch_size=67108864, output_bytes=26235, output_rows=6360
+                  GpuHashJoinExec: join_type=Inner, on=[(t_time_sk@0, ws_sold_time_sk@0)], projection=[2], output_bytes=26235, output_rows=6360
+                    GpuCoalesceBatchesExec: target_batch_size=67108864, output_bytes=29700, output_rows=7200
+                      GpuFilterExec: predicate=t_hour@1 >= 8 AND t_hour@1 <= 9, projection=[0], output_bytes=29700, output_rows=7200
+                        GpuScanExec: table=time_dim, projections=[t_time_sk, t_hour], batch_size=67108864, output_bytes=712800, output_rows=86400
+                    GpuCoalesceBatchesExec: target_batch_size=67108864, output_bytes=583350, output_rows=70709
+                      GpuHashJoinExec: join_type=Inner, on=[(hd_demo_sk@0, ws_ship_hdemo_sk@1)], projection=[1, 3], output_bytes=583354, output_rows=70709
+                        GpuCoalesceBatchesExec: target_batch_size=67108864, output_bytes=2970, output_rows=720
+                          GpuFilterExec: predicate=hd_dep_count@1 = 6, projection=[0], output_bytes=2970, output_rows=720
+                            GpuScanExec: table=household_demographics, projections=[hd_demo_sk, hd_dep_count], batch_size=67108864, output_bytes=59400, output_rows=7200
+                        GpuScanExec: table=web_sales, projections=[ws_sold_time_sk, ws_ship_hdemo_sk, ws_web_page_sk], batch_size=67108864, output_bytes=8902377, output_rows=719384
+      GpuProjectExec: expr=[count(*)@0 as pmc], output_bytes=9, output_rows=1
+        GpuAggregateExec: group_by=[], aggr=[count(*)], output_bytes=9, output_rows=1
+          GpuProjectExec: expr=[], output_bytes=0, output_rows=201
+            GpuCoalesceBatchesExec: target_batch_size=67108864, output_bytes=1660, output_rows=201
+              GpuHashJoinExec: join_type=Inner, on=[(wp_web_page_sk@0, ws_web_page_sk@0)], output_bytes=1660, output_rows=201
+                GpuCoalesceBatchesExec: target_batch_size=67108864, output_bytes=5, output_rows=1
+                  GpuFilterExec: predicate=wp_char_count@1 >= 5000 AND wp_char_count@1 <= 5200, projection=[0], output_bytes=5, output_rows=1
+                    GpuScanExec: table=web_page, projections=[wp_web_page_sk, wp_char_count], batch_size=67108864, output_bytes=496, output_rows=60
+                GpuCoalesceBatchesExec: target_batch_size=67108864, output_bytes=44253, output_rows=10728
+                  GpuHashJoinExec: join_type=Inner, on=[(t_time_sk@0, ws_sold_time_sk@0)], projection=[2], output_bytes=44253, output_rows=10728
+                    GpuCoalesceBatchesExec: target_batch_size=67108864, output_bytes=29700, output_rows=7200
+                      GpuFilterExec: predicate=t_hour@1 >= 19 AND t_hour@1 <= 20, projection=[0], output_bytes=29700, output_rows=7200
+                        GpuScanExec: table=time_dim, projections=[t_time_sk, t_hour], batch_size=67108864, output_bytes=712800, output_rows=86400
+                    GpuCoalesceBatchesExec: target_batch_size=67108864, output_bytes=583350, output_rows=70709
+                      GpuHashJoinExec: join_type=Inner, on=[(hd_demo_sk@0, ws_ship_hdemo_sk@1)], projection=[1, 3], output_bytes=583354, output_rows=70709
+                        GpuCoalesceBatchesExec: target_batch_size=67108864, output_bytes=2970, output_rows=720
+                          GpuFilterExec: predicate=hd_dep_count@1 = 6, projection=[0], output_bytes=2970, output_rows=720
+                            GpuScanExec: table=household_demographics, projections=[hd_demo_sk, hd_dep_count], batch_size=67108864, output_bytes=59400, output_rows=7200
+                        GpuScanExec: table=web_sales, projections=[ws_sold_time_sk, ws_ship_hdemo_sk, ws_web_page_sk], batch_size=67108864, output_bytes=8902377, output_rows=719384
+peacockdb_cost=21960506

@@ -1,0 +1,13 @@
+PROJECTION: projections=[__internal_decompress_string(#0), #1, #2], output_bytes=96, output_rows=2, materialized=0
+  ORDER_BY: order_by=[tpch.main.lineitem.l_shipmode ASC], output_bytes=80, output_rows=2, materialized=80
+    PROJECTION: projections=[__internal_compress_string_ubigint(#0), #1, #2], output_bytes=80, output_rows=2, materialized=0
+      PROJECTION: projections=[__internal_decompress_string(#0), #1, #2], output_bytes=96, output_rows=2, materialized=0
+        HASH_GROUP_BY: groups=[#0], aggregates=[sum(#1), sum(#2)], output_bytes=80, output_rows=2, materialized=495808
+          PROJECTION: projections=[l_shipmode, CASE  WHEN (((o_orderpriority = '1-URGENT') OR (o_orderpriority = '2-HIGH'))) THEN (1) ELSE 0 END, CASE  WHEN (((o_orderpriority != '1-URGENT') AND (o_orderpriority != '2-HIGH'))) THEN (1) ELSE 0 END], output_bytes=495808, output_rows=30988, materialized=0
+            PROJECTION: projections=[#0, __internal_compress_string_ubigint(#1)], output_bytes=743712, output_rows=30988, materialized=0
+              HASH_JOIN: join_type=INNER, conditions=[o_orderkey = l_orderkey], output_bytes=991616, output_rows=30988, materialized=1735328
+                TABLE_SCAN: table=orders, projections=[o_orderkey, o_orderpriority], output_bytes=35997432, output_rows=1499893, materialized=71997432, bytes_read_est=36000000, rows_read=1500000
+                PROJECTION: projections=[#0, #1], output_bytes=743712, output_rows=30988, materialized=0
+                  FILTER: output_bytes=1115568, output_rows=30988, materialized=0
+                    TABLE_SCAN: table=lineitem, projections=[l_orderkey, l_shipmode, l_commitdate, l_receiptdate, l_shipdate], filters="l_receiptdate>='1994-01-01'::DATE AND l_receiptdate<'1995-01-01'::DATE AND l_commitdate<'1995-01-01'::DATE AND l_shipdate<'1995-01-01'::DATE AND optional: l_shipmode IN ('MAIL', 'SHIP')", output_bytes=31887828, output_rows=885773, materialized=247931568, bytes_read_est=216043740, rows_read=6001215
+duckdb_cost=322160216

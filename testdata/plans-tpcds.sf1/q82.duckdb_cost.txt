@@ -1,0 +1,15 @@
+TOP_N: order_by=[tpcds.main.item.i_item_id ASC], top=100, output_bytes=72, output_rows=2, materialized=72
+  HASH_GROUP_BY: groups=[#0, #1, #2], output_bytes=72, output_rows=2, materialized=290088
+    PROJECTION: projections=[i_item_id, i_item_desc, i_current_price], output_bytes=290088, output_rows=8058, materialized=0
+      PROJECTION: projections=[__internal_compress_integral_usmallint(#0, 1), #1, #2, #3], output_bytes=306204, output_rows=8058, materialized=0
+        HASH_JOIN: join_type=INNER, conditions=[ss_item_sk = i_item_sk], output_bytes=322320, output_rows=8058, materialized=322320
+          TABLE_SCAN: table=store_sales, projections=[ss_item_sk], output_bytes=753720, output_rows=188430, materialized=12275336, bytes_read_est=11521616, rows_read=2880404
+          HASH_JOIN: join_type=INNER, conditions=[inv_date_sk = d_date_sk], output_bytes=1496, output_rows=34, materialized=1740
+            HASH_JOIN: join_type=INNER, conditions=[inv_item_sk = i_item_sk], output_bytes=1496, output_rows=34, materialized=1656
+              TABLE_SCAN: table=inventory, projections=[inv_item_sk, inv_date_sk], filters="inv_quantity_on_hand>=100 AND inv_quantity_on_hand<=500", output_bytes=352680, output_rows=44085, materialized=94312680, bytes_read_est=93960000, rows_read=11745000
+              PROJECTION: projections=[#0, #1, #3, #4], output_bytes=160, output_rows=4, materialized=0
+                FILTER: output_bytes=176, output_rows=4, materialized=0
+                  TABLE_SCAN: table=item, projections=[i_current_price, i_item_sk, i_manufact_id, i_item_id, i_item_desc], filters="i_current_price>=62.00 AND i_current_price<=92.00 AND optional: i_manufact_id IN (129, 270, 423, 821)", output_bytes=27280, output_rows=620, materialized=819280, bytes_read_est=792000, rows_read=18000
+            FILTER: output_bytes=244, output_rows=61, materialized=0
+              TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_date>='2000-05-25'::DATE AND d_date<='2000-07-24'::DATE", output_bytes=244, output_rows=61, materialized=292440, bytes_read_est=292196, rows_read=73049
+duckdb_cost=108315612

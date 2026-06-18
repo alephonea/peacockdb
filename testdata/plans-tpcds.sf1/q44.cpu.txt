@@ -1,48 +1,49 @@
-SortExec: output_bytes=86
-  ProjectionExec: output_bytes=86
-    CoalesceBatchesExec: output_bytes=86
-      HashJoinExec: output_bytes=86
-        CoalesceBatchesExec: output_bytes=126
-          HashJoinExec: output_bytes=126
-            CoalesceBatchesExec: output_bytes=166
-              HashJoinExec: output_bytes=166
-                ProjectionExec: output_bytes=124
-                  CoalesceBatchesExec: output_bytes=124
-                    FilterExec: output_bytes=124
-                      ProjectionExec: output_bytes=90676
-                        GpuWindowExec: output_bytes=91602
-                          SortExec: output_bytes=31460
-                            ProjectionExec: output_bytes=31460
-                              CoalesceBatchesExec: output_bytes=31460
-                                FilterExec: output_bytes=31460
-                                  GpuNestedLoopJoinExec: output_bytes=222738
-                                    AggregateExec: output_bytes=76496
-                                      CoalesceBatchesExec: output_bytes=1948384
-                                        FilterExec: output_bytes=1948400
-                                          ParquetExec: output_bytes=24123385
-                                    ProjectionExec: output_bytes=9
-                                      AggregateExec: output_bytes=6
-                                        CoalesceBatchesExec: output_bytes=45778
-                                          FilterExec: output_bytes=45794
-                                            ParquetExec: output_bytes=24123385
-                ProjectionExec: output_bytes=124
-                  CoalesceBatchesExec: output_bytes=124
-                    FilterExec: output_bytes=124
-                      ProjectionExec: output_bytes=90676
-                        GpuWindowExec: output_bytes=91602
-                          SortExec: output_bytes=31460
-                            ProjectionExec: output_bytes=31460
-                              CoalesceBatchesExec: output_bytes=31460
-                                FilterExec: output_bytes=31460
-                                  GpuNestedLoopJoinExec: output_bytes=222738
-                                    AggregateExec: output_bytes=76496
-                                      CoalesceBatchesExec: output_bytes=1948384
-                                        FilterExec: output_bytes=1948400
-                                          ParquetExec: output_bytes=24123385
-                                    ProjectionExec: output_bytes=9
-                                      AggregateExec: output_bytes=6
-                                        CoalesceBatchesExec: output_bytes=45778
-                                          FilterExec: output_bytes=45794
-                                            ParquetExec: output_bytes=24123385
-            ParquetExec: output_bytes=76500
-        ParquetExec: output_bytes=76500
+GpuSortExec: expr=[rnk@0 ASC NULLS LAST], fetch=100, output_bytes=537, output_rows=10
+  GpuProjectExec: expr=[rnk@0 as rnk, i_product_name@1 as best_performing, i_product_name@2 as worst_performing], output_bytes=537, output_rows=10
+    GpuCoalesceBatchesExec: target_batch_size=14128181, output_bytes=537, output_rows=10
+      GpuHashJoinExec: join_type=Inner, on=[(item_sk@1, i_item_sk@0)], projection=[0, 2, 4], output_bytes=537, output_rows=10
+        GpuCoalesceBatchesExec: target_batch_size=14128181, output_bytes=342, output_rows=10
+          GpuHashJoinExec: join_type=Inner, on=[(item_sk@0, i_item_sk@0)], projection=[1, 2, 4], output_bytes=342, output_rows=10
+            GpuCoalesceBatchesExec: target_batch_size=14128181, output_bytes=166, output_rows=10
+              GpuHashJoinExec: join_type=Inner, on=[(rnk@1, rnk@1)], projection=[0, 1, 2], output_bytes=166, output_rows=10
+                GpuProjectExec: expr=[item_sk@0 as item_sk, rank() ORDER BY [v1.rank_col ASC NULLS LAST] RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW@1 as rnk], output_bytes=124, output_rows=10
+                  GpuCoalesceBatchesExec: target_batch_size=14128181, output_bytes=124, output_rows=10
+                    GpuFilterExec: predicate=rank() ORDER BY [v1.rank_col ASC NULLS LAST] RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW@1 < 11, output_bytes=124, output_rows=10
+                      GpuProjectExec: expr=[item_sk@0 as item_sk, rank() ORDER BY [v1.rank_col ASC NULLS LAST] RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW@2 as rank() ORDER BY [v1.rank_col ASC NULLS LAST] RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW], output_bytes=90676, output_rows=7402
+                        GpuWindowExec: wdw=[rank() ORDER BY [v1.rank_col ASC NULLS LAST] RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW], output_bytes=210034, output_rows=7402
+                          GpuSortExec: expr=[rank_col@1 ASC NULLS LAST], output_bytes=149892, output_rows=7402
+                            GpuProjectExec: expr=[ss_item_sk@0 as item_sk, avg(ss1.ss_net_profit)@1 as rank_col], output_bytes=149892, output_rows=7402
+                              GpuCoalesceBatchesExec: target_batch_size=14128181, output_bytes=149892, output_rows=7402
+                                GpuFilterExec: predicate=CAST(avg(ss1.ss_net_profit)@1 AS Decimal128(30, 15)) > CAST(0.9 * rank_col@2 AS Decimal128(30, 15)), projection=[0, 1], output_bytes=149892, output_rows=7402
+                                  GpuNestedLoopJoinExec: join_type=Left, output_bytes=510722, output_rows=17999
+                                    GpuAggregateExec: group_by=[ss_item_sk], aggr=[avg(ss1.ss_net_profit)], output_bytes=364480, output_rows=17999
+                                      GpuCoalesceBatchesExec: target_batch_size=14128181, output_bytes=9283472, output_rows=458443
+                                        GpuFilterExec: predicate=ss_store_sk@1 = 4, projection=[0, 2], output_bytes=9283488, output_rows=458443
+                                          GpuScanExec: table=store_sales, projections=[ss_item_sk, ss_store_sk, ss_net_profit], batch_size=14128181, output_bytes=70209849, output_rows=2880404
+                                    GpuProjectExec: expr=[CAST(avg(store_sales.ss_net_profit)@1 AS Float64) as rank_col], output_bytes=9, output_rows=1
+                                      GpuAggregateExec: group_by=[ss_store_sk], aggr=[avg(store_sales.ss_net_profit)], output_bytes=22, output_rows=1
+                                        GpuCoalesceBatchesExec: target_batch_size=14128181, output_bytes=218114, output_rows=10771
+                                          GpuFilterExec: predicate=ss_store_sk@1 = 4 AND ss_addr_sk@0 IS NULL, projection=[1, 2], output_bytes=218130, output_rows=10771
+                                            GpuScanExec: table=store_sales, projections=[ss_addr_sk, ss_store_sk, ss_net_profit], batch_size=14128181, output_bytes=70209849, output_rows=2880404
+                GpuProjectExec: expr=[item_sk@0 as item_sk, rank() ORDER BY [v2.rank_col DESC NULLS FIRST] RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW@1 as rnk], output_bytes=124, output_rows=10
+                  GpuCoalesceBatchesExec: target_batch_size=14128181, output_bytes=124, output_rows=10
+                    GpuFilterExec: predicate=rank() ORDER BY [v2.rank_col DESC NULLS FIRST] RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW@1 < 11, output_bytes=124, output_rows=10
+                      GpuProjectExec: expr=[item_sk@0 as item_sk, rank() ORDER BY [v2.rank_col DESC NULLS FIRST] RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW@2 as rank() ORDER BY [v2.rank_col DESC NULLS FIRST] RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW], output_bytes=90676, output_rows=7402
+                        GpuWindowExec: wdw=[rank() ORDER BY [v2.rank_col DESC NULLS FIRST] RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW], output_bytes=210034, output_rows=7402
+                          GpuSortExec: expr=[rank_col@1 DESC], output_bytes=149892, output_rows=7402
+                            GpuProjectExec: expr=[ss_item_sk@0 as item_sk, avg(ss1.ss_net_profit)@1 as rank_col], output_bytes=149892, output_rows=7402
+                              GpuCoalesceBatchesExec: target_batch_size=14128181, output_bytes=149892, output_rows=7402
+                                GpuFilterExec: predicate=CAST(avg(ss1.ss_net_profit)@1 AS Decimal128(30, 15)) > CAST(0.9 * rank_col@2 AS Decimal128(30, 15)), projection=[0, 1], output_bytes=149892, output_rows=7402
+                                  GpuNestedLoopJoinExec: join_type=Left, output_bytes=510722, output_rows=17999
+                                    GpuAggregateExec: group_by=[ss_item_sk], aggr=[avg(ss1.ss_net_profit)], output_bytes=364480, output_rows=17999
+                                      GpuCoalesceBatchesExec: target_batch_size=14128181, output_bytes=9283472, output_rows=458443
+                                        GpuFilterExec: predicate=ss_store_sk@1 = 4, projection=[0, 2], output_bytes=9283488, output_rows=458443
+                                          GpuScanExec: table=store_sales, projections=[ss_item_sk, ss_store_sk, ss_net_profit], batch_size=14128181, output_bytes=70209849, output_rows=2880404
+                                    GpuProjectExec: expr=[CAST(avg(store_sales.ss_net_profit)@1 AS Float64) as rank_col], output_bytes=9, output_rows=1
+                                      GpuAggregateExec: group_by=[ss_store_sk], aggr=[avg(store_sales.ss_net_profit)], output_bytes=22, output_rows=1
+                                        GpuCoalesceBatchesExec: target_batch_size=14128181, output_bytes=218114, output_rows=10771
+                                          GpuFilterExec: predicate=ss_store_sk@1 = 4 AND ss_addr_sk@0 IS NULL, projection=[1, 2], output_bytes=218130, output_rows=10771
+                                            GpuScanExec: table=store_sales, projections=[ss_addr_sk, ss_store_sk, ss_net_profit], batch_size=14128181, output_bytes=70209849, output_rows=2880404
+            GpuScanExec: table=item, projections=[i_item_sk, i_product_name], batch_size=14128181, output_bytes=472554, output_rows=18000
+        GpuScanExec: table=item, projections=[i_item_sk, i_product_name], batch_size=14128181, output_bytes=472554, output_rows=18000
+peacockdb_cost=323345842

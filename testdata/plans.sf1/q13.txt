@@ -11,12 +11,12 @@ GpuSortPreservingMergeExec: [custdist@1 DESC, c_count@0 DESC]
                     GpuHashJoinExec: join_type=Left, on=[(c_custkey@0, o_custkey@1)], projection=[0, 1]
                       GpuCoalesceBatchesExec: target_batch_size=33554432
                         GpuRepartitionExec: partitioning=Hash([c_custkey@0], 8), input_partitions=8
-                          GpuScanExec: batch_size=33554432
+                          GpuScanExec: table=customer, projections=[c_custkey], batch_size=33554432
                       GpuCoalesceBatchesExec: target_batch_size=33554432
                         GpuRepartitionExec: partitioning=Hash([o_custkey@1], 8), input_partitions=8
                           GpuCoalesceBatchesExec: target_batch_size=33554432
                             GpuFilterExec: predicate=o_comment@2 NOT LIKE %special%requests%, projection=[0, 1]
-                              GpuScanExec: batch_size=33554432
+                              GpuScanExec: table=orders, projections=[o_orderkey, o_custkey, o_comment], batch_size=33554432
 --- memory ---
 total_estimate_cost=592
 GpuSortPreservingMergeExec: row_width=16, subtree_max_row_bytes=64, estimate_input_bytes=16, estimate_output_bytes=16, estimate_cost=32

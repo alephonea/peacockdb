@@ -1,0 +1,41 @@
+TOP_N: order_by=[count_star() ASC, a.ca_state ASC], top=100, output_bytes=1104, output_rows=46, materialized=1104
+  FILTER: output_bytes=1104, output_rows=46, materialized=0
+    PROJECTION: projections=[__internal_decompress_string(#0), #1], output_bytes=1224, output_rows=51, materialized=0
+      HASH_GROUP_BY: groups=[#0], aggregates=[count_star()], output_bytes=612, output_rows=51, materialized=11376
+        PROJECTION: projections=[ca_state], output_bytes=11376, output_rows=2844, materialized=0
+          PROJECTION: projections=[__internal_compress_string_uinteger(#0)], output_bytes=11376, output_rows=2844, materialized=0
+            PROJECTION: projections=[#1], output_bytes=45504, output_rows=2844, materialized=0
+              FILTER: output_bytes=79632, output_rows=2844, materialized=0
+                RIGHT_DELIM_JOIN: join_type=RIGHT, conditions=[i_category IS NOT DISTINCT FROM i_category], output_bytes=0, output_rows=0, materialized=176
+                  HASH_JOIN: join_type=INNER, conditions=[ca_address_sk = c_current_addr_sk], output_bytes=1044504, output_rows=29014, materialized=1044504
+                    TABLE_SCAN: table=customer_address, projections=[ca_address_sk, ca_state], output_bytes=999720, output_rows=49986, materialized=1999720, bytes_read_est=1000000, rows_read=50000
+                    HASH_JOIN: join_type=INNER, conditions=[c_customer_sk = ss_customer_sk], output_bytes=696336, output_rows=29014, materialized=696336
+                      TABLE_SCAN: table=customer, projections=[c_current_addr_sk, c_customer_sk], output_bytes=799736, output_rows=99967, materialized=1599736, bytes_read_est=800000, rows_read=100000
+                      HASH_JOIN: join_type=INNER, conditions=[i_item_sk = ss_item_sk], output_bytes=713544, output_rows=29731, materialized=713544
+                        TABLE_SCAN: table=item, projections=[i_item_sk, i_current_price, i_category], output_bytes=431976, output_rows=17999, materialized=863976, bytes_read_est=432000, rows_read=18000
+                        HASH_JOIN: join_type=INNER, conditions=[ss_sold_date_sk = d_date_sk], output_bytes=356772, output_rows=29731, materialized=356896
+                          TABLE_SCAN: table=store_sales, projections=[ss_customer_sk, ss_sold_date_sk, ss_item_sk], output_bytes=356772, output_rows=29731, materialized=34921620, bytes_read_est=34564848, rows_read=2880404
+                          PROJECTION: projections=[#0], output_bytes=124, output_rows=31, materialized=0
+                            FILTER: output_bytes=248, output_rows=31, materialized=0
+                              HASH_JOIN: join_type=INNER, conditions=[d_month_seq = SUBQUERY], output_bytes=248, output_rows=31, materialized=252
+                                TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_month_seq], output_bytes=248, output_rows=31, materialized=584640, bytes_read_est=584392, rows_read=73049
+                                PROJECTION: projections=[CASE  WHEN ((#1 > 1)) THEN (error('More than one row returned by a subquery used as an expression - scalar subqueries can only return a single row., Use "SET scalar_subquery_error_on_multiple_rows=false" to revert to previous behavior of returning a random row.')) ELSE #0 END], output_bytes=4, output_rows=1, materialized=0
+                                  UNGROUPED_AGGREGATE: aggregates=["first"(#0), count_star()], output_bytes=12, output_rows=1, materialized=4
+                                    PROJECTION: projections=[#0], output_bytes=4, output_rows=1, materialized=0
+                                      PROJECTION: projections=[__internal_decompress_integral_integer(#0, 0)], output_bytes=4, output_rows=1, materialized=0
+                                        HASH_GROUP_BY: groups=[#0], output_bytes=2, output_rows=1, materialized=62
+                                          PROJECTION: projections=[d_month_seq], output_bytes=62, output_rows=31, materialized=0
+                                            PROJECTION: projections=[__internal_compress_integral_usmallint(#0, 0)], output_bytes=62, output_rows=31, materialized=0
+                                              TABLE_SCAN: table=date_dim, projections=[d_month_seq], filters="d_year=2001 AND d_moy=1", output_bytes=124, output_rows=31, materialized=292320, bytes_read_est=292196, rows_read=73049
+                  HASH_JOIN: join_type=RIGHT, conditions=[i_category IS NOT DISTINCT FROM i_category], output_bytes=812392, output_rows=29014, materialized=812632
+                    PROJECTION: projections=[avg(i_current_price), i_category], output_bytes=240, output_rows=10, materialized=0
+                      PROJECTION: projections=[__internal_decompress_string(#0), #1], output_bytes=240, output_rows=10, materialized=0
+                        HASH_GROUP_BY: groups=[#0], aggregates=[avg(#1)], output_bytes=240, output_rows=10, materialized=359140
+                          PROJECTION: projections=[i_category, i_current_price], output_bytes=359140, output_rows=17957, materialized=0
+                            PROJECTION: projections=[__internal_compress_string_hugeint(#0), #1, #2], output_bytes=646452, output_rows=17957, materialized=0
+                              HASH_JOIN: join_type=INNER, conditions=[i_category = i_category], output_bytes=646452, output_rows=17957, materialized=646452
+                                TABLE_SCAN: table=item, projections=[i_category, i_current_price], output_bytes=359140, output_rows=17957, materialized=719140, bytes_read_est=360000, rows_read=18000
+                                DELIM_SCAN: output_bytes=0, output_rows=0, materialized=0
+                    DUMMY_SCAN: output_bytes=0, output_rows=0, materialized=0
+                  HASH_GROUP_BY: groups=[#2], output_bytes=176, output_rows=11, materialized=0
+duckdb_cost=45623630

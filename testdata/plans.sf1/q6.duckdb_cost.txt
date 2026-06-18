@@ -1,0 +1,4 @@
+UNGROUPED_AGGREGATE: aggregates=[sum_no_overflow(#0)], output_bytes=16, output_rows=1, materialized=913280
+  PROJECTION: projections=[(l_extendedprice * l_discount)], output_bytes=913280, output_rows=114160, materialized=0
+    TABLE_SCAN: table=lineitem, projections=[l_discount, l_extendedprice], filters="l_shipdate>='1994-01-01'::DATE AND l_shipdate<'1995-01-01'::DATE AND l_discount>=0.05 AND l_discount<=0.07 AND l_quantity<24.00", output_bytes=1826560, output_rows=114160, materialized=97846000, bytes_read_est=96019440, rows_read=6001215
+duckdb_cost=98759280

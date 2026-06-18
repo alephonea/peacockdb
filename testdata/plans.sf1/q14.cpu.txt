@@ -1,9 +1,10 @@
-ProjectionExec: output_bytes=9
-  AggregateExec: output_bytes=2
-    ProjectionExec: output_bytes=18996
-      CoalesceBatchesExec: output_bytes=28494
-        HashJoinExec: output_bytes=28494
-          ParquetExec: output_bytes=1650000
-          CoalesceBatchesExec: output_bytes=636358
-            FilterExec: output_bytes=636421
-              ParquetExec: output_bytes=75015188
+GpuProjectExec: expr=[100 * CAST(sum(CASE WHEN part.p_type LIKE Utf8("PROMO%") THEN lineitem.l_extendedprice * Int64(1) - lineitem.l_discount ELSE Int64(0) END)@0 AS Float64) / CAST(sum(lineitem.l_extendedprice * Int64(1) - lineitem.l_discount)@1 AS Float64) as promo_revenue], output_bytes=9, output_rows=1
+  GpuAggregateExec: group_by=[], aggr=[sum(CASE WHEN part.p_type LIKE Utf8("PROMO%") THEN lineitem.l_extendedprice * Int64(1) - lineitem.l_discount ELSE Int64(0) END), sum(lineitem.l_extendedprice * Int64(1) - lineitem.l_discount)], output_bytes=34, output_rows=1
+    GpuProjectExec: expr=[l_extendedprice@1 * (Some(1),20,0 - l_discount@2) as __common_expr_1, p_type@0 as p_type], output_bytes=3104077, output_rows=75983
+      GpuCoalesceBatchesExec: target_batch_size=14913080, output_bytes=4329303, output_rows=75983
+        GpuHashJoinExec: join_type=Inner, on=[(p_partkey@0, l_partkey@0)], projection=[1, 3, 4], output_bytes=4329339, output_rows=75983
+          GpuScanExec: table=part, projections=[p_partkey, p_type], batch_size=14913080, output_bytes=6569954, output_rows=200000
+          GpuCoalesceBatchesExec: target_batch_size=14913080, output_bytes=3067814, output_rows=75983
+            GpuFilterExec: predicate=l_shipdate@3 >= 1995-09-01 AND l_shipdate@3 < 1995-10-01, projection=[0, 1, 2], output_bytes=3067877, output_rows=75983
+              GpuScanExec: table=lineitem, projections=[l_partkey, l_extendedprice, l_discount, l_shipdate], batch_size=14913080, output_bytes=267054068, output_rows=6001215
+peacockdb_cost=291522475

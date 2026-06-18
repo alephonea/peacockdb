@@ -1,0 +1,69 @@
+TOP_N: order_by=[x.channel ASC, x.id ASC, sum(x.returns_) DESC], top=100, output_bytes=2992, output_rows=44, materialized=2992
+  HASH_GROUP_BY: groups=[#0, #1], aggregates=[sum(#2), sum(#3), sum(#4)], output_bytes=2992, output_rows=44, materialized=3808
+    PROJECTION: projections=[channel, id, sales, returns_, profit], output_bytes=3808, output_rows=56, materialized=0
+      UNION: output_bytes=0, output_rows=56, materialized=0
+        UNION: output_bytes=0, output_rows=26, materialized=0
+          PROJECTION: projections=[channel, id, sales, returns_, profit], output_bytes=408, output_rows=6, materialized=0
+            HASH_JOIN: join_type=RIGHT, conditions=[s_store_sk = s_store_sk], output_bytes=408, output_rows=6, materialized=840
+              PROJECTION: projections=[__internal_decompress_integral_integer(#0, 1), #1, #2], output_bytes=216, output_rows=6, materialized=0
+                PERFECT_HASH_GROUP_BY: groups=[#0], aggregates=[sum(#1), sum(#2)], output_bytes=198, output_rows=6, materialized=30042
+                  PROJECTION: projections=[s_store_sk, sr_return_amt, sr_net_loss], output_bytes=30042, output_rows=3338, materialized=0
+                    PROJECTION: projections=[__internal_compress_integral_utinyint(#0, 1), #1, #2, __internal_compress_integral_utinyint(#3, 1)], output_bytes=33380, output_rows=3338, materialized=0
+                      HASH_JOIN: join_type=INNER, conditions=[sr_store_sk = s_store_sk], output_bytes=53408, output_rows=3338, materialized=53408
+                        HASH_JOIN: join_type=INNER, conditions=[sr_returned_date_sk = d_date_sk], output_bytes=53408, output_rows=3338, materialized=53532
+                          TABLE_SCAN: table=store_returns, projections=[sr_returned_date_sk, sr_store_sk, sr_return_amt, sr_net_loss], output_bytes=53408, output_rows=3338, materialized=4659280, bytes_read_est=4605872, rows_read=287867
+                          FILTER: output_bytes=124, output_rows=31, materialized=0
+                            TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_date>='2000-08-23'::DATE AND d_date<='2000-09-22'::DATE", output_bytes=124, output_rows=31, materialized=292320, bytes_read_est=292196, rows_read=73049
+                        TABLE_SCAN: table=store, projections=[s_store_sk], filters="s_store_sk<=10", output_bytes=40, output_rows=10, materialized=88, bytes_read_est=48, rows_read=12
+              PROJECTION: projections=[__internal_decompress_integral_integer(#0, 1), #1, #2], output_bytes=216, output_rows=6, materialized=0
+                PERFECT_HASH_GROUP_BY: groups=[#0], aggregates=[sum(#1), sum(#2)], output_bytes=198, output_rows=6, materialized=556182
+                  PROJECTION: projections=[s_store_sk, ss_ext_sales_price, ss_net_profit], output_bytes=556182, output_rows=61798, materialized=0
+                    PROJECTION: projections=[__internal_compress_integral_utinyint(#0, 1), #1, #2, __internal_compress_integral_utinyint(#3, 1)], output_bytes=617980, output_rows=61798, materialized=0
+                      HASH_JOIN: join_type=INNER, conditions=[ss_store_sk = s_store_sk], output_bytes=988768, output_rows=61798, materialized=988768
+                        HASH_JOIN: join_type=INNER, conditions=[ss_sold_date_sk = d_date_sk], output_bytes=988768, output_rows=61798, materialized=988892
+                          TABLE_SCAN: table=store_sales, projections=[ss_sold_date_sk, ss_store_sk, ss_ext_sales_price, ss_net_profit], output_bytes=988768, output_rows=61798, materialized=47075232, bytes_read_est=46086464, rows_read=2880404
+                          FILTER: output_bytes=124, output_rows=31, materialized=0
+                            TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_date>='2000-08-23'::DATE AND d_date<='2000-09-22'::DATE", output_bytes=124, output_rows=31, materialized=292320, bytes_read_est=292196, rows_read=73049
+                        TABLE_SCAN: table=store, projections=[s_store_sk], filters="s_store_sk<=10", output_bytes=40, output_rows=10, materialized=88, bytes_read_est=48, rows_read=12
+          PROJECTION: projections=[channel, id, sales, returns_, profit], output_bytes=1360, output_rows=20, materialized=0
+            CROSS_PRODUCT: output_bytes=1360, output_rows=20, materialized=1664
+              PROJECTION: projections=[__internal_decompress_integral_integer(#0, 1), #1, #2], output_bytes=144, output_rows=4, materialized=0
+                PERFECT_HASH_GROUP_BY: groups=[#0], aggregates=[sum(#1), sum(#2)], output_bytes=132, output_rows=4, materialized=284706
+                  PROJECTION: projections=[cs_call_center_sk, cs_ext_sales_price, cs_net_profit], output_bytes=284706, output_rows=31634, materialized=0
+                    PROJECTION: projections=[__internal_compress_integral_utinyint(#0, 1), #1, #2, __internal_compress_integral_usmallint(#3, 2450815)], output_bytes=347974, output_rows=31634, materialized=0
+                      HASH_JOIN: join_type=INNER, conditions=[cs_sold_date_sk = d_date_sk], output_bytes=506144, output_rows=31634, materialized=506268
+                        TABLE_SCAN: table=catalog_sales, projections=[cs_sold_date_sk, cs_call_center_sk, cs_ext_sales_price, cs_net_profit], output_bytes=506144, output_rows=31634, materialized=23570912, bytes_read_est=23064768, rows_read=1441548
+                        FILTER: output_bytes=124, output_rows=31, materialized=0
+                          TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_date>='2000-08-23'::DATE AND d_date<='2000-09-22'::DATE", output_bytes=124, output_rows=31, materialized=292320, bytes_read_est=292196, rows_read=73049
+              PROJECTION: projections=[returns_, profit_loss], output_bytes=160, output_rows=5, materialized=0
+                PROJECTION: projections=[__internal_decompress_integral_integer(#0, 1), #1, #2], output_bytes=180, output_rows=5, materialized=0
+                  PERFECT_HASH_GROUP_BY: groups=[#0], aggregates=[sum(#1), sum(#2)], output_bytes=165, output_rows=5, materialized=13689
+                    PROJECTION: projections=[cr_call_center_sk, cr_return_amount, cr_net_loss], output_bytes=13689, output_rows=1521, materialized=0
+                      PROJECTION: projections=[__internal_compress_integral_utinyint(#0, 1), #1, #2, __internal_compress_integral_usmallint(#3, 2450834)], output_bytes=16731, output_rows=1521, materialized=0
+                        HASH_JOIN: join_type=INNER, conditions=[cr_returned_date_sk = d_date_sk], output_bytes=24336, output_rows=1521, materialized=24460
+                          TABLE_SCAN: table=catalog_returns, projections=[cr_returned_date_sk, cr_call_center_sk, cr_return_amount, cr_net_loss], output_bytes=24336, output_rows=1521, materialized=2329408, bytes_read_est=2305072, rows_read=144067
+                          FILTER: output_bytes=124, output_rows=31, materialized=0
+                            TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_date>='2000-08-23'::DATE AND d_date<='2000-09-22'::DATE", output_bytes=124, output_rows=31, materialized=292320, bytes_read_est=292196, rows_read=73049
+        PROJECTION: projections=[channel, id, sales, returns_, profit], output_bytes=2040, output_rows=30, materialized=0
+          HASH_JOIN: join_type=RIGHT, conditions=[wp_web_page_sk = wp_web_page_sk], output_bytes=2040, output_rows=30, materialized=4560
+            PROJECTION: projections=[__internal_decompress_integral_integer(#0, 1), #1, #2], output_bytes=1440, output_rows=40, materialized=0
+              PERFECT_HASH_GROUP_BY: groups=[#0], aggregates=[sum(#1), sum(#2)], output_bytes=1320, output_rows=40, materialized=9333
+                PROJECTION: projections=[wp_web_page_sk, wr_return_amt, wr_net_loss], output_bytes=9333, output_rows=1037, materialized=0
+                  PROJECTION: projections=[__internal_compress_integral_utinyint(#0, 1), #1, #2, __internal_compress_integral_utinyint(#3, 1)], output_bytes=10370, output_rows=1037, materialized=0
+                    HASH_JOIN: join_type=INNER, conditions=[wr_web_page_sk = wp_web_page_sk], output_bytes=16592, output_rows=1037, materialized=16592
+                      HASH_JOIN: join_type=INNER, conditions=[wr_returned_date_sk = d_date_sk], output_bytes=16592, output_rows=1037, materialized=16716
+                        TABLE_SCAN: table=web_returns, projections=[wr_returned_date_sk, wr_web_page_sk, wr_return_amt, wr_net_loss], output_bytes=16592, output_rows=1037, materialized=1163056, bytes_read_est=1146464, rows_read=71654
+                        FILTER: output_bytes=124, output_rows=31, materialized=0
+                          TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_date>='2000-08-23'::DATE AND d_date<='2000-09-22'::DATE", output_bytes=124, output_rows=31, materialized=292320, bytes_read_est=292196, rows_read=73049
+                      TABLE_SCAN: table=web_page, projections=[wp_web_page_sk], output_bytes=240, output_rows=60, materialized=480, bytes_read_est=240, rows_read=60
+            PROJECTION: projections=[__internal_decompress_integral_integer(#0, 1), #1, #2], output_bytes=1080, output_rows=30, materialized=0
+              PERFECT_HASH_GROUP_BY: groups=[#0], aggregates=[sum(#1), sum(#2)], output_bytes=990, output_rows=30, materialized=145989
+                PROJECTION: projections=[wp_web_page_sk, ws_ext_sales_price, ws_net_profit], output_bytes=145989, output_rows=16221, materialized=0
+                  PROJECTION: projections=[__internal_compress_integral_utinyint(#0, 1), #1, #2, __internal_compress_integral_utinyint(#3, 1)], output_bytes=162210, output_rows=16221, materialized=0
+                    HASH_JOIN: join_type=INNER, conditions=[ws_web_page_sk = wp_web_page_sk], output_bytes=259536, output_rows=16221, materialized=259536
+                      HASH_JOIN: join_type=INNER, conditions=[ws_sold_date_sk = d_date_sk], output_bytes=259536, output_rows=16221, materialized=259660
+                        TABLE_SCAN: table=web_sales, projections=[ws_sold_date_sk, ws_web_page_sk, ws_ext_sales_price, ws_net_profit], output_bytes=259536, output_rows=16221, materialized=11769680, bytes_read_est=11510144, rows_read=719384
+                        FILTER: output_bytes=124, output_rows=31, materialized=0
+                          TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_date>='2000-08-23'::DATE AND d_date<='2000-09-22'::DATE", output_bytes=124, output_rows=31, materialized=292320, bytes_read_est=292196, rows_read=73049
+                      TABLE_SCAN: table=web_page, projections=[wp_web_page_sk], output_bytes=240, output_rows=60, materialized=480, bytes_read_est=240, rows_read=60
+duckdb_cost=96544261

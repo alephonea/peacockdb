@@ -18,7 +18,7 @@ GpuProjectExec: expr=[order count@0 as order count, total shipping cost@1 as tot
                                   GpuCoalesceBatchesExec: target_batch_size=20648881
                                     GpuFilterExec: predicate=cc_county@1 = Williamson County, projection=[0]
                                       GpuRepartitionExec: partitioning=RoundRobinBatch(8), input_partitions=1
-                                        GpuScanExec: batch_size=20648881
+                                        GpuScanExec: table=call_center, projections=[cc_call_center_sk, cc_county], batch_size=20648881
                               GpuCoalesceBatchesExec: target_batch_size=20648881
                                 GpuRepartitionExec: partitioning=Hash([cs_call_center_sk@0], 8), input_partitions=8
                                   GpuCoalesceBatchesExec: target_batch_size=20648881
@@ -28,7 +28,7 @@ GpuProjectExec: expr=[order count@0 as order count, total shipping cost@1 as tot
                                           GpuCoalesceBatchesExec: target_batch_size=20648881
                                             GpuFilterExec: predicate=ca_state@1 = GA, projection=[0]
                                               GpuRepartitionExec: partitioning=RoundRobinBatch(8), input_partitions=1
-                                                GpuScanExec: batch_size=20648881
+                                                GpuScanExec: table=customer_address, projections=[ca_address_sk, ca_state], batch_size=20648881
                                       GpuCoalesceBatchesExec: target_batch_size=20648881
                                         GpuRepartitionExec: partitioning=Hash([cs_ship_addr_sk@0], 8), input_partitions=8
                                           GpuCoalesceBatchesExec: target_batch_size=20648881
@@ -38,16 +38,16 @@ GpuProjectExec: expr=[order count@0 as order count, total shipping cost@1 as tot
                                                   GpuCoalesceBatchesExec: target_batch_size=20648881
                                                     GpuFilterExec: predicate=d_date@1 >= 2002-02-01 AND d_date@1 <= 2002-04-02, projection=[0]
                                                       GpuRepartitionExec: partitioning=RoundRobinBatch(8), input_partitions=1
-                                                        GpuScanExec: batch_size=20648881
+                                                        GpuScanExec: table=date_dim, projections=[d_date_sk, d_date], batch_size=20648881
                                               GpuCoalesceBatchesExec: target_batch_size=20648881
                                                 GpuRepartitionExec: partitioning=Hash([cs_ship_date_sk@0], 8), input_partitions=8
-                                                  GpuScanExec: batch_size=20648881
+                                                  GpuScanExec: table=catalog_sales, projections=[cs_ship_date_sk, cs_ship_addr_sk, cs_call_center_sk, cs_warehouse_sk, cs_order_number, cs_ext_ship_cost, cs_net_profit], batch_size=20648881
                       GpuCoalesceBatchesExec: target_batch_size=20648881
                         GpuRepartitionExec: partitioning=Hash([cs_order_number@1], 8), input_partitions=8
-                          GpuScanExec: batch_size=20648881
+                          GpuScanExec: table=catalog_sales, projections=[cs_warehouse_sk, cs_order_number], batch_size=20648881
                   GpuCoalesceBatchesExec: target_batch_size=20648881
                     GpuRepartitionExec: partitioning=Hash([cr_order_number@0], 8), input_partitions=8
-                      GpuScanExec: batch_size=20648881
+                      GpuScanExec: table=catalog_returns, projections=[cr_order_number], batch_size=20648881
 --- memory ---
 total_estimate_cost=2672
 GpuProjectExec: row_width=40, subtree_max_row_bytes=104, estimate_input_bytes=48, estimate_output_bytes=40, estimate_cost=88

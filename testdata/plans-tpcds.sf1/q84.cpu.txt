@@ -1,24 +1,25 @@
-ProjectionExec: output_bytes=4
-  SortExec: output_bytes=6
-    ProjectionExec: output_bytes=6
-      CoalesceBatchesExec: output_bytes=6
-        HashJoinExec: output_bytes=9
-          CoalesceBatchesExec: output_bytes=920
-            HashJoinExec: output_bytes=920
-              CoalesceBatchesExec: output_bytes=17
-                FilterExec: output_bytes=17
-                  ParquetExec: output_bytes=249
-              ProjectionExec: output_bytes=7765
-                CoalesceBatchesExec: output_bytes=7765
-                  HashJoinExec: output_bytes=7765
-                    ParquetExec: output_bytes=59400
-                    CoalesceBatchesExec: output_bytes=7879
-                      HashJoinExec: output_bytes=7914
-                        CoalesceBatchesExec: output_bytes=8171
-                          HashJoinExec: output_bytes=8171
-                            CoalesceBatchesExec: output_bytes=1914
-                              FilterExec: output_bytes=1914
-                                ParquetExec: output_bytes=212500
-                            ParquetExec: output_bytes=1275000
-                        ParquetExec: output_bytes=7923300
-          ParquetExec: output_bytes=1187452
+GpuProjectExec: expr=[customer_id@0 as customer_id, customername@1 as customername], output_bytes=630, output_rows=16
+  GpuSortExec: expr=[c_customer_id@2 ASC], fetch=100, output_bytes=956, output_rows=16
+    GpuProjectExec: expr=[c_customer_id@0 as customer_id, concat(concat(coalesce(c_last_name@2, ), , ), coalesce(c_first_name@1, )) as customername, c_customer_id@0 as c_customer_id], output_bytes=956, output_rows=16
+      GpuCoalesceBatchesExec: target_batch_size=9942053, output_bytes=668, output_rows=16
+        GpuHashJoinExec: join_type=Inner, on=[(cd_demo_sk@3, sr_cdemo_sk@0)], projection=[0, 1, 2], output_bytes=695, output_rows=16
+          GpuCoalesceBatchesExec: target_batch_size=9942053, output_bytes=9072, output_rows=204
+            GpuHashJoinExec: join_type=Inner, on=[(ib_income_band_sk@0, hd_income_band_sk@4)], projection=[1, 2, 3, 4], output_bytes=9072, output_rows=204
+              GpuCoalesceBatchesExec: target_batch_size=9942053, output_bytes=17, output_rows=4
+                GpuFilterExec: predicate=ib_lower_bound@1 >= 38128 AND ib_upper_bound@2 <= 88128, projection=[0], output_bytes=17, output_rows=4
+                  GpuScanExec: table=income_band, projections=[ib_income_band_sk, ib_lower_bound, ib_upper_bound], batch_size=9942053, output_bytes=249, output_rows=20
+              GpuProjectExec: expr=[c_customer_id@1 as c_customer_id, c_first_name@2 as c_first_name, c_last_name@3 as c_last_name, cd_demo_sk@4 as cd_demo_sk, hd_income_band_sk@0 as hd_income_band_sk], output_bytes=43642, output_rows=900
+                GpuCoalesceBatchesExec: target_batch_size=9942053, output_bytes=43642, output_rows=900
+                  GpuHashJoinExec: join_type=Inner, on=[(hd_demo_sk@0, c_current_hdemo_sk@1)], projection=[1, 2, 4, 5, 6], output_bytes=43642, output_rows=900
+                    GpuScanExec: table=household_demographics, projections=[hd_demo_sk, hd_income_band_sk], batch_size=9942053, output_bytes=59400, output_rows=7200
+                    GpuCoalesceBatchesExec: target_batch_size=9942053, output_bytes=44228, output_rows=913
+                      GpuHashJoinExec: join_type=Inner, on=[(c_current_cdemo_sk@1, cd_demo_sk@0)], projection=[0, 2, 3, 4, 5], output_bytes=44443, output_rows=913
+                        GpuCoalesceBatchesExec: target_batch_size=9942053, output_bytes=45695, output_rows=947
+                          GpuHashJoinExec: join_type=Inner, on=[(ca_address_sk@0, c_current_addr_sk@3)], projection=[1, 2, 3, 5, 6], output_bytes=45695, output_rows=947
+                            GpuCoalesceBatchesExec: target_batch_size=9942053, output_bytes=1914, output_rows=464
+                              GpuFilterExec: predicate=ca_city@1 = Edgewood, projection=[0], output_bytes=1914, output_rows=464
+                                GpuScanExec: table=customer_address, projections=[ca_address_sk, ca_city], batch_size=9942053, output_bytes=846069, output_rows=50000
+                            GpuScanExec: table=customer, projections=[c_customer_id, c_current_cdemo_sk, c_current_hdemo_sk, c_current_addr_sk, c_first_name, c_last_name], batch_size=9942053, output_bytes=5229629, output_rows=100000
+                        GpuScanExec: table=customer_demographics, projections=[cd_demo_sk], batch_size=9942053, output_bytes=7923300, output_rows=1920800
+          GpuScanExec: table=store_returns, projections=[sr_cdemo_sk], batch_size=9942053, output_bytes=1187452, output_rows=287867
+peacockdb_cost=15582997

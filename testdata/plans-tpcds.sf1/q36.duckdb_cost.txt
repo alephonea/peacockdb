@@ -1,0 +1,35 @@
+PROJECTION: projections=[#0, #1, #2, #3, #4], output_bytes=5200, output_rows=100, materialized=0
+  TOP_N: order_by=[results_rollup.lochierarchy DESC, #5 ASC, rank() OVER (PARTITION BY results_rollup.lochierarchy, CASE  WHEN ((results_rollup.t_class = 0)) THEN (results_rollup.i_category) ELSE NULL END ORDER BY results_rollup.gross_margin ASC) ASC], top=100, output_bytes=6800, output_rows=100, materialized=9044
+    PROJECTION: projections=[gross_margin, i_category, i_class, lochierarchy, rank_within_parent, CASE  WHEN ((lochierarchy = 0)) THEN (i_category) ELSE NULL END], output_bytes=9044, output_rows=133, materialized=0
+      PROJECTION: projections=[#0, #1, #2, #3, #4, #5, #6], output_bytes=7980, output_rows=133, materialized=0
+        WINDOW: output_bytes=7980, output_rows=133, materialized=0
+          CTE: output_bytes=0, output_rows=0, materialized=0
+            PROJECTION: projections=[ss_net_profit, ss_ext_sales_price, gross_margin, i_category, i_class, g_category, g_class], output_bytes=9680, output_rows=121, materialized=0
+              PROJECTION: projections=[__internal_decompress_string(#0), __internal_decompress_string(#1), #2, #3], output_bytes=7744, output_rows=121, materialized=0
+                HASH_GROUP_BY: groups=[#0, #1], aggregates=[sum(#2), sum(#3)], output_bytes=7744, output_rows=121, materialized=21335720
+                  PROJECTION: projections=[i_category, i_class, ss_net_profit, ss_ext_sales_price], output_bytes=21335720, output_rows=533393, materialized=0
+                    PROJECTION: projections=[__internal_compress_string_hugeint(#0), __internal_compress_string_hugeint(#1), #2, #3], output_bytes=21335720, output_rows=533393, materialized=0
+                      HASH_JOIN: join_type=INNER, conditions=[i_item_sk = ss_item_sk], output_bytes=21335720, output_rows=533393, materialized=21335720
+                        TABLE_SCAN: table=item, projections=[i_item_sk, i_category, i_class], output_bytes=647964, output_rows=17999, materialized=1295964, bytes_read_est=648000, rows_read=18000
+                        HASH_JOIN: join_type=INNER, conditions=[ss_store_sk = s_store_sk], output_bytes=8534288, output_rows=533393, materialized=8534328
+                          HASH_JOIN: join_type=INNER, conditions=[ss_sold_date_sk = d_date_sk], output_bytes=10667860, output_rows=533393, materialized=10669320
+                            TABLE_SCAN: table=store_sales, projections=[ss_sold_date_sk, ss_item_sk, ss_store_sk, ss_net_profit, ss_ext_sales_price], output_bytes=10667860, output_rows=533393, materialized=68275940, bytes_read_est=57608080, rows_read=2880404
+                            FILTER: output_bytes=1460, output_rows=365, materialized=0
+                              TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_year=2001", output_bytes=1460, output_rows=365, materialized=293656, bytes_read_est=292196, rows_read=73049
+                          FILTER: output_bytes=40, output_rows=10, materialized=0
+                            TABLE_SCAN: table=store, projections=[s_store_sk], filters="s_state='TN'", output_bytes=48, output_rows=12, materialized=96, bytes_read_est=48, rows_read=12
+            HASH_GROUP_BY: groups=[#0, #1, #2, #3, #4, #5], output_bytes=6916, output_rows=133, materialized=0
+              UNION: output_bytes=0, output_rows=133, materialized=0
+                HASH_GROUP_BY: groups=[#0, #1, #2, #3, #4, #5], output_bytes=6864, output_rows=132, materialized=0
+                  UNION: output_bytes=0, output_rows=132, materialized=0
+                    PROJECTION: projections=[gross_margin, i_category, i_class, t_category, t_class, lochierarchy], output_bytes=6292, output_rows=121, materialized=0
+                      CTE_SCAN: output_bytes=9680, output_rows=121, materialized=0
+                    PROJECTION: projections=[gross_margin, i_category, i_class, t_category, t_class, lochierarchy], output_bytes=572, output_rows=11, materialized=0
+                      HASH_GROUP_BY: groups=[#0], aggregates=[sum(#1), sum(#2)], output_bytes=528, output_rows=11, materialized=5808
+                        PROJECTION: projections=[i_category, ss_net_profit, ss_ext_sales_price], output_bytes=5808, output_rows=121, materialized=0
+                          CTE_SCAN: output_bytes=9680, output_rows=121, materialized=0
+                PROJECTION: projections=[gross_margin, i_category, i_class, t_category, t_class, lochierarchy], output_bytes=52, output_rows=1, materialized=0
+                  UNGROUPED_AGGREGATE: aggregates=[sum(#0), sum(#1)], output_bytes=32, output_rows=1, materialized=3872
+                    PROJECTION: projections=[ss_net_profit, ss_ext_sales_price], output_bytes=3872, output_rows=121, materialized=0
+                      CTE_SCAN: output_bytes=9680, output_rows=121, materialized=0
+duckdb_cost=131759468

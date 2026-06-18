@@ -1,0 +1,31 @@
+TOP_N: order_by=[tpcds.main.item.i_item_id ASC, tpcds.main.item.i_item_desc ASC, tpcds.main.store.s_state ASC], top=100, output_bytes=0, output_rows=0, materialized=0
+  PROJECTION: projections=[i_item_id, i_item_desc, s_state, store_sales_quantitycount, store_sales_quantityave, store_sales_quantitystdev, store_sales_quantitycov, store_returns_quantitycount, store_returns_quantityave, store_returns_quantitystdev, store_returns_quantitycov, catalog_sales_quantitycount, catalog_sales_quantityave, catalog_sales_quantitystdev, catalog_sales_quantitycov], output_bytes=0, output_rows=0, materialized=0
+    PROJECTION: projections=[#0, #1, __internal_decompress_string(#2), #3, #4, #5, #6, #7, #8, #9, #10, #11], output_bytes=0, output_rows=0, materialized=0
+      HASH_GROUP_BY: groups=[#0, #1, #2], aggregates=[count(#3), avg(#4), stddev_samp(#5), count(#6), avg(#7), stddev_samp(#8), count(#9), avg(#10), stddev_samp(#11)], output_bytes=0, output_rows=0, materialized=0
+        PROJECTION: projections=[i_item_id, i_item_desc, s_state, ss_quantity, ss_quantity, CAST(ss_quantity AS DOUBLE), sr_return_quantity, sr_return_quantity, CAST(sr_return_quantity AS DOUBLE), cs_quantity, cs_quantity, CAST(cs_quantity AS DOUBLE)], output_bytes=0, output_rows=0, materialized=0
+          PROJECTION: projections=[#4, #3, #2, #0, #1, __internal_compress_string_uinteger(#5)], output_bytes=0, output_rows=0, materialized=0
+            HASH_JOIN: join_type=INNER, conditions=[ss_store_sk = s_store_sk], output_bytes=0, output_rows=0, materialized=0
+              HASH_JOIN: join_type=INNER, conditions=[i_item_sk = ss_item_sk], output_bytes=0, output_rows=0, materialized=0
+                TABLE_SCAN: table=item, projections=[i_item_sk, i_item_id, i_item_desc], output_bytes=73728, output_rows=2048, materialized=721728, bytes_read_est=648000, rows_read=18000
+                HASH_JOIN: join_type=INNER, conditions=[cs_sold_date_sk = d_date_sk], output_bytes=0, output_rows=0, materialized=1096
+                  HASH_JOIN: join_type=INNER, conditions=[cs_item_sk = ss_item_sk, cs_bill_customer_sk = ss_customer_sk], output_bytes=0, output_rows=0, materialized=0
+                    TABLE_SCAN: table=catalog_sales, projections=[cs_bill_customer_sk, cs_item_sk, cs_sold_date_sk, cs_quantity], filters="cs_bill_customer_sk>=2", output_bytes=2549248, output_rows=159328, materialized=25614016, bytes_read_est=23064768, rows_read=1441548
+                    HASH_JOIN: join_type=INNER, conditions=[sr_returned_date_sk = d_date_sk], output_bytes=139968, output_rows=5832, materialized=141064
+                      HASH_JOIN: join_type=INNER, conditions=[sr_item_sk = ss_item_sk, sr_customer_sk = ss_customer_sk, sr_ticket_number = ss_ticket_number], output_bytes=139968, output_rows=5832, materialized=1703848
+                        TABLE_SCAN: table=store_returns, projections=[sr_customer_sk, sr_item_sk, sr_ticket_number, sr_returned_date_sk, sr_return_quantity], output_bytes=798080, output_rows=39904, materialized=6555420, bytes_read_est=5757340, rows_read=287867
+                        PROJECTION: projections=[#0, #1, #2, #3, #4], output_bytes=1563880, output_rows=78194, materialized=0
+                          FILTER: output_bytes=1876656, output_rows=78194, materialized=0
+                            HASH_JOIN: join_type=INNER, conditions=[ss_sold_date_sk = d_date_sk], output_bytes=1921800, output_rows=80075, materialized=1922164
+                              TABLE_SCAN: table=store_sales, projections=[ss_sold_date_sk, ss_item_sk, ss_store_sk, ss_customer_sk, ss_ticket_number, ss_quantity], output_bytes=1921800, output_rows=80075, materialized=71051496, bytes_read_est=69129696, rows_read=2880404
+                              FILTER: output_bytes=364, output_rows=91, materialized=0
+                                TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_quarter_name='2001Q1'", output_bytes=364, output_rows=91, materialized=292560, bytes_read_est=292196, rows_read=73049
+                      FILTER: output_bytes=1096, output_rows=274, materialized=0
+                        PROJECTION: projections=[#0], output_bytes=1096, output_rows=274, materialized=0
+                          FILTER: output_bytes=5480, output_rows=274, materialized=0
+                            TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_quarter_name], filters="optional: d_quarter_name IN ('2001Q1', '2001Q2', '2001Q3')", output_bytes=1460980, output_rows=73049, materialized=2921960, bytes_read_est=1460980, rows_read=73049
+                  FILTER: output_bytes=1096, output_rows=274, materialized=0
+                    PROJECTION: projections=[#0], output_bytes=1096, output_rows=274, materialized=0
+                      FILTER: output_bytes=5480, output_rows=274, materialized=0
+                        TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_quarter_name], filters="optional: d_quarter_name IN ('2001Q1', '2001Q2', '2001Q3')", output_bytes=1460980, output_rows=73049, materialized=2921960, bytes_read_est=1460980, rows_read=73049
+              TABLE_SCAN: table=store, projections=[s_store_sk, s_state], filters="s_store_sk<=10", output_bytes=200, output_rows=10, materialized=440, bytes_read_est=240, rows_read=12
+duckdb_cost=113847752

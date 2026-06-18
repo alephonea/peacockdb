@@ -1,0 +1,20 @@
+TOP_N: order_by=[tmp1.i_manager_id ASC, tmp1.avg_monthly_sales ASC, tmp1.sum_sales ASC], top=100, output_bytes=2800, output_rows=100, materialized=25480
+  FILTER: output_bytes=25480, output_rows=910, materialized=0
+    PROJECTION: projections=[i_manager_id, sum_sales, avg_monthly_sales], output_bytes=28196, output_rows=1007, materialized=0
+      PROJECTION: projections=[#0, #1, #2, #3], output_bytes=32224, output_rows=1007, materialized=0
+        WINDOW: output_bytes=32224, output_rows=1007, materialized=24168
+          PROJECTION: projections=[__internal_decompress_integral_integer(#0, 1), __internal_decompress_integral_integer(#1, 1), #2], output_bytes=24168, output_rows=1007, materialized=0
+            PERFECT_HASH_GROUP_BY: groups=[#0, #1], aggregates=[sum(#2)], output_bytes=18126, output_rows=1007, materialized=115788
+              PROJECTION: projections=[i_manager_id, d_moy, ss_sales_price], output_bytes=115788, output_rows=19298, materialized=0
+                PROJECTION: projections=[__internal_compress_integral_utinyint(#2, 1), #0, __internal_compress_integral_utinyint(#1, 1), __internal_compress_integral_utinyint(#3, 1)], output_bytes=135086, output_rows=19298, materialized=0
+                  HASH_JOIN: join_type=INNER, conditions=[ss_store_sk = s_store_sk], output_bytes=308768, output_rows=19298, materialized=308768
+                    HASH_JOIN: join_type=INNER, conditions=[ss_item_sk = i_item_sk], output_bytes=308768, output_rows=19298, materialized=316240
+                      HASH_JOIN: join_type=INNER, conditions=[ss_sold_date_sk = d_date_sk], output_bytes=8645808, output_rows=540363, materialized=8648736
+                        TABLE_SCAN: table=store_sales, projections=[ss_item_sk, ss_sold_date_sk, ss_store_sk, ss_sales_price], output_bytes=8645808, output_rows=540363, materialized=54732272, bytes_read_est=46086464, rows_read=2880404
+                        FILTER: output_bytes=2928, output_rows=366, materialized=0
+                          TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_moy], filters="d_month_seq>=1200 AND d_month_seq<=1211", output_bytes=2928, output_rows=366, materialized=587320, bytes_read_est=584392, rows_read=73049
+                      PROJECTION: projections=[#0, #4], output_bytes=7472, output_rows=934, materialized=0
+                        FILTER: output_bytes=52304, output_rows=934, materialized=0
+                          TABLE_SCAN: table=item, projections=[i_item_sk, i_category, i_class, i_brand, i_manager_id], output_bytes=1008000, output_rows=18000, materialized=2016000, bytes_read_est=1008000, rows_read=18000
+                    TABLE_SCAN: table=store, projections=[s_store_sk], filters="s_store_sk<=10", output_bytes=40, output_rows=10, materialized=88, bytes_read_est=48, rows_read=12
+duckdb_cost=66774860

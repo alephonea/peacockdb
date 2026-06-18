@@ -1,0 +1,29 @@
+ORDER_BY: order_by=[custsale.cntrycode ASC], output_bytes=280, output_rows=7, materialized=280
+  HASH_GROUP_BY: groups=[#0], aggregates=[count_star(), sum(#1)], output_bytes=280, output_rows=7, materialized=153216
+    PROJECTION: projections=[cntrycode, c_acctbal], output_bytes=153216, output_rows=6384, materialized=0
+      PROJECTION: projections=[cntrycode, c_acctbal], output_bytes=153216, output_rows=6384, materialized=0
+        RIGHT_DELIM_JOIN: join_type=RIGHT_ANTI, conditions=[c_custkey IS NOT DISTINCT FROM c_custkey], output_bytes=0, output_rows=0, materialized=152000
+          NESTED_LOOP_JOIN: join_type=INNER, conditions=[CAST(c_acctbal AS DOUBLE) > SUBQUERY], output_bytes=760000, output_rows=19000, materialized=2104488
+            PROJECTION: projections=[#0, #1, #2], output_bytes=1344480, output_rows=42015, materialized=0
+              FILTER: output_bytes=1386495, output_rows=42015, materialized=0
+                HASH_JOIN: join_type=MARK, conditions=["substring"(c_phone, 1, 2) = #0], output_bytes=4950000, output_rows=150000, materialized=4950000
+                  TABLE_SCAN: table=customer, projections=[c_phone, c_acctbal, c_custkey], output_bytes=4800000, output_rows=150000, materialized=9600000, bytes_read_est=4800000, rows_read=150000
+                  COLUMN_DATA_SCAN: output_bytes=112, output_rows=7, materialized=0
+            PROJECTION: projections=[CASE  WHEN ((#1 > 1)) THEN (error('More than one row returned by a subquery used as an expression - scalar subqueries can only return a single row., Use "SET scalar_subquery_error_on_multiple_rows=false" to revert to previous behavior of returning a random row.')) ELSE #0 END], output_bytes=8, output_rows=1, materialized=0
+              UNGROUPED_AGGREGATE: aggregates=["first"(#0), count_star()], output_bytes=16, output_rows=1, materialized=8
+                PROJECTION: projections=[#0], output_bytes=8, output_rows=1, materialized=0
+                  UNGROUPED_AGGREGATE: aggregates=[avg(#0)], output_bytes=8, output_rows=1, materialized=304960
+                    PROJECTION: projections=[c_acctbal], output_bytes=304960, output_rows=38120, materialized=0
+                      PROJECTION: projections=[#0, #1], output_bytes=914880, output_rows=38120, materialized=0
+                        FILTER: output_bytes=953000, output_rows=38120, materialized=0
+                          HASH_JOIN: join_type=MARK, conditions=["substring"(c_phone, 1, 2) = #0], output_bytes=3407700, output_rows=136308, materialized=3407700
+                            TABLE_SCAN: table=customer, projections=[c_acctbal, c_phone], filters="c_acctbal>0.00", output_bytes=3271392, output_rows=136308, materialized=6871392, bytes_read_est=3600000, rows_read=150000
+                            COLUMN_DATA_SCAN: output_bytes=112, output_rows=7, materialized=0
+          HASH_JOIN: join_type=RIGHT_ANTI, conditions=[c_custkey IS NOT DISTINCT FROM c_custkey], output_bytes=153216, output_rows=6384, materialized=1673768
+            PROJECTION: projections=[c_custkey], output_bytes=1520552, output_rows=190069, materialized=0
+              HASH_JOIN: join_type=INNER, conditions=[o_custkey = c_custkey], output_bytes=3041104, output_rows=190069, materialized=3041104
+                TABLE_SCAN: table=orders, projections=[o_custkey], output_bytes=11999328, output_rows=1499916, materialized=23999328, bytes_read_est=12000000, rows_read=1500000
+                DELIM_SCAN: output_bytes=0, output_rows=0, materialized=0
+            DUMMY_SCAN: output_bytes=0, output_rows=0, materialized=0
+          HASH_GROUP_BY: groups=[#2], output_bytes=152000, output_rows=19000, materialized=0
+duckdb_cost=56258244

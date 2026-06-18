@@ -1,85 +1,86 @@
-ProjectionExec: output_bytes=5
-  GpuNestedLoopJoinExec: output_bytes=55
-    GpuNestedLoopJoinExec: output_bytes=54
-      GpuNestedLoopJoinExec: output_bytes=53
-        GpuNestedLoopJoinExec: output_bytes=44
-          GpuNestedLoopJoinExec: output_bytes=43
-            GpuNestedLoopJoinExec: output_bytes=42
-              GpuNestedLoopJoinExec: output_bytes=33
-                GpuNestedLoopJoinExec: output_bytes=32
-                  GpuNestedLoopJoinExec: output_bytes=31
-                    GpuNestedLoopJoinExec: output_bytes=22
-                      GpuNestedLoopJoinExec: output_bytes=21
-                        GpuNestedLoopJoinExec: output_bytes=20
-                          GpuNestedLoopJoinExec: output_bytes=11
-                            GpuNestedLoopJoinExec: output_bytes=10
-                              GpuNestedLoopJoinExec: output_bytes=9
-                                ProjectionExec: output_bytes=0
-                                  CoalesceBatchesExec: output_bytes=5
-                                    FilterExec: output_bytes=5
-                                      ParquetExec: output_bytes=145
-                                AggregateExec: output_bytes=9
-                                  ProjectionExec: output_bytes=0
-                                    CoalesceBatchesExec: output_bytes=2269835
-                                      FilterExec: output_bytes=2269845
-                                        ParquetExec: output_bytes=11881667
-                              AggregateExec: output_bytes=1
-                                CoalesceBatchesExec: output_bytes=68783
-                                  FilterExec: output_bytes=68793
-                                    ParquetExec: output_bytes=12241718
-                            AggregateExec: output_bytes=1
-                              CoalesceBatchesExec: output_bytes=68783
-                                FilterExec: output_bytes=68793
-                                  ParquetExec: output_bytes=12241718
-                          AggregateExec: output_bytes=9
-                            ProjectionExec: output_bytes=0
-                              CoalesceBatchesExec: output_bytes=2264382
-                                FilterExec: output_bytes=2264392
-                                  ParquetExec: output_bytes=11881667
-                        AggregateExec: output_bytes=1
-                          CoalesceBatchesExec: output_bytes=68618
-                            FilterExec: output_bytes=68628
-                              ParquetExec: output_bytes=12241718
-                      AggregateExec: output_bytes=1
-                        CoalesceBatchesExec: output_bytes=68618
-                          FilterExec: output_bytes=68628
-                            ParquetExec: output_bytes=12241718
-                    AggregateExec: output_bytes=9
-                      ProjectionExec: output_bytes=0
-                        CoalesceBatchesExec: output_bytes=2267855
-                          FilterExec: output_bytes=2267866
-                            ParquetExec: output_bytes=11881667
-                  AggregateExec: output_bytes=1
-                    CoalesceBatchesExec: output_bytes=68723
-                      FilterExec: output_bytes=68734
-                        ParquetExec: output_bytes=12241718
-                AggregateExec: output_bytes=1
-                  CoalesceBatchesExec: output_bytes=68723
-                    FilterExec: output_bytes=68734
-                      ParquetExec: output_bytes=12241718
-              AggregateExec: output_bytes=9
-                ProjectionExec: output_bytes=0
-                  CoalesceBatchesExec: output_bytes=2270697
-                    FilterExec: output_bytes=2270709
-                      ParquetExec: output_bytes=11881667
-            AggregateExec: output_bytes=1
-              CoalesceBatchesExec: output_bytes=68809
-                FilterExec: output_bytes=68821
-                  ParquetExec: output_bytes=12241718
-          AggregateExec: output_bytes=1
-            CoalesceBatchesExec: output_bytes=68809
-              FilterExec: output_bytes=68821
-                ParquetExec: output_bytes=12241718
-        AggregateExec: output_bytes=9
-          ProjectionExec: output_bytes=0
-            CoalesceBatchesExec: output_bytes=2273317
-              FilterExec: output_bytes=2273327
-                ParquetExec: output_bytes=11881667
-      AggregateExec: output_bytes=1
-        CoalesceBatchesExec: output_bytes=68889
-          FilterExec: output_bytes=68899
-            ParquetExec: output_bytes=12241718
-    AggregateExec: output_bytes=1
-      CoalesceBatchesExec: output_bytes=68889
-        FilterExec: output_bytes=68899
-          ParquetExec: output_bytes=12241718
+GpuProjectExec: expr=[CASE WHEN count(*)@0 > 74129 THEN avg(store_sales.ss_ext_discount_amt)@1 ELSE avg(store_sales.ss_net_paid)@2 END as bucket1, CASE WHEN count(*)@3 > 122840 THEN avg(store_sales.ss_ext_discount_amt)@4 ELSE avg(store_sales.ss_net_paid)@5 END as bucket2, CASE WHEN count(*)@6 > 56580 THEN avg(store_sales.ss_ext_discount_amt)@7 ELSE avg(store_sales.ss_net_paid)@8 END as bucket3, CASE WHEN count(*)@9 > 10097 THEN avg(store_sales.ss_ext_discount_amt)@10 ELSE avg(store_sales.ss_net_paid)@11 END as bucket4, CASE WHEN count(*)@12 > 165306 THEN avg(store_sales.ss_ext_discount_amt)@13 ELSE avg(store_sales.ss_net_paid)@14 END as bucket5], output_bytes=85, output_rows=1
+  GpuNestedLoopJoinExec: join_type=Left, output_bytes=215, output_rows=1
+    GpuNestedLoopJoinExec: join_type=Left, output_bytes=198, output_rows=1
+      GpuNestedLoopJoinExec: join_type=Left, output_bytes=181, output_rows=1
+        GpuNestedLoopJoinExec: join_type=Left, output_bytes=172, output_rows=1
+          GpuNestedLoopJoinExec: join_type=Left, output_bytes=155, output_rows=1
+            GpuNestedLoopJoinExec: join_type=Left, output_bytes=138, output_rows=1
+              GpuNestedLoopJoinExec: join_type=Left, output_bytes=129, output_rows=1
+                GpuNestedLoopJoinExec: join_type=Left, output_bytes=112, output_rows=1
+                  GpuNestedLoopJoinExec: join_type=Left, output_bytes=95, output_rows=1
+                    GpuNestedLoopJoinExec: join_type=Left, output_bytes=86, output_rows=1
+                      GpuNestedLoopJoinExec: join_type=Left, output_bytes=69, output_rows=1
+                        GpuNestedLoopJoinExec: join_type=Left, output_bytes=52, output_rows=1
+                          GpuNestedLoopJoinExec: join_type=Left, output_bytes=43, output_rows=1
+                            GpuNestedLoopJoinExec: join_type=Left, output_bytes=26, output_rows=1
+                              GpuNestedLoopJoinExec: join_type=Left, output_bytes=9, output_rows=1
+                                GpuProjectExec: expr=[], output_bytes=0, output_rows=1
+                                  GpuCoalesceBatchesExec: target_batch_size=7669584, output_bytes=5, output_rows=1
+                                    GpuFilterExec: predicate=r_reason_sk@0 = 1, output_bytes=5, output_rows=1
+                                      GpuScanExec: table=reason, projections=[r_reason_sk], batch_size=7669584, output_bytes=145, output_rows=35
+                                GpuAggregateExec: group_by=[], aggr=[count(*)], output_bytes=9, output_rows=1
+                                  GpuProjectExec: expr=[], output_bytes=0, output_rows=550263
+                                    GpuCoalesceBatchesExec: target_batch_size=7669584, output_bytes=2269835, output_rows=550263
+                                      GpuFilterExec: predicate=ss_quantity@0 >= 1 AND ss_quantity@0 <= 20, output_bytes=2269845, output_rows=550263
+                                        GpuScanExec: table=store_sales, projections=[ss_quantity], batch_size=7669584, output_bytes=11881667, output_rows=2880404
+                              GpuAggregateExec: group_by=[], aggr=[avg(store_sales.ss_ext_discount_amt)], output_bytes=17, output_rows=1
+                                GpuCoalesceBatchesExec: target_batch_size=7669584, output_bytes=8872991, output_rows=550263
+                                  GpuFilterExec: predicate=ss_quantity@0 >= 1 AND ss_quantity@0 <= 20, projection=[1], output_bytes=8873001, output_rows=550263
+                                    GpuScanExec: table=store_sales, projections=[ss_quantity, ss_ext_discount_amt], batch_size=7669584, output_bytes=58328182, output_rows=2880404
+                            GpuAggregateExec: group_by=[], aggr=[avg(store_sales.ss_net_paid)], output_bytes=17, output_rows=1
+                              GpuCoalesceBatchesExec: target_batch_size=7669584, output_bytes=8872991, output_rows=550263
+                                GpuFilterExec: predicate=ss_quantity@0 >= 1 AND ss_quantity@0 <= 20, projection=[1], output_bytes=8873001, output_rows=550263
+                                  GpuScanExec: table=store_sales, projections=[ss_quantity, ss_net_paid], batch_size=7669584, output_bytes=58328182, output_rows=2880404
+                          GpuAggregateExec: group_by=[], aggr=[count(*)], output_bytes=9, output_rows=1
+                            GpuProjectExec: expr=[], output_bytes=0, output_rows=548941
+                              GpuCoalesceBatchesExec: target_batch_size=7669584, output_bytes=2264382, output_rows=548941
+                                GpuFilterExec: predicate=ss_quantity@0 >= 21 AND ss_quantity@0 <= 40, output_bytes=2264392, output_rows=548941
+                                  GpuScanExec: table=store_sales, projections=[ss_quantity], batch_size=7669584, output_bytes=11881667, output_rows=2880404
+                        GpuAggregateExec: group_by=[], aggr=[avg(store_sales.ss_ext_discount_amt)], output_bytes=17, output_rows=1
+                          GpuCoalesceBatchesExec: target_batch_size=7669584, output_bytes=8851674, output_rows=548941
+                            GpuFilterExec: predicate=ss_quantity@0 >= 21 AND ss_quantity@0 <= 40, projection=[1], output_bytes=8851684, output_rows=548941
+                              GpuScanExec: table=store_sales, projections=[ss_quantity, ss_ext_discount_amt], batch_size=7669584, output_bytes=58328182, output_rows=2880404
+                      GpuAggregateExec: group_by=[], aggr=[avg(store_sales.ss_net_paid)], output_bytes=17, output_rows=1
+                        GpuCoalesceBatchesExec: target_batch_size=7669584, output_bytes=8851674, output_rows=548941
+                          GpuFilterExec: predicate=ss_quantity@0 >= 21 AND ss_quantity@0 <= 40, projection=[1], output_bytes=8851684, output_rows=548941
+                            GpuScanExec: table=store_sales, projections=[ss_quantity, ss_net_paid], batch_size=7669584, output_bytes=58328182, output_rows=2880404
+                    GpuAggregateExec: group_by=[], aggr=[count(*)], output_bytes=9, output_rows=1
+                      GpuProjectExec: expr=[], output_bytes=0, output_rows=549783
+                        GpuCoalesceBatchesExec: target_batch_size=7669584, output_bytes=2267855, output_rows=549783
+                          GpuFilterExec: predicate=ss_quantity@0 >= 41 AND ss_quantity@0 <= 60, output_bytes=2267866, output_rows=549783
+                            GpuScanExec: table=store_sales, projections=[ss_quantity], batch_size=7669584, output_bytes=11881667, output_rows=2880404
+                  GpuAggregateExec: group_by=[], aggr=[avg(store_sales.ss_ext_discount_amt)], output_bytes=17, output_rows=1
+                    GpuCoalesceBatchesExec: target_batch_size=7669584, output_bytes=8865251, output_rows=549783
+                      GpuFilterExec: predicate=ss_quantity@0 >= 41 AND ss_quantity@0 <= 60, projection=[1], output_bytes=8865262, output_rows=549783
+                        GpuScanExec: table=store_sales, projections=[ss_quantity, ss_ext_discount_amt], batch_size=7669584, output_bytes=58328182, output_rows=2880404
+                GpuAggregateExec: group_by=[], aggr=[avg(store_sales.ss_net_paid)], output_bytes=17, output_rows=1
+                  GpuCoalesceBatchesExec: target_batch_size=7669584, output_bytes=8865251, output_rows=549783
+                    GpuFilterExec: predicate=ss_quantity@0 >= 41 AND ss_quantity@0 <= 60, projection=[1], output_bytes=8865262, output_rows=549783
+                      GpuScanExec: table=store_sales, projections=[ss_quantity, ss_net_paid], batch_size=7669584, output_bytes=58328182, output_rows=2880404
+              GpuAggregateExec: group_by=[], aggr=[count(*)], output_bytes=9, output_rows=1
+                GpuProjectExec: expr=[], output_bytes=0, output_rows=550472
+                  GpuCoalesceBatchesExec: target_batch_size=7669584, output_bytes=2270697, output_rows=550472
+                    GpuFilterExec: predicate=ss_quantity@0 >= 61 AND ss_quantity@0 <= 80, output_bytes=2270709, output_rows=550472
+                      GpuScanExec: table=store_sales, projections=[ss_quantity], batch_size=7669584, output_bytes=11881667, output_rows=2880404
+            GpuAggregateExec: group_by=[], aggr=[avg(store_sales.ss_ext_discount_amt)], output_bytes=17, output_rows=1
+              GpuCoalesceBatchesExec: target_batch_size=7669584, output_bytes=8876361, output_rows=550472
+                GpuFilterExec: predicate=ss_quantity@0 >= 61 AND ss_quantity@0 <= 80, projection=[1], output_bytes=8876373, output_rows=550472
+                  GpuScanExec: table=store_sales, projections=[ss_quantity, ss_ext_discount_amt], batch_size=7669584, output_bytes=58328182, output_rows=2880404
+          GpuAggregateExec: group_by=[], aggr=[avg(store_sales.ss_net_paid)], output_bytes=17, output_rows=1
+            GpuCoalesceBatchesExec: target_batch_size=7669584, output_bytes=8876361, output_rows=550472
+              GpuFilterExec: predicate=ss_quantity@0 >= 61 AND ss_quantity@0 <= 80, projection=[1], output_bytes=8876373, output_rows=550472
+                GpuScanExec: table=store_sales, projections=[ss_quantity, ss_net_paid], batch_size=7669584, output_bytes=58328182, output_rows=2880404
+        GpuAggregateExec: group_by=[], aggr=[count(*)], output_bytes=9, output_rows=1
+          GpuProjectExec: expr=[], output_bytes=0, output_rows=551107
+            GpuCoalesceBatchesExec: target_batch_size=7669584, output_bytes=2273317, output_rows=551107
+              GpuFilterExec: predicate=ss_quantity@0 >= 81 AND ss_quantity@0 <= 100, output_bytes=2273327, output_rows=551107
+                GpuScanExec: table=store_sales, projections=[ss_quantity], batch_size=7669584, output_bytes=11881667, output_rows=2880404
+      GpuAggregateExec: group_by=[], aggr=[avg(store_sales.ss_ext_discount_amt)], output_bytes=17, output_rows=1
+        GpuCoalesceBatchesExec: target_batch_size=7669584, output_bytes=8886601, output_rows=551107
+          GpuFilterExec: predicate=ss_quantity@0 >= 81 AND ss_quantity@0 <= 100, projection=[1], output_bytes=8886611, output_rows=551107
+            GpuScanExec: table=store_sales, projections=[ss_quantity, ss_ext_discount_amt], batch_size=7669584, output_bytes=58328182, output_rows=2880404
+    GpuAggregateExec: group_by=[], aggr=[avg(store_sales.ss_net_paid)], output_bytes=17, output_rows=1
+      GpuCoalesceBatchesExec: target_batch_size=7669584, output_bytes=8886601, output_rows=551107
+        GpuFilterExec: predicate=ss_quantity@0 >= 81 AND ss_quantity@0 <= 100, projection=[1], output_bytes=8886611, output_rows=551107
+          GpuScanExec: table=store_sales, projections=[ss_quantity, ss_net_paid], batch_size=7669584, output_bytes=58328182, output_rows=2880404
+peacockdb_cost=842796133

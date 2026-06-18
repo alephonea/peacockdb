@@ -1,0 +1,25 @@
+PROJECTION: projections=[__internal_decompress_string(#0), __internal_decompress_integral_bigint(#1, 1992), #2], output_bytes=7000, output_rows=175, materialized=0
+  ORDER_BY: order_by=[profit.nation ASC, profit.o_year DESC], output_bytes=5775, output_rows=175, materialized=5775
+    PROJECTION: projections=[__internal_compress_string_hugeint(#0), __internal_compress_integral_utinyint(#1, 1992), #2], output_bytes=5775, output_rows=175, materialized=0
+      PROJECTION: projections=[__internal_decompress_string(#0), __internal_decompress_integral_bigint(#1, 1992), #2], output_bytes=7000, output_rows=175, materialized=0
+        HASH_GROUP_BY: groups=[#0, #1], aggregates=[sum(#2)], output_bytes=5775, output_rows=175, materialized=7985100
+          PROJECTION: projections=[nation, o_year, amount], output_bytes=7985100, output_rows=319404, materialized=0
+            PROJECTION: projections=[__internal_compress_string_hugeint(#0), __internal_compress_integral_utinyint(#1, 1992), #2], output_bytes=7985100, output_rows=319404, materialized=0
+              PROJECTION: projections=[nation, o_year, amount], output_bytes=10220928, output_rows=319404, materialized=0
+                HASH_JOIN: join_type=INNER, conditions=[p_partkey = ps_partkey, l_suppkey = ps_suppkey], output_bytes=16609008, output_rows=319404, materialized=30662784
+                  PROJECTION: projections=[#4, #0, #1, #2, #3, #5], output_bytes=14053776, output_rows=319404, materialized=0
+                    HASH_JOIN: join_type=INNER, conditions=[l_orderkey = o_orderkey], output_bytes=14053776, output_rows=319404, materialized=40107552
+                      PROJECTION: projections=[#0, __internal_compress_integral_uinteger(#1, 1), #2, #3, #4, #5], output_bytes=14053776, output_rows=319404, materialized=0
+                        HASH_JOIN: join_type=INNER, conditions=[l_partkey = p_partkey], output_bytes=15331392, output_rows=319404, materialized=15416704
+                          TABLE_SCAN: table=lineitem, projections=[l_suppkey, l_partkey, l_orderkey, l_extendedprice, l_discount, l_quantity], output_bytes=287999856, output_rows=5999997, materialized=576058176, bytes_read_est=288058320, rows_read=6001215
+                          PROJECTION: projections=[#0], output_bytes=85312, output_rows=10664, materialized=0
+                            FILTER: output_bytes=255936, output_rows=10664, materialized=0
+                              TABLE_SCAN: table=part, projections=[p_partkey, p_name], output_bytes=4800000, output_rows=200000, materialized=9600000, bytes_read_est=4800000, rows_read=200000
+                      PROJECTION: projections=[__internal_compress_integral_uinteger(#0, 1), #1], output_bytes=12000000, output_rows=1500000, materialized=0
+                        TABLE_SCAN: table=orders, projections=[o_orderkey, o_orderdate], output_bytes=18000000, output_rows=1500000, materialized=36000000, bytes_read_est=18000000, rows_read=1500000
+                  HASH_JOIN: join_type=INNER, conditions=[ps_suppkey = s_suppkey], output_bytes=32000000, output_rows=800000, materialized=32000000
+                    TABLE_SCAN: table=partsupp, projections=[ps_suppkey, ps_partkey, ps_supplycost], output_bytes=19200000, output_rows=800000, materialized=38400000, bytes_read_est=19200000, rows_read=800000
+                    HASH_JOIN: join_type=INNER, conditions=[s_nationkey = n_nationkey], output_bytes=240000, output_rows=10000, materialized=240000
+                      TABLE_SCAN: table=supplier, projections=[s_suppkey, s_nationkey], output_bytes=120000, output_rows=10000, materialized=240000, bytes_read_est=120000, rows_read=10000
+                      TABLE_SCAN: table=nation, projections=[n_nationkey, n_name], output_bytes=500, output_rows=25, materialized=1000, bytes_read_est=500, rows_read=25
+duckdb_cost=786717091

@@ -1,5 +1,6 @@
-AggregateExec: output_bytes=11
-  CoalesceBatchesExec: output_bytes=1500304
-    HashJoinExec: output_bytes=1500304
-      ParquetExec: output_bytes=12375000
-      ParquetExec: output_bytes=49510024
+GpuAggregateExec: group_by=[], aggr=[count(*), sum(l.l_quantity), sum(o.o_totalprice)], output_bytes=43, output_rows=1
+  GpuCoalesceBatchesExec: target_batch_size=26843545, output_bytes=193539184, output_rows=6001215
+    GpuHashJoinExec: join_type=Inner, on=[(o_orderkey@0, l_orderkey@0)], projection=[1, 3], output_bytes=193539184, output_rows=6001215
+      GpuScanExec: table=orders, projections=[o_orderkey, o_totalprice], batch_size=26843545, output_bytes=36375000, output_rows=1500000
+      GpuScanExec: table=lineitem, projections=[l_orderkey, l_quantity], batch_size=26843545, output_bytes=145529464, output_rows=6001215
+peacockdb_cost=568982875

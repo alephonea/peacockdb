@@ -1,16 +1,17 @@
-SortExec: output_bytes=228928
-  ProjectionExec: output_bytes=228928
-    AggregateExec: output_bytes=228928
-      AggregateExec: output_bytes=1478128
-        CoalesceBatchesExec: output_bytes=1478428
-          HashJoinExec: output_bytes=1478428
-            CoalesceBatchesExec: output_bytes=33
-              FilterExec: output_bytes=33
-                ParquetExec: output_bytes=82500
-            ProjectionExec: output_bytes=1479052
-              CoalesceBatchesExec: output_bytes=1479052
-                HashJoinExec: output_bytes=1479060
-                  CoalesceBatchesExec: output_bytes=369764
-                    FilterExec: output_bytes=369768
-                      ParquetExec: output_bytes=2500000
-                  ParquetExec: output_bytes=13000000
+GpuSortExec: expr=[supplier_cnt@3 DESC, p_brand@0 ASC NULLS LAST, p_type@1 ASC NULLS LAST, p_size@2 ASC NULLS LAST], output_bytes=899061, output_rows=18314
+  GpuProjectExec: expr=[p_brand@0 as p_brand, p_type@1 as p_type, p_size@2 as p_size, count(alias1)@3 as supplier_cnt], output_bytes=899061, output_rows=18314
+    GpuAggregateExec: group_by=[p_brand, p_type, p_size], aggr=[count(alias1)], output_bytes=899061, output_rows=18314
+      GpuAggregateExec: group_by=[p_brand, p_type, p_size, alias1], aggr=[], output_bytes=5804632, output_rows=118250
+        GpuCoalesceBatchesExec: target_batch_size=12782640, output_bytes=5805698, output_rows=118274
+          GpuHashJoinExec: join_type=RightAnti, on=[(s_suppkey@0, ps_suppkey@0)], output_bytes=5805698, output_rows=118274
+            GpuCoalesceBatchesExec: target_batch_size=12782640, output_bytes=33, output_rows=4
+              GpuFilterExec: predicate=s_comment@1 LIKE %Customer%Complaints%, projection=[0], output_bytes=33, output_rows=4
+                GpuScanExec: table=supplier, projections=[s_suppkey, s_comment], batch_size=12782640, output_bytes=748199, output_rows=10000
+            GpuProjectExec: expr=[ps_suppkey@3 as ps_suppkey, p_brand@0 as p_brand, p_type@1 as p_type, p_size@2 as p_size], output_bytes=5808132, output_rows=118324
+              GpuCoalesceBatchesExec: target_batch_size=12782640, output_bytes=5808132, output_rows=118324
+                GpuHashJoinExec: join_type=Inner, on=[(p_partkey@0, ps_partkey@0)], projection=[1, 2, 3, 5], output_bytes=5808292, output_rows=118324
+                  GpuCoalesceBatchesExec: target_batch_size=12782640, output_bytes=1452040, output_rows=29581
+                    GpuFilterExec: predicate=p_brand@1 != Brand#45 AND p_type@2 NOT LIKE MEDIUM POLISHED% AND (p_size@3 = 49 OR p_size@3 = 14 OR p_size@3 = 23 OR p_size@3 = 45 OR p_size@3 = 19 OR p_size@3 = 3 OR p_size@3 = 36 OR p_size@3 = 9), output_bytes=1452052, output_rows=29581
+                      GpuScanExec: table=part, projections=[p_partkey, p_brand, p_type, p_size], batch_size=12782640, output_bytes=9819962, output_rows=200000
+                  GpuScanExec: table=partsupp, projections=[ps_partkey, ps_suppkey], batch_size=12782640, output_bytes=13000000, output_rows=800000
+peacockdb_cost=64010086

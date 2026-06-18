@@ -44,9 +44,11 @@ RUST_TESTS_STAGING="$INSTALL_DIR/rust-tests"
 BUILD=0
 RSYNC=0
 RUN=0
+UPDATE_CANON=0   # --update-canonical: regen goldens during the remote run (UPDATE_CANONICAL=1)
+FETCH_GOLDENS=0  # --fetch-goldens: pull the remote goldens back into the local repo after the run
 
 usage() {
-  echo "Usage: $0 --host <ssh-dest> [--cpu|--gpu] [--remote-dir <path>] [--local-cudf-root <path>] [--remote-cudf-root <path>] [--gcc-version <n>] [--build] [--rsync] [--run] [--all]"
+  echo "Usage: $0 --host <ssh-dest> [--cpu|--gpu] [--remote-dir <path>] [--local-cudf-root <path>] [--remote-cudf-root <path>] [--gcc-version <n>] [--build] [--rsync] [--run] [--all] [--update-canonical] [--fetch-goldens]"
   exit 1
 }
 
@@ -65,6 +67,8 @@ while [ $# -gt 0 ]; do
     --rsync)            RSYNC=1 ;;
     --run)              RUN=1 ;;
     --all)              BUILD=1; RSYNC=1; RUN=1 ;;
+    --update-canonical) UPDATE_CANON=1 ;;
+    --fetch-goldens)    FETCH_GOLDENS=1 ;;
     *) echo "Unknown flag: $1"; usage ;;
   esac
   shift
@@ -181,6 +185,15 @@ if [ "$RUN" -eq 1 ]; then
     TESTDATA_ENV=":"
   fi
 
+  # --update-canonical: the test binaries regenerate their goldens in-place
+  # (UPDATE_CANONICAL=1) on the remote instead of asserting against them. The
+  # regenerated goldens are pulled back to the local repo after the run.
+  if [ "$UPDATE_CANON" -eq 1 ]; then
+    UPDATE_CANON_ENV="export UPDATE_CANONICAL=1"
+  else
+    UPDATE_CANON_ENV=":"
+  fi
+
   # Run only this mode's binaries by explicit name — globbing rust-tests/* would
   # also pick up stale binaries left by a previous run of the other mode (the
   # rsync doesn't --delete), e.g. test_cpu_executor lingering during a --gpu run.
@@ -197,6 +210,7 @@ if [ "$RUN" -eq 1 ]; then
     # (their baked rpath points at this build host); then the remote's cuDF libs.
     export LD_LIBRARY_PATH="$REMOTE_DIR/cpp/install/lib:$REMOTE_CUDF_ROOT/lib:\$LD_LIBRARY_PATH"
     $TESTDATA_ENV
+    $UPDATE_CANON_ENV
 
     rc=0
 
@@ -213,4 +227,17 @@ if [ "$RUN" -eq 1 ]; then
 
     exit \$rc
 EOF
+fi
+
+# Pull the remote goldens back into the local repo — only with --fetch-goldens
+# (typically paired with --update-canonical, which regenerates *.txt via
+# test_query_plan and *.cpu.txt via test_cpu_executor on the remote). Opt-in so a
+# plain verify run never overwrites local goldens. set -e means we only reach
+# here if the run succeeded.
+if [ "$RUN" -eq 1 ] && [ "$FETCH_GOLDENS" -eq 1 ] && [ "$MODE" = "cpu" ]; then
+  echo "==> fetching goldens back from $HOST"
+  for g in plans plans.sf1 plans-tpcds.sf1; do
+    rsync -r --include='*/' --include='*.txt' --exclude='*' \
+      "$HOST:$REMOTE_DIR/testdata/$g/" "testdata/$g/"
+  done
 fi

@@ -1,0 +1,23 @@
+TOP_N: order_by=[i1.i_product_name ASC], top=100, output_bytes=64, output_rows=4, materialized=64
+  HASH_GROUP_BY: groups=[#0], output_bytes=64, output_rows=4, materialized=64
+    PROJECTION: projections=[i_product_name], output_bytes=64, output_rows=4, materialized=0
+      PROJECTION: projections=[#0], output_bytes=64, output_rows=4, materialized=0
+        FILTER: output_bytes=96, output_rows=4, materialized=0
+          LEFT_DELIM_JOIN: join_type=SINGLE, conditions=[i_manufact IS NOT DISTINCT FROM i_manufact], output_bytes=0, output_rows=0, materialized=2144
+            TABLE_SCAN: table=item, projections=[i_manufact, i_product_name], filters="i_manufact_id>=738 AND i_manufact_id<=778", output_bytes=7648, output_rows=239, materialized=583648, bytes_read_est=576000, rows_read=18000
+            HASH_JOIN: join_type=SINGLE, conditions=[i_manufact IS NOT DISTINCT FROM i_manufact], output_bytes=5736, output_rows=239, materialized=7344
+              COLUMN_DATA_SCAN: output_bytes=7648, output_rows=239, materialized=0
+              PROJECTION: projections=[CASE  WHEN ((item_cnt IS NULL)) THEN (0) ELSE item_cnt END, i_manufact], output_bytes=1608, output_rows=67, materialized=0
+                HASH_JOIN: join_type=RIGHT, conditions=[#0 IS NOT DISTINCT FROM i_manufact], output_bytes=1608, output_rows=67, materialized=1656
+                  PROJECTION: projections=[__internal_decompress_string(#0), #1], output_bytes=48, output_rows=2, materialized=0
+                    HASH_GROUP_BY: groups=[#0], aggregates=[count_star()], output_bytes=48, output_rows=2, materialized=32
+                      PROJECTION: projections=[i_manufact], output_bytes=32, output_rows=2, materialized=0
+                        PROJECTION: projections=[__internal_compress_string_hugeint(#0), #1], output_bytes=64, output_rows=2, materialized=0
+                          HASH_JOIN: join_type=INNER, conditions=[i_manufact = i_manufact], output_bytes=64, output_rows=2, materialized=192
+                            PROJECTION: projections=[#0], output_bytes=128, output_rows=8, materialized=0
+                              FILTER: output_bytes=640, output_rows=8, materialized=0
+                                TABLE_SCAN: table=item, projections=[i_manufact, i_category, i_color, i_units, i_size], output_bytes=1412320, output_rows=17654, materialized=2852320, bytes_read_est=1440000, rows_read=18000
+                            DELIM_SCAN: output_bytes=0, output_rows=0, materialized=0
+                  DELIM_SCAN: output_bytes=0, output_rows=0, materialized=0
+            HASH_GROUP_BY: groups=[#0], output_bytes=2144, output_rows=134, materialized=0
+duckdb_cost=3447464

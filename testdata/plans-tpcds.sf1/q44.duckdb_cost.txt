@@ -1,0 +1,50 @@
+TOP_N: order_by=[asceding.rnk ASC], top=100, output_bytes=400, output_rows=10, materialized=400
+  PROJECTION: projections=[rnk, best_performing, worst_performing], output_bytes=400, output_rows=10, materialized=0
+    HASH_JOIN: join_type=INNER, conditions=[rnk = rnk], output_bytes=400, output_rows=10, materialized=400
+      HASH_JOIN: join_type=INNER, conditions=[i_item_sk = item_sk], output_bytes=240, output_rows=10, materialized=360
+        TABLE_SCAN: table=item, projections=[i_item_sk, i_product_name], output_bytes=290340, output_rows=14517, materialized=650340, bytes_read_est=360000, rows_read=18000
+        PROJECTION: projections=[#0, #2], output_bytes=120, output_rows=10, materialized=0
+          FILTER: output_bytes=200, output_rows=10, materialized=0
+            PROJECTION: projections=[#0, #1, #2], output_bytes=148040, output_rows=7402, materialized=0
+              WINDOW: output_bytes=148040, output_rows=7402, materialized=88824
+                PROJECTION: projections=[item_sk, rank_col], output_bytes=88824, output_rows=7402, materialized=0
+                  NESTED_LOOP_JOIN: join_type=INNER, conditions=[avg(ss_net_profit) > (0.9 * SUBQUERY)], output_bytes=148040, output_rows=7402, materialized=364036
+                    PROJECTION: projections=[__internal_decompress_integral_integer(#0, 1), #1], output_bytes=215988, output_rows=17999, materialized=0
+                      HASH_GROUP_BY: groups=[#0], aggregates=[avg(#1)], output_bytes=179990, output_rows=17999, materialized=2750658
+                        PROJECTION: projections=[ss_item_sk, ss_net_profit], output_bytes=2750658, output_rows=458443, materialized=0
+                          PROJECTION: projections=[__internal_compress_integral_usmallint(#0, 1), #1], output_bytes=2750658, output_rows=458443, materialized=0
+                            TABLE_SCAN: table=store_sales, projections=[ss_item_sk, ss_net_profit], filters="ss_store_sk=4", output_bytes=3667544, output_rows=458443, materialized=26710776, bytes_read_est=23043232, rows_read=2880404
+                    PROJECTION: projections=[CASE  WHEN ((#1 > 1)) THEN (error('More than one row returned by a subquery used as an expression - scalar subqueries can only return a single row., Use "SET scalar_subquery_error_on_multiple_rows=false" to revert to previous behavior of returning a random row.')) ELSE #0 END], output_bytes=8, output_rows=1, materialized=0
+                      UNGROUPED_AGGREGATE: aggregates=["first"(#0), count_star()], output_bytes=16, output_rows=1, materialized=8
+                        PROJECTION: projections=[#0], output_bytes=8, output_rows=1, materialized=0
+                          PROJECTION: projections=[rank_col], output_bytes=8, output_rows=1, materialized=0
+                            PROJECTION: projections=[__internal_decompress_integral_integer(#0, 4), #1], output_bytes=12, output_rows=1, materialized=0
+                              PERFECT_HASH_GROUP_BY: groups=[#0], aggregates=[avg(#1)], output_bytes=9, output_rows=1, materialized=53855
+                                PROJECTION: projections=[ss_store_sk, ss_net_profit], output_bytes=53855, output_rows=10771, materialized=0
+                                  PROJECTION: projections=[__internal_compress_integral_utinyint(#0, 4), __internal_compress_integral_usmallint(#1, 1), #2], output_bytes=75397, output_rows=10771, materialized=0
+                                    FILTER: output_bytes=129252, output_rows=10771, materialized=0
+                                      TABLE_SCAN: table=store_sales, projections=[ss_store_sk, ss_addr_sk, ss_net_profit], filters="ss_store_sk=4", output_bytes=5501316, output_rows=458443, materialized=40066164, bytes_read_est=34564848, rows_read=2880404
+      HASH_JOIN: join_type=INNER, conditions=[i_item_sk = item_sk], output_bytes=240, output_rows=10, materialized=360
+        TABLE_SCAN: table=item, projections=[i_item_sk, i_product_name], output_bytes=331700, output_rows=16585, materialized=691700, bytes_read_est=360000, rows_read=18000
+        PROJECTION: projections=[#0, #2], output_bytes=120, output_rows=10, materialized=0
+          FILTER: output_bytes=200, output_rows=10, materialized=0
+            PROJECTION: projections=[#0, #1, #2], output_bytes=148040, output_rows=7402, materialized=0
+              WINDOW: output_bytes=148040, output_rows=7402, materialized=88824
+                PROJECTION: projections=[item_sk, rank_col], output_bytes=88824, output_rows=7402, materialized=0
+                  NESTED_LOOP_JOIN: join_type=INNER, conditions=[avg(ss_net_profit) > (0.9 * SUBQUERY)], output_bytes=148040, output_rows=7402, materialized=364036
+                    PROJECTION: projections=[__internal_decompress_integral_integer(#0, 1), #1], output_bytes=215988, output_rows=17999, materialized=0
+                      HASH_GROUP_BY: groups=[#0], aggregates=[avg(#1)], output_bytes=179990, output_rows=17999, materialized=2750658
+                        PROJECTION: projections=[ss_item_sk, ss_net_profit], output_bytes=2750658, output_rows=458443, materialized=0
+                          PROJECTION: projections=[__internal_compress_integral_usmallint(#0, 1), #1], output_bytes=2750658, output_rows=458443, materialized=0
+                            TABLE_SCAN: table=store_sales, projections=[ss_item_sk, ss_net_profit], filters="ss_store_sk=4", output_bytes=3667544, output_rows=458443, materialized=26710776, bytes_read_est=23043232, rows_read=2880404
+                    PROJECTION: projections=[CASE  WHEN ((#1 > 1)) THEN (error('More than one row returned by a subquery used as an expression - scalar subqueries can only return a single row., Use "SET scalar_subquery_error_on_multiple_rows=false" to revert to previous behavior of returning a random row.')) ELSE #0 END], output_bytes=8, output_rows=1, materialized=0
+                      UNGROUPED_AGGREGATE: aggregates=["first"(#0), count_star()], output_bytes=16, output_rows=1, materialized=8
+                        PROJECTION: projections=[#0], output_bytes=8, output_rows=1, materialized=0
+                          PROJECTION: projections=[rank_col], output_bytes=8, output_rows=1, materialized=0
+                            PROJECTION: projections=[__internal_decompress_integral_integer(#0, 4), #1], output_bytes=12, output_rows=1, materialized=0
+                              PERFECT_HASH_GROUP_BY: groups=[#0], aggregates=[avg(#1)], output_bytes=9, output_rows=1, materialized=53855
+                                PROJECTION: projections=[ss_store_sk, ss_net_profit], output_bytes=53855, output_rows=10771, materialized=0
+                                  PROJECTION: projections=[__internal_compress_integral_utinyint(#0, 4), __internal_compress_integral_usmallint(#1, 1), #2], output_bytes=75397, output_rows=10771, materialized=0
+                                    FILTER: output_bytes=129252, output_rows=10771, materialized=0
+                                      TABLE_SCAN: table=store_sales, projections=[ss_store_sk, ss_addr_sk, ss_net_profit], filters="ss_store_sk=4", output_bytes=5501316, output_rows=458443, materialized=40066164, bytes_read_est=34564848, rows_read=2880404
+duckdb_cost=141412202

@@ -12,17 +12,17 @@ GpuSortPreservingMergeExec: [cntrycode@0 ASC NULLS LAST]
                       GpuAggregateExec: group_by=[], aggr=[avg(customer.c_acctbal)]
                         GpuCoalesceBatchesExec: target_batch_size=19173961
                           GpuFilterExec: predicate=c_acctbal@1 > Some(0),15,2 AND (substr(c_phone@0, 1, 2) = 13 OR substr(c_phone@0, 1, 2) = 31 OR substr(c_phone@0, 1, 2) = 23 OR substr(c_phone@0, 1, 2) = 29 OR substr(c_phone@0, 1, 2) = 30 OR substr(c_phone@0, 1, 2) = 18 OR substr(c_phone@0, 1, 2) = 17), projection=[1]
-                            GpuScanExec: batch_size=19173961
+                            GpuScanExec: table=customer, projections=[c_phone, c_acctbal], batch_size=19173961
                   GpuCoalesceBatchesExec: target_batch_size=19173961
                     GpuHashJoinExec: join_type=LeftAnti, on=[(c_custkey@0, o_custkey@0)], projection=[1, 2]
                       GpuCoalesceBatchesExec: target_batch_size=19173961
                         GpuRepartitionExec: partitioning=Hash([c_custkey@0], 8), input_partitions=8
                           GpuCoalesceBatchesExec: target_batch_size=19173961
                             GpuFilterExec: predicate=substr(c_phone@1, 1, 2) = 13 OR substr(c_phone@1, 1, 2) = 31 OR substr(c_phone@1, 1, 2) = 23 OR substr(c_phone@1, 1, 2) = 29 OR substr(c_phone@1, 1, 2) = 30 OR substr(c_phone@1, 1, 2) = 18 OR substr(c_phone@1, 1, 2) = 17
-                              GpuScanExec: batch_size=19173961
+                              GpuScanExec: table=customer, projections=[c_custkey, c_phone, c_acctbal], batch_size=19173961
                       GpuCoalesceBatchesExec: target_batch_size=19173961
                         GpuRepartitionExec: partitioning=Hash([o_custkey@0], 8), input_partitions=8
-                          GpuScanExec: batch_size=19173961
+                          GpuScanExec: table=orders, projections=[o_custkey], batch_size=19173961
 --- memory ---
 total_estimate_cost=2008
 GpuSortPreservingMergeExec: row_width=56, subtree_max_row_bytes=112, estimate_input_bytes=56, estimate_output_bytes=56, estimate_cost=112

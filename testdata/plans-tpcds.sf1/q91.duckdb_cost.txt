@@ -1,0 +1,26 @@
+PROJECTION: projections=[#0, __internal_decompress_string(#1), __internal_decompress_string(#2), #3], output_bytes=128, output_rows=2, materialized=0
+  ORDER_BY: order_by=[sum(tpcds.main.catalog_returns.cr_net_loss) DESC], output_bytes=128, output_rows=2, materialized=128
+    PROJECTION: projections=[#0, __internal_compress_string_hugeint(#1), __internal_compress_string_hugeint(#2), #3], output_bytes=128, output_rows=2, materialized=0
+      PROJECTION: projections=[Call_Center, Call_Center_Name, Manager, Returns_Loss], output_bytes=128, output_rows=2, materialized=0
+        PROJECTION: projections=[#0, __internal_decompress_string(#1), __internal_decompress_string(#2), __internal_decompress_string(#3), __internal_decompress_string(#4), #5], output_bytes=192, output_rows=2, materialized=0
+          HASH_GROUP_BY: groups=[#0, #1, #2, #3, #4], aggregates=[sum(#5)], output_bytes=162, output_rows=2, materialized=207
+            PROJECTION: projections=[cc_call_center_id, cc_name, cc_manager, cd_marital_status, cd_education_status, cr_net_loss], output_bytes=207, output_rows=3, materialized=0
+              PROJECTION: projections=[#0, __internal_compress_string_hugeint(#1), __internal_compress_string_hugeint(#2), #5, __internal_compress_string_utinyint(#3), __internal_compress_string_hugeint(#4)], output_bytes=207, output_rows=3, materialized=0
+                HASH_JOIN: join_type=INNER, conditions=[cc_call_center_sk = cr_call_center_sk], output_bytes=252, output_rows=3, materialized=252
+                  TABLE_SCAN: table=call_center, projections=[cc_call_center_sk, cc_call_center_id, cc_name, cc_manager], output_bytes=52, output_rows=1, materialized=364, bytes_read_est=312, rows_read=6
+                  HASH_JOIN: join_type=INNER, conditions=[ca_address_sk = c_current_addr_sk], output_bytes=132, output_rows=3, materialized=132
+                    TABLE_SCAN: table=customer_address, projections=[ca_address_sk], filters="ca_gmt_offset=-7.00", output_bytes=19524, output_rows=4881, materialized=219524, bytes_read_est=200000, rows_read=50000
+                    HASH_JOIN: join_type=INNER, conditions=[cd_demo_sk = c_current_cdemo_sk], output_bytes=836, output_rows=19, materialized=3928436
+                      FILTER: output_bytes=3927600, output_rows=109100, materialized=0
+                        TABLE_SCAN: table=customer_demographics, projections=[cd_demo_sk, cd_marital_status, cd_education_status], filters="cd_demo_sk>=17 AND cd_demo_sk<=1920788", output_bytes=68731668, output_rows=1909213, materialized=137880468, bytes_read_est=69148800, rows_read=1920800
+                      HASH_JOIN: join_type=INNER, conditions=[c_current_hdemo_sk = hd_demo_sk], output_bytes=5940, output_rows=297, materialized=10740
+                        HASH_JOIN: join_type=INNER, conditions=[c_customer_sk = cr_returning_customer_sk], output_bytes=35100, output_rows=1755, materialized=35100
+                          TABLE_SCAN: table=customer, projections=[c_customer_sk, c_current_cdemo_sk, c_current_hdemo_sk, c_current_addr_sk], filters="c_customer_sk>=2 AND c_customer_sk<=99998", output_bytes=1522608, output_rows=95163, materialized=3122608, bytes_read_est=1600000, rows_read=100000
+                          HASH_JOIN: join_type=INNER, conditions=[cr_returned_date_sk = d_date_sk], output_bytes=30544, output_rows=1909, materialized=30664
+                            TABLE_SCAN: table=catalog_returns, projections=[cr_call_center_sk, cr_returned_date_sk, cr_returning_customer_sk, cr_net_loss], output_bytes=30544, output_rows=1909, materialized=2335616, bytes_read_est=2305072, rows_read=144067
+                            FILTER: output_bytes=120, output_rows=30, materialized=0
+                              TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_year=1998 AND d_moy=11", output_bytes=120, output_rows=30, materialized=292316, bytes_read_est=292196, rows_read=73049
+                        PROJECTION: projections=[#0], output_bytes=4800, output_rows=1200, materialized=0
+                          FILTER: output_bytes=24000, output_rows=1200, materialized=0
+                            TABLE_SCAN: table=household_demographics, projections=[hd_demo_sk, hd_buy_potential], filters="hd_buy_potential>='Unknown' AND hd_buy_potential<'Unknowo'", output_bytes=24000, output_rows=1200, materialized=168000, bytes_read_est=144000, rows_read=7200
+duckdb_cost=148024555

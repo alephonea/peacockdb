@@ -1,22 +1,23 @@
-ProjectionExec: output_bytes=27
-  GpuGlobalLimitExec: output_bytes=27
-    AggregateExec: output_bytes=27
-      ProjectionExec: output_bytes=7098268
-        CoalesceBatchesExec: output_bytes=6889494
-          HashJoinExec: output_bytes=6889494
-            ProjectionExec: output_bytes=2371900
-              AggregateExec: output_bytes=2371900
-                CoalesceBatchesExec: output_bytes=2372396
-                  HashJoinExec: output_bytes=2372398
-                    CoalesceBatchesExec: output_bytes=1510
-                      FilterExec: output_bytes=1510
-                        ParquetExec: output_bytes=602656
-                    ParquetExec: output_bytes=17839158
-            ProjectionExec: output_bytes=4519004
-              AggregateExec: output_bytes=4519004
-                CoalesceBatchesExec: output_bytes=4570254
-                  HashJoinExec: output_bytes=4570274
-                    CoalesceBatchesExec: output_bytes=1510
-                      FilterExec: output_bytes=1510
-                        ParquetExec: output_bytes=602656
-                    ParquetExec: output_bytes=35645001
+GpuProjectExec: expr=[sum(CASE WHEN ssci.customer_sk IS NOT NULL AND csci.customer_sk IS NULL THEN Int64(1) ELSE Int64(0) END)@0 as store_only, sum(CASE WHEN ssci.customer_sk IS NULL AND csci.customer_sk IS NOT NULL THEN Int64(1) ELSE Int64(0) END)@1 as catalog_only, sum(CASE WHEN ssci.customer_sk IS NOT NULL AND csci.customer_sk IS NOT NULL THEN Int64(1) ELSE Int64(0) END)@2 as store_and_catalog], output_bytes=27, output_rows=1
+  GpuGlobalLimitExec: skip=0, fetch=100, output_bytes=27, output_rows=1
+    GpuAggregateExec: group_by=[], aggr=[sum(CASE WHEN ssci.customer_sk IS NOT NULL AND csci.customer_sk IS NULL THEN Int64(1) ELSE Int64(0) END), sum(CASE WHEN ssci.customer_sk IS NULL AND csci.customer_sk IS NOT NULL THEN Int64(1) ELSE Int64(0) END), sum(CASE WHEN ssci.customer_sk IS NOT NULL AND csci.customer_sk IS NOT NULL THEN Int64(1) ELSE Int64(0) END)], output_bytes=27, output_rows=1
+      GpuProjectExec: expr=[customer_sk@1 IS NOT NULL as __common_expr_1, customer_sk@1 as customer_sk, customer_sk@0 as customer_sk], output_bytes=7098268, output_rows=835090
+        GpuCoalesceBatchesExec: target_batch_size=33554432, output_bytes=6889494, output_rows=835090
+          GpuHashJoinExec: join_type=Full, on=[(customer_sk@0, customer_sk@0), (item_sk@1, item_sk@1)], projection=[0, 2], output_bytes=6889494, output_rows=835090
+            GpuProjectExec: expr=[cs_bill_customer_sk@0 as customer_sk, cs_item_sk@1 as item_sk], output_bytes=2371900, output_rows=287503
+              GpuAggregateExec: group_by=[cs_bill_customer_sk, cs_item_sk], aggr=[], output_bytes=2371900, output_rows=287503
+                GpuCoalesceBatchesExec: target_batch_size=33554432, output_bytes=2372396, output_rows=287563
+                  GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, cs_sold_date_sk@0)], projection=[2, 3], output_bytes=2372398, output_rows=287563
+                    GpuCoalesceBatchesExec: target_batch_size=33554432, output_bytes=1510, output_rows=366
+                      GpuFilterExec: predicate=d_month_seq@1 >= 1200 AND d_month_seq@1 <= 1211, projection=[0], output_bytes=1510, output_rows=366
+                        GpuScanExec: table=date_dim, projections=[d_date_sk, d_month_seq], batch_size=33554432, output_bytes=602656, output_rows=73049
+                    GpuScanExec: table=catalog_sales, projections=[cs_sold_date_sk, cs_bill_customer_sk, cs_item_sk], batch_size=33554432, output_bytes=17839158, output_rows=1441548
+            GpuProjectExec: expr=[ss_customer_sk@0 as customer_sk, ss_item_sk@1 as item_sk], output_bytes=4519004, output_rows=547758
+              GpuAggregateExec: group_by=[ss_customer_sk, ss_item_sk], aggr=[], output_bytes=4519004, output_rows=547758
+                GpuCoalesceBatchesExec: target_batch_size=33554432, output_bytes=4570254, output_rows=553970
+                  GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ss_sold_date_sk@0)], projection=[2, 3], output_bytes=4570274, output_rows=553970
+                    GpuCoalesceBatchesExec: target_batch_size=33554432, output_bytes=1510, output_rows=366
+                      GpuFilterExec: predicate=d_month_seq@1 >= 1200 AND d_month_seq@1 <= 1211, projection=[0], output_bytes=1510, output_rows=366
+                        GpuScanExec: table=date_dim, projections=[d_date_sk, d_month_seq], batch_size=33554432, output_bytes=602656, output_rows=73049
+                    GpuScanExec: table=store_sales, projections=[ss_sold_date_sk, ss_item_sk, ss_customer_sk], batch_size=33554432, output_bytes=35645001, output_rows=2880404
+peacockdb_cost=103239978

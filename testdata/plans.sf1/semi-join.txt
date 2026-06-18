@@ -4,10 +4,10 @@ GpuCoalesceBatchesExec: target_batch_size=6242685
       GpuRepartitionExec: partitioning=Hash([c_custkey@0], 8), input_partitions=8
         GpuCoalesceBatchesExec: target_batch_size=6242685
           GpuFilterExec: predicate=c_mktsegment@1 = BUILDING, projection=[0]
-            GpuScanExec: batch_size=6242685
+            GpuScanExec: table=customer, projections=[c_custkey, c_mktsegment], batch_size=6242685
     GpuCoalesceBatchesExec: target_batch_size=6242685
       GpuRepartitionExec: partitioning=Hash([o_custkey@1], 8), input_partitions=8
-        GpuScanExec: batch_size=6242685
+        GpuScanExec: table=orders, projections=[o_orderkey, o_custkey, o_orderstatus, o_totalprice, o_orderdate, o_orderpriority, o_clerk, o_shippriority, o_comment], batch_size=6242685
 --- memory ---
 total_estimate_cost=1656
 GpuCoalesceBatchesExec: row_width=168, subtree_max_row_bytes=344, estimate_input_bytes=168, estimate_output_bytes=168, estimate_cost=336

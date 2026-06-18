@@ -11,7 +11,7 @@ GpuSortPreservingMergeExec: [i_item_id@0 ASC NULLS LAST, i_item_desc@1 ASC NULLS
                     GpuCoalesceBatchesExec: target_batch_size=5965232
                       GpuRepartitionExec: partitioning=Hash([i_item_sk@0], 8), input_partitions=8
                         GpuRepartitionExec: partitioning=RoundRobinBatch(8), input_partitions=1
-                          GpuScanExec: batch_size=5965232
+                          GpuScanExec: table=item, projections=[i_item_sk, i_item_id, i_item_desc], batch_size=5965232
                     GpuCoalesceBatchesExec: target_batch_size=5965232
                       GpuRepartitionExec: partitioning=Hash([ss_item_sk@0], 8), input_partitions=8
                         GpuProjectExec: expr=[ss_item_sk@2 as ss_item_sk, ss_net_profit@3 as ss_net_profit, sr_net_loss@4 as sr_net_loss, cs_net_profit@5 as cs_net_profit, s_store_id@0 as s_store_id, s_store_name@1 as s_store_name]
@@ -19,7 +19,7 @@ GpuSortPreservingMergeExec: [i_item_id@0 ASC NULLS LAST, i_item_desc@1 ASC NULLS
                             GpuHashJoinExec: join_type=Inner, on=[(s_store_sk@0, ss_store_sk@1)], projection=[1, 2, 3, 5, 6, 7]
                               GpuCoalesceBatchesExec: target_batch_size=5965232
                                 GpuRepartitionExec: partitioning=Hash([s_store_sk@0], 8), input_partitions=1
-                                  GpuScanExec: batch_size=5965232
+                                  GpuScanExec: table=store, projections=[s_store_sk, s_store_id, s_store_name], batch_size=5965232
                               GpuCoalesceBatchesExec: target_batch_size=5965232
                                 GpuRepartitionExec: partitioning=Hash([ss_store_sk@1], 8), input_partitions=8
                                   GpuCoalesceBatchesExec: target_batch_size=5965232
@@ -29,7 +29,7 @@ GpuSortPreservingMergeExec: [i_item_id@0 ASC NULLS LAST, i_item_desc@1 ASC NULLS
                                           GpuCoalesceBatchesExec: target_batch_size=5965232
                                             GpuFilterExec: predicate=d_moy@2 >= 4 AND d_moy@2 <= 10 AND d_year@1 = 2001, projection=[0]
                                               GpuRepartitionExec: partitioning=RoundRobinBatch(8), input_partitions=1
-                                                GpuScanExec: batch_size=5965232
+                                                GpuScanExec: table=date_dim, projections=[d_date_sk, d_year, d_moy], batch_size=5965232
                                       GpuCoalesceBatchesExec: target_batch_size=5965232
                                         GpuRepartitionExec: partitioning=Hash([cs_sold_date_sk@4], 8), input_partitions=8
                                           GpuCoalesceBatchesExec: target_batch_size=5965232
@@ -39,7 +39,7 @@ GpuSortPreservingMergeExec: [i_item_id@0 ASC NULLS LAST, i_item_desc@1 ASC NULLS
                                                   GpuCoalesceBatchesExec: target_batch_size=5965232
                                                     GpuFilterExec: predicate=d_moy@2 >= 4 AND d_moy@2 <= 10 AND d_year@1 = 2001, projection=[0]
                                                       GpuRepartitionExec: partitioning=RoundRobinBatch(8), input_partitions=1
-                                                        GpuScanExec: batch_size=5965232
+                                                        GpuScanExec: table=date_dim, projections=[d_date_sk, d_year, d_moy], batch_size=5965232
                                               GpuCoalesceBatchesExec: target_batch_size=5965232
                                                 GpuRepartitionExec: partitioning=Hash([sr_returned_date_sk@3], 8), input_partitions=8
                                                   GpuCoalesceBatchesExec: target_batch_size=5965232
@@ -49,7 +49,7 @@ GpuSortPreservingMergeExec: [i_item_id@0 ASC NULLS LAST, i_item_desc@1 ASC NULLS
                                                           GpuCoalesceBatchesExec: target_batch_size=5965232
                                                             GpuFilterExec: predicate=d_moy@2 = 4 AND d_year@1 = 2001, projection=[0]
                                                               GpuRepartitionExec: partitioning=RoundRobinBatch(8), input_partitions=1
-                                                                GpuScanExec: batch_size=5965232
+                                                                GpuScanExec: table=date_dim, projections=[d_date_sk, d_year, d_moy], batch_size=5965232
                                                       GpuCoalesceBatchesExec: target_batch_size=5965232
                                                         GpuRepartitionExec: partitioning=Hash([ss_sold_date_sk@0], 8), input_partitions=8
                                                           GpuProjectExec: expr=[ss_sold_date_sk@2 as ss_sold_date_sk, ss_item_sk@3 as ss_item_sk, ss_store_sk@4 as ss_store_sk, ss_net_profit@5 as ss_net_profit, sr_returned_date_sk@6 as sr_returned_date_sk, sr_net_loss@7 as sr_net_loss, cs_sold_date_sk@0 as cs_sold_date_sk, cs_net_profit@1 as cs_net_profit]
@@ -57,7 +57,7 @@ GpuSortPreservingMergeExec: [i_item_id@0 ASC NULLS LAST, i_item_desc@1 ASC NULLS
                                                               GpuHashJoinExec: join_type=Inner, on=[(cs_bill_customer_sk@1, sr_customer_sk@6), (cs_item_sk@2, sr_item_sk@5)], projection=[0, 3, 4, 5, 6, 7, 8, 11]
                                                                 GpuCoalesceBatchesExec: target_batch_size=5965232
                                                                   GpuRepartitionExec: partitioning=Hash([cs_bill_customer_sk@1, cs_item_sk@2], 8), input_partitions=8
-                                                                    GpuScanExec: batch_size=5965232
+                                                                    GpuScanExec: table=catalog_sales, projections=[cs_sold_date_sk, cs_bill_customer_sk, cs_item_sk, cs_net_profit], batch_size=5965232
                                                                 GpuCoalesceBatchesExec: target_batch_size=5965232
                                                                   GpuRepartitionExec: partitioning=Hash([sr_customer_sk@6, sr_item_sk@5], 8), input_partitions=8
                                                                     GpuProjectExec: expr=[ss_sold_date_sk@4 as ss_sold_date_sk, ss_item_sk@5 as ss_item_sk, ss_store_sk@6 as ss_store_sk, ss_net_profit@7 as ss_net_profit, sr_returned_date_sk@0 as sr_returned_date_sk, sr_item_sk@1 as sr_item_sk, sr_customer_sk@2 as sr_customer_sk, sr_net_loss@3 as sr_net_loss]
@@ -65,10 +65,10 @@ GpuSortPreservingMergeExec: [i_item_id@0 ASC NULLS LAST, i_item_desc@1 ASC NULLS
                                                                         GpuHashJoinExec: join_type=Inner, on=[(sr_customer_sk@2, ss_customer_sk@2), (sr_item_sk@1, ss_item_sk@1), (sr_ticket_number@3, ss_ticket_number@4)], projection=[0, 1, 2, 4, 5, 6, 8, 10]
                                                                           GpuCoalesceBatchesExec: target_batch_size=5965232
                                                                             GpuRepartitionExec: partitioning=Hash([sr_customer_sk@2, sr_item_sk@1, sr_ticket_number@3], 8), input_partitions=8
-                                                                              GpuScanExec: batch_size=5965232
+                                                                              GpuScanExec: table=store_returns, projections=[sr_returned_date_sk, sr_item_sk, sr_customer_sk, sr_ticket_number, sr_net_loss], batch_size=5965232
                                                                           GpuCoalesceBatchesExec: target_batch_size=5965232
                                                                             GpuRepartitionExec: partitioning=Hash([ss_customer_sk@2, ss_item_sk@1, ss_ticket_number@4], 8), input_partitions=8
-                                                                              GpuScanExec: batch_size=5965232
+                                                                              GpuScanExec: table=store_sales, projections=[ss_sold_date_sk, ss_item_sk, ss_customer_sk, ss_store_sk, ss_ticket_number, ss_net_profit], batch_size=5965232
 --- memory ---
 total_estimate_cost=8952
 GpuSortPreservingMergeExec: row_width=176, subtree_max_row_bytes=360, estimate_input_bytes=176, estimate_output_bytes=176, estimate_cost=352

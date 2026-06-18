@@ -1,0 +1,13 @@
+[package]
+name = "cost-report"
+version = "0.1.0"
+edition = "2024"
+
+# Self-contained (std only): generates the GPU-coverage / cost-ratio report from
+# committed goldens, so it builds in seconds in the CI CPU tier with no executor
+# or GPU dependencies.
+[dependencies]
+
+[[bin]]
+name = "cost-report"
+path = "src/main.rs"

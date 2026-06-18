@@ -1,15 +1,16 @@
-SortExec: output_bytes=1
-  AggregateExec: output_bytes=1
-    CoalesceBatchesExec: output_bytes=1
-      FilterExec: output_bytes=1
-        CoalesceBatchesExec: output_bytes=2032
-          HashJoinExec: output_bytes=2036
-            CoalesceBatchesExec: output_bytes=60
-              FilterExec: output_bytes=60
-                ParquetExec: output_bytes=78750
-            ProjectionExec: output_bytes=68
-              AggregateExec: output_bytes=66
-                CoalesceBatchesExec: output_bytes=1
-                  FilterExec: output_bytes=1
-                    ProjectionExec: output_bytes=15750
-                      ParquetExec: output_bytes=11250
+GpuSortExec: expr=[i_product_name@0 ASC NULLS LAST], fetch=100, output_bytes=91, output_rows=4
+  GpuAggregateExec: group_by=[i_product_name], aggr=[], output_bytes=91, output_rows=4
+    GpuCoalesceBatchesExec: target_batch_size=6100805, output_bytes=91, output_rows=4
+      GpuFilterExec: predicate=CASE WHEN __always_true@2 IS NULL THEN 0 ELSE item_cnt@1 END > 0, projection=[0], output_bytes=91, output_rows=4
+        GpuCoalesceBatchesExec: target_batch_size=6100805, output_bytes=7214, output_rows=239
+          GpuHashJoinExec: join_type=Left, on=[(i_manufact@0, i_manufact@1)], projection=[1, 2, 4], output_bytes=7222, output_rows=239
+            GpuCoalesceBatchesExec: target_batch_size=6100805, output_bytes=9293, output_rows=239
+              GpuFilterExec: predicate=i_manufact_id@0 >= 738 AND i_manufact_id@0 <= 778, projection=[1, 2], output_bytes=9293, output_rows=239
+                GpuScanExec: table=item, projections=[i_manufact_id, i_manufact, i_product_name], batch_size=6100805, output_bytes=750494, output_rows=18000
+            GpuProjectExec: expr=[count(*)@1 as item_cnt, i_manufact@0 as i_manufact, true as __always_true], output_bytes=200, output_rows=8
+              GpuAggregateExec: group_by=[i_manufact], aggr=[count(*)], output_bytes=198, output_rows=8
+                GpuCoalesceBatchesExec: target_batch_size=6100805, output_bytes=133, output_rows=8
+                  GpuFilterExec: predicate=__common_expr_5@0 AND ((i_color@4 = powder OR i_color@4 = khaki) AND (i_units@5 = Ounce OR i_units@5 = Oz) AND (i_size@3 = medium OR i_size@3 = extra large) OR (i_color@4 = brown OR i_color@4 = honeydew) AND (i_units@5 = Bunch OR i_units@5 = Ton) AND (i_size@3 = N/A OR i_size@3 = small)) OR i_category@1 = Men AND (i_color@4 = floral OR i_color@4 = deep) AND (i_units@5 = N/A OR i_units@5 = Dozen) AND i_size@3 = petite OR i_category@1 = Men AND (i_color@4 = light OR i_color@4 = cornflower) AND (i_units@5 = Box OR i_units@5 = Pound) AND (i_size@3 = medium OR i_size@3 = extra large) OR __common_expr_5@0 AND ((i_color@4 = midnight OR i_color@4 = snow) AND (i_units@5 = Pallet OR i_units@5 = Gross) AND (i_size@3 = medium OR i_size@3 = extra large) OR (i_color@4 = cyan OR i_color@4 = papaya) AND (i_units@5 = Cup OR i_units@5 = Dram) AND (i_size@3 = N/A OR i_size@3 = small)) OR i_category@1 = Men AND (i_color@4 = orange OR i_color@4 = frosted) AND (i_units@5 = Each OR i_units@5 = Tbl) AND i_size@3 = petite OR i_category@1 = Men AND (i_color@4 = forest OR i_color@4 = ghost) AND (i_units@5 = Lb OR i_units@5 = Bundle) AND (i_size@3 = medium OR i_size@3 = extra large), projection=[2], output_bytes=133, output_rows=8
+                    GpuProjectExec: expr=[i_category@0 = Women as __common_expr_5, i_category@0 as i_category, i_manufact@1 as i_manufact, i_size@2 as i_size, i_color@3 as i_color, i_units@4 as i_units], output_bytes=935268, output_rows=18000
+                      GpuScanExec: table=item, projections=[i_category, i_manufact, i_size, i_color, i_units], batch_size=6100805, output_bytes=930768, output_rows=18000
+peacockdb_cost=2650580

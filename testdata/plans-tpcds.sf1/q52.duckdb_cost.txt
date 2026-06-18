@@ -1,0 +1,13 @@
+TOP_N: order_by=[dt.d_year ASC, sum(tpcds.main.store_sales.ss_ext_sales_price) DESC, tpcds.main.item.i_brand_id ASC], top=100, output_bytes=4000, output_rows=100, materialized=4360
+  PROJECTION: projections=[d_year, brand_id, brand, ext_price], output_bytes=4360, output_rows=109, materialized=0
+    PROJECTION: projections=[__internal_decompress_integral_integer(#0, 2000), #1, #2, #3], output_bytes=4360, output_rows=109, materialized=0
+      HASH_GROUP_BY: groups=[#0, #1, #2], aggregates=[sum(#3)], output_bytes=4033, output_rows=109, materialized=37425
+        PROJECTION: projections=[d_year, i_brand, i_brand_id, ss_ext_sales_price], output_bytes=37425, output_rows=1497, materialized=0
+          PROJECTION: projections=[__internal_compress_integral_utinyint(#1, 2000), #0, #2, #3], output_bytes=37425, output_rows=1497, materialized=0
+            HASH_JOIN: join_type=INNER, conditions=[ss_item_sk = i_item_sk], output_bytes=41916, output_rows=1497, materialized=41916
+              HASH_JOIN: join_type=INNER, conditions=[ss_sold_date_sk = d_date_sk], output_bytes=1057788, output_rows=88149, materialized=1058028
+                TABLE_SCAN: table=store_sales, projections=[ss_sold_date_sk, ss_item_sk, ss_ext_sales_price], output_bytes=1057788, output_rows=88149, materialized=35622636, bytes_read_est=34564848, rows_read=2880404
+                FILTER: output_bytes=240, output_rows=30, materialized=0
+                  TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_year], filters="d_moy=11 AND d_year=2000", output_bytes=240, output_rows=30, materialized=584632, bytes_read_est=584392, rows_read=73049
+              TABLE_SCAN: table=item, projections=[i_item_sk, i_brand, i_brand_id], filters="i_manager_id=1", output_bytes=7704, output_rows=321, materialized=439704, bytes_read_est=432000, rows_read=18000
+duckdb_cost=37788701

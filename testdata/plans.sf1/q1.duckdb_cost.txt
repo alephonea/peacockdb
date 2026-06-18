@@ -1,0 +1,10 @@
+PROJECTION: projections=[__internal_decompress_string(#0), __internal_decompress_string(#1), #2, #3, #4, #5, #6, #7, #8, #9], output_bytes=512, output_rows=4, materialized=0
+  ORDER_BY: order_by=[tpch.main.lineitem.l_returnflag ASC, tpch.main.lineitem.l_linestatus ASC], output_bytes=392, output_rows=4, materialized=392
+    PROJECTION: projections=[__internal_compress_string_utinyint(#0), __internal_compress_string_utinyint(#1), #2, #3, #4, #5, #6, #7, #8, #9], output_bytes=392, output_rows=4, materialized=0
+      PROJECTION: projections=[__internal_decompress_string(#0), __internal_decompress_string(#1), #2, #3, #4, #5, #6, #7, #8, #9], output_bytes=512, output_rows=4, materialized=0
+        PERFECT_HASH_GROUP_BY: groups=[#0, #1], aggregates=[sum_no_overflow(#2), sum_no_overflow(#3), sum_no_overflow(#4), sum_no_overflow(#5), avg(#6), avg(#7), avg(#8), count_star()], output_bytes=392, output_rows=4, materialized=343162278
+          PROJECTION: projections=[l_returnflag, l_linestatus, l_quantity, l_extendedprice, #4, (#4 * (1.00 + l_tax)), l_quantity, l_extendedprice, l_discount], output_bytes=343162278, output_rows=5916591, materialized=0
+            PROJECTION: projections=[__internal_compress_string_utinyint(#0), __internal_compress_string_utinyint(#1), #2, #3, #4, #5, #6], output_bytes=248496822, output_rows=5916591, materialized=0
+              PROJECTION: projections=[l_returnflag, l_linestatus, l_quantity, l_extendedprice, (l_extendedprice * (1.00 - l_discount)), l_tax, l_discount], output_bytes=425994552, output_rows=5916591, materialized=0
+                TABLE_SCAN: table=lineitem, projections=[l_returnflag, l_linestatus, l_quantity, l_extendedprice, l_discount, l_tax], filters="l_shipdate<='1998-09-02'::DATE", output_bytes=378661824, output_rows=5916591, materialized=762739584, bytes_read_est=384077760, rows_read=6001215
+duckdb_cost=1105902254
