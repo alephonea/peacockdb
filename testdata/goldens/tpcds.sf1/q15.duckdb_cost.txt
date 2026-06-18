@@ -3,16 +3,38 @@ TOP_N: order_by=[tpcds.main.customer_address.ca_zip ASC], top=100, output_bytes=
     HASH_GROUP_BY: groups=[#0], aggregates=[sum(#1)], output_bytes=4848, output_rows=202, materialized=40104
       PROJECTION: projections=[ca_zip, cs_sales_price], output_bytes=40104, output_rows=3342, materialized=0
         PROJECTION: projections=[#0, __internal_compress_string_ubigint(#1), __internal_compress_integral_usmallint(#2, 2450815)], output_bytes=46788, output_rows=3342, materialized=0
-          HASH_JOIN: join_type=INNER, conditions=[cs_sold_date_sk = d_date_sk], output_bytes=80208, output_rows=3342, materialized=160780
-            PROJECTION: projections=[#0, #1, #2], output_bytes=80208, output_rows=3342, materialized=0
-              FILTER: output_bytes=137022, output_rows=3342, materialized=0
-                HASH_JOIN: join_type=MARK, conditions=["substring"(ca_zip, 1, 5) = #0], output_bytes=1690184, output_rows=41224, materialized=1690184
-                  HASH_JOIN: join_type=INNER, conditions=[cs_bill_customer_sk = c_customer_sk], output_bytes=1648960, output_rows=41224, materialized=1648960
-                    TABLE_SCAN: table=catalog_sales, projections=[cs_bill_customer_sk, cs_sales_price, cs_sold_date_sk], output_bytes=494688, output_rows=41224, materialized=17793264, bytes_read_est=17298576, rows_read=1441548
-                    HASH_JOIN: join_type=INNER, conditions=[c_current_addr_sk = ca_address_sk], output_bytes=3600000, output_rows=100000, materialized=3600000
-                      TABLE_SCAN: table=customer, projections=[c_customer_sk, c_current_addr_sk], output_bytes=800000, output_rows=100000, materialized=1600000, bytes_read_est=800000, rows_read=100000
-                      TABLE_SCAN: table=customer_address, projections=[ca_address_sk, ca_zip, ca_state], output_bytes=1800000, output_rows=50000, materialized=3600000, bytes_read_est=1800000, rows_read=50000
+          HASH_JOIN: join_type=INNER, conditions=[cs_sold_date_sk = d_date_sk], output_bytes=93576, output_rows=3342, materialized=3337264
+            PROJECTION: projections=[#0, #1, #2], output_bytes=3242960, output_rows=115820, materialized=0
+              FILTER: output_bytes=5211900, output_rows=115820, materialized=0
+                HASH_JOIN: join_type=MARK, conditions=["substring"(ca_zip, 1, 5) = #0], output_bytes=64548810, output_rows=1434418, materialized=64548810
+                  HASH_JOIN: join_type=INNER, conditions=[cs_bill_customer_sk = c_customer_sk], output_bytes=63114392, output_rows=1434418, materialized=63114392
+                    TABLE_SCAN: table=catalog_sales, projections=[cs_bill_customer_sk, cs_sales_price, cs_sold_date_sk], output_bytes=2457600, output_rows=122880, materialized=2457600, bytes_read=583633, rows_read=122880
+                    HASH_JOIN: join_type=INNER, conditions=[c_current_addr_sk = ca_address_sk], output_bytes=4000000, output_rows=100000, materialized=4000000
+                      TABLE_SCAN: table=customer, projections=[c_customer_sk, c_current_addr_sk], output_bytes=1600000, output_rows=100000, materialized=1600000, bytes_read=822777, rows_read=100000
+                      TABLE_SCAN: table=customer_address, projections=[ca_address_sk, ca_zip, ca_state], output_bytes=2000000, output_rows=50000, materialized=2000000, bytes_read=335376, rows_read=50000
                   COLUMN_DATA_SCAN: output_bytes=144, output_rows=9, materialized=0
-            FILTER: output_bytes=364, output_rows=91, materialized=0
-              TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_qoy=2 AND d_year=2001", output_bytes=364, output_rows=91, materialized=292560, bytes_read_est=292196, rows_read=73049
-duckdb_cost=30432316
+            FILTER: output_bytes=728, output_rows=91, materialized=0
+              TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_qoy=2 AND d_year=2001", output_bytes=728, output_rows=91, materialized=728, bytes_read=294080, rows_read=73049
+duckdb_cost=143141228
+materialization_total=141105362
+storage_read_total=2035866
+
+--- row-group pruning (storage reduction) ---
+catalog_sales  dyn_filter=[cs_bill_customer_sk>=1 AND cs_bill_customer_sk<=100000 AND cs_sold_date_sk>=2452002 AND cs_sold_date_sk<=2452092]  row_groups=1/12  rows=122880/1441548 (8.5%)  bytes_fetched=583633/6855124 (8.5%)
+customer  dyn_filter=[c_current_addr_sk>=1 AND c_current_addr_sk<=50000]  row_groups=1/1  rows=100000/100000 (100.0%)  bytes_fetched=822777/822777 (100.0%)
+customer_address  row_groups=1/1  rows=50000/50000 (100.0%)  bytes_fetched=335376/335376 (100.0%)
+date_dim  filter=[d_qoy=2 AND d_year=2001]  row_groups=1/1  rows=73049/73049 (100.0%)  bytes_fetched=294080/294080 (100.0%)
+pruning_bytes_fetched=2035866/8307357 (24.5%)
+
+--- cost breakdown ---
+HASH_JOIN                              64548810  45.7%
+HASH_JOIN                              63114392  44.7%
+HASH_JOIN                               4000000   2.8%
+HASH_JOIN                               3337264   2.4%
+TABLE_SCAN(catalog_sales)               2457600   1.7%
+TABLE_SCAN(customer_address)            2000000   1.4%
+TABLE_SCAN(customer)                    1600000   1.1%
+HASH_GROUP_BY                             40104   0.0%
+TOP_N                                      6464   0.0%
+TABLE_SCAN(date_dim)                        728   0.0%
+total=141105362

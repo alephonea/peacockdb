@@ -4,13 +4,37 @@ TOP_N: order_by=[tpcds.main.warehouse.w_state ASC, tpcds.main.item.i_item_id ASC
       PROJECTION: projections=[w_state, i_item_id, CASE  WHEN ((d_date < '2000-03-11'::DATE)) THEN ((CAST(cs_sales_price AS DECIMAL(13,2)) - COALESCE(CAST(cr_refunded_cash AS DECIMAL(12,2)), 0.00))) ELSE 0.00 END, CASE  WHEN ((d_date >= '2000-03-11'::DATE)) THEN ((CAST(cs_sales_price AS DECIMAL(13,2)) - COALESCE(CAST(cr_refunded_cash AS DECIMAL(12,2)), 0.00))) ELSE 0.00 END], output_bytes=62388, output_rows=1733, materialized=0
         PROJECTION: projections=[#0, #1, #2, #3, __internal_compress_string_uinteger(#4)], output_bytes=55456, output_rows=1733, materialized=0
           HASH_JOIN: join_type=INNER, conditions=[cs_warehouse_sk = w_warehouse_sk], output_bytes=76252, output_rows=1733, materialized=76252
-            HASH_JOIN: join_type=INNER, conditions=[cs_item_sk = i_item_sk], output_bytes=55456, output_rows=1733, materialized=55456
-              HASH_JOIN: join_type=INNER, conditions=[cs_sold_date_sk = d_date_sk], output_bytes=559340, output_rows=27967, materialized=559828
-                HASH_JOIN: join_type=LEFT, conditions=[cs_order_number = cr_order_number, cs_item_sk = cr_item_sk], output_bytes=559340, output_rows=27967, materialized=559340
-                  TABLE_SCAN: table=catalog_sales, projections=[cs_order_number, cs_item_sk, cs_warehouse_sk, cs_sold_date_sk, cs_sales_price], output_bytes=559340, output_rows=27967, materialized=29390300, bytes_read_est=28830960, rows_read=1441548
-                  TABLE_SCAN: table=catalog_returns, projections=[cr_order_number, cr_item_sk, cr_refunded_cash], output_bytes=1728804, output_rows=144067, materialized=3457608, bytes_read_est=1728804, rows_read=144067
-                FILTER: output_bytes=488, output_rows=61, materialized=0
-                  TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_date], filters="d_date>='2000-02-10'::DATE AND d_date<='2000-04-10'::DATE", output_bytes=488, output_rows=61, materialized=584880, bytes_read_est=584392, rows_read=73049
-              TABLE_SCAN: table=item, projections=[i_item_sk, i_item_id], filters="i_current_price>=0.99 AND i_current_price<=1.49", output_bytes=22080, output_rows=1104, materialized=382080, bytes_read_est=360000, rows_read=18000
-            TABLE_SCAN: table=warehouse, projections=[w_warehouse_sk, w_state], output_bytes=100, output_rows=5, materialized=200, bytes_read_est=100, rows_read=5
-duckdb_cost=35162572
+            HASH_JOIN: join_type=INNER, conditions=[cs_item_sk = i_item_sk], output_bytes=62568, output_rows=1738, materialized=62568
+              HASH_JOIN: join_type=INNER, conditions=[cs_sold_date_sk = d_date_sk], output_bytes=785232, output_rows=28044, materialized=785964
+                HASH_JOIN: join_type=LEFT, conditions=[cs_order_number = cr_order_number, cs_item_sk = cr_item_sk], output_bytes=46129536, output_rows=1441548, materialized=46129536
+                  TABLE_SCAN: table=catalog_sales, projections=[cs_order_number, cs_item_sk, cs_warehouse_sk, cs_sold_date_sk, cs_sales_price], output_bytes=8847360, output_rows=245760, materialized=8847360, bytes_read=1771147, rows_read=245760
+                  TABLE_SCAN: table=catalog_returns, projections=[cr_order_number, cr_item_sk, cr_refunded_cash], output_bytes=2881340, output_rows=144067, materialized=2881340, bytes_read=1510485, rows_read=144067
+                FILTER: output_bytes=732, output_rows=61, materialized=0
+                  TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_date], filters="d_date>='2000-02-10'::DATE AND d_date<='2000-04-10'::DATE", output_bytes=732, output_rows=61, materialized=732, bytes_read=584645, rows_read=73049
+              TABLE_SCAN: table=item, projections=[i_item_sk, i_item_id], filters="i_current_price>=0.99 AND i_current_price<=1.49", output_bytes=26496, output_rows=1104, materialized=26496, bytes_read=167205, rows_read=18000
+            TABLE_SCAN: table=warehouse, projections=[w_warehouse_sk, w_state], output_bytes=120, output_rows=5, materialized=120, bytes_read=106, rows_read=5
+duckdb_cost=62940584
+materialization_total=58906996
+storage_read_total=4033588
+
+--- row-group pruning (storage reduction) ---
+catalog_sales  dyn_filter=[cs_item_sk>=2 AND cs_item_sk<=17998 AND cs_warehouse_sk>=1 AND cs_warehouse_sk<=5 AND cs_sold_date_sk>=2451585 AND cs_sold_date_sk<=2451645]  row_groups=2/12  rows=245760/1441548 (17.0%)  bytes_fetched=1771147/10402219 (17.0%)
+catalog_returns  row_groups=2/2  rows=144067/144067 (100.0%)  bytes_fetched=1510485/1510485 (100.0%)
+date_dim  filter=[d_date>='2000-02-10'::DATE AND d_date<='2000-04-10'::DATE]  row_groups=1/1  rows=73049/73049 (100.0%)  bytes_fetched=584645/584645 (100.0%)
+item  filter=[i_current_price>=0.99 AND i_current_price<=1.49]  row_groups=1/1  rows=18000/18000 (100.0%)  bytes_fetched=167205/167205 (100.0%)
+warehouse  row_groups=1/1  rows=5/5 (100.0%)  bytes_fetched=106/106 (100.0%)
+pruning_bytes_fetched=4033588/12664660 (31.8%)
+
+--- cost breakdown ---
+HASH_JOIN                              46129536  78.3%
+TABLE_SCAN(catalog_sales)               8847360  15.0%
+TABLE_SCAN(catalog_returns)             2881340   4.9%
+HASH_JOIN                                785964   1.3%
+HASH_JOIN                                 76252   0.1%
+HASH_JOIN                                 62568   0.1%
+HASH_GROUP_BY                             62388   0.1%
+TOP_N                                     34240   0.1%
+TABLE_SCAN(item)                          26496   0.0%
+TABLE_SCAN(date_dim)                        732   0.0%
+TABLE_SCAN(warehouse)                       120   0.0%
+total=58906996

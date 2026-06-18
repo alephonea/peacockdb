@@ -1,28 +1,59 @@
 TOP_N: order_by=[main."substring"(tpcds.main.reason.r_reason_desc, 1, 20) ASC, avg(tpcds.main.web_sales.ws_quantity) ASC, avg(tpcds.main.web_returns.wr_refunded_cash) ASC, avg(tpcds.main.web_returns.wr_fee) ASC], top=100, output_bytes=40, output_rows=1, materialized=40
   PROJECTION: projections=["substring"(r_reason_desc, 1, 20), avg1, avg2, avg(wr_fee)], output_bytes=40, output_rows=1, materialized=0
-    HASH_GROUP_BY: groups=[#0], aggregates=[avg(#1), avg(#2), avg(#3)], output_bytes=40, output_rows=1, materialized=28
-      PROJECTION: projections=[r_reason_desc, ws_quantity, wr_refunded_cash, wr_fee], output_bytes=28, output_rows=1, materialized=0
-        PROJECTION: projections=[#2, #0, #1, #3, __internal_compress_integral_utinyint(#4, 1)], output_bytes=29, output_rows=1, materialized=0
-          HASH_JOIN: join_type=INNER, conditions=[ws_web_page_sk = wp_web_page_sk], output_bytes=32, output_rows=1, materialized=32
-            HASH_JOIN: join_type=INNER, conditions=[wr_reason_sk = r_reason_sk], output_bytes=32, output_rows=1, materialized=32
-              HASH_JOIN: join_type=INNER, conditions=[cd_demo_sk = wr_returning_cdemo_sk, cd_education_status = cd_education_status, cd_marital_status = cd_marital_status], output_bytes=56, output_rows=1, materialized=112
-                TABLE_SCAN: table=customer_demographics, projections=[cd_demo_sk, cd_marital_status, cd_education_status], filters="cd_demo_sk>=24 AND cd_demo_sk<=1920785", output_bytes=36, output_rows=1, materialized=69148836, bytes_read_est=69148800, rows_read=1920800
-                PROJECTION: projections=[#0, #1, #2, #3, #4, #5, #6, #8], output_bytes=56, output_rows=1, materialized=0
-                  FILTER: output_bytes=60, output_rows=1, materialized=0
-                    HASH_JOIN: join_type=INNER, conditions=[cd_demo_sk = wr_refunded_cdemo_sk], output_bytes=7440, output_rows=124, materialized=11536
-                      TABLE_SCAN: table=customer_demographics, projections=[cd_demo_sk, cd_marital_status, cd_education_status], filters="cd_demo_sk>=24 AND cd_demo_sk<=1920785", output_bytes=68773860, output_rows=1910385, materialized=137922660, bytes_read_est=69148800, rows_read=1920800
-                      PROJECTION: projections=[#1, #2, #3, #4, #5, #6, #7, #9], output_bytes=4096, output_rows=128, materialized=0
-                        FILTER: output_bytes=6656, output_rows=128, materialized=0
-                          HASH_JOIN: join_type=INNER, conditions=[ca_address_sk = wr_refunded_addr_sk], output_bytes=678860, output_rows=13055, materialized=678860
-                            TABLE_SCAN: table=customer_address, projections=[ca_address_sk, ca_state], filters="ca_country='United States'", output_bytes=969480, output_rows=48474, materialized=1969480, bytes_read_est=1000000, rows_read=50000
-                            HASH_JOIN: join_type=INNER, conditions=[wr_item_sk = ws_item_sk, wr_order_number = ws_order_number], output_bytes=562640, output_rows=14066, materialized=3974960
-                              TABLE_SCAN: table=web_returns, projections=[wr_item_sk, wr_order_number, wr_refunded_cdemo_sk, wr_returning_cdemo_sk, wr_refunded_addr_sk, wr_reason_sk, wr_refunded_cash, wr_fee], output_bytes=2292768, output_rows=71649, materialized=4585696, bytes_read_est=2292928, rows_read=71654
-                              PROJECTION: projections=[#0, #1, #2, #3, #4, #5], output_bytes=3412320, output_rows=142180, materialized=0
-                                FILTER: output_bytes=3981040, output_rows=142180, materialized=0
-                                  HASH_JOIN: join_type=INNER, conditions=[ws_sold_date_sk = d_date_sk], output_bytes=3981040, output_rows=142180, materialized=3982504
-                                    TABLE_SCAN: table=web_sales, projections=[ws_web_page_sk, ws_item_sk, ws_order_number, ws_sold_date_sk, ws_sales_price, ws_net_profit, ws_quantity], output_bytes=3981040, output_rows=142180, materialized=24123792, bytes_read_est=20142752, rows_read=719384
-                                    FILTER: output_bytes=1464, output_rows=366, materialized=0
-                                      TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_year=2000", output_bytes=1464, output_rows=366, materialized=293660, bytes_read_est=292196, rows_read=73049
-              TABLE_SCAN: table=reason, projections=[r_reason_sk, r_reason_desc], output_bytes=700, output_rows=35, materialized=1400, bytes_read_est=700, rows_read=35
-            TABLE_SCAN: table=web_page, projections=[wp_web_page_sk], output_bytes=240, output_rows=60, materialized=480, bytes_read_est=240, rows_read=60
-duckdb_cost=246694108
+    HASH_GROUP_BY: groups=[#0], aggregates=[avg(#1), avg(#2), avg(#3)], output_bytes=40, output_rows=1, materialized=32
+      PROJECTION: projections=[r_reason_desc, ws_quantity, wr_refunded_cash, wr_fee], output_bytes=32, output_rows=1, materialized=0
+        PROJECTION: projections=[#2, #0, #1, #3, __internal_compress_integral_utinyint(#4, 1)], output_bytes=33, output_rows=1, materialized=0
+          HASH_JOIN: join_type=INNER, conditions=[ws_web_page_sk = wp_web_page_sk], output_bytes=40, output_rows=1, materialized=40
+            HASH_JOIN: join_type=INNER, conditions=[wr_reason_sk = r_reason_sk], output_bytes=40, output_rows=1, materialized=40
+              HASH_JOIN: join_type=INNER, conditions=[cd_demo_sk = wr_returning_cdemo_sk, cd_education_status = cd_education_status, cd_marital_status = cd_marital_status], output_bytes=72, output_rows=1, materialized=144
+                TABLE_SCAN: table=customer_demographics, projections=[cd_demo_sk, cd_marital_status, cd_education_status], filters="cd_demo_sk>=24 AND cd_demo_sk<=1920785", output_bytes=4915200, output_rows=122880, materialized=4915200, bytes_read=495409, rows_read=122880
+                PROJECTION: projections=[#0, #1, #2, #3, #4, #5, #6, #8], output_bytes=72, output_rows=1, materialized=0
+                  FILTER: output_bytes=76, output_rows=1, materialized=0
+                    HASH_JOIN: join_type=INNER, conditions=[cd_demo_sk = wr_refunded_cdemo_sk], output_bytes=9424, output_rows=124, materialized=16080
+                      TABLE_SCAN: table=customer_demographics, projections=[cd_demo_sk, cd_marital_status, cd_education_status], filters="cd_demo_sk>=24 AND cd_demo_sk<=1920785", output_bytes=76830480, output_rows=1920762, materialized=76830480, bytes_read=7744906, rows_read=1920800
+                      PROJECTION: projections=[#1, #2, #3, #4, #5, #6, #7, #9], output_bytes=6656, output_rows=128, materialized=0
+                        FILTER: output_bytes=9216, output_rows=128, materialized=0
+                          HASH_JOIN: join_type=INNER, conditions=[ca_address_sk = wr_refunded_addr_sk], output_bytes=939960, output_rows=13055, materialized=939960
+                            TABLE_SCAN: table=customer_address, projections=[ca_address_sk, ca_state], filters="ca_country='United States'", output_bytes=1163400, output_rows=48475, materialized=1163400, bytes_read=244286, rows_read=50000
+                            HASH_JOIN: join_type=INNER, conditions=[wr_item_sk = ws_item_sk, wr_order_number = ws_order_number], output_bytes=900224, output_rows=14066, materialized=900224
+                              TABLE_SCAN: table=web_returns, projections=[wr_item_sk, wr_order_number, wr_refunded_cdemo_sk, wr_returning_cdemo_sk, wr_refunded_addr_sk, wr_reason_sk, wr_refunded_cash, wr_fee], output_bytes=4012624, output_rows=71654, materialized=4012624, bytes_read=2040667, rows_read=71654
+                              HASH_JOIN: join_type=INNER, conditions=[ws_sold_date_sk = d_date_sk], output_bytes=6824640, output_rows=142180, materialized=6827568
+                                TABLE_SCAN: table=web_sales, projections=[ws_web_page_sk, ws_item_sk, ws_order_number, ws_sold_date_sk, ws_sales_price, ws_net_profit, ws_quantity], filters="ws_order_number<=59999", output_bytes=11796480, output_rows=245760, materialized=11796480, bytes_read=3054147, rows_read=245760
+                                FILTER: output_bytes=2928, output_rows=366, materialized=0
+                                  TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_year=2000", output_bytes=2928, output_rows=366, materialized=2928, bytes_read=293872, rows_read=73049
+              TABLE_SCAN: table=reason, projections=[r_reason_sk, r_reason_desc], output_bytes=840, output_rows=35, materialized=840, bytes_read=777, rows_read=35
+            TABLE_SCAN: table=web_page, projections=[wp_web_page_sk], output_bytes=480, output_rows=60, materialized=480, bytes_read=357, rows_read=60
+duckdb_cost=121280981
+materialization_total=107406560
+storage_read_total=13874421
+
+--- row-group pruning (storage reduction) ---
+customer_demographics  filter=[cd_demo_sk>=24 AND cd_demo_sk<=1920785]  dyn_filter=[cd_demo_sk=1037564 AND cd_marital_status='S' AND cd_education_status='College']  row_groups=1/16  rows=122880/1920800 (6.4%)  bytes_fetched=495409/7744906 (6.4%)
+customer_demographics  filter=[cd_demo_sk>=24 AND cd_demo_sk<=1920785]  dyn_filter=[cd_demo_sk>=4686 AND cd_demo_sk<=1915070]  row_groups=16/16  rows=1920800/1920800 (100.0%)  bytes_fetched=7744906/7744906 (100.0%)
+customer_address  filter=[ca_country='United States']  dyn_filter=[ca_address_sk>=2 AND ca_address_sk<=50000]  row_groups=1/1  rows=50000/50000 (100.0%)  bytes_fetched=244286/244286 (100.0%)
+web_returns  dyn_filter=[wr_item_sk>=1 AND wr_item_sk<=17999 AND wr_order_number>=3 AND wr_order_number<=59999]  row_groups=1/1  rows=71654/71654 (100.0%)  bytes_fetched=2040667/2040667 (100.0%)
+web_sales  filter=[ws_order_number<=59999]  dyn_filter=[ws_sold_date_sk>=2451545 AND ws_sold_date_sk<=2451910]  row_groups=2/6  rows=245760/719384 (34.2%)  bytes_fetched=3054147/8888415 (34.4%)
+date_dim  filter=[d_year=2000]  row_groups=1/1  rows=73049/73049 (100.0%)  bytes_fetched=293872/293872 (100.0%)
+reason  row_groups=1/1  rows=35/35 (100.0%)  bytes_fetched=777/777 (100.0%)
+web_page  row_groups=1/1  rows=60/60 (100.0%)  bytes_fetched=357/357 (100.0%)
+pruning_bytes_fetched=13874421/26958186 (51.5%)
+
+--- cost breakdown ---
+TABLE_SCAN(customer_demographics)       76830480  71.5%
+TABLE_SCAN(web_sales)                  11796480  11.0%
+HASH_JOIN                               6827568   6.4%
+TABLE_SCAN(customer_demographics)        4915200   4.6%
+TABLE_SCAN(web_returns)                 4012624   3.7%
+TABLE_SCAN(customer_address)            1163400   1.1%
+HASH_JOIN                                939960   0.9%
+HASH_JOIN                                900224   0.8%
+HASH_JOIN                                 16080   0.0%
+TABLE_SCAN(date_dim)                       2928   0.0%
+TABLE_SCAN(reason)                          840   0.0%
+TABLE_SCAN(web_page)                        480   0.0%
+HASH_JOIN                                   144   0.0%
+TOP_N                                        40   0.0%
+HASH_JOIN                                    40   0.0%
+HASH_JOIN                                    40   0.0%
+HASH_GROUP_BY                                32   0.0%
+total=107406560

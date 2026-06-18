@@ -1,13 +1,31 @@
-TOP_N: order_by=[dt.d_year ASC, sum(tpcds.main.store_sales.ss_ext_sales_price) DESC, tpcds.main.item.i_brand_id ASC], top=100, output_bytes=4000, output_rows=100, materialized=4360
-  PROJECTION: projections=[d_year, brand_id, brand, ext_price], output_bytes=4360, output_rows=109, materialized=0
-    PROJECTION: projections=[__internal_decompress_integral_integer(#0, 2000), #1, #2, #3], output_bytes=4360, output_rows=109, materialized=0
+TOP_N: order_by=[dt.d_year ASC, sum(tpcds.main.store_sales.ss_ext_sales_price) DESC, tpcds.main.item.i_brand_id ASC], top=100, output_bytes=4800, output_rows=100, materialized=5232
+  PROJECTION: projections=[d_year, brand_id, brand, ext_price], output_bytes=5232, output_rows=109, materialized=0
+    PROJECTION: projections=[__internal_decompress_integral_bigint(#0, 2000), #1, __internal_decompress_integral_bigint(#2, 1001001), #3], output_bytes=5232, output_rows=109, materialized=0
       HASH_GROUP_BY: groups=[#0, #1, #2], aggregates=[sum(#3)], output_bytes=4033, output_rows=109, materialized=37425
         PROJECTION: projections=[d_year, i_brand, i_brand_id, ss_ext_sales_price], output_bytes=37425, output_rows=1497, materialized=0
-          PROJECTION: projections=[__internal_compress_integral_utinyint(#1, 2000), #0, #2, #3], output_bytes=37425, output_rows=1497, materialized=0
-            HASH_JOIN: join_type=INNER, conditions=[ss_item_sk = i_item_sk], output_bytes=41916, output_rows=1497, materialized=41916
-              HASH_JOIN: join_type=INNER, conditions=[ss_sold_date_sk = d_date_sk], output_bytes=1057788, output_rows=88149, materialized=1058028
-                TABLE_SCAN: table=store_sales, projections=[ss_sold_date_sk, ss_item_sk, ss_ext_sales_price], output_bytes=1057788, output_rows=88149, materialized=35622636, bytes_read_est=34564848, rows_read=2880404
-                FILTER: output_bytes=240, output_rows=30, materialized=0
-                  TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_year], filters="d_moy=11 AND d_year=2000", output_bytes=240, output_rows=30, materialized=584632, bytes_read_est=584392, rows_read=73049
-              TABLE_SCAN: table=item, projections=[i_item_sk, i_brand, i_brand_id], filters="i_manager_id=1", output_bytes=7704, output_rows=321, materialized=439704, bytes_read_est=432000, rows_read=18000
-duckdb_cost=37788701
+          PROJECTION: projections=[__internal_compress_integral_utinyint(#1, 2000), #0, #2, __internal_compress_integral_uinteger(#3, 1001001)], output_bytes=37425, output_rows=1497, materialized=0
+            HASH_JOIN: join_type=INNER, conditions=[ss_item_sk = i_item_sk], output_bytes=53892, output_rows=1497, materialized=53892
+              HASH_JOIN: join_type=INNER, conditions=[ss_sold_date_sk = d_date_sk], output_bytes=1775120, output_rows=88756, materialized=1775600
+                TABLE_SCAN: table=store_sales, projections=[ss_sold_date_sk, ss_item_sk, ss_ext_sales_price], output_bytes=5998480, output_rows=299924, materialized=5998480, bytes_read=1683061, rows_read=299924
+                FILTER: output_bytes=480, output_rows=30, materialized=0
+                  TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_year], filters="d_moy=11 AND d_year=2000", output_bytes=480, output_rows=30, materialized=480, bytes_read=294237, rows_read=73049
+              TABLE_SCAN: table=item, projections=[i_item_sk, i_brand, i_brand_id], filters="i_manager_id=1", output_bytes=10272, output_rows=321, materialized=10272, bytes_read=144435, rows_read=18000
+duckdb_cost=10003114
+materialization_total=7881381
+storage_read_total=2121733
+
+--- row-group pruning (storage reduction) ---
+store_sales  dyn_filter=[ss_sold_date_sk>=2451850 AND ss_sold_date_sk<=2451879 AND ss_item_sk>=114 AND ss_item_sk<=18000]  row_groups=3/24  rows=299924/2880404 (10.4%)  bytes_fetched=1683061/17087272 (9.8%)
+date_dim  filter=[d_moy=11 AND d_year=2000]  row_groups=1/1  rows=73049/73049 (100.0%)  bytes_fetched=294237/294237 (100.0%)
+item  filter=[i_manager_id=1]  row_groups=1/1  rows=18000/18000 (100.0%)  bytes_fetched=144435/144435 (100.0%)
+pruning_bytes_fetched=2121733/17525944 (12.1%)
+
+--- cost breakdown ---
+TABLE_SCAN(store_sales)                 5998480  76.1%
+HASH_JOIN                               1775600  22.5%
+HASH_JOIN                                 53892   0.7%
+HASH_GROUP_BY                             37425   0.5%
+TABLE_SCAN(item)                          10272   0.1%
+TOP_N                                      5232   0.1%
+TABLE_SCAN(date_dim)                        480   0.0%
+total=7881381

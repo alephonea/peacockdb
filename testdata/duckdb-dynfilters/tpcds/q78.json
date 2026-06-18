@@ -1,0 +1,1 @@
+["ss_sold_date_sk>=2451545 AND ss_sold_date_sk<=2451910","","","ws_sold_date_sk>=2451545 AND ws_sold_date_sk<=2451910","","","cs_sold_date_sk>=2451545 AND cs_sold_date_sk<=2451910","",""]

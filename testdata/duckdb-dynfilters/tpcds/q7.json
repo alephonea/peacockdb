@@ -1,0 +1,1 @@
+["i_item_sk>=1 AND i_item_sk<=17996","cd_demo_sk>=32 AND cd_demo_sk<=1920744","ss_sold_date_sk>=2451545 AND ss_sold_date_sk<=2451910","",""]

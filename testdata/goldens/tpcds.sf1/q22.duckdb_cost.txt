@@ -2,9 +2,27 @@ TOP_N: order_by=[avg(tpcds.main.inventory.inv_quantity_on_hand) ASC, tpcds.main.
   HASH_GROUP_BY: groups=[#0, #1, #2, #3], aggregates=[avg(#4)], output_bytes=2589696, output_rows=35968, materialized=159120000
     PROJECTION: projections=[i_product_name, i_brand, i_class, i_category, inv_quantity_on_hand], output_bytes=159120000, output_rows=2340000, materialized=0
       HASH_JOIN: join_type=INNER, conditions=[inv_item_sk = i_item_sk], output_bytes=159120000, output_rows=2340000, materialized=159120000
-        HASH_JOIN: join_type=INNER, conditions=[inv_date_sk = d_date_sk], output_bytes=28080000, output_rows=2340000, materialized=28081464
-          TABLE_SCAN: table=inventory, projections=[inv_date_sk, inv_item_sk, inv_quantity_on_hand], output_bytes=28080000, output_rows=2340000, materialized=169020000, bytes_read_est=140940000, rows_read=11745000
-          FILTER: output_bytes=1464, output_rows=366, materialized=0
-            TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_month_seq>=1200 AND d_month_seq<=1211", output_bytes=1464, output_rows=366, materialized=293660, bytes_read_est=292196, rows_read=73049
-        TABLE_SCAN: table=item, projections=[i_item_sk, i_product_name, i_brand, i_class, i_category], output_bytes=1224000, output_rows=18000, materialized=2448000, bytes_read_est=1224000, rows_read=18000
-duckdb_cost=520672820
+        HASH_JOIN: join_type=INNER, conditions=[inv_date_sk = d_date_sk], output_bytes=46800000, output_rows=2340000, materialized=46802928
+          TABLE_SCAN: table=inventory, projections=[inv_date_sk, inv_item_sk, inv_quantity_on_hand], output_bytes=49152000, output_rows=2457600, materialized=49152000, bytes_read=5431271, rows_read=2457600
+          FILTER: output_bytes=2928, output_rows=366, materialized=0
+            TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_month_seq>=1200 AND d_month_seq<=1211", output_bytes=2928, output_rows=366, materialized=2928, bytes_read=309271, rows_read=73049
+        TABLE_SCAN: table=item, projections=[i_item_sk, i_product_name, i_brand, i_class, i_category], output_bytes=1296000, output_rows=18000, materialized=1296000, bytes_read=251188, rows_read=18000
+duckdb_cost=424075282
+materialization_total=418083552
+storage_read_total=5991730
+
+--- row-group pruning (storage reduction) ---
+inventory  dyn_filter=[inv_date_sk>=2451545 AND inv_date_sk<=2451910 AND inv_item_sk>=1 AND inv_item_sk<=18000]  row_groups=20/96  rows=2457600/11745000 (20.9%)  bytes_fetched=5431271/25891053 (21.0%)
+date_dim  filter=[d_month_seq>=1200 AND d_month_seq<=1211]  row_groups=1/1  rows=73049/73049 (100.0%)  bytes_fetched=309271/309271 (100.0%)
+item  row_groups=1/1  rows=18000/18000 (100.0%)  bytes_fetched=251188/251188 (100.0%)
+pruning_bytes_fetched=5991730/26451512 (22.7%)
+
+--- cost breakdown ---
+HASH_GROUP_BY                         159120000  38.1%
+HASH_JOIN                             159120000  38.1%
+TABLE_SCAN(inventory)                  49152000  11.8%
+HASH_JOIN                              46802928  11.2%
+TOP_N                                   2589696   0.6%
+TABLE_SCAN(item)                        1296000   0.3%
+TABLE_SCAN(date_dim)                       2928   0.0%
+total=418083552

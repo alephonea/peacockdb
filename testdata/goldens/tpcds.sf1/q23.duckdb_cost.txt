@@ -1,64 +1,125 @@
-TOP_N: order_by=[sq3.c_last_name ASC, sq3.c_first_name ASC, sq3.sales ASC], top=100, output_bytes=192, output_rows=4, materialized=0
-  CTE: output_bytes=0, output_rows=0, materialized=0
-    FILTER: output_bytes=1664, output_rows=52, materialized=0
-      PROJECTION: projections=[#0, __internal_decompress_integral_integer(#1, 1), #2, #3], output_bytes=47728192, output_rows=1491506, materialized=0
+CTE: output_bytes=0, output_rows=0, materialized=0
+  PROJECTION: projections=[#1], output_bytes=416, output_rows=52, materialized=0
+    FILTER: output_bytes=1872, output_rows=52, materialized=0
+      PROJECTION: projections=[#0, __internal_decompress_integral_bigint(#1, 1), #2, #3], output_bytes=53694216, output_rows=1491506, materialized=0
         HASH_GROUP_BY: groups=[#0, #1, #2], aggregates=[count_star()], output_bytes=44745180, output_rows=1491506, materialized=36433386
           PROJECTION: projections=[itemdesc, i_item_sk, d_date], output_bytes=36433386, output_rows=1656063, materialized=0
             PROJECTION: projections=[__internal_compress_integral_usmallint(#0, 1), #1, #2], output_bytes=36433386, output_rows=1656063, materialized=0
-              HASH_JOIN: join_type=INNER, conditions=[ss_item_sk = i_item_sk], output_bytes=39745512, output_rows=1656063, materialized=40105512
-                HASH_JOIN: join_type=INNER, conditions=[ss_sold_date_sk = d_date_sk], output_bytes=13248504, output_rows=1656063, materialized=13257288
-                  TABLE_SCAN: table=store_sales, projections=[ss_sold_date_sk, ss_item_sk], output_bytes=13248504, output_rows=1656063, materialized=36291736, bytes_read_est=23043232, rows_read=2880404
-                  FILTER: output_bytes=8784, output_rows=1098, materialized=0
-                    TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_date], filters="d_year>=2000 AND d_year<=2003", output_bytes=11688, output_rows=1461, materialized=596080, bytes_read_est=584392, rows_read=73049
-                PROJECTION: projections=[itemdesc, i_item_sk], output_bytes=360000, output_rows=18000, materialized=0
-                  TABLE_SCAN: table=item, projections=[i_item_desc, i_item_sk], output_bytes=360000, output_rows=18000, materialized=720000, bytes_read_est=360000, rows_read=18000
-    CTE: output_bytes=0, output_rows=0, materialized=0
-      PROJECTION: projections=[#0, #1], output_bytes=94060, output_rows=4703, materialized=0
-        FILTER: output_bytes=169308, output_rows=4703, materialized=0
-          HASH_GROUP_BY: groups=[#0], aggregates=[sum(#1), max(#2)], output_bytes=3270888, output_rows=90858, materialized=77028336
-            PROJECTION: projections=[c_customer_sk, (CAST(ss_quantity AS DECIMAL(17,0)) * CAST(ss_sales_price AS DECIMAL(17,2))), tpcds_cmax], output_bytes=77028336, output_rows=2751012, materialized=0
-              HASH_JOIN: join_type=INNER, conditions=[ss_customer_sk = c_customer_sk], output_bytes=77028336, output_rows=2751012, materialized=77028336
-                TABLE_SCAN: table=store_sales, projections=[ss_customer_sk, ss_quantity, ss_sales_price], output_bytes=33012144, output_rows=2751012, materialized=67576992, bytes_read_est=34564848, rows_read=2880404
-                CROSS_PRODUCT: output_bytes=2000000, output_rows=100000, materialized=2000016
-                  TABLE_SCAN: table=customer, projections=[c_customer_sk], output_bytes=400000, output_rows=100000, materialized=800000, bytes_read_est=400000, rows_read=100000
-                  UNGROUPED_AGGREGATE: aggregates=[max(#0)], output_bytes=16, output_rows=1, materialized=1222592
-                    PROJECTION: projections=[csales], output_bytes=1222592, output_rows=76412, materialized=0
+              HASH_JOIN: join_type=INNER, conditions=[ss_item_sk = i_item_sk], output_bytes=46369764, output_rows=1656063, materialized=46801764
+                HASH_JOIN: join_type=INNER, conditions=[ss_sold_date_sk = d_date_sk], output_bytes=19872756, output_rows=1656063, materialized=19885932
+                  TABLE_SCAN: table=store_sales, projections=[ss_sold_date_sk, ss_item_sk], output_bytes=30357824, output_rows=1897364, materialized=30357824, bytes_read=3897336, rows_read=1897364
+                  FILTER: output_bytes=13176, output_rows=1098, materialized=0
+                    TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_date], filters="d_year>=2000 AND d_year<=2003", output_bytes=17532, output_rows=1461, materialized=17532, bytes_read=586117, rows_read=73049
+                PROJECTION: projections=[itemdesc, i_item_sk], output_bytes=432000, output_rows=18000, materialized=0
+                  TABLE_SCAN: table=item, projections=[i_item_desc, i_item_sk], output_bytes=432000, output_rows=18000, materialized=432000, bytes_read=1026705, rows_read=18000
+  CTE: output_bytes=0, output_rows=0, materialized=0
+    PROJECTION: projections=[#0, #1], output_bytes=112872, output_rows=4703, materialized=0
+      FILTER: output_bytes=188120, output_rows=4703, materialized=0
+        PROJECTION: projections=[__internal_decompress_integral_bigint(#0, 1), #1, #2], output_bytes=3634320, output_rows=90858, materialized=0
+          HASH_GROUP_BY: groups=[#0], aggregates=[sum(#1), max(#2)], output_bytes=3270888, output_rows=90858, materialized=99036432
+            PROJECTION: projections=[c_customer_sk, (CAST(ss_quantity AS DECIMAL(26,0)) * CAST(ss_sales_price AS DECIMAL(26,2))), tpcds_cmax], output_bytes=99036432, output_rows=2751012, materialized=0
+              PROJECTION: projections=[__internal_compress_integral_uinteger(#0, 1), #1, #2, #3], output_bytes=88032384, output_rows=2751012, materialized=0
+                HASH_JOIN: join_type=INNER, conditions=[ss_customer_sk = c_customer_sk], output_bytes=99036432, output_rows=2751012, materialized=99036432
+                  TABLE_SCAN: table=store_sales, projections=[ss_customer_sk, ss_quantity, ss_sales_price], output_bytes=57608080, output_rows=2880404, materialized=57608080, bytes_read=15159527, rows_read=2880404
+                  CROSS_PRODUCT: output_bytes=2400000, output_rows=100000, materialized=2400016
+                    TABLE_SCAN: table=customer, projections=[c_customer_sk], output_bytes=800000, output_rows=100000, materialized=800000, bytes_read=401025, rows_read=100000
+                    UNGROUPED_AGGREGATE: aggregates=[max(#0)], output_bytes=16, output_rows=1, materialized=1222592
                       PROJECTION: projections=[csales], output_bytes=1222592, output_rows=76412, materialized=0
-                        HASH_GROUP_BY: groups=[#0], aggregates=[sum(#1)], output_bytes=1528240, output_rows=76412, materialized=19405488
-                          PROJECTION: projections=[c_customer_sk, (CAST(ss_quantity AS DECIMAL(17,0)) * CAST(ss_sales_price AS DECIMAL(17,2)))], output_bytes=19405488, output_rows=1617124, materialized=0
-                            HASH_JOIN: join_type=INNER, conditions=[ss_customer_sk = c_customer_sk], output_bytes=25873984, output_rows=1617124, materialized=25873984
-                              HASH_JOIN: join_type=INNER, conditions=[ss_sold_date_sk = d_date_sk], output_bytes=25873984, output_rows=1617124, materialized=25878376
-                                TABLE_SCAN: table=store_sales, projections=[ss_customer_sk, ss_sold_date_sk, ss_quantity, ss_sales_price], output_bytes=25873984, output_rows=1617124, materialized=71960448, bytes_read_est=46086464, rows_read=2880404
-                                FILTER: output_bytes=4392, output_rows=1098, materialized=0
-                                  TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_year>=2000 AND d_year<=2003", output_bytes=5844, output_rows=1461, materialized=298040, bytes_read_est=292196, rows_read=73049
-                              TABLE_SCAN: table=customer, projections=[c_customer_sk], output_bytes=400000, output_rows=100000, materialized=800000, bytes_read_est=400000, rows_read=100000
+                        PROJECTION: projections=[csales], output_bytes=1222592, output_rows=76412, materialized=0
+                          PROJECTION: projections=[__internal_decompress_integral_bigint(#0, 1), #1], output_bytes=1833888, output_rows=76412, materialized=0
+                            HASH_GROUP_BY: groups=[#0], aggregates=[sum(#1)], output_bytes=1528240, output_rows=76412, materialized=32342480
+                              PROJECTION: projections=[c_customer_sk, (CAST(ss_quantity AS DECIMAL(26,0)) * CAST(ss_sales_price AS DECIMAL(26,2)))], output_bytes=32342480, output_rows=1617124, materialized=0
+                                PROJECTION: projections=[__internal_compress_integral_uinteger(#0, 1), #1, #2, __internal_compress_integral_uinteger(#3, 1)], output_bytes=32342480, output_rows=1617124, materialized=0
+                                  HASH_JOIN: join_type=INNER, conditions=[ss_customer_sk = c_customer_sk], output_bytes=45279472, output_rows=1617124, materialized=45279472
+                                    HASH_JOIN: join_type=INNER, conditions=[ss_sold_date_sk = d_date_sk], output_bytes=46369764, output_rows=1656063, materialized=46378548
+                                      TABLE_SCAN: table=store_sales, projections=[ss_customer_sk, ss_sold_date_sk, ss_quantity, ss_sales_price], output_bytes=53126192, output_rows=1897364, materialized=53126192, bytes_read=9967006, rows_read=1897364
+                                      FILTER: output_bytes=8784, output_rows=1098, materialized=0
+                                        TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_year>=2000 AND d_year<=2003", output_bytes=11688, output_rows=1461, materialized=11688, bytes_read=293872, rows_read=73049
+                                    TABLE_SCAN: table=customer, projections=[c_customer_sk], output_bytes=800000, output_rows=100000, materialized=800000, bytes_read=401025, rows_read=100000
+    TOP_N: order_by=[sq3.c_last_name ASC, sq3.c_first_name ASC, sq3.sales ASC], top=100, output_bytes=192, output_rows=4, materialized=0
       UNION: output_bytes=0, output_rows=4, materialized=0
         PROJECTION: projections=[__internal_decompress_string(#0), __internal_decompress_string(#1), #2], output_bytes=144, output_rows=3, materialized=0
-          HASH_GROUP_BY: groups=[#0, #1], aggregates=[sum(#2)], output_bytes=144, output_rows=3, materialized=120
-            PROJECTION: projections=[c_last_name, c_first_name, (CAST(cs_quantity AS DECIMAL(17,0)) * CAST(cs_list_price AS DECIMAL(17,2)))], output_bytes=120, output_rows=3, materialized=0
-              PROJECTION: projections=[#0, #1, #2, #3, #6, #7, __internal_compress_string_hugeint(#4), __internal_compress_string_hugeint(#5)], output_bytes=216, output_rows=3, materialized=0
-                HASH_JOIN: join_type=INNER, conditions=[item_sk = cs_item_sk], output_bytes=216, output_rows=3, materialized=216
-                  CTE_SCAN: output_bytes=1664, output_rows=52, materialized=0
-                  HASH_JOIN: join_type=INNER, conditions=[c_customer_sk = cs_bill_customer_sk], output_bytes=29348, output_rows=667, materialized=29348
-                    TABLE_SCAN: table=customer, output_bytes=3473928, output_rows=96498, materialized=7073928, bytes_read_est=3600000, rows_read=100000
-                    HASH_JOIN: join_type=INNER, conditions=[cs_bill_customer_sk = c_customer_sk], output_bytes=24012, output_rows=667, materialized=24012
-                      HASH_JOIN: join_type=INNER, conditions=[cs_sold_date_sk = d_date_sk], output_bytes=265220, output_rows=13261, materialized=265336
-                        TABLE_SCAN: table=catalog_sales, projections=[cs_sold_date_sk, cs_item_sk, cs_bill_customer_sk, cs_quantity, cs_list_price], output_bytes=265220, output_rows=13261, materialized=29096180, bytes_read_est=28830960, rows_read=1441548
-                        FILTER: output_bytes=116, output_rows=29, materialized=0
-                          TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_year=2000 AND d_moy=2", output_bytes=116, output_rows=29, materialized=292312, bytes_read_est=292196, rows_read=73049
-                      CTE_SCAN: output_bytes=94060, output_rows=4703, materialized=0
+          HASH_GROUP_BY: groups=[#0, #1], aggregates=[sum(#2)], output_bytes=144, output_rows=3, materialized=144
+            PROJECTION: projections=[c_last_name, c_first_name, (CAST(cs_quantity AS DECIMAL(26,0)) * CAST(cs_list_price AS DECIMAL(26,2)))], output_bytes=144, output_rows=3, materialized=0
+              PROJECTION: projections=[#0, #3, #4, __internal_compress_string_uhugeint(#1), __internal_compress_string_uhugeint(#2)], output_bytes=156, output_rows=3, materialized=0
+                HASH_JOIN: join_type=INNER, conditions=[item_sk = cs_item_sk], output_bytes=156, output_rows=3, materialized=156
+                  CTE_SCAN: output_bytes=416, output_rows=52, materialized=0
+                  HASH_JOIN: join_type=INNER, conditions=[c_customer_sk = cs_bill_customer_sk], output_bytes=34684, output_rows=667, materialized=34684
+                    TABLE_SCAN: table=customer, projections=[c_customer_sk, c_last_name, c_first_name], output_bytes=4000000, output_rows=100000, materialized=4000000, bytes_read=790560, rows_read=100000
+                    HASH_JOIN: join_type=INNER, conditions=[c_customer_sk = cs_bill_customer_sk], output_bytes=34684, output_rows=667, materialized=34684
+                      CTE_SCAN: output_bytes=112872, output_rows=4703, materialized=0
+                      HASH_JOIN: join_type=INNER, conditions=[cs_sold_date_sk = d_date_sk], output_bytes=478872, output_rows=13302, materialized=479104
+                        TABLE_SCAN: table=catalog_sales, projections=[cs_sold_date_sk, cs_item_sk, cs_bill_customer_sk, cs_quantity, cs_list_price], output_bytes=4423680, output_rows=122880, materialized=4423680, bytes_read=1141677, rows_read=122880
+                        FILTER: output_bytes=232, output_rows=29, materialized=0
+                          TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_year=2000 AND d_moy=2", output_bytes=232, output_rows=29, materialized=232, bytes_read=294237, rows_read=73049
         PROJECTION: projections=[__internal_decompress_string(#0), __internal_decompress_string(#1), #2], output_bytes=48, output_rows=1, materialized=0
-          HASH_GROUP_BY: groups=[#0, #1], aggregates=[sum(#2)], output_bytes=48, output_rows=1, materialized=40
-            PROJECTION: projections=[c_last_name, c_first_name, (CAST(ws_quantity AS DECIMAL(17,0)) * CAST(ws_list_price AS DECIMAL(17,2)))], output_bytes=40, output_rows=1, materialized=0
-              PROJECTION: projections=[#0, #1, #2, #3, #6, #7, __internal_compress_string_hugeint(#4), __internal_compress_string_hugeint(#5)], output_bytes=72, output_rows=1, materialized=0
-                HASH_JOIN: join_type=INNER, conditions=[item_sk = ws_item_sk], output_bytes=72, output_rows=1, materialized=72
-                  CTE_SCAN: output_bytes=1664, output_rows=52, materialized=0
-                  HASH_JOIN: join_type=INNER, conditions=[c_customer_sk = ws_bill_customer_sk], output_bytes=16104, output_rows=366, materialized=16104
-                    TABLE_SCAN: table=customer, filters="c_customer_sk>=2", output_bytes=3425292, output_rows=95147, materialized=7025292, bytes_read_est=3600000, rows_read=100000
-                    HASH_JOIN: join_type=INNER, conditions=[c_customer_sk = ws_bill_customer_sk], output_bytes=13176, output_rows=366, materialized=13176
-                      CTE_SCAN: output_bytes=94060, output_rows=4703, materialized=0
-                      HASH_JOIN: join_type=INNER, conditions=[ws_sold_date_sk = d_date_sk], output_bytes=134500, output_rows=6725, materialized=134616
-                        TABLE_SCAN: table=web_sales, projections=[ws_sold_date_sk, ws_item_sk, ws_bill_customer_sk, ws_quantity, ws_list_price], output_bytes=134500, output_rows=6725, materialized=14522180, bytes_read_est=14387680, rows_read=719384
-                        FILTER: output_bytes=116, output_rows=29, materialized=0
-                          TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_year=2000 AND d_moy=2", output_bytes=116, output_rows=29, materialized=292312, bytes_read_est=292196, rows_read=73049
-duckdb_cost=556061854
+          HASH_GROUP_BY: groups=[#0, #1], aggregates=[sum(#2)], output_bytes=48, output_rows=1, materialized=48
+            PROJECTION: projections=[c_last_name, c_first_name, (CAST(ws_quantity AS DECIMAL(26,0)) * CAST(ws_list_price AS DECIMAL(26,2)))], output_bytes=48, output_rows=1, materialized=0
+              PROJECTION: projections=[#0, #3, #4, __internal_compress_string_uhugeint(#1), __internal_compress_string_uhugeint(#2)], output_bytes=52, output_rows=1, materialized=0
+                HASH_JOIN: join_type=INNER, conditions=[item_sk = ws_item_sk], output_bytes=52, output_rows=1, materialized=52
+                  CTE_SCAN: output_bytes=416, output_rows=52, materialized=0
+                  HASH_JOIN: join_type=INNER, conditions=[c_customer_sk = ws_bill_customer_sk], output_bytes=19032, output_rows=366, materialized=19032
+                    TABLE_SCAN: table=customer, projections=[c_customer_sk, c_last_name, c_first_name], filters="c_customer_sk>=2", output_bytes=3999960, output_rows=99999, materialized=3999960, bytes_read=790560, rows_read=100000
+                    HASH_JOIN: join_type=INNER, conditions=[c_customer_sk = ws_bill_customer_sk], output_bytes=19032, output_rows=366, materialized=19032
+                      CTE_SCAN: output_bytes=112872, output_rows=4703, materialized=0
+                      HASH_JOIN: join_type=INNER, conditions=[ws_sold_date_sk = d_date_sk], output_bytes=242100, output_rows=6725, materialized=242332
+                        TABLE_SCAN: table=web_sales, projections=[ws_sold_date_sk, ws_item_sk, ws_bill_customer_sk, ws_quantity, ws_list_price], output_bytes=4423680, output_rows=122880, materialized=4423680, bytes_read=1127377, rows_read=122880
+                        FILTER: output_bytes=232, output_rows=29, materialized=0
+                          TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_year=2000 AND d_moy=2", output_bytes=232, output_rows=29, materialized=232, bytes_read=294237, rows_read=73049
+duckdb_cost=625818683
+materialization_total=589647422
+storage_read_total=36171261
+
+--- row-group pruning (storage reduction) ---
+store_sales  dyn_filter=[ss_sold_date_sk>=2451545 AND ss_sold_date_sk<=2452642 AND ss_item_sk>=1 AND ss_item_sk<=18000]  row_groups=16/24  rows=1897364/2880404 (65.9%)  bytes_fetched=3897336/5922266 (65.8%)
+date_dim  filter=[d_year>=2000 AND d_year<=2003]  row_groups=1/1  rows=73049/73049 (100.0%)  bytes_fetched=586117/586117 (100.0%)
+item  row_groups=1/1  rows=18000/18000 (100.0%)  bytes_fetched=1026705/1026705 (100.0%)
+store_sales  dyn_filter=[ss_customer_sk>=1 AND ss_customer_sk<=100000]  row_groups=24/24  rows=2880404/2880404 (100.0%)  bytes_fetched=15159527/15159527 (100.0%)
+customer  row_groups=1/1  rows=100000/100000 (100.0%)  bytes_fetched=401025/401025 (100.0%)
+store_sales  dyn_filter=[ss_customer_sk>=1 AND ss_customer_sk<=100000 AND ss_sold_date_sk>=2451545 AND ss_sold_date_sk<=2452642]  row_groups=16/24  rows=1897364/2880404 (65.9%)  bytes_fetched=9967006/15173951 (65.7%)
+date_dim  filter=[d_year>=2000 AND d_year<=2003]  row_groups=1/1  rows=73049/73049 (100.0%)  bytes_fetched=293872/293872 (100.0%)
+customer  row_groups=1/1  rows=100000/100000 (100.0%)  bytes_fetched=401025/401025 (100.0%)
+customer  dyn_filter=[c_customer_sk>=228 AND c_customer_sk<=96725]  row_groups=1/1  rows=100000/100000 (100.0%)  bytes_fetched=790560/790560 (100.0%)
+catalog_sales  dyn_filter=[cs_sold_date_sk>=2451576 AND cs_sold_date_sk<=2451604]  row_groups=1/12  rows=122880/1441548 (8.5%)  bytes_fetched=1141677/13295250 (8.6%)
+date_dim  filter=[d_year=2000 AND d_moy=2]  row_groups=1/1  rows=73049/73049 (100.0%)  bytes_fetched=294237/294237 (100.0%)
+customer  filter=[c_customer_sk>=2]  dyn_filter=[c_customer_sk>=881 AND c_customer_sk<=96027]  row_groups=1/1  rows=100000/100000 (100.0%)  bytes_fetched=790560/790560 (100.0%)
+web_sales  dyn_filter=[ws_sold_date_sk>=2451576 AND ws_sold_date_sk<=2451604]  row_groups=1/6  rows=122880/719384 (17.1%)  bytes_fetched=1127377/6571115 (17.2%)
+date_dim  filter=[d_year=2000 AND d_moy=2]  row_groups=1/1  rows=73049/73049 (100.0%)  bytes_fetched=294237/294237 (100.0%)
+pruning_bytes_fetched=36171261/61000447 (59.3%)
+
+--- cost breakdown ---
+HASH_GROUP_BY                          99036432  16.8%
+HASH_JOIN                              99036432  16.8%
+TABLE_SCAN(store_sales)                57608080   9.8%
+TABLE_SCAN(store_sales)                53126192   9.0%
+HASH_JOIN                              46801764   7.9%
+HASH_JOIN                              46378548   7.9%
+HASH_JOIN                              45279472   7.7%
+HASH_GROUP_BY                          36433386   6.2%
+HASH_GROUP_BY                          32342480   5.5%
+TABLE_SCAN(store_sales)                30357824   5.1%
+HASH_JOIN                              19885932   3.4%
+TABLE_SCAN(catalog_sales)               4423680   0.8%
+TABLE_SCAN(web_sales)                   4423680   0.8%
+TABLE_SCAN(customer)                    4000000   0.7%
+TABLE_SCAN(customer)                    3999960   0.7%
+CROSS_PRODUCT                           2400016   0.4%
+UNGROUPED_AGGREGATE                     1222592   0.2%
+TABLE_SCAN(customer)                     800000   0.1%
+TABLE_SCAN(customer)                     800000   0.1%
+HASH_JOIN                                479104   0.1%
+TABLE_SCAN(item)                         432000   0.1%
+HASH_JOIN                                242332   0.0%
+HASH_JOIN                                 34684   0.0%
+HASH_JOIN                                 34684   0.0%
+HASH_JOIN                                 19032   0.0%
+HASH_JOIN                                 19032   0.0%
+TABLE_SCAN(date_dim)                      17532   0.0%
+TABLE_SCAN(date_dim)                      11688   0.0%
+TABLE_SCAN(date_dim)                        232   0.0%
+TABLE_SCAN(date_dim)                        232   0.0%
+HASH_JOIN                                   156   0.0%
+HASH_GROUP_BY                               144   0.0%
+HASH_JOIN                                    52   0.0%
+HASH_GROUP_BY                                48   0.0%
+total=589647422

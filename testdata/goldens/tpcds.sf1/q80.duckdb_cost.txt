@@ -2,50 +2,113 @@ TOP_N: order_by=[x.channel ASC, x.id ASC], top=100, output_bytes=8000, output_ro
   HASH_GROUP_BY: groups=[#0, #1], aggregates=[sum(#2), sum(#3), sum(#4)], output_bytes=34160, output_rows=427, materialized=33840
     PROJECTION: projections=[channel, id, sales, returns_, profit], output_bytes=33840, output_rows=423, materialized=0
       UNION: output_bytes=0, output_rows=423, materialized=0
-        UNION: output_bytes=0, output_rows=408, materialized=0
-          PROJECTION: projections=[channel, id, sales, returns_, profit], output_bytes=480, output_rows=6, materialized=0
-            HASH_GROUP_BY: groups=[#0], aggregates=[sum(#1), sum(#2), sum(#3)], output_bytes=384, output_rows=6, materialized=124308
-              PROJECTION: projections=[s_store_id, ss_ext_sales_price, COALESCE(CAST(sr_return_amt AS DECIMAL(12,2)), 0.00), (CAST(ss_net_profit AS DECIMAL(13,2)) - COALESCE(CAST(sr_net_loss AS DECIMAL(12,2)), 0.00))], output_bytes=124308, output_rows=3453, materialized=0
-                HASH_JOIN: join_type=INNER, conditions=[ss_store_sk = s_store_sk], output_bytes=110496, output_rows=3453, materialized=110496
-                  HASH_JOIN: join_type=INNER, conditions=[ss_item_sk = i_item_sk], output_bytes=82872, output_rows=3453, materialized=82872
-                    HASH_JOIN: join_type=INNER, conditions=[ss_sold_date_sk = d_date_sk], output_bytes=1672860, output_rows=59745, materialized=1672984
-                      HASH_JOIN: join_type=INNER, conditions=[ss_promo_sk = p_promo_sk], output_bytes=1911840, output_rows=59745, materialized=1911840
-                        HASH_JOIN: join_type=LEFT, conditions=[ss_item_sk = sr_item_sk, ss_ticket_number = sr_ticket_number], output_bytes=1952512, output_rows=61016, materialized=1952512
-                          TABLE_SCAN: table=store_sales, projections=[ss_item_sk, ss_ticket_number, ss_sold_date_sk, ss_store_sk, ss_promo_sk, ss_ext_sales_price, ss_net_profit], output_bytes=1708448, output_rows=61016, materialized=82359760, bytes_read_est=80651312, rows_read=2880404
-                          TABLE_SCAN: table=store_returns, projections=[sr_item_sk, sr_ticket_number, sr_return_amt, sr_net_loss], output_bytes=4605872, output_rows=287867, materialized=9211744, bytes_read_est=4605872, rows_read=287867
-                        TABLE_SCAN: table=promotion, projections=[p_promo_sk], filters="p_channel_tv='N'", output_bytes=1176, output_rows=294, materialized=2376, bytes_read_est=1200, rows_read=300
-                      FILTER: output_bytes=124, output_rows=31, materialized=0
-                        TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_date>='2000-08-23'::DATE AND d_date<='2000-09-22'::DATE", output_bytes=124, output_rows=31, materialized=292320, bytes_read_est=292196, rows_read=73049
-                    TABLE_SCAN: table=item, projections=[i_item_sk], filters="i_current_price>50.00", output_bytes=4220, output_rows=1055, materialized=76220, bytes_read_est=72000, rows_read=18000
-                  TABLE_SCAN: table=store, projections=[s_store_sk, s_store_id], filters="s_store_sk<=10", output_bytes=200, output_rows=10, materialized=440, bytes_read_est=240, rows_read=12
-          PROJECTION: projections=[channel, id, sales, returns_, profit], output_bytes=32160, output_rows=402, materialized=0
-            HASH_GROUP_BY: groups=[#0], aggregates=[sum(#1), sum(#2), sum(#3)], output_bytes=25728, output_rows=402, materialized=63648
-              PROJECTION: projections=[cp_catalog_page_id, cs_ext_sales_price, COALESCE(CAST(cr_return_amount AS DECIMAL(12,2)), 0.00), (CAST(cs_net_profit AS DECIMAL(13,2)) - COALESCE(CAST(cr_net_loss AS DECIMAL(12,2)), 0.00))], output_bytes=63648, output_rows=1768, materialized=0
-                HASH_JOIN: join_type=INNER, conditions=[cp_catalog_page_sk = cs_catalog_page_sk], output_bytes=56576, output_rows=1768, materialized=56576
-                  TABLE_SCAN: table=catalog_page, projections=[cp_catalog_page_sk, cp_catalog_page_id], filters="cp_catalog_page_sk<=9828", output_bytes=17260, output_rows=863, materialized=251620, bytes_read_est=234360, rows_read=11718
-                  HASH_JOIN: join_type=INNER, conditions=[cs_item_sk = i_item_sk], output_bytes=42480, output_rows=1770, materialized=42480
-                    HASH_JOIN: join_type=INNER, conditions=[cs_sold_date_sk = d_date_sk], output_bytes=866516, output_rows=30947, materialized=866640
-                      HASH_JOIN: join_type=INNER, conditions=[cs_promo_sk = p_promo_sk], output_bytes=990304, output_rows=30947, materialized=990304
-                        HASH_JOIN: join_type=LEFT, conditions=[cs_item_sk = cr_item_sk, cs_order_number = cr_order_number], output_bytes=1009280, output_rows=31540, materialized=1009280
-                          TABLE_SCAN: table=catalog_sales, projections=[cs_item_sk, cs_order_number, cs_sold_date_sk, cs_catalog_page_sk, cs_promo_sk, cs_ext_sales_price, cs_net_profit], output_bytes=883120, output_rows=31540, materialized=41246464, bytes_read_est=40363344, rows_read=1441548
-                          TABLE_SCAN: table=catalog_returns, projections=[cr_item_sk, cr_order_number, cr_return_amount, cr_net_loss], output_bytes=2305072, output_rows=144067, materialized=4610144, bytes_read_est=2305072, rows_read=144067
-                        TABLE_SCAN: table=promotion, projections=[p_promo_sk], filters="p_channel_tv='N'", output_bytes=1176, output_rows=294, materialized=2376, bytes_read_est=1200, rows_read=300
-                      FILTER: output_bytes=124, output_rows=31, materialized=0
-                        TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_date>='2000-08-23'::DATE AND d_date<='2000-09-22'::DATE", output_bytes=124, output_rows=31, materialized=292320, bytes_read_est=292196, rows_read=73049
-                    TABLE_SCAN: table=item, projections=[i_item_sk], filters="i_current_price>50.00", output_bytes=4220, output_rows=1055, materialized=76220, bytes_read_est=72000, rows_read=18000
+        PROJECTION: projections=[channel, id, sales, returns_, profit], output_bytes=480, output_rows=6, materialized=0
+          HASH_GROUP_BY: groups=[#0], aggregates=[sum(#1), sum(#2), sum(#3)], output_bytes=384, output_rows=6, materialized=124308
+            PROJECTION: projections=[s_store_id, ss_ext_sales_price, COALESCE(CAST(sr_return_amt AS DECIMAL(12,2)), 0.00), (CAST(ss_net_profit AS DECIMAL(13,2)) - COALESCE(CAST(sr_net_loss AS DECIMAL(12,2)), 0.00))], output_bytes=124308, output_rows=3453, materialized=0
+              HASH_JOIN: join_type=INNER, conditions=[ss_store_sk = s_store_sk], output_bytes=110496, output_rows=3453, materialized=110496
+                HASH_JOIN: join_type=INNER, conditions=[ss_item_sk = i_item_sk], output_bytes=111616, output_rows=3488, materialized=111616
+                  HASH_JOIN: join_type=INNER, conditions=[ss_sold_date_sk = d_date_sk], output_bytes=2421200, output_rows=60530, materialized=2421448
+                    HASH_JOIN: join_type=INNER, conditions=[ss_promo_sk = p_promo_sk], output_bytes=129409104, output_rows=2696023, materialized=129409104
+                      HASH_JOIN: join_type=LEFT, conditions=[ss_item_sk = sr_item_sk, ss_ticket_number = sr_ticket_number], output_bytes=138259392, output_rows=2880404, materialized=138259392
+                        TABLE_SCAN: table=store_sales, projections=[ss_item_sk, ss_ticket_number, ss_sold_date_sk, ss_store_sk, ss_promo_sk, ss_ext_sales_price, ss_net_profit], output_bytes=14396352, output_rows=299924, materialized=14396352, bytes_read=4010868, rows_read=299924
+                        TABLE_SCAN: table=store_returns, projections=[sr_item_sk, sr_ticket_number, sr_return_amt, sr_net_loss], output_bytes=6908808, output_rows=287867, materialized=6908808, bytes_read=4258409, rows_read=287867
+                      TABLE_SCAN: table=promotion, projections=[p_promo_sk], filters="p_channel_tv='N'", output_bytes=2352, output_rows=294, materialized=2352, bytes_read=2068, rows_read=300
+                    FILTER: output_bytes=248, output_rows=31, materialized=0
+                      TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_date>='2000-08-23'::DATE AND d_date<='2000-09-22'::DATE", output_bytes=248, output_rows=31, materialized=248, bytes_read=584645, rows_read=73049
+                  TABLE_SCAN: table=item, projections=[i_item_sk], filters="i_current_price>50.00", output_bytes=8440, output_rows=1055, materialized=8440, bytes_read=111227, rows_read=18000
+                TABLE_SCAN: table=store, projections=[s_store_sk, s_store_id], filters="s_store_sk<=10", output_bytes=240, output_rows=10, materialized=240, bytes_read=180, rows_read=12
+        PROJECTION: projections=[channel, id, sales, returns_, profit], output_bytes=32160, output_rows=402, materialized=0
+          HASH_GROUP_BY: groups=[#0], aggregates=[sum(#1), sum(#2), sum(#3)], output_bytes=25728, output_rows=402, materialized=63648
+            PROJECTION: projections=[cp_catalog_page_id, cs_ext_sales_price, COALESCE(CAST(cr_return_amount AS DECIMAL(12,2)), 0.00), (CAST(cs_net_profit AS DECIMAL(13,2)) - COALESCE(CAST(cr_net_loss AS DECIMAL(12,2)), 0.00))], output_bytes=63648, output_rows=1768, materialized=0
+              HASH_JOIN: join_type=INNER, conditions=[cp_catalog_page_sk = cs_catalog_page_sk], output_bytes=56576, output_rows=1768, materialized=56576
+                TABLE_SCAN: table=catalog_page, projections=[cp_catalog_page_sk, cp_catalog_page_id], filters="cp_catalog_page_sk<=9828", output_bytes=235872, output_rows=9828, materialized=235872, bytes_read=106429, rows_read=11718
+                HASH_JOIN: join_type=INNER, conditions=[cs_item_sk = i_item_sk], output_bytes=56640, output_rows=1770, materialized=56640
+                  HASH_JOIN: join_type=INNER, conditions=[cs_sold_date_sk = d_date_sk], output_bytes=1238880, output_rows=30972, materialized=1239128
+                    HASH_JOIN: join_type=INNER, conditions=[cs_promo_sk = p_promo_sk], output_bytes=67474032, output_rows=1405709, materialized=67474032
+                      HASH_JOIN: join_type=LEFT, conditions=[cs_item_sk = cr_item_sk, cs_order_number = cr_order_number], output_bytes=69194304, output_rows=1441548, materialized=69194304
+                        TABLE_SCAN: table=catalog_sales, projections=[cs_item_sk, cs_order_number, cs_sold_date_sk, cs_catalog_page_sk, cs_promo_sk, cs_ext_sales_price, cs_net_profit], output_bytes=5898240, output_rows=122880, materialized=5898240, bytes_read=1808406, rows_read=122880
+                        TABLE_SCAN: table=catalog_returns, projections=[cr_item_sk, cr_order_number, cr_return_amount, cr_net_loss], output_bytes=3457608, output_rows=144067, materialized=3457608, bytes_read=2086879, rows_read=144067
+                      TABLE_SCAN: table=promotion, projections=[p_promo_sk], filters="p_channel_tv='N'", output_bytes=2352, output_rows=294, materialized=2352, bytes_read=2068, rows_read=300
+                    FILTER: output_bytes=248, output_rows=31, materialized=0
+                      TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_date>='2000-08-23'::DATE AND d_date<='2000-09-22'::DATE", output_bytes=248, output_rows=31, materialized=248, bytes_read=584645, rows_read=73049
+                  TABLE_SCAN: table=item, projections=[i_item_sk], filters="i_current_price>50.00", output_bytes=8440, output_rows=1055, materialized=8440, bytes_read=111227, rows_read=18000
         PROJECTION: projections=[channel, id, sales, returns_, profit], output_bytes=1200, output_rows=15, materialized=0
           HASH_GROUP_BY: groups=[#0], aggregates=[sum(#1), sum(#2), sum(#3)], output_bytes=960, output_rows=15, materialized=31788
             PROJECTION: projections=[web_site_id, ws_ext_sales_price, COALESCE(CAST(wr_return_amt AS DECIMAL(12,2)), 0.00), (CAST(ws_net_profit AS DECIMAL(13,2)) - COALESCE(CAST(wr_net_loss AS DECIMAL(12,2)), 0.00))], output_bytes=31788, output_rows=883, materialized=0
               HASH_JOIN: join_type=INNER, conditions=[ws_web_site_sk = web_site_sk], output_bytes=28256, output_rows=883, materialized=28256
-                HASH_JOIN: join_type=INNER, conditions=[ws_item_sk = i_item_sk], output_bytes=21192, output_rows=883, materialized=21192
-                  HASH_JOIN: join_type=INNER, conditions=[ws_sold_date_sk = d_date_sk], output_bytes=445284, output_rows=15903, materialized=445408
-                    HASH_JOIN: join_type=INNER, conditions=[ws_promo_sk = p_promo_sk], output_bytes=508896, output_rows=15903, materialized=508896
-                      HASH_JOIN: join_type=LEFT, conditions=[ws_item_sk = wr_item_sk, ws_order_number = wr_order_number], output_bytes=518720, output_rows=16210, materialized=518720
-                        TABLE_SCAN: table=web_sales, projections=[ws_item_sk, ws_order_number, ws_sold_date_sk, ws_web_site_sk, ws_promo_sk, ws_ext_sales_price, ws_net_profit], output_bytes=453880, output_rows=16210, materialized=20596632, bytes_read_est=20142752, rows_read=719384
-                        TABLE_SCAN: table=web_returns, projections=[wr_item_sk, wr_order_number, wr_return_amt, wr_net_loss], output_bytes=1146464, output_rows=71654, materialized=2292928, bytes_read_est=1146464, rows_read=71654
-                      TABLE_SCAN: table=promotion, projections=[p_promo_sk], filters="p_channel_tv='N'", output_bytes=1176, output_rows=294, materialized=2376, bytes_read_est=1200, rows_read=300
-                    FILTER: output_bytes=124, output_rows=31, materialized=0
-                      TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_date>='2000-08-23'::DATE AND d_date<='2000-09-22'::DATE", output_bytes=124, output_rows=31, materialized=292320, bytes_read_est=292196, rows_read=73049
-                  TABLE_SCAN: table=item, projections=[i_item_sk], filters="i_current_price>50.00", output_bytes=4220, output_rows=1055, materialized=76220, bytes_read_est=72000, rows_read=18000
-                TABLE_SCAN: table=web_site, projections=[web_site_sk, web_site_id], output_bytes=600, output_rows=30, materialized=1200, bytes_read_est=600, rows_read=30
-duckdb_cost=172189880
+                HASH_JOIN: join_type=INNER, conditions=[ws_item_sk = i_item_sk], output_bytes=28256, output_rows=883, materialized=28256
+                  HASH_JOIN: join_type=INNER, conditions=[ws_sold_date_sk = d_date_sk], output_bytes=636560, output_rows=15914, materialized=636808
+                    HASH_JOIN: join_type=INNER, conditions=[ws_promo_sk = p_promo_sk], output_bytes=33829440, output_rows=704780, materialized=33829440
+                      HASH_JOIN: join_type=LEFT, conditions=[ws_item_sk = wr_item_sk, ws_order_number = wr_order_number], output_bytes=34530432, output_rows=719384, materialized=34530432
+                        TABLE_SCAN: table=web_sales, projections=[ws_item_sk, ws_order_number, ws_sold_date_sk, ws_web_site_sk, ws_promo_sk, ws_ext_sales_price, ws_net_profit], output_bytes=5898240, output_rows=122880, materialized=5898240, bytes_read=1728461, rows_read=122880
+                        TABLE_SCAN: table=web_returns, projections=[wr_item_sk, wr_order_number, wr_return_amt, wr_net_loss], output_bytes=1719696, output_rows=71654, materialized=1719696, bytes_read=1118629, rows_read=71654
+                      TABLE_SCAN: table=promotion, projections=[p_promo_sk], filters="p_channel_tv='N'", output_bytes=2352, output_rows=294, materialized=2352, bytes_read=2068, rows_read=300
+                    FILTER: output_bytes=248, output_rows=31, materialized=0
+                      TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_date>='2000-08-23'::DATE AND d_date<='2000-09-22'::DATE", output_bytes=248, output_rows=31, materialized=248, bytes_read=584645, rows_read=73049
+                  TABLE_SCAN: table=item, projections=[i_item_sk], filters="i_current_price>50.00", output_bytes=8440, output_rows=1055, materialized=8440, bytes_read=111227, rows_read=18000
+                TABLE_SCAN: table=web_site, projections=[web_site_sk, web_site_id], output_bytes=720, output_rows=30, materialized=720, bytes_read=364, rows_read=30
+duckdb_cost=533435013
+materialization_total=516222568
+storage_read_total=17212445
+
+--- row-group pruning (storage reduction) ---
+store_sales  dyn_filter=[ss_item_sk>=11 AND ss_item_sk<=17995 AND ss_sold_date_sk>=2451780 AND ss_sold_date_sk<=2451810 AND ss_store_sk>=1 AND ss_store_sk<=10 AND ss_promo_sk>=1 AND ss_promo_sk<=300]  row_groups=3/24  rows=299924/2880404 (10.4%)  bytes_fetched=4010868/39376422 (10.2%)
+store_returns  row_groups=3/3  rows=287867/287867 (100.0%)  bytes_fetched=4258409/4258409 (100.0%)
+promotion  filter=[p_channel_tv='N']  row_groups=1/1  rows=300/300 (100.0%)  bytes_fetched=2068/2068 (100.0%)
+date_dim  filter=[d_date>='2000-08-23'::DATE AND d_date<='2000-09-22'::DATE]  row_groups=1/1  rows=73049/73049 (100.0%)  bytes_fetched=584645/584645 (100.0%)
+item  filter=[i_current_price>50.00]  row_groups=1/1  rows=18000/18000 (100.0%)  bytes_fetched=111227/111227 (100.0%)
+store  filter=[s_store_sk<=10]  row_groups=1/1  rows=12/12 (100.0%)  bytes_fetched=180/180 (100.0%)
+catalog_page  filter=[cp_catalog_page_sk<=9828]  dyn_filter=[cp_catalog_page_sk>=3997 AND cp_catalog_page_sk<=4859]  row_groups=1/1  rows=11718/11718 (100.0%)  bytes_fetched=106429/106429 (100.0%)
+catalog_sales  dyn_filter=[cs_item_sk>=11 AND cs_item_sk<=17995 AND cs_sold_date_sk>=2451780 AND cs_sold_date_sk<=2451810 AND cs_promo_sk>=1 AND cs_promo_sk<=300]  row_groups=1/12  rows=122880/1441548 (8.5%)  bytes_fetched=1808406/21357738 (8.5%)
+catalog_returns  row_groups=2/2  rows=144067/144067 (100.0%)  bytes_fetched=2086879/2086879 (100.0%)
+promotion  filter=[p_channel_tv='N']  row_groups=1/1  rows=300/300 (100.0%)  bytes_fetched=2068/2068 (100.0%)
+date_dim  filter=[d_date>='2000-08-23'::DATE AND d_date<='2000-09-22'::DATE]  row_groups=1/1  rows=73049/73049 (100.0%)  bytes_fetched=584645/584645 (100.0%)
+item  filter=[i_current_price>50.00]  row_groups=1/1  rows=18000/18000 (100.0%)  bytes_fetched=111227/111227 (100.0%)
+web_sales  dyn_filter=[ws_item_sk>=11 AND ws_item_sk<=17995 AND ws_sold_date_sk>=2451780 AND ws_sold_date_sk<=2451810 AND ws_web_site_sk>=1 AND ws_web_site_sk<=30 AND ws_promo_sk>=1 AND ws_promo_sk<=300]  row_groups=1/6  rows=122880/719384 (17.1%)  bytes_fetched=1728461/10059322 (17.2%)
+web_returns  row_groups=1/1  rows=71654/71654 (100.0%)  bytes_fetched=1118629/1118629 (100.0%)
+promotion  filter=[p_channel_tv='N']  row_groups=1/1  rows=300/300 (100.0%)  bytes_fetched=2068/2068 (100.0%)
+date_dim  filter=[d_date>='2000-08-23'::DATE AND d_date<='2000-09-22'::DATE]  row_groups=1/1  rows=73049/73049 (100.0%)  bytes_fetched=584645/584645 (100.0%)
+item  filter=[i_current_price>50.00]  row_groups=1/1  rows=18000/18000 (100.0%)  bytes_fetched=111227/111227 (100.0%)
+web_site  row_groups=1/1  rows=30/30 (100.0%)  bytes_fetched=364/364 (100.0%)
+pruning_bytes_fetched=17212445/80458192 (21.4%)
+
+--- cost breakdown ---
+HASH_JOIN                             138259392  26.8%
+HASH_JOIN                             129409104  25.1%
+HASH_JOIN                              69194304  13.4%
+HASH_JOIN                              67474032  13.1%
+HASH_JOIN                              34530432   6.7%
+HASH_JOIN                              33829440   6.6%
+TABLE_SCAN(store_sales)                14396352   2.8%
+TABLE_SCAN(store_returns)               6908808   1.3%
+TABLE_SCAN(catalog_sales)               5898240   1.1%
+TABLE_SCAN(web_sales)                   5898240   1.1%
+TABLE_SCAN(catalog_returns)             3457608   0.7%
+HASH_JOIN                               2421448   0.5%
+TABLE_SCAN(web_returns)                 1719696   0.3%
+HASH_JOIN                               1239128   0.2%
+HASH_JOIN                                636808   0.1%
+TABLE_SCAN(catalog_page)                 235872   0.0%
+HASH_GROUP_BY                            124308   0.0%
+HASH_JOIN                                111616   0.0%
+HASH_JOIN                                110496   0.0%
+HASH_GROUP_BY                             63648   0.0%
+HASH_JOIN                                 56640   0.0%
+HASH_JOIN                                 56576   0.0%
+TOP_N                                     34160   0.0%
+HASH_GROUP_BY                             33840   0.0%
+HASH_GROUP_BY                             31788   0.0%
+HASH_JOIN                                 28256   0.0%
+HASH_JOIN                                 28256   0.0%
+TABLE_SCAN(item)                           8440   0.0%
+TABLE_SCAN(item)                           8440   0.0%
+TABLE_SCAN(item)                           8440   0.0%
+TABLE_SCAN(promotion)                      2352   0.0%
+TABLE_SCAN(promotion)                      2352   0.0%
+TABLE_SCAN(promotion)                      2352   0.0%
+TABLE_SCAN(web_site)                        720   0.0%
+TABLE_SCAN(date_dim)                        248   0.0%
+TABLE_SCAN(date_dim)                        248   0.0%
+TABLE_SCAN(date_dim)                        248   0.0%
+TABLE_SCAN(store)                           240   0.0%
+total=516222568

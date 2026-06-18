@@ -4,16 +4,38 @@ TOP_N: order_by=[tpch.main.orders.o_totalprice DESC, tpch.main.orders.o_orderdat
       PROJECTION: projections=[c_name, c_custkey, o_orderkey, o_orderdate, o_totalprice, l_quantity], output_bytes=17556, output_rows=399, materialized=0
         PROJECTION: projections=[#0, __internal_compress_integral_uinteger(#1, 1), #2, #3, __internal_compress_integral_uinteger(#4, 1), #5], output_bytes=17556, output_rows=399, materialized=0
           HASH_JOIN: join_type=INNER, conditions=[l_orderkey = o_orderkey], output_bytes=20748, output_rows=399, materialized=20748
-            TABLE_SCAN: table=lineitem, projections=[l_orderkey, l_quantity], output_bytes=95664560, output_rows=5979035, materialized=191684000, bytes_read_est=96019440, rows_read=6001215
+            TABLE_SCAN: table=lineitem, projections=[l_orderkey, l_quantity], output_bytes=96019440, output_rows=6001215, materialized=96019440, bytes_read=33772577, rows_read=6001215
             HASH_JOIN: join_type=INNER, conditions=[o_custkey = c_custkey], output_bytes=2508, output_rows=57, materialized=2508
               HASH_JOIN: join_type=SEMI, conditions=[o_orderkey = #0], output_bytes=1596, output_rows=57, materialized=2052
-                TABLE_SCAN: table=orders, projections=[o_orderkey, o_custkey, o_orderdate, o_totalprice], output_bytes=41844012, output_rows=1494429, materialized=83844012, bytes_read_est=42000000, rows_read=1500000
+                TABLE_SCAN: table=orders, projections=[o_orderkey, o_custkey, o_orderdate, o_totalprice], output_bytes=42000000, output_rows=1500000, materialized=42000000, bytes_read=23002355, rows_read=1500000
                 PROJECTION: projections=[#0], output_bytes=456, output_rows=57, materialized=0
                   FILTER: output_bytes=1368, output_rows=57, materialized=0
                     PROJECTION: projections=[__internal_decompress_integral_bigint(#0, 1), #1], output_bytes=36000000, output_rows=1500000, materialized=0
                       HASH_GROUP_BY: groups=[#0], aggregates=[sum_no_overflow(#1)], output_bytes=30000000, output_rows=1500000, materialized=72014580
                         PROJECTION: projections=[l_orderkey, l_quantity], output_bytes=72014580, output_rows=6001215, materialized=0
                           PROJECTION: projections=[__internal_compress_integral_uinteger(#0, 1), #1], output_bytes=72014580, output_rows=6001215, materialized=0
-                            TABLE_SCAN: table=lineitem, projections=[l_orderkey, l_quantity], output_bytes=96019440, output_rows=6001215, materialized=192038880, bytes_read_est=96019440, rows_read=6001215
-              TABLE_SCAN: table=customer, projections=[c_custkey, c_name], filters="c_custkey<=149999", output_bytes=3599976, output_rows=149999, materialized=7199976, bytes_read_est=3600000, rows_read=150000
-duckdb_cost=546827732
+                            TABLE_SCAN: table=lineitem, projections=[l_orderkey, l_quantity], output_bytes=96019440, output_rows=6001215, materialized=96019440, bytes_read=33772577, rows_read=6001215
+              TABLE_SCAN: table=customer, projections=[c_custkey, c_name], filters="c_custkey<=149999", output_bytes=3599976, output_rows=149999, materialized=3599976, bytes_read=1346848, rows_read=150000
+duckdb_cost=401594077
+materialization_total=309699720
+storage_read_total=91894357
+
+--- row-group pruning (storage reduction) ---
+lineitem  dyn_filter=[l_orderkey>=6882 AND l_orderkey<=5984582]  row_groups=49/49  rows=6001215/6001215 (100.0%)  bytes_fetched=33772577/33772577 (100.0%)
+orders  dyn_filter=[o_orderkey>=6882 AND o_orderkey<=5984582 AND o_custkey>=1 AND o_custkey<=149999]  row_groups=13/13  rows=1500000/1500000 (100.0%)  bytes_fetched=23002355/23002355 (100.0%)
+lineitem  row_groups=49/49  rows=6001215/6001215 (100.0%)  bytes_fetched=33772577/33772577 (100.0%)
+customer  filter=[c_custkey<=149999]  row_groups=2/2  rows=150000/150000 (100.0%)  bytes_fetched=1346848/1346848 (100.0%)
+pruning_bytes_fetched=91894357/91894357 (100.0%)
+
+--- cost breakdown ---
+TABLE_SCAN(lineitem)                   96019440  31.0%
+TABLE_SCAN(lineitem)                   96019440  31.0%
+HASH_GROUP_BY                          72014580  23.3%
+TABLE_SCAN(orders)                     42000000  13.6%
+TABLE_SCAN(customer)                    3599976   1.2%
+HASH_JOIN                                 20748   0.0%
+HASH_GROUP_BY                             17556   0.0%
+TOP_N                                      3420   0.0%
+HASH_JOIN                                  2508   0.0%
+HASH_JOIN                                  2052   0.0%
+total=309699720

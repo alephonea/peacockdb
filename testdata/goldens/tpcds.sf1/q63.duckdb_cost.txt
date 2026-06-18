@@ -1,20 +1,42 @@
-TOP_N: order_by=[tmp1.i_manager_id ASC, tmp1.avg_monthly_sales ASC, tmp1.sum_sales ASC], top=100, output_bytes=2800, output_rows=100, materialized=25480
-  FILTER: output_bytes=25480, output_rows=910, materialized=0
-    PROJECTION: projections=[i_manager_id, sum_sales, avg_monthly_sales], output_bytes=28196, output_rows=1007, materialized=0
-      PROJECTION: projections=[#0, #1, #2, #3], output_bytes=32224, output_rows=1007, materialized=0
-        WINDOW: output_bytes=32224, output_rows=1007, materialized=24168
-          PROJECTION: projections=[__internal_decompress_integral_integer(#0, 1), __internal_decompress_integral_integer(#1, 1), #2], output_bytes=24168, output_rows=1007, materialized=0
+TOP_N: order_by=[tmp1.i_manager_id ASC, tmp1.avg_monthly_sales ASC, tmp1.sum_sales ASC], top=100, output_bytes=3200, output_rows=100, materialized=29120
+  FILTER: output_bytes=29120, output_rows=910, materialized=0
+    PROJECTION: projections=[i_manager_id, sum_sales, avg_monthly_sales], output_bytes=32224, output_rows=1007, materialized=0
+      PROJECTION: projections=[#0, #1, #2, #3], output_bytes=40280, output_rows=1007, materialized=0
+        WINDOW: output_bytes=40280, output_rows=1007, materialized=32224
+          PROJECTION: projections=[__internal_decompress_integral_bigint(#0, 1), __internal_decompress_integral_bigint(#1, 1), #2], output_bytes=32224, output_rows=1007, materialized=0
             PERFECT_HASH_GROUP_BY: groups=[#0, #1], aggregates=[sum(#2)], output_bytes=18126, output_rows=1007, materialized=115788
               PROJECTION: projections=[i_manager_id, d_moy, ss_sales_price], output_bytes=115788, output_rows=19298, materialized=0
-                PROJECTION: projections=[__internal_compress_integral_utinyint(#2, 1), #0, __internal_compress_integral_utinyint(#1, 1), __internal_compress_integral_utinyint(#3, 1)], output_bytes=135086, output_rows=19298, materialized=0
-                  HASH_JOIN: join_type=INNER, conditions=[ss_store_sk = s_store_sk], output_bytes=308768, output_rows=19298, materialized=308768
-                    HASH_JOIN: join_type=INNER, conditions=[ss_item_sk = i_item_sk], output_bytes=308768, output_rows=19298, materialized=316240
-                      HASH_JOIN: join_type=INNER, conditions=[ss_sold_date_sk = d_date_sk], output_bytes=8645808, output_rows=540363, materialized=8648736
-                        TABLE_SCAN: table=store_sales, projections=[ss_item_sk, ss_sold_date_sk, ss_store_sk, ss_sales_price], output_bytes=8645808, output_rows=540363, materialized=54732272, bytes_read_est=46086464, rows_read=2880404
-                        FILTER: output_bytes=2928, output_rows=366, materialized=0
-                          TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_moy], filters="d_month_seq>=1200 AND d_month_seq<=1211", output_bytes=2928, output_rows=366, materialized=587320, bytes_read_est=584392, rows_read=73049
-                      PROJECTION: projections=[#0, #4], output_bytes=7472, output_rows=934, materialized=0
-                        FILTER: output_bytes=52304, output_rows=934, materialized=0
-                          TABLE_SCAN: table=item, projections=[i_item_sk, i_category, i_class, i_brand, i_manager_id], output_bytes=1008000, output_rows=18000, materialized=2016000, bytes_read_est=1008000, rows_read=18000
-                    TABLE_SCAN: table=store, projections=[s_store_sk], filters="s_store_sk<=10", output_bytes=40, output_rows=10, materialized=88, bytes_read_est=48, rows_read=12
-duckdb_cost=66774860
+                PROJECTION: projections=[__internal_compress_integral_utinyint(#1, 1), #0, __internal_compress_integral_utinyint(#2, 1), __internal_compress_integral_utinyint(#3, 1)], output_bytes=135086, output_rows=19298, materialized=0
+                  HASH_JOIN: join_type=INNER, conditions=[ss_store_sk = s_store_sk], output_bytes=540344, output_rows=19298, materialized=540344
+                    HASH_JOIN: join_type=INNER, conditions=[ss_sold_date_sk = d_date_sk], output_bytes=553756, output_rows=19777, materialized=559612
+                      HASH_JOIN: join_type=INNER, conditions=[ss_item_sk = i_item_sk], output_bytes=3364088, output_rows=120146, materialized=3379032
+                        TABLE_SCAN: table=store_sales, projections=[ss_item_sk, ss_sold_date_sk, ss_store_sk, ss_sales_price], output_bytes=22160432, output_rows=791444, materialized=22160432, bytes_read=3695473, rows_read=791444
+                        PROJECTION: projections=[#0, #4], output_bytes=14944, output_rows=934, materialized=0
+                          FILTER: output_bytes=59776, output_rows=934, materialized=0
+                            TABLE_SCAN: table=item, projections=[i_item_sk, i_category, i_class, i_brand, i_manager_id], filters="((i_category IN ('Books', 'Children', 'Electronics')) OR (i_category IN ('Women', 'Music', 'Men'))) AND ((i_class IN ('personal', 'portable', 'reference', 'self-help')) OR (i_class IN ('accessories', 'classical', 'fragrances', 'pants'))) AND ((i_brand IN ('scholaramalgamalg #14', 'scholaramalgamalg #7', 'exportiunivamalg #9', 'scholaramalgamalg #9')) OR (i_brand IN ('amalgimporto #1', 'edu packscholar #1', 'exportiimporto #1', 'importoamalg #1')))", output_bytes=59776, output_rows=934, materialized=59776, bytes_read=144184, rows_read=18000
+                      FILTER: output_bytes=5856, output_rows=366, materialized=0
+                        TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_moy], filters="d_month_seq>=1200 AND d_month_seq<=1211", output_bytes=5856, output_rows=366, materialized=5856, bytes_read=309636, rows_read=73049
+                    TABLE_SCAN: table=store, projections=[s_store_sk], filters="s_store_sk<=10", output_bytes=80, output_rows=10, materialized=80, bytes_read=108, rows_read=12
+duckdb_cost=31031665
+materialization_total=26882264
+storage_read_total=4149401
+
+--- row-group pruning (storage reduction) ---
+store_sales  dyn_filter=[ss_item_sk>=6 AND ss_item_sk<=17980 AND ss_sold_date_sk>=2451545 AND ss_sold_date_sk<=2451910 AND ss_store_sk>=1 AND ss_store_sk<=10]  row_groups=7/24  rows=791444/2880404 (27.5%)  bytes_fetched=3695473/13466306 (27.4%)
+item  filter=[((i_category IN ('Books', 'Children', 'Electronics')) OR (i_category IN ('Women', 'Music', 'Men'))) AND ((i_class IN ('personal', 'portable', 'reference', 'self-help')) OR (i_class IN ('accessories', 'classical', 'fragrances', 'pants'))) AND ((i_brand IN ('scholaramalgamalg #14', 'scholaramalgamalg #7', 'exportiunivamalg #9', 'scholaramalgamalg #9')) OR (i_brand IN ('amalgimporto #1', 'edu packscholar #1', 'exportiimporto #1', 'importoamalg #1')))]  row_groups=1/1  rows=18000/18000 (100.0%)  bytes_fetched=144184/144184 (100.0%)
+date_dim  filter=[d_month_seq>=1200 AND d_month_seq<=1211]  row_groups=1/1  rows=73049/73049 (100.0%)  bytes_fetched=309636/309636 (100.0%)
+store  filter=[s_store_sk<=10]  row_groups=1/1  rows=12/12 (100.0%)  bytes_fetched=108/108 (100.0%)
+pruning_bytes_fetched=4149401/13920234 (29.8%)
+
+--- cost breakdown ---
+TABLE_SCAN(store_sales)                22160432  82.4%
+HASH_JOIN                               3379032  12.6%
+HASH_JOIN                                559612   2.1%
+HASH_JOIN                                540344   2.0%
+PERFECT_HASH_GROUP_BY                    115788   0.4%
+TABLE_SCAN(item)                          59776   0.2%
+WINDOW                                    32224   0.1%
+TOP_N                                     29120   0.1%
+TABLE_SCAN(date_dim)                       5856   0.0%
+TABLE_SCAN(store)                            80   0.0%
+total=26882264

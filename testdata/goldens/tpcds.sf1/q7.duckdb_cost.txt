@@ -1,17 +1,41 @@
 TOP_N: order_by=[tpcds.main.item.i_item_id ASC], top=100, output_bytes=4800, output_rows=100, materialized=247632
-  HASH_GROUP_BY: groups=[#0], aggregates=[avg(#1), avg(#2), avg(#3), avg(#4)], output_bytes=247632, output_rows=5159, materialized=248352
-    PROJECTION: projections=[i_item_id, ss_quantity, ss_list_price, ss_coupon_amt, ss_sales_price], output_bytes=248352, output_rows=7761, materialized=0
-      HASH_JOIN: join_type=INNER, conditions=[i_item_sk = ss_item_sk], output_bytes=248352, output_rows=7761, materialized=248352
-        TABLE_SCAN: table=item, projections=[i_item_sk, i_item_id], filters="optional: Dynamic Filter (i_item_id)", output_bytes=359920, output_rows=17996, materialized=719920, bytes_read_est=360000, rows_read=18000
-        HASH_JOIN: join_type=INNER, conditions=[ss_promo_sk = p_promo_sk], output_bytes=186264, output_rows=7761, materialized=187460
-          HASH_JOIN: join_type=INNER, conditions=[cd_demo_sk = ss_cdemo_sk], output_bytes=220780, output_rows=7885, materialized=330532
-            FILTER: output_bytes=109752, output_rows=27438, materialized=0
-              TABLE_SCAN: table=customer_demographics, projections=[cd_demo_sk], filters="cd_gender='M' AND cd_marital_status='S' AND cd_education_status='College'", output_bytes=109752, output_rows=27438, materialized=7792952, bytes_read_est=7683200, rows_read=1920800
-            HASH_JOIN: join_type=INNER, conditions=[ss_sold_date_sk = d_date_sk], output_bytes=17727040, output_rows=553970, materialized=17728504
-              TABLE_SCAN: table=store_sales, projections=[ss_sold_date_sk, ss_item_sk, ss_cdemo_sk, ss_promo_sk, ss_quantity, ss_list_price, ss_coupon_amt, ss_sales_price], output_bytes=17727040, output_rows=553970, materialized=109899968, bytes_read_est=92172928, rows_read=2880404
-              FILTER: output_bytes=1464, output_rows=366, materialized=0
-                TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_year=2000", output_bytes=1464, output_rows=366, materialized=293660, bytes_read_est=292196, rows_read=73049
-          PROJECTION: projections=[#0], output_bytes=1196, output_rows=299, materialized=0
-            FILTER: output_bytes=10764, output_rows=299, materialized=0
-              TABLE_SCAN: table=promotion, projections=[p_promo_sk, p_channel_email, p_channel_event], output_bytes=10800, output_rows=300, materialized=21600, bytes_read_est=10800, rows_read=300
-duckdb_cost=137718932
+  HASH_GROUP_BY: groups=[#0], aggregates=[avg(#1), avg(#2), avg(#3), avg(#4)], output_bytes=247632, output_rows=5159, materialized=279396
+    PROJECTION: projections=[i_item_id, ss_quantity, ss_list_price, ss_coupon_amt, ss_sales_price], output_bytes=279396, output_rows=7761, materialized=0
+      HASH_JOIN: join_type=INNER, conditions=[i_item_sk = ss_item_sk], output_bytes=279396, output_rows=7761, materialized=279396
+        TABLE_SCAN: table=item, projections=[i_item_sk, i_item_id], filters="optional: Dynamic Filter (i_item_id)", output_bytes=432000, output_rows=18000, materialized=432000, bytes_read=128816, rows_read=18000
+        HASH_JOIN: join_type=INNER, conditions=[ss_promo_sk = p_promo_sk], output_bytes=279396, output_rows=7761, materialized=281788
+          HASH_JOIN: join_type=INNER, conditions=[cd_demo_sk = ss_cdemo_sk], output_bytes=346940, output_rows=7885, materialized=566460
+            FILTER: output_bytes=219520, output_rows=27440, materialized=0
+              TABLE_SCAN: table=customer_demographics, projections=[cd_demo_sk], filters="cd_gender='M' AND cd_marital_status='S' AND cd_education_status='College'", output_bytes=219520, output_rows=27440, materialized=219520, bytes_read=7768785, rows_read=1920800
+            HASH_JOIN: join_type=INNER, conditions=[ss_sold_date_sk = d_date_sk], output_bytes=28806440, output_rows=553970, materialized=28809368
+              TABLE_SCAN: table=store_sales, projections=[ss_sold_date_sk, ss_item_sk, ss_cdemo_sk, ss_promo_sk, ss_quantity, ss_list_price, ss_coupon_amt, ss_sales_price], output_bytes=41155088, output_rows=791444, materialized=41155088, bytes_read=9931263, rows_read=791444
+              FILTER: output_bytes=2928, output_rows=366, materialized=0
+                TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_year=2000", output_bytes=2928, output_rows=366, materialized=2928, bytes_read=293872, rows_read=73049
+          PROJECTION: projections=[#0], output_bytes=2392, output_rows=299, materialized=0
+            FILTER: output_bytes=11960, output_rows=299, materialized=0
+              TABLE_SCAN: table=promotion, projections=[p_promo_sk, p_channel_email, p_channel_event], output_bytes=12000, output_rows=300, materialized=12000, bytes_read=2138, rows_read=300
+duckdb_cost=90410450
+materialization_total=72285576
+storage_read_total=18124874
+
+--- row-group pruning (storage reduction) ---
+item  filter=[optional: Dynamic Filter (i_item_id)]  dyn_filter=[i_item_sk>=1 AND i_item_sk<=17996]  row_groups=1/1  rows=18000/18000 (100.0%)  bytes_fetched=128816/128816 (100.0%)
+customer_demographics  filter=[cd_gender='M' AND cd_marital_status='S' AND cd_education_status='College']  dyn_filter=[cd_demo_sk>=32 AND cd_demo_sk<=1920744]  row_groups=16/16  rows=1920800/1920800 (100.0%)  bytes_fetched=7768785/7768785 (100.0%)
+store_sales  dyn_filter=[ss_sold_date_sk>=2451545 AND ss_sold_date_sk<=2451910]  row_groups=7/24  rows=791444/2880404 (27.5%)  bytes_fetched=9931263/36258235 (27.4%)
+date_dim  filter=[d_year=2000]  row_groups=1/1  rows=73049/73049 (100.0%)  bytes_fetched=293872/293872 (100.0%)
+promotion  row_groups=1/1  rows=300/300 (100.0%)  bytes_fetched=2138/2138 (100.0%)
+pruning_bytes_fetched=18124874/44451846 (40.8%)
+
+--- cost breakdown ---
+TABLE_SCAN(store_sales)                41155088  56.9%
+HASH_JOIN                              28809368  39.9%
+HASH_JOIN                                566460   0.8%
+TABLE_SCAN(item)                         432000   0.6%
+HASH_JOIN                                281788   0.4%
+HASH_GROUP_BY                            279396   0.4%
+HASH_JOIN                                279396   0.4%
+TOP_N                                    247632   0.3%
+TABLE_SCAN(customer_demographics)         219520   0.3%
+TABLE_SCAN(promotion)                     12000   0.0%
+TABLE_SCAN(date_dim)                       2928   0.0%
+total=72285576

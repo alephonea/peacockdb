@@ -1,0 +1,1 @@
+["c_customer_sk>=1 AND c_customer_sk<=99999","ss_sold_date_sk>=2451911 AND ss_sold_date_sk<=2452640","","c_customer_sk>=2 AND c_customer_sk<=100000","ws_sold_date_sk>=2451911 AND ws_sold_date_sk<=2452640",""]

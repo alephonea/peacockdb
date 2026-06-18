@@ -1,29 +1,54 @@
-TOP_N: order_by=[y.item_sk ASC, y.d_date ASC], top=100, output_bytes=7200, output_rows=100, materialized=1839096
-  FILTER: output_bytes=1839096, output_rows=25543, materialized=0
-    PROJECTION: projections=[#0, #1, #2, #3, #4, #5], output_bytes=43969248, output_rows=610684, materialized=0
-      WINDOW: output_bytes=43969248, output_rows=610684, materialized=24427360
-        PROJECTION: projections=[item_sk, d_date, web_sales, store_sales], output_bytes=24427360, output_rows=610684, materialized=0
-          HASH_JOIN: join_type=FULL, conditions=[item_sk = item_sk, d_date = d_date], output_bytes=29312832, output_rows=610684, materialized=44613192
-            PROJECTION: projections=[item_sk, d_date, cume_sales], output_bytes=3319440, output_rows=138310, materialized=0
-              PROJECTION: projections=[#0, #1, #2, #3], output_bytes=5532400, output_rows=138310, materialized=0
-                WINDOW: output_bytes=5532400, output_rows=138310, materialized=3319440
-                  PROJECTION: projections=[__internal_decompress_integral_integer(#0, 1), #1, #2], output_bytes=3319440, output_rows=138310, materialized=0
-                    HASH_GROUP_BY: groups=[#0, #1], aggregates=[sum(#2)], output_bytes=3042820, output_rows=138310, materialized=1421800
-                      PROJECTION: projections=[ws_item_sk, d_date, ws_sales_price], output_bytes=1421800, output_rows=142180, materialized=0
-                        PROJECTION: projections=[__internal_compress_integral_usmallint(#0, 1), #1, #2], output_bytes=1421800, output_rows=142180, materialized=0
-                          HASH_JOIN: join_type=INNER, conditions=[ws_sold_date_sk = d_date_sk], output_bytes=1706160, output_rows=142180, materialized=1709088
-                            TABLE_SCAN: table=web_sales, projections=[ws_sold_date_sk, ws_item_sk, ws_sales_price], output_bytes=1706160, output_rows=142180, materialized=10338768, bytes_read_est=8632608, rows_read=719384
-                            FILTER: output_bytes=2928, output_rows=366, materialized=0
-                              TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_date], filters="d_month_seq>=1200 AND d_month_seq<=1211", output_bytes=2928, output_rows=366, materialized=587320, bytes_read_est=584392, rows_read=73049
-            PROJECTION: projections=[item_sk, d_date, cume_sales], output_bytes=11980920, output_rows=499205, materialized=0
-              PROJECTION: projections=[#0, #1, #2, #3], output_bytes=19968200, output_rows=499205, materialized=0
-                WINDOW: output_bytes=19968200, output_rows=499205, materialized=11980920
-                  PROJECTION: projections=[__internal_decompress_integral_integer(#0, 1), #1, #2], output_bytes=11980920, output_rows=499205, materialized=0
+TOP_N: order_by=[y.item_sk ASC, y.d_date ASC], top=100, output_bytes=7600, output_rows=100, materialized=1941268
+  FILTER: output_bytes=1941268, output_rows=25543, materialized=0
+    PROJECTION: projections=[#0, #1, #2, #3, #4, #5], output_bytes=46411984, output_rows=610684, materialized=0
+      WINDOW: output_bytes=46411984, output_rows=610684, materialized=26870096
+        PROJECTION: projections=[item_sk, d_date, web_sales, store_sales], output_bytes=26870096, output_rows=610684, materialized=0
+          HASH_JOIN: join_type=FULL, conditions=[item_sk = item_sk, d_date = d_date], output_bytes=34198304, output_rows=610684, materialized=52048724
+            PROJECTION: projections=[item_sk, d_date, cume_sales], output_bytes=13977740, output_rows=499205, materialized=0
+              PROJECTION: projections=[#0, #1, #2, #3], output_bytes=21965020, output_rows=499205, materialized=0
+                WINDOW: output_bytes=21965020, output_rows=499205, materialized=13977740
+                  PROJECTION: projections=[__internal_decompress_integral_bigint(#0, 1), #1, #2], output_bytes=13977740, output_rows=499205, materialized=0
                     HASH_GROUP_BY: groups=[#0, #1], aggregates=[sum(#2)], output_bytes=10982510, output_rows=499205, materialized=5539700
                       PROJECTION: projections=[ss_item_sk, d_date, ss_sales_price], output_bytes=5539700, output_rows=553970, materialized=0
                         PROJECTION: projections=[__internal_compress_integral_usmallint(#0, 1), #1, #2], output_bytes=5539700, output_rows=553970, materialized=0
-                          HASH_JOIN: join_type=INNER, conditions=[ss_sold_date_sk = d_date_sk], output_bytes=6647640, output_rows=553970, materialized=6650568
-                            TABLE_SCAN: table=store_sales, projections=[ss_sold_date_sk, ss_item_sk, ss_sales_price], output_bytes=6647640, output_rows=553970, materialized=41212488, bytes_read_est=34564848, rows_read=2880404
-                            FILTER: output_bytes=2928, output_rows=366, materialized=0
-                              TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_date], filters="d_month_seq>=1200 AND d_month_seq<=1211", output_bytes=2928, output_rows=366, materialized=587320, bytes_read_est=584392, rows_read=73049
-duckdb_cost=154227060
+                          HASH_JOIN: join_type=INNER, conditions=[ss_sold_date_sk = d_date_sk], output_bytes=8863520, output_rows=553970, materialized=8867912
+                            TABLE_SCAN: table=store_sales, projections=[ss_sold_date_sk, ss_item_sk, ss_sales_price], output_bytes=15828880, output_rows=791444, materialized=15828880, bytes_read=3366086, rows_read=791444
+                            FILTER: output_bytes=4392, output_rows=366, materialized=0
+                              TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_date], filters="d_month_seq>=1200 AND d_month_seq<=1211", output_bytes=4392, output_rows=366, materialized=4392, bytes_read=601516, rows_read=73049
+            PROJECTION: projections=[item_sk, d_date, cume_sales], output_bytes=3872680, output_rows=138310, materialized=0
+              PROJECTION: projections=[#0, #1, #2, #3], output_bytes=6085640, output_rows=138310, materialized=0
+                WINDOW: output_bytes=6085640, output_rows=138310, materialized=3872680
+                  PROJECTION: projections=[__internal_decompress_integral_bigint(#0, 1), #1, #2], output_bytes=3872680, output_rows=138310, materialized=0
+                    HASH_GROUP_BY: groups=[#0, #1], aggregates=[sum(#2)], output_bytes=3042820, output_rows=138310, materialized=1421800
+                      PROJECTION: projections=[ws_item_sk, d_date, ws_sales_price], output_bytes=1421800, output_rows=142180, materialized=0
+                        PROJECTION: projections=[__internal_compress_integral_usmallint(#0, 1), #1, #2], output_bytes=1421800, output_rows=142180, materialized=0
+                          HASH_JOIN: join_type=INNER, conditions=[ws_sold_date_sk = d_date_sk], output_bytes=2274880, output_rows=142180, materialized=2279272
+                            TABLE_SCAN: table=web_sales, projections=[ws_sold_date_sk, ws_item_sk, ws_sales_price], output_bytes=4915200, output_rows=245760, materialized=4915200, bytes_read=1147555, rows_read=245760
+                            FILTER: output_bytes=4392, output_rows=366, materialized=0
+                              TABLE_SCAN: table=date_dim, projections=[d_date_sk, d_date], filters="d_month_seq>=1200 AND d_month_seq<=1211", output_bytes=4392, output_rows=366, materialized=4392, bytes_read=601516, rows_read=73049
+duckdb_cost=143288729
+materialization_total=137572056
+storage_read_total=5716673
+
+--- row-group pruning (storage reduction) ---
+store_sales  dyn_filter=[ss_sold_date_sk>=2451545 AND ss_sold_date_sk<=2451910]  row_groups=7/24  rows=791444/2880404 (27.5%)  bytes_fetched=3366086/12259092 (27.5%)
+date_dim  filter=[d_month_seq>=1200 AND d_month_seq<=1211]  row_groups=1/1  rows=73049/73049 (100.0%)  bytes_fetched=601516/601516 (100.0%)
+web_sales  dyn_filter=[ws_sold_date_sk>=2451545 AND ws_sold_date_sk<=2451910]  row_groups=2/6  rows=245760/719384 (34.2%)  bytes_fetched=1147555/3336360 (34.4%)
+date_dim  filter=[d_month_seq>=1200 AND d_month_seq<=1211]  row_groups=1/1  rows=73049/73049 (100.0%)  bytes_fetched=601516/601516 (100.0%)
+pruning_bytes_fetched=5716673/16798484 (34.0%)
+
+--- cost breakdown ---
+HASH_JOIN                              52048724  37.8%
+WINDOW                                 26870096  19.5%
+TABLE_SCAN(store_sales)                15828880  11.5%
+WINDOW                                 13977740  10.2%
+HASH_JOIN                               8867912   6.4%
+HASH_GROUP_BY                           5539700   4.0%
+TABLE_SCAN(web_sales)                   4915200   3.6%
+WINDOW                                  3872680   2.8%
+HASH_JOIN                               2279272   1.7%
+TOP_N                                   1941268   1.4%
+HASH_GROUP_BY                           1421800   1.0%
+TABLE_SCAN(date_dim)                       4392   0.0%
+TABLE_SCAN(date_dim)                       4392   0.0%
+total=137572056

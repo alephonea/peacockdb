@@ -43,7 +43,7 @@ jobs:
           # DuckDB releases (e.g. INT32 vs INT64 surrogate keys), which would
           # shift row_width and target_batch_size across every plan golden.
           # generate_testdata.sh asserts $(duckdb --version) matches this.
-          conda install -y -n base -c conda-forge 'duckdb-cli=1.2.2'
+          conda install -y -n base -c conda-forge 'duckdb-cli=1.5.4'
           testdata/generate_testdata.sh --bench tpch
           testdata/generate_testdata.sh --bench tpcds
 

@@ -1,0 +1,1 @@
+["cd_demo_sk>=72894 AND cd_demo_sk<=1902498","hd_income_band_sk>=5 AND hd_income_band_sk<=8 AND hd_demo_sk>=38 AND hd_demo_sk<=7154","sr_cdemo_sk>=3781 AND sr_cdemo_sk<=1915892","c_current_addr_sk>=12 AND c_current_addr_sk<=49511","",""]

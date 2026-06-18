@@ -1,0 +1,1 @@
+["c_customer_sk>=212 AND c_customer_sk<=99852","ss_sold_date_sk>=2451180 AND ss_sold_date_sk<=2452272 AND ss_store_sk>=1 AND ss_store_sk<=10 AND ss_hdemo_sk>=1520 AND ss_hdemo_sk<=5999","","",""]

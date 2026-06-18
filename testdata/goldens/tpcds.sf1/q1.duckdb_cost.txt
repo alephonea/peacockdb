@@ -1,28 +1,53 @@
-TOP_N: order_by=[tpcds.main.customer.c_customer_id ASC], top=100, output_bytes=1600, output_rows=100, materialized=205936
-  PROJECTION: projections=[c_customer_id], output_bytes=205936, output_rows=12871, materialized=0
-    CTE: output_bytes=0, output_rows=0, materialized=0
-      PROJECTION: projections=[#0, __internal_decompress_integral_integer(#1, 1), #2], output_bytes=1199928, output_rows=49997, materialized=0
-        HASH_GROUP_BY: groups=[#0, #1], aggregates=[sum(#2)], output_bytes=1049937, output_rows=49997, materialized=498960
-          PROJECTION: projections=[sr_customer_sk, sr_store_sk, sr_return_amt], output_bytes=498960, output_rows=55440, materialized=0
-            PROJECTION: projections=[#0, __internal_compress_integral_utinyint(#1, 1), #2, __internal_compress_integral_usmallint(#3, 2450820)], output_bytes=609840, output_rows=55440, materialized=0
-              HASH_JOIN: join_type=INNER, conditions=[sr_returned_date_sk = d_date_sk], output_bytes=887040, output_rows=55440, materialized=888504
-                TABLE_SCAN: table=store_returns, projections=[sr_returned_date_sk, sr_customer_sk, sr_store_sk, sr_return_amt], output_bytes=887040, output_rows=55440, materialized=5492912, bytes_read_est=4605872, rows_read=287867
-                FILTER: output_bytes=1464, output_rows=366, materialized=0
-                  TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_year=2000", output_bytes=1464, output_rows=366, materialized=293660, bytes_read_est=292196, rows_read=73049
-      FILTER: output_bytes=978196, output_rows=12871, materialized=0
-        RIGHT_DELIM_JOIN: join_type=RIGHT, conditions=[ctr_store_sk IS NOT DISTINCT FROM ctr_store_sk], output_bytes=0, output_rows=0, materialized=24
-          HASH_JOIN: join_type=INNER, conditions=[c_customer_sk = ctr_customer_sk], output_bytes=3167552, output_rows=49493, materialized=3167552
-            TABLE_SCAN: table=customer, output_bytes=1999900, output_rows=99995, materialized=3999900, bytes_read_est=2000000, rows_read=100000
-            HASH_JOIN: join_type=INNER, conditions=[ctr_store_sk = s_store_sk], output_bytes=2177956, output_rows=49499, materialized=2177956
-              CTE_SCAN: output_bytes=1199928, output_rows=49997, materialized=0
-              TABLE_SCAN: table=store, filters="s_state='TN'", output_bytes=240, output_rows=12, materialized=480, bytes_read_est=240, rows_read=12
-          HASH_JOIN: join_type=RIGHT, conditions=[ctr_store_sk IS NOT DISTINCT FROM ctr_store_sk], output_bytes=3761468, output_rows=49493, materialized=3761540
-            PROJECTION: projections=[(avg(ctr_total_return) * 1.2), ctr_store_sk], output_bytes=72, output_rows=6, materialized=0
-              HASH_GROUP_BY: groups=[#0], aggregates=[avg(#1)], output_bytes=72, output_rows=6, materialized=989980
-                PROJECTION: projections=[ctr_store_sk, ctr_total_return], output_bytes=989980, output_rows=49499, materialized=0
-                  HASH_JOIN: join_type=INNER, conditions=[ctr_store_sk = ctr_store_sk], output_bytes=1187976, output_rows=49499, materialized=1187976
-                    CTE_SCAN: output_bytes=1199928, output_rows=49997, materialized=0
+CTE: output_bytes=0, output_rows=0, materialized=0
+  PROJECTION: projections=[__internal_decompress_integral_bigint(#0, 2), __internal_decompress_integral_bigint(#1, 1), #2], output_bytes=1599904, output_rows=49997, materialized=0
+    HASH_GROUP_BY: groups=[#0, #1], aggregates=[sum(#2)], output_bytes=1049937, output_rows=49997, materialized=498960
+      PROJECTION: projections=[sr_customer_sk, sr_store_sk, sr_return_amt], output_bytes=498960, output_rows=55440, materialized=0
+        PROJECTION: projections=[__internal_compress_integral_uinteger(#0, 2), __internal_compress_integral_utinyint(#1, 1), #2, __internal_compress_integral_usmallint(#3, 2450820)], output_bytes=609840, output_rows=55440, materialized=0
+          HASH_JOIN: join_type=INNER, conditions=[sr_returned_date_sk = d_date_sk], output_bytes=1552320, output_rows=55440, materialized=1555248
+            TABLE_SCAN: table=store_returns, projections=[sr_returned_date_sk, sr_customer_sk, sr_store_sk, sr_return_amt], output_bytes=6881280, output_rows=245760, materialized=6881280, bytes_read=2167502, rows_read=245760
+            FILTER: output_bytes=2928, output_rows=366, materialized=0
+              TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_year=2000", output_bytes=2928, output_rows=366, materialized=2928, bytes_read=293872, rows_read=73049
+  TOP_N: order_by=[tpcds.main.customer.c_customer_id ASC], top=100, output_bytes=1600, output_rows=100, materialized=205936
+    PROJECTION: projections=[#0], output_bytes=205936, output_rows=12871, materialized=0
+      FILTER: output_bytes=514840, output_rows=12871, materialized=0
+        LEFT_DELIM_JOIN: join_type=LEFT, conditions=[ctr_store_sk IS NOT DISTINCT FROM ctr_store_sk], output_bytes=0, output_rows=0, materialized=48
+          HASH_JOIN: join_type=INNER, conditions=[c_customer_sk = ctr_customer_sk], output_bytes=1979720, output_rows=49493, materialized=1979720
+            TABLE_SCAN: table=customer, projections=[c_customer_sk, c_customer_id], output_bytes=2400000, output_rows=100000, materialized=2400000, bytes_read=898553, rows_read=100000
+            HASH_JOIN: join_type=INNER, conditions=[ctr_store_sk = s_store_sk], output_bytes=1979960, output_rows=49499, materialized=1979960
+              CTE_SCAN: output_bytes=1599904, output_rows=49997, materialized=0
+              TABLE_SCAN: table=store, projections=[s_store_sk], filters="s_state='TN'", output_bytes=96, output_rows=12, materialized=96, bytes_read=157, rows_read=12
+          HASH_JOIN: join_type=LEFT, conditions=[ctr_store_sk IS NOT DISTINCT FROM ctr_store_sk], output_bytes=1979720, output_rows=49493, materialized=1979816
+            COLUMN_DATA_SCAN: output_bytes=1979720, output_rows=49493, materialized=0
+            PROJECTION: projections=[(avg(ctr_total_return) * 1.2), ctr_store_sk], output_bytes=96, output_rows=6, materialized=0
+              HASH_GROUP_BY: groups=[#0], aggregates=[avg(#1)], output_bytes=96, output_rows=6, materialized=1187976
+                PROJECTION: projections=[ctr_store_sk, ctr_total_return], output_bytes=1187976, output_rows=49499, materialized=0
+                  HASH_JOIN: join_type=INNER, conditions=[ctr_store_sk = ctr_store_sk], output_bytes=1583968, output_rows=49499, materialized=1583968
+                    CTE_SCAN: output_bytes=1599904, output_rows=49997, materialized=0
                     DELIM_SCAN: output_bytes=0, output_rows=0, materialized=0
-            DUMMY_SCAN: output_bytes=0, output_rows=0, materialized=0
-          HASH_GROUP_BY: groups=[#3], output_bytes=24, output_rows=6, materialized=0
-duckdb_cost=22665380
+          HASH_GROUP_BY: groups=[#1], output_bytes=48, output_rows=6, materialized=0
+duckdb_cost=23616020
+materialization_total=20255936
+storage_read_total=3360084
+
+--- row-group pruning (storage reduction) ---
+store_returns  dyn_filter=[sr_returned_date_sk>=2451545 AND sr_returned_date_sk<=2451910]  row_groups=2/3  rows=245760/287867 (85.4%)  bytes_fetched=2167502/2498600 (86.7%)
+date_dim  filter=[d_year=2000]  row_groups=1/1  rows=73049/73049 (100.0%)  bytes_fetched=293872/293872 (100.0%)
+customer  dyn_filter=[c_customer_sk>=6 AND c_customer_sk<=100000]  row_groups=1/1  rows=100000/100000 (100.0%)  bytes_fetched=898553/898553 (100.0%)
+store  filter=[s_state='TN']  row_groups=1/1  rows=12/12 (100.0%)  bytes_fetched=157/157 (100.0%)
+pruning_bytes_fetched=3360084/3691182 (91.0%)
+
+--- cost breakdown ---
+TABLE_SCAN(store_returns)               6881280  34.0%
+TABLE_SCAN(customer)                    2400000  11.8%
+HASH_JOIN                               1979960   9.8%
+HASH_JOIN                               1979816   9.8%
+HASH_JOIN                               1979720   9.8%
+HASH_JOIN                               1583968   7.8%
+HASH_JOIN                               1555248   7.7%
+HASH_GROUP_BY                           1187976   5.9%
+HASH_GROUP_BY                            498960   2.5%
+TOP_N                                    205936   1.0%
+TABLE_SCAN(date_dim)                       2928   0.0%
+TABLE_SCAN(store)                            96   0.0%
+LEFT_DELIM_JOIN                              48   0.0%
+total=20255936

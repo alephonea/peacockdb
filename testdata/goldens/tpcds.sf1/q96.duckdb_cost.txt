@@ -1,12 +1,33 @@
 TOP_N: order_by=[count_star() ASC], top=100, output_bytes=8, output_rows=1, materialized=8
-  UNGROUPED_AGGREGATE: aggregates=[count_star()], output_bytes=8, output_rows=1, materialized=10488
-    HASH_JOIN: join_type=INNER, conditions=[ss_store_sk = s_store_sk], output_bytes=10488, output_rows=874, materialized=10492
-      HASH_JOIN: join_type=INNER, conditions=[ss_hdemo_sk = hd_demo_sk], output_bytes=6992, output_rows=874, materialized=6992
-        HASH_JOIN: join_type=INNER, conditions=[ss_sold_time_sk = t_time_sk], output_bytes=92232, output_rows=7686, materialized=99432
-          TABLE_SCAN: table=store_sales, projections=[ss_sold_time_sk, ss_hdemo_sk, ss_store_sk], output_bytes=92232, output_rows=7686, materialized=34657080, bytes_read_est=34564848, rows_read=2880404
-          FILTER: output_bytes=7200, output_rows=1800, materialized=0
-            TABLE_SCAN: table=time_dim, projections=[t_time_sk], filters="t_hour=20 AND t_minute>=30", output_bytes=7200, output_rows=1800, materialized=352800, bytes_read_est=345600, rows_read=86400
-        TABLE_SCAN: table=household_demographics, projections=[hd_demo_sk], filters="hd_dep_count=7", output_bytes=2880, output_rows=720, materialized=31680, bytes_read_est=28800, rows_read=7200
-      FILTER: output_bytes=4, output_rows=1, materialized=0
-        TABLE_SCAN: table=store, projections=[s_store_sk], filters="s_store_name='ese'", output_bytes=4, output_rows=1, materialized=52, bytes_read_est=48, rows_read=12
-duckdb_cost=35169024
+  UNGROUPED_AGGREGATE: aggregates=[count_star()], output_bytes=8, output_rows=1, materialized=20976
+    HASH_JOIN: join_type=INNER, conditions=[ss_store_sk = s_store_sk], output_bytes=20976, output_rows=874, materialized=20984
+      HASH_JOIN: join_type=INNER, conditions=[ss_hdemo_sk = hd_demo_sk], output_bytes=87312, output_rows=5457, materialized=87312
+        HASH_JOIN: join_type=INNER, conditions=[ss_sold_time_sk = t_time_sk], output_bytes=1348152, output_rows=56173, materialized=1362552
+          TABLE_SCAN: table=store_sales, projections=[ss_sold_time_sk, ss_hdemo_sk, ss_store_sk], output_bytes=69129696, output_rows=2880404, materialized=69129696, bytes_read=12481881, rows_read=2880404
+          FILTER: output_bytes=14400, output_rows=1800, materialized=0
+            TABLE_SCAN: table=time_dim, projections=[t_time_sk], filters="t_hour=20 AND t_minute>=30", output_bytes=14400, output_rows=1800, materialized=14400, bytes_read=347352, rows_read=86400
+        TABLE_SCAN: table=household_demographics, projections=[hd_demo_sk], filters="hd_dep_count=7", output_bytes=5760, output_rows=720, materialized=5760, bytes_read=29747, rows_read=7200
+      FILTER: output_bytes=8, output_rows=1, materialized=0
+        TABLE_SCAN: table=store, projections=[s_store_sk], filters="s_store_name='ese'", output_bytes=8, output_rows=1, materialized=8, bytes_read=217, rows_read=12
+duckdb_cost=83500893
+materialization_total=70641696
+storage_read_total=12859197
+
+--- row-group pruning (storage reduction) ---
+store_sales  dyn_filter=[ss_sold_time_sk>=73800 AND ss_sold_time_sk<=75599 AND ss_hdemo_sk>=840 AND ss_hdemo_sk<=6959 AND ss_store_sk=4]  row_groups=24/24  rows=2880404/2880404 (100.0%)  bytes_fetched=12481881/12481881 (100.0%)
+time_dim  filter=[t_hour=20 AND t_minute>=30]  row_groups=1/1  rows=86400/86400 (100.0%)  bytes_fetched=347352/347352 (100.0%)
+household_demographics  filter=[hd_dep_count=7]  row_groups=1/1  rows=7200/7200 (100.0%)  bytes_fetched=29747/29747 (100.0%)
+store  filter=[s_store_name='ese']  row_groups=1/1  rows=12/12 (100.0%)  bytes_fetched=217/217 (100.0%)
+pruning_bytes_fetched=12859197/12859197 (100.0%)
+
+--- cost breakdown ---
+TABLE_SCAN(store_sales)                69129696  97.9%
+HASH_JOIN                               1362552   1.9%
+HASH_JOIN                                 87312   0.1%
+HASH_JOIN                                 20984   0.0%
+UNGROUPED_AGGREGATE                       20976   0.0%
+TABLE_SCAN(time_dim)                      14400   0.0%
+TABLE_SCAN(household_demographics)           5760   0.0%
+TOP_N                                         8   0.0%
+TABLE_SCAN(store)                             8   0.0%
+total=70641696

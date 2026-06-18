@@ -1,21 +1,38 @@
-PROJECTION: projections=[__internal_decompress_integral_bigint(#0, 1), #1, #2, __internal_decompress_string(#3), #4], output_bytes=72, output_rows=1, materialized=0
-  ORDER_BY: order_by=[tpch.main.supplier.s_suppkey ASC], output_bytes=66, output_rows=1, materialized=66
-    PROJECTION: projections=[__internal_compress_integral_usmallint(#0, 1), #1, #2, __internal_compress_string_hugeint(#3), #4], output_bytes=66, output_rows=1, materialized=0
-      PROJECTION: projections=[s_suppkey, s_name, s_address, s_phone, total_revenue], output_bytes=72, output_rows=1, materialized=0
-        CTE: output_bytes=0, output_rows=0, materialized=0
-          PROJECTION: projections=[__internal_decompress_integral_bigint(#0, 1), #1], output_bytes=240000, output_rows=10000, materialized=0
-            HASH_GROUP_BY: groups=[#0], aggregates=[sum_no_overflow(#1)], output_bytes=180000, output_rows=10000, materialized=2259540
-              PROJECTION: projections=[l_suppkey, (l_extendedprice * (1.00 - l_discount))], output_bytes=2259540, output_rows=225954, materialized=0
-                PROJECTION: projections=[__internal_compress_integral_usmallint(#0, 1), #1, #2], output_bytes=4067172, output_rows=225954, materialized=0
-                  TABLE_SCAN: table=lineitem, projections=[l_suppkey, l_extendedprice, l_discount], filters="l_shipdate>='1996-01-01'::DATE AND l_shipdate<'1996-04-01'::DATE", output_bytes=5422896, output_rows=225954, materialized=149452056, bytes_read_est=144029160, rows_read=6001215
-          HASH_JOIN: join_type=INNER, conditions=[s_suppkey = supplier_no], output_bytes=96, output_rows=1, materialized=96
-            TABLE_SCAN: table=supplier, output_bytes=56, output_rows=1, materialized=560056, bytes_read_est=560000, rows_read=10000
-            HASH_JOIN: join_type=INNER, conditions=[total_revenue = SUBQUERY], output_bytes=40, output_rows=1, materialized=56
-              CTE_SCAN: output_bytes=240000, output_rows=10000, materialized=0
-              PROJECTION: projections=[CASE  WHEN ((#1 > 1)) THEN (error('More than one row returned by a subquery used as an expression - scalar subqueries can only return a single row., Use "SET scalar_subquery_error_on_multiple_rows=false" to revert to previous behavior of returning a random row.')) ELSE #0 END], output_bytes=16, output_rows=1, materialized=0
-                UNGROUPED_AGGREGATE: aggregates=["first"(#0), count_star()], output_bytes=24, output_rows=1, materialized=16
-                  PROJECTION: projections=[#0], output_bytes=16, output_rows=1, materialized=0
-                    UNGROUPED_AGGREGATE: aggregates=[max(#0)], output_bytes=16, output_rows=1, materialized=160000
-                      PROJECTION: projections=[total_revenue], output_bytes=160000, output_rows=10000, materialized=0
-                        CTE_SCAN: output_bytes=240000, output_rows=10000, materialized=0
-duckdb_cost=152431886
+CTE: output_bytes=0, output_rows=0, materialized=0
+  PROJECTION: projections=[__internal_decompress_integral_bigint(#0, 1), #1], output_bytes=240000, output_rows=10000, materialized=0
+    HASH_GROUP_BY: groups=[#0], aggregates=[sum_no_overflow(#1)], output_bytes=180000, output_rows=10000, materialized=2259540
+      PROJECTION: projections=[l_suppkey, (l_extendedprice * (1.00 - l_discount))], output_bytes=2259540, output_rows=225954, materialized=0
+        PROJECTION: projections=[__internal_compress_integral_usmallint(#0, 1), #1, #2], output_bytes=4067172, output_rows=225954, materialized=0
+          TABLE_SCAN: table=lineitem, projections=[l_suppkey, l_extendedprice, l_discount], filters="l_shipdate>='1996-01-01'::DATE AND (CAST(l_shipdate AS TIMESTAMP) < '1996-04-01 00:00:00'::TIMESTAMP)", output_bytes=5422896, output_rows=225954, materialized=5422896, bytes_read=2858384, rows_read=368640
+  PROJECTION: projections=[__internal_decompress_integral_bigint(#0, 1), #1, #2, __internal_decompress_string(#3), #4], output_bytes=72, output_rows=1, materialized=0
+    ORDER_BY: order_by=[tpch.main.supplier.s_suppkey ASC], output_bytes=66, output_rows=1, materialized=66
+      PROJECTION: projections=[__internal_compress_integral_usmallint(#0, 1), #1, #2, __internal_compress_string_uhugeint(#3), #4], output_bytes=66, output_rows=1, materialized=0
+        HASH_JOIN: join_type=INNER, conditions=[s_suppkey = supplier_no], output_bytes=72, output_rows=1, materialized=72
+          TABLE_SCAN: table=supplier, projections=[s_suppkey, s_name, s_address, s_phone], output_bytes=560000, output_rows=10000, materialized=560000, bytes_read=494410, rows_read=10000
+          HASH_JOIN: join_type=INNER, conditions=[total_revenue = SUBQUERY], output_bytes=40, output_rows=1, materialized=56
+            CTE_SCAN: output_bytes=240000, output_rows=10000, materialized=0
+            PROJECTION: projections=[CASE  WHEN ((#1 > 1)) THEN ("error"('More than one row returned by a subquery used as an expression - scalar subqueries can only return a single row., Use "SET scalar_subquery_error_on_multiple_rows=false" to revert to previous behavior of returning a random row.')) ELSE #0 END], output_bytes=16, output_rows=1, materialized=0
+              UNGROUPED_AGGREGATE: aggregates=["first"(#0), count_star()], output_bytes=24, output_rows=1, materialized=16
+                PROJECTION: projections=[#0], output_bytes=16, output_rows=1, materialized=0
+                  UNGROUPED_AGGREGATE: aggregates=[max(#0)], output_bytes=16, output_rows=1, materialized=160000
+                    PROJECTION: projections=[total_revenue], output_bytes=160000, output_rows=10000, materialized=0
+                      CTE_SCAN: output_bytes=240000, output_rows=10000, materialized=0
+duckdb_cost=11755440
+materialization_total=8402646
+storage_read_total=3352794
+
+--- row-group pruning (storage reduction) ---
+lineitem  filter=[l_shipdate>='1996-01-01'::DATE AND (CAST(l_shipdate AS TIMESTAMP) < '1996-04-01 00:00:00'::TIMESTAMP)]  row_groups=3/49  rows=368640/6001215 (6.1%)  bytes_fetched=2858384/46538612 (6.1%)
+supplier  dyn_filter=[s_suppkey=8449]  row_groups=1/1  rows=10000/10000 (100.0%)  bytes_fetched=494410/494410 (100.0%)
+pruning_bytes_fetched=3352794/47033022 (7.1%)
+
+--- cost breakdown ---
+TABLE_SCAN(lineitem)                    5422896  64.5%
+HASH_GROUP_BY                           2259540  26.9%
+TABLE_SCAN(supplier)                     560000   6.7%
+UNGROUPED_AGGREGATE                      160000   1.9%
+HASH_JOIN                                    72   0.0%
+ORDER_BY                                     66   0.0%
+HASH_JOIN                                    56   0.0%
+UNGROUPED_AGGREGATE                          16   0.0%
+total=8402646

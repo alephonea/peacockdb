@@ -1,0 +1,1 @@
+["s_nationkey>=6 AND s_nationkey<=23","n_regionkey=3","","ps_partkey>=249 AND ps_partkey<=199723 AND ps_suppkey>=7 AND ps_suppkey<=10000","","ps_partkey>=249 AND ps_partkey<=199478 AND ps_suppkey>=7 AND ps_suppkey<=10000"]

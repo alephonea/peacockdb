@@ -1,0 +1,1 @@
+["ps_suppkey>=33 AND ps_suppkey<=9990","s_nationkey=7",""]

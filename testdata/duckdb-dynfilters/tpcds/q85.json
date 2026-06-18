@@ -1,0 +1,1 @@
+["cd_demo_sk=1037564 AND cd_marital_status='S' AND cd_education_status='College'","cd_demo_sk>=4686 AND cd_demo_sk<=1915070","ca_address_sk>=2 AND ca_address_sk<=50000","wr_item_sk>=1 AND wr_item_sk<=17999 AND wr_order_number>=3 AND wr_order_number<=59999","ws_sold_date_sk>=2451545 AND ws_sold_date_sk<=2451910","","",""]

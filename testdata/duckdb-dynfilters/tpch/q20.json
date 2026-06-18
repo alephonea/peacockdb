@@ -1,0 +1,1 @@
+["ps_partkey>=5 AND ps_partkey<=199879","","l_partkey>=5 AND l_partkey<=199879 AND l_suppkey>=1 AND l_suppkey<=9993","s_nationkey=3",""]

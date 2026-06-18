@@ -1,0 +1,1 @@
+["o_orderkey>=1 AND o_orderkey<=6000000","l_suppkey>=74 AND l_suppkey<=9898","s_nationkey=20","","l_orderkey>=229 AND l_orderkey<=5999845","l_orderkey>=229 AND l_orderkey<=5999845"]

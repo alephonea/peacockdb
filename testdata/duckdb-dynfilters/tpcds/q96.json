@@ -1,0 +1,1 @@
+["ss_sold_time_sk>=73800 AND ss_sold_time_sk<=75599 AND ss_hdemo_sk>=840 AND ss_hdemo_sk<=6959 AND ss_store_sk=4","","",""]

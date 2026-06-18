@@ -2,30 +2,58 @@ TOP_N: order_by=[tpcds.main.store.s_store_name ASC], top=100, output_bytes=160, 
   PROJECTION: projections=[__internal_decompress_string(#0), #1], output_bytes=160, output_rows=5, materialized=0
     HASH_GROUP_BY: groups=[#0], aggregates=[sum(#1)], output_bytes=120, output_rows=5, materialized=765420
       PROJECTION: projections=[s_store_name, ss_net_profit], output_bytes=765420, output_rows=63785, materialized=0
-        PROJECTION: projections=[#0, __internal_compress_string_ubigint(#1), #2], output_bytes=1785980, output_rows=63785, materialized=0
-          HASH_JOIN: join_type=INNER, conditions=["substring"(s_zip, 1, 2) = "substring"(ca_zip, 1, 2)], output_bytes=2296260, output_rows=63785, materialized=2296372
-            HASH_JOIN: join_type=INNER, conditions=[ss_store_sk = s_store_sk], output_bytes=2777580, output_rows=77155, materialized=2777580
-              HASH_JOIN: join_type=INNER, conditions=[ss_sold_date_sk = d_date_sk], output_bytes=925860, output_rows=77155, materialized=926224
-                TABLE_SCAN: table=store_sales, projections=[ss_store_sk, ss_sold_date_sk, ss_net_profit], output_bytes=925860, output_rows=77155, materialized=35490708, bytes_read_est=34564848, rows_read=2880404
-                FILTER: output_bytes=364, output_rows=91, materialized=0
-                  TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_qoy=2 AND d_year=1998", output_bytes=364, output_rows=91, materialized=292560, bytes_read_est=292196, rows_read=73049
-              TABLE_SCAN: table=store, projections=[s_store_sk, s_zip, s_store_name], filters="s_store_sk<=10", output_bytes=360, output_rows=10, materialized=792, bytes_read_est=432, rows_read=12
-            HASH_GROUP_BY: groups=[#0], output_bytes=112, output_rows=7, materialized=5552
-              HASH_JOIN: join_type=SEMI, conditions=[#0 IS NOT DISTINCT FROM #0], output_bytes=5552, output_rows=347, materialized=26656
-                PROJECTION: projections=[ca_zip], output_bytes=6128, output_rows=383, materialized=0
-                  PROJECTION: projections=[#0], output_bytes=6128, output_rows=383, materialized=0
-                    FILTER: output_bytes=6511, output_rows=383, materialized=0
-                      HASH_JOIN: join_type=MARK, conditions=["substring"(ca_zip, 1, 5) = #0], output_bytes=850000, output_rows=50000, materialized=850000
-                        TABLE_SCAN: table=customer_address, projections=[ca_zip], output_bytes=800000, output_rows=50000, materialized=1600000, bytes_read_est=800000, rows_read=50000
-                        COLUMN_DATA_SCAN: output_bytes=6400, output_rows=400, materialized=0
-                PROJECTION: projections=[ca_zip], output_bytes=14976, output_rows=936, materialized=0
-                  PROJECTION: projections=[#0], output_bytes=14976, output_rows=936, materialized=0
-                    FILTER: output_bytes=22464, output_rows=936, materialized=0
-                      PROJECTION: projections=[__internal_decompress_string(#0), #1], output_bytes=76032, output_rows=3168, materialized=0
-                        HASH_GROUP_BY: groups=[#0], aggregates=[count_star()], output_bytes=50688, output_rows=3168, materialized=379016
-                          PROJECTION: projections=[ca_zip], output_bytes=379016, output_rows=47377, materialized=0
-                            PROJECTION: projections=[__internal_compress_string_ubigint(#0), __internal_compress_integral_usmallint(#1, 1)], output_bytes=473770, output_rows=47377, materialized=0
-                              HASH_JOIN: join_type=INNER, conditions=[ca_address_sk = c_current_addr_sk], output_bytes=947540, output_rows=47377, materialized=947540
-                                TABLE_SCAN: table=customer_address, projections=[ca_address_sk, ca_zip], output_bytes=1000000, output_rows=50000, materialized=2000000, bytes_read_est=1000000, rows_read=50000
-                                TABLE_SCAN: table=customer, projections=[c_current_addr_sk], filters="c_preferred_cust_flag='Y'", output_bytes=189508, output_rows=47377, materialized=589508, bytes_read_est=400000, rows_read=100000
-duckdb_cost=48948088
+        PROJECTION: projections=[#0, __internal_compress_string_ubigint(#1)], output_bytes=765420, output_rows=63785, materialized=0
+          HASH_JOIN: join_type=INNER, conditions=[ss_store_sk = s_store_sk], output_bytes=1275700, output_rows=63785, materialized=1275700
+            HASH_JOIN: join_type=INNER, conditions=[ss_sold_date_sk = d_date_sk], output_bytes=1579940, output_rows=78997, materialized=1580668
+              TABLE_SCAN: table=store_sales, projections=[ss_store_sk, ss_sold_date_sk, ss_net_profit], output_bytes=5998480, output_rows=299924, materialized=5998480, bytes_read=1212446, rows_read=299924
+              FILTER: output_bytes=728, output_rows=91, materialized=0
+                TABLE_SCAN: table=date_dim, projections=[d_date_sk], filters="d_qoy=2 AND d_year=1998", output_bytes=728, output_rows=91, materialized=728, bytes_read=294080, rows_read=73049
+            HASH_JOIN: join_type=INNER, conditions=["substring"(ca_zip, 1, 2) = "substring"(s_zip, 1, 2)], output_bytes=320, output_rows=8, materialized=432
+              HASH_GROUP_BY: groups=[#0], output_bytes=112, output_rows=7, materialized=112
+                PROJECTION: projections=[ca_zip], output_bytes=112, output_rows=7, materialized=0
+                  HASH_GROUP_BY: groups=[#0], output_bytes=112, output_rows=7, materialized=5552
+                    HASH_JOIN: join_type=SEMI, conditions=[#0 IS NOT DISTINCT FROM #0], output_bytes=5552, output_rows=347, materialized=26656
+                      PROJECTION: projections=[ca_zip], output_bytes=6128, output_rows=383, materialized=0
+                        TABLE_SCAN: table=customer_address, projections=[ca_zip], filters="("substring"(ca_zip, 1, 5) IN ('24128', '76232', '65084', '87816', '83926', '77556', '20548', '26231', '43848', '15126', '91137', '61265', '98294', '25782', '17920', '18426', '98235', '40081', '84093', '28577', '55565', '17183', '54601', '67897', '22752', '86284', '18376', '38607', '45200', '21756', '29741', '96765', '23932', '89360', '29839', '25989', '28898', '91068', '72550', '10390', '18845', '47770', '82636', '41367', '76638', '86198', '81312', '37126', '39192', '88424', '72175', '81426', '53672', '10445', '42666', '66864', '66708', '41248', '48583', '82276', '18842', '78890', '49448', '14089', '38122', '34425', '79077', '19849', '43285', '39861', '66162', '77610', '13695', '99543', '83444', '83041', '12305', '57665', '68341', '25003', '57834', '62878', '49130', '81096', '18840', '27700', '23470', '50412', '21195', '16021', '76107', '71954', '68309', '18119', '98359', '64544', '10336', '86379', '27068', '39736', '98569', '28915', '24206', '56529', '57647', '54917', '42961', '91110', '63981', '14922', '36420', '23006', '67467', '32754', '30903', '20260', '31671', '51798', '72325', '85816', '68621', '13955', '36446', '41766', '68806', '16725', '15146', '22744', '35850', '88086', '51649', '18270', '52867', '39972', '96976', '63792', '11376', '94898', '13595', '10516', '90225', '58943', '39371', '94945', '28587', '96576', '57855', '28488', '26105', '83933', '25858', '34322', '44438', '73171', '30122', '34102', '22685', '71256', '78451', '54364', '13354', '45375', '40558', '56458', '28286', '45266', '47305', '69399', '83921', '26233', '11101', '15371', '69913', '35942', '15882', '25631', '24610', '44165', '99076', '33786', '70738', '26653', '14328', '72305', '62496', '22152', '10144', '64147', '48425', '14663', '21076', '18799', '30450', '63089', '81019', '68893', '24996', '51200', '51211', '45692', '92712', '70466', '79994', '22437', '25280', '38935', '71791', '73134', '56571', '14060', '19505', '72425', '56575', '74351', '68786', '51650', '20004', '18383', '76614', '11634', '18906', '15765', '41368', '73241', '76698', '78567', '97189', '28545', '76231', '75691', '22246', '51061', '90578', '56691', '68014', '51103', '94167', '57047', '14867', '73520', '15734', '63435', '25733', '35474', '24676', '94627', '53535', '17879', '15559', '53268', '59166', '11928', '59402', '33282', '45721', '43933', '68101', '33515', '36634', '71286', '19736', '58058', '55253', '67473', '41918', '19515', '36495', '19430', '22351', '77191', '91393', '49156', '50298', '87501', '18652', '53179', '18767', '63193', '23968', '65164', '68880', '21286', '72823', '58470', '67301', '13394', '31016', '70372', '67030', '40604', '24317', '45748', '39127', '26065', '77721', '31029', '31880', '60576', '24671', '45549', '13376', '50016', '33123', '19769', '22927', '97789', '46081', '72151', '15723', '46136', '51949', '68100', '96888', '64528', '14171', '79777', '28709', '11489', '25103', '32213', '78668', '22245', '15798', '27156', '37930', '62971', '21337', '51622', '67853', '10567', '38415', '15455', '58263', '42029', '60279', '37125', '56240', '88190', '50308', '26859', '64457', '89091', '82136', '62377', '36233', '63837', '58078', '17043', '30010', '60099', '28810', '98025', '29178', '87343', '73273', '30469', '64034', '39516', '86057', '21309', '90257', '67875', '40162', '11356', '73650', '61810', '72013', '30431', '22461', '19512', '13375', '55307', '30625', '83849', '68908', '26689', '96451', '38193', '46820', '88885', '84935', '69035', '83144', '47537', '56616', '94983', '48033', '69952', '25486', '61547', '27385', '61860', '58048', '56910', '16807', '17871', '35258', '31387', '35458', '35576'))", output_bytes=6128, output_rows=383, materialized=6128, bytes_read=94321, rows_read=50000
+                      PROJECTION: projections=[ca_zip], output_bytes=14976, output_rows=936, materialized=0
+                        PROJECTION: projections=[#0], output_bytes=14976, output_rows=936, materialized=0
+                          FILTER: output_bytes=22464, output_rows=936, materialized=0
+                            PROJECTION: projections=[__internal_decompress_string(#0), #1], output_bytes=76032, output_rows=3168, materialized=0
+                              HASH_GROUP_BY: groups=[#0], aggregates=[count_star()], output_bytes=50688, output_rows=3168, materialized=379016
+                                PROJECTION: projections=[ca_zip], output_bytes=379016, output_rows=47377, materialized=0
+                                  PROJECTION: projections=[__internal_compress_string_ubigint(#0), __internal_compress_integral_usmallint(#1, 1)], output_bytes=473770, output_rows=47377, materialized=0
+                                    HASH_JOIN: join_type=INNER, conditions=[ca_address_sk = c_current_addr_sk], output_bytes=1137048, output_rows=47377, materialized=1137048
+                                      TABLE_SCAN: table=customer_address, projections=[ca_address_sk, ca_zip], output_bytes=1200000, output_rows=50000, materialized=1200000, bytes_read=295232, rows_read=50000
+                                      TABLE_SCAN: table=customer, projections=[c_current_addr_sk], filters="c_preferred_cust_flag='Y'", output_bytes=379016, output_rows=47377, materialized=379016, bytes_read=452982, rows_read=100000
+              TABLE_SCAN: table=store, projections=[s_store_sk, s_zip, s_store_name], filters="s_store_sk<=10", output_bytes=400, output_rows=10, materialized=400, bytes_read=285, rows_read=12
+duckdb_cost=15104862
+materialization_total=12755516
+storage_read_total=2349346
+
+--- row-group pruning (storage reduction) ---
+store_sales  dyn_filter=[ss_store_sk>=1 AND ss_store_sk<=10 AND ss_sold_date_sk>=2450906 AND ss_sold_date_sk<=2450996]  row_groups=3/24  rows=299924/2880404 (10.4%)  bytes_fetched=1212446/12388542 (9.8%)
+date_dim  filter=[d_qoy=2 AND d_year=1998]  row_groups=1/1  rows=73049/73049 (100.0%)  bytes_fetched=294080/294080 (100.0%)
+customer_address  filter=[("substring"(ca_zip, 1, 5) IN ('24128', '76232', '65084', '87816', '83926', '77556', '20548', '26231', '43848', '15126', '91137', '61265', '98294', '25782', '17920', '18426', '98235', '40081', '84093', '28577', '55565', '17183', '54601', '67897', '22752', '86284', '18376', '38607', '45200', '21756', '29741', '96765', '23932', '89360', '29839', '25989', '28898', '91068', '72550', '10390', '18845', '47770', '82636', '41367', '76638', '86198', '81312', '37126', '39192', '88424', '72175', '81426', '53672', '10445', '42666', '66864', '66708', '41248', '48583', '82276', '18842', '78890', '49448', '14089', '38122', '34425', '79077', '19849', '43285', '39861', '66162', '77610', '13695', '99543', '83444', '83041', '12305', '57665', '68341', '25003', '57834', '62878', '49130', '81096', '18840', '27700', '23470', '50412', '21195', '16021', '76107', '71954', '68309', '18119', '98359', '64544', '10336', '86379', '27068', '39736', '98569', '28915', '24206', '56529', '57647', '54917', '42961', '91110', '63981', '14922', '36420', '23006', '67467', '32754', '30903', '20260', '31671', '51798', '72325', '85816', '68621', '13955', '36446', '41766', '68806', '16725', '15146', '22744', '35850', '88086', '51649', '18270', '52867', '39972', '96976', '63792', '11376', '94898', '13595', '10516', '90225', '58943', '39371', '94945', '28587', '96576', '57855', '28488', '26105', '83933', '25858', '34322', '44438', '73171', '30122', '34102', '22685', '71256', '78451', '54364', '13354', '45375', '40558', '56458', '28286', '45266', '47305', '69399', '83921', '26233', '11101', '15371', '69913', '35942', '15882', '25631', '24610', '44165', '99076', '33786', '70738', '26653', '14328', '72305', '62496', '22152', '10144', '64147', '48425', '14663', '21076', '18799', '30450', '63089', '81019', '68893', '24996', '51200', '51211', '45692', '92712', '70466', '79994', '22437', '25280', '38935', '71791', '73134', '56571', '14060', '19505', '72425', '56575', '74351', '68786', '51650', '20004', '18383', '76614', '11634', '18906', '15765', '41368', '73241', '76698', '78567', '97189', '28545', '76231', '75691', '22246', '51061', '90578', '56691', '68014', '51103', '94167', '57047', '14867', '73520', '15734', '63435', '25733', '35474', '24676', '94627', '53535', '17879', '15559', '53268', '59166', '11928', '59402', '33282', '45721', '43933', '68101', '33515', '36634', '71286', '19736', '58058', '55253', '67473', '41918', '19515', '36495', '19430', '22351', '77191', '91393', '49156', '50298', '87501', '18652', '53179', '18767', '63193', '23968', '65164', '68880', '21286', '72823', '58470', '67301', '13394', '31016', '70372', '67030', '40604', '24317', '45748', '39127', '26065', '77721', '31029', '31880', '60576', '24671', '45549', '13376', '50016', '33123', '19769', '22927', '97789', '46081', '72151', '15723', '46136', '51949', '68100', '96888', '64528', '14171', '79777', '28709', '11489', '25103', '32213', '78668', '22245', '15798', '27156', '37930', '62971', '21337', '51622', '67853', '10567', '38415', '15455', '58263', '42029', '60279', '37125', '56240', '88190', '50308', '26859', '64457', '89091', '82136', '62377', '36233', '63837', '58078', '17043', '30010', '60099', '28810', '98025', '29178', '87343', '73273', '30469', '64034', '39516', '86057', '21309', '90257', '67875', '40162', '11356', '73650', '61810', '72013', '30431', '22461', '19512', '13375', '55307', '30625', '83849', '68908', '26689', '96451', '38193', '46820', '88885', '84935', '69035', '83144', '47537', '56616', '94983', '48033', '69952', '25486', '61547', '27385', '61860', '58048', '56910', '16807', '17871', '35258', '31387', '35458', '35576'))]  row_groups=1/1  rows=50000/50000 (100.0%)  bytes_fetched=94321/94321 (100.0%)
+customer_address  dyn_filter=[ca_address_sk>=1 AND ca_address_sk<=50000]  row_groups=1/1  rows=50000/50000 (100.0%)  bytes_fetched=295232/295232 (100.0%)
+customer  filter=[c_preferred_cust_flag='Y']  row_groups=1/1  rows=100000/100000 (100.0%)  bytes_fetched=452982/452982 (100.0%)
+store  filter=[s_store_sk<=10]  row_groups=1/1  rows=12/12 (100.0%)  bytes_fetched=285/285 (100.0%)
+pruning_bytes_fetched=2349346/13525442 (17.4%)
+
+--- cost breakdown ---
+TABLE_SCAN(store_sales)                 5998480  47.0%
+HASH_JOIN                               1580668  12.4%
+HASH_JOIN                               1275700  10.0%
+TABLE_SCAN(customer_address)            1200000   9.4%
+HASH_JOIN                               1137048   8.9%
+HASH_GROUP_BY                            765420   6.0%
+HASH_GROUP_BY                            379016   3.0%
+TABLE_SCAN(customer)                     379016   3.0%
+HASH_JOIN                                 26656   0.2%
+TABLE_SCAN(customer_address)               6128   0.0%
+HASH_GROUP_BY                              5552   0.0%
+TABLE_SCAN(date_dim)                        728   0.0%
+HASH_JOIN                                   432   0.0%
+TABLE_SCAN(store)                           400   0.0%
+TOP_N                                       160   0.0%
+HASH_GROUP_BY                               112   0.0%
+total=12755516

@@ -46,10 +46,28 @@ RSYNC=0
 RUN=0
 UPDATE_CANON=0   # --update-canonical: regen goldens during the remote run (UPDATE_CANONICAL=1)
 FETCH_GOLDENS=0  # --fetch-goldens: pull the remote goldens back into the local repo after the run
+PUSH_TESTDATA="" # --push-testdata KIND[,KIND]: rsync local testdata kinds -> remote
+PULL_TESTDATA="" # --pull-testdata KIND[,KIND]: rsync remote testdata kinds -> local
+# Per-kind testdata sync. KIND in {parquet,goldens,duckdb-profiles,queries}; each
+# maps to one or more dirs under testdata/. Used to move datasets generated once on
+# verda to local/shad-gpu (parquet), or pull regenerated goldens back, without
+# touching the (separately shipped) test binaries.
 
 usage() {
-  echo "Usage: $0 --host <ssh-dest> [--cpu|--gpu] [--remote-dir <path>] [--local-cudf-root <path>] [--remote-cudf-root <path>] [--gcc-version <n>] [--build] [--rsync] [--run] [--all] [--update-canonical] [--fetch-goldens]"
+  echo "Usage: $0 --host <ssh-dest> [--cpu|--gpu] [--remote-dir <path>] [--local-cudf-root <path>] [--remote-cudf-root <path>] [--gcc-version <n>] [--build] [--rsync] [--run] [--all] [--update-canonical] [--fetch-goldens] [--push-testdata KIND[,KIND]] [--pull-testdata KIND[,KIND]]"
+  echo "  testdata KIND: parquet | goldens | duckdb-profiles | queries"
   exit 1
+}
+
+# Map a testdata KIND to its repo-relative dir(s) under testdata/.
+testdata_dirs_for_kind() {
+  case "$1" in
+    parquet)         echo "tpch.sf1 tpcds.sf1 tpch.minimal" ;;
+    goldens)         echo "goldens" ;;
+    duckdb-profiles) echo "duckdb-profiles" ;;
+    queries)         echo "tpch-queries tpcds-queries" ;;
+    *) echo "error: unknown testdata kind '$1' (parquet|goldens|duckdb-profiles|queries)" >&2; exit 1 ;;
+  esac
 }
 
 if [ $# -eq 0 ]; then usage; fi
@@ -69,6 +87,8 @@ while [ $# -gt 0 ]; do
     --all)              BUILD=1; RSYNC=1; RUN=1 ;;
     --update-canonical) UPDATE_CANON=1 ;;
     --fetch-goldens)    FETCH_GOLDENS=1 ;;
+    --push-testdata)    PUSH_TESTDATA="$2"; shift ;;
+    --pull-testdata)    PULL_TESTDATA="$2"; shift ;;
     *) echo "Unknown flag: $1"; usage ;;
   esac
   shift
@@ -89,9 +109,28 @@ else
   CPP_TEST_BIN=peacock_cpu_tests
 fi
 
-if { [ "$RSYNC" -eq 1 ] || [ "$RUN" -eq 1 ]; } && [ -z "$HOST" ]; then
-  echo "error: --host is required for --rsync/--run (e.g. --host dmitry@86.38.182.185)" >&2
+# --fetch-goldens is shorthand for --pull-testdata goldens.
+if [ "$FETCH_GOLDENS" -eq 1 ]; then
+  PULL_TESTDATA="${PULL_TESTDATA:+$PULL_TESTDATA,}goldens"
+fi
+
+if { [ "$RSYNC" -eq 1 ] || [ "$RUN" -eq 1 ] || [ -n "$PUSH_TESTDATA" ] || [ -n "$PULL_TESTDATA" ]; } && [ -z "$HOST" ]; then
+  echo "error: --host is required for --rsync/--run/--push-testdata/--pull-testdata (e.g. --host dmitry@86.38.182.185)" >&2
   exit 1
+fi
+
+# Push named testdata kinds local -> remote (before any --run that consumes them).
+# --delete keeps the remote subtree exact (drops files removed locally).
+if [ -n "$PUSH_TESTDATA" ]; then
+  IFS=',' read -ra _kinds <<< "$PUSH_TESTDATA"
+  for kind in "${_kinds[@]}"; do
+    for d in $(testdata_dirs_for_kind "$kind"); do
+      [ -d "testdata/$d" ] || { echo "--push-testdata: skip missing testdata/$d"; continue; }
+      echo "==> push testdata/$d -> $HOST:$REMOTE_DIR/testdata/$d"
+      ssh "$HOST" "mkdir -p '$REMOTE_DIR/testdata/$d'"
+      rsync -a --delete "testdata/$d/" "$HOST:$REMOTE_DIR/testdata/$d/"
+    done
+  done
 fi
 
 if [ "$BUILD" -eq 1 ]; then
@@ -226,13 +265,23 @@ if [ "$RUN" -eq 1 ]; then
 EOF
 fi
 
-# Pull the remote goldens back into the local repo — only with --fetch-goldens
-# (typically paired with --update-canonical, which regenerates *.txt via
-# test_query_plan and *.cpu.txt via test_cpu_executor on the remote). Opt-in so a
-# plain verify run never overwrites local goldens. set -e means we only reach
-# here if the run succeeded.
-if [ "$RUN" -eq 1 ] && [ "$FETCH_GOLDENS" -eq 1 ] && [ "$MODE" = "cpu" ]; then
-  echo "==> fetching goldens back from $HOST"
-  rsync -r --include='*/' --include='*.txt' --exclude='*' \
-    "$HOST:$REMOTE_DIR/testdata/goldens/" testdata/goldens/
+# Pull named testdata kinds remote -> local. Runs last, so an --update-canonical
+# --run --fetch-goldens pulls the regenerated goldens only after the run succeeded
+# (set -e). For goldens we pull only *.txt (the cost/plan goldens); other kinds
+# (e.g. parquet generated once on verda) sync in full. Opt-in so a plain run never
+# overwrites local data.
+if [ -n "$PULL_TESTDATA" ]; then
+  IFS=',' read -ra _kinds <<< "$PULL_TESTDATA"
+  for kind in "${_kinds[@]}"; do
+    for d in $(testdata_dirs_for_kind "$kind"); do
+      echo "==> pull $HOST:$REMOTE_DIR/testdata/$d -> testdata/$d"
+      mkdir -p "testdata/$d"
+      if [ "$kind" = "goldens" ]; then
+        rsync -r --include='*/' --include='*.txt' --exclude='*' \
+          "$HOST:$REMOTE_DIR/testdata/$d/" "testdata/$d/"
+      else
+        rsync -a --delete "$HOST:$REMOTE_DIR/testdata/$d/" "testdata/$d/"
+      fi
+    done
+  done
 fi

@@ -1,0 +1,1 @@
+["d_date_sk>=2451943 AND d_date_sk<=2452149","ss_ticket_number>=128 AND ss_ticket_number<=239931 AND ss_item_sk>=11 AND ss_item_sk<=17987 AND ss_customer_sk>=29 AND ss_customer_sk<=99988","sr_returned_date_sk>=2452123 AND sr_returned_date_sk<=2452153","",""]

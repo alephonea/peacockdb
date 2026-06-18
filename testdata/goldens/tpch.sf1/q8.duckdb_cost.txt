@@ -9,17 +9,50 @@ PROJECTION: projections=[__internal_decompress_integral_bigint(#0, 1992), #1], o
                 PROJECTION: projections=[o_year, volume, nation], output_bytes=83296, output_rows=2603, materialized=0
                   HASH_JOIN: join_type=INNER, conditions=[s_nationkey = n_nationkey], output_bytes=93708, output_rows=2603, materialized=93708
                     HASH_JOIN: join_type=INNER, conditions=[s_suppkey = l_suppkey], output_bytes=62472, output_rows=2603, materialized=62472
-                      TABLE_SCAN: table=supplier, projections=[s_suppkey, s_nationkey], output_bytes=119832, output_rows=9986, materialized=239832, bytes_read_est=120000, rows_read=10000
+                      TABLE_SCAN: table=supplier, projections=[s_suppkey, s_nationkey], output_bytes=120000, output_rows=10000, materialized=120000, bytes_read=47418, rows_read=10000
                       HASH_JOIN: join_type=INNER, conditions=[c_nationkey = n_nationkey], output_bytes=93708, output_rows=2603, materialized=93708
-                        HASH_JOIN: join_type=INNER, conditions=[c_custkey = o_custkey], output_bytes=410272, output_rows=12821, materialized=410272
-                          TABLE_SCAN: table=customer, projections=[c_custkey, c_nationkey], filters="c_custkey<=149999", output_bytes=1728624, output_rows=144052, materialized=3528624, bytes_read_est=1800000, rows_read=150000
+                        HASH_JOIN: join_type=INNER, conditions=[c_custkey = o_custkey], output_bytes=428448, output_rows=13389, materialized=428448
+                          TABLE_SCAN: table=customer, projections=[c_custkey, c_nationkey], filters="c_custkey<=149999", output_bytes=1799988, output_rows=149999, materialized=1799988, bytes_read=695814, rows_read=150000
                           HASH_JOIN: join_type=INNER, conditions=[o_orderkey = l_orderkey], output_bytes=482004, output_rows=13389, materialized=482004
-                            TABLE_SCAN: table=orders, projections=[o_orderkey, o_custkey, o_orderdate], filters="o_orderdate>='1995-01-01'::DATE AND o_orderdate<='1996-12-31'::DATE", output_bytes=9145120, output_rows=457256, materialized=39145120, bytes_read_est=30000000, rows_read=1500000
+                            TABLE_SCAN: table=orders, projections=[o_orderkey, o_custkey, o_orderdate], filters="o_orderdate>='1995-01-01'::DATE AND o_orderdate<='1996-12-31'::DATE", output_bytes=9145260, output_rows=457263, materialized=9145260, bytes_read=5979924, rows_read=614400
                             HASH_JOIN: join_type=INNER, conditions=[l_partkey = p_partkey], output_bytes=1747720, output_rows=43693, materialized=1747720
-                              TABLE_SCAN: table=lineitem, projections=[l_partkey, l_suppkey, l_orderkey, l_extendedprice, l_discount], output_bytes=239801720, output_rows=5995043, materialized=479850320, bytes_read_est=240048600, rows_read=6001215
-                              TABLE_SCAN: table=part, projections=[p_partkey], filters="p_type='ECONOMY ANODIZED STEEL'", output_bytes=11608, output_rows=1451, materialized=1611608, bytes_read_est=1600000, rows_read=200000
+                              TABLE_SCAN: table=lineitem, projections=[l_partkey, l_suppkey, l_orderkey, l_extendedprice, l_discount], output_bytes=240048600, output_rows=6001215, materialized=240048600, bytes_read=103957022, rows_read=6001215
+                              TABLE_SCAN: table=part, projections=[p_partkey], filters="p_type='ECONOMY ANODIZED STEEL'", output_bytes=11608, output_rows=1451, materialized=11608, bytes_read=1004712, rows_read=200000
                         HASH_JOIN: join_type=INNER, conditions=[n_regionkey = r_regionkey], output_bytes=40, output_rows=5, materialized=40
-                          TABLE_SCAN: table=nation, projections=[n_nationkey, n_regionkey], output_bytes=40, output_rows=5, materialized=240, bytes_read_est=200, rows_read=25
-                          TABLE_SCAN: table=region, projections=[r_regionkey], filters="r_name='AMERICA'", output_bytes=4, output_rows=1, materialized=24, bytes_read_est=20, rows_read=5
-                    TABLE_SCAN: table=nation, projections=[n_nationkey, n_name], output_bytes=500, output_rows=25, materialized=1000, bytes_read_est=500, rows_read=25
-duckdb_cost=527310961
+                          TABLE_SCAN: table=nation, projections=[n_nationkey, n_regionkey], output_bytes=200, output_rows=25, materialized=200, bytes_read=205, rows_read=25
+                          TABLE_SCAN: table=region, projections=[r_regionkey], filters="r_name='AMERICA'", output_bytes=4, output_rows=1, materialized=4, bytes_read=119, rows_read=5
+                    TABLE_SCAN: table=nation, projections=[n_nationkey, n_name], output_bytes=500, output_rows=25, materialized=500, bytes_read=398, rows_read=25
+duckdb_cost=365764141
+materialization_total=254078529
+storage_read_total=111685612
+
+--- row-group pruning (storage reduction) ---
+supplier  dyn_filter=[s_suppkey>=14 AND s_suppkey<=9999 AND s_nationkey>=0 AND s_nationkey<=24]  row_groups=1/1  rows=10000/10000 (100.0%)  bytes_fetched=47418/47418 (100.0%)
+customer  filter=[c_custkey<=149999]  dyn_filter=[c_custkey>=16 AND c_custkey<=149992 AND c_nationkey>=1 AND c_nationkey<=24]  row_groups=2/2  rows=150000/150000 (100.0%)  bytes_fetched=695814/695814 (100.0%)
+orders  filter=[o_orderdate>='1995-01-01'::DATE AND o_orderdate<='1996-12-31'::DATE]  dyn_filter=[o_orderkey>=7 AND o_orderkey<=5999969]  row_groups=5/13  rows=614400/1500000 (41.0%)  bytes_fetched=5979924/14600972 (41.0%)
+lineitem  dyn_filter=[l_partkey>=157 AND l_partkey<=199949]  row_groups=49/49  rows=6001215/6001215 (100.0%)  bytes_fetched=103957022/103957022 (100.0%)
+part  filter=[p_type='ECONOMY ANODIZED STEEL']  row_groups=2/2  rows=200000/200000 (100.0%)  bytes_fetched=1004712/1004712 (100.0%)
+nation  dyn_filter=[n_regionkey=1]  row_groups=1/1  rows=25/25 (100.0%)  bytes_fetched=205/205 (100.0%)
+region  filter=[r_name='AMERICA']  row_groups=1/1  rows=5/5 (100.0%)  bytes_fetched=119/119 (100.0%)
+nation  row_groups=1/1  rows=25/25 (100.0%)  bytes_fetched=398/398 (100.0%)
+pruning_bytes_fetched=111685612/120306660 (92.8%)
+
+--- cost breakdown ---
+TABLE_SCAN(lineitem)                  240048600  94.5%
+TABLE_SCAN(orders)                      9145260   3.6%
+TABLE_SCAN(customer)                    1799988   0.7%
+HASH_JOIN                               1747720   0.7%
+HASH_JOIN                                482004   0.2%
+HASH_JOIN                                428448   0.2%
+TABLE_SCAN(supplier)                     120000   0.0%
+HASH_JOIN                                 93708   0.0%
+HASH_JOIN                                 93708   0.0%
+HASH_JOIN                                 62472   0.0%
+PERFECT_HASH_GROUP_BY                     44251   0.0%
+TABLE_SCAN(part)                          11608   0.0%
+TABLE_SCAN(nation)                          500   0.0%
+TABLE_SCAN(nation)                          200   0.0%
+HASH_JOIN                                    40   0.0%
+ORDER_BY                                     18   0.0%
+TABLE_SCAN(region)                            4   0.0%
+total=254078529

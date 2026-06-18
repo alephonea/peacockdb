@@ -1,103 +1,110 @@
 #!/usr/bin/env bash
-# Generate the DuckDB cost goldens (Task 5).
+# Generate the DuckDB cost goldens (Task 5/#10).
 #
-# GENERATION/EXTRACTION SPLIT (#70):
-#   generate (default; needs duckdb + data): run each TPC-H/TPC-DS query under
-#     JSON profiling (actual execution — EXPLAIN ANALYZE semantics) and PERSIST a
-#     lean normalized subset of the profiling tree to
-#     testdata/duckdb-profiles/{tpch,tpcds}/<q>.json (committed), then extract the
-#     golden from it.
-#   --extract-only (pure; no duckdb, no data, runs anywhere): re-extract every
-#     golden from the persisted JSON. Use this for annotation / cost-model tweaks
-#     — NO query re-execution needed.
+# TWO-PASS GENERATION (both JSON profiling; join_filter_pushdown is the only diff):
+#   pass 1 (JFP OFF): deterministic cost tree. DuckDB's join_filter_pushdown installs
+#     OPTIONAL min/max dynamic filters on probe scans, applied opportunistically
+#     (build-vs-probe race) -> a scan's operator_cardinality is NONDETERMINISTIC even
+#     at threads=1. Disabling it makes the cost-tree cardinalities reproducible (scans
+#     report their stable post-STATIC-filter count); the query RESULT is unchanged.
+#     Persisted lean to testdata/duckdb-profiles/{tpch,tpcds}/<q>.json (committed).
+#   pass 2 (JFP ON): the runtime dynamic filters appear in the JSON profile's per-scan
+#     extra_info "Dynamic Filters". We keep ONLY the deterministic min/max RANGE bounds
+#     (the row counts they reduce are the flaky race — discarded). Persisted BOUNDS-ONLY
+#     to testdata/duckdb-dynfilters/{tpch,tpcds}/<q>.json (committed).
 #
-# Golden line (written by duckdb_cost.py — see it for the model + unit tests),
-# annotations first then cost fields, mirroring .cpu.txt:
-#   <OP>: [<annotation>, ]output_bytes=<n>, output_rows=<n>, materialized=<n>[, bytes_read_est=<n>, rows_read=<n>]
-# materialized = this node's pipeline-breaker contribution (0 for streaming);
-# duckdb_cost = Σ materialized. bytes_read_est/rows_read on TABLE_SCAN only
-# (bytes_read_est is DERIVED, not measured). Annotation = DuckDB's own extra_info
-# (table/projections/filters, join_type/conditions, groups/aggregates, order_by/top).
+# duckdb_cost.py extract COMBINES the two: cost tree + duckdb_cost from pass 1; the
+# storage-pruning section from pass-1 static filters ∩ pass-2 dynamic bounds applied to
+# the parquet row-group min/max. duckdb_cost NEVER uses pass-2's flaky numbers.
 #
-# PRAGMA threads=1 below is LOAD-BEARING: rows_read (operator_rows_scanned) scales
-# with the thread count, so single-threaded keeps the goldens reproducible across
-# machines (output_bytes/output_rows are already thread-independent).
+#   GEN (needs duckdb 1.5.4 + parquet): --gen  -> both passes + extract.
+#   DEFAULT / --extract-only (needs parquet for the pruning section, no duckdb):
+#     re-extract goldens from the committed pass-1 profiles + pass-2 bounds.
 #
-# Run once (preferably on verda, which has duckdb 1.2.2 installed):
-#   DUCKDB=~/.local/bin/duckdb testdata/gen_duckdb_cost.sh [TESTDATA_DIR]
-#   testdata/gen_duckdb_cost.sh --extract-only [TESTDATA_DIR]   # no duckdb needed
+# threads=1 throughout (reproducibility).
 #
-# Requires duckdb 1.2.2 (generate only; via DUCKDB=) and python3.
+# Run on verda (duckdb 1.5.4 + parquet + pyarrow):
+#   DUCKDB=~/.local/bin/duckdb testdata/gen_duckdb_cost.sh --gen [TESTDATA_DIR]
+#   testdata/gen_duckdb_cost.sh --extract-only [TESTDATA_DIR]
 set -euo pipefail
 
-EXTRACT_ONLY=0
-if [ "${1:-}" = "--extract-only" ]; then EXTRACT_ONLY=1; shift; fi
+GEN=0
+case "${1:-}" in
+  --gen)          GEN=1; shift ;;
+  --extract-only) GEN=0; shift ;;
+  --*)            echo "error: unknown flag $1 (use --gen or --extract-only)" >&2; exit 1 ;;
+esac
 
-# duckdb + version pin are only needed for the generate phase. --extract-only is
-# pure (reads persisted JSON), so it skips them and runs without duckdb/data.
 DUCKDB=${DUCKDB:-$(command -v duckdb 2>/dev/null || true)}
-if [ "$EXTRACT_ONLY" = 0 ]; then
+if [ "$GEN" = 1 ]; then
   [ -x "$DUCKDB" ] || { echo "error: duckdb not found; set DUCKDB=/path/to/duckdb" >&2; exit 1; }
   # Pin to the same engine as generate_testdata.sh / CI (vX.Y.Z token compare).
-  # Goldens are only reproducible against this exact engine + pinned testdata.
-  EXPECTED_DUCKDB=${EXPECTED_DUCKDB-"v1.2.2"}
+  EXPECTED_DUCKDB=${EXPECTED_DUCKDB-"v1.5.4"}
   if [ -n "$EXPECTED_DUCKDB" ]; then
     ACTUAL_FULL=$("$DUCKDB" --version)
     ACTUAL=$(echo "$ACTUAL_FULL" | awk '{print $1}')
     if [ "$ACTUAL" != "$EXPECTED_DUCKDB" ]; then
-      echo "error: duckdb version mismatch" >&2
-      echo "  expected: $EXPECTED_DUCKDB" >&2
-      echo "  actual:   $ACTUAL  (full: $ACTUAL_FULL)" >&2
-      echo "  duckdb:   $DUCKDB" >&2
+      echo "error: duckdb version mismatch (expected $EXPECTED_DUCKDB, got $ACTUAL_FULL)" >&2
       exit 1
     fi
   fi
 fi
 
 TESTDATA=${1:-"$(cd "$(dirname "$0")" && pwd)"}
-
-# All cost-extraction logic lives in the standalone, unit-tested duckdb_cost.py
-# module (testdata/duckdb_cost.py). This script only runs the duckdb CLI under
-# JSON profiling and hands each profile to the module, which writes the per-node
-# cost-tree golden and prints the scalar duckdb_cost (Σ materialized).
 COST_PY="$(cd "$(dirname "$0")" && pwd)/duckdb_cost.py"
 [ -f "$COST_PY" ] || { echo "error: $COST_PY not found" >&2; exit 1; }
 
-# EXTRACTION phase: persisted JSON -> golden, for every <q>.json in profiles/.
-# Pure (no duckdb/data) — re-run for annotation/model tweaks.
+# Run one query under JSON profiling. jfp=off disables join_filter_pushdown.
+profile() {  # db sqlfile jfp(on|off) out
+  local db="$1" sqlfile="$2" jfp="$3" out="$4" dis=""
+  [ "$jfp" = off ] && dis="SET disabled_optimizers='join_filter_pushdown';"
+  rm -f "$out"
+  "$DUCKDB" "$db" >/dev/null 2>/tmp/peacock_duckdb_err <<SQL
+PRAGMA threads=1;
+$dis
+SET enable_profiling='json';
+SET profiling_output='$out';
+$(cat "$sqlfile")
+SQL
+}
+
+# extract one golden by combining the committed inputs (+ parquet for pruning).
+extract_one() {  # profile dynf canon data q label
+  local profile="$1" dynf="$2" canon="$3" data="$4" q="$5" label="$6"
+  local args=("$profile" "$canon/$q.duckdb_cost.txt")
+  [ -f "$dynf/$q.json" ] && args+=(--dynfilters "$dynf/$q.json")
+  [ -d "$data" ] && args+=(--data-dir "$data")
+  local cost; cost=$(python3 "$COST_PY" extract "${args[@]}")
+  echo "[$label] $q: duckdb_cost=$cost"
+}
+
+# EXTRACT-ONLY: re-render goldens from committed pass-1 profiles + pass-2 bounds.
 extract_dataset() {
-  local label=$1 profiles=$2 canon=$3
-  if [ ! -d "$profiles" ]; then echo "[$label] skip: no profiles dir $profiles" >&2; return; fi
+  local label=$1 profiles=$2 dynf=$3 canon=$4 data=$5
+  [ -d "$profiles" ] || { echo "[$label] skip: no profiles $profiles" >&2; return; }
   mkdir -p "$canon"
   local ok=0
   for pj in "$profiles"/q*.json; do
     [ -f "$pj" ] || continue
     local q; q=$(basename "$pj" .json)
-    local cost; cost=$(python3 "$COST_PY" extract "$pj" "$canon/$q.duckdb_cost.txt")
-    echo "[$label] $q: duckdb_cost=$cost"
+    extract_one "$pj" "$dynf" "$canon" "$data" "$q" "$label"
     ok=$((ok + 1))
   done
   echo "[$label] extracted=$ok"
 }
 
-# GENERATION phase: run each query under JSON profiling, persist the normalized
-# subset to profiles/<q>.json, then extract its golden.
+# GEN: two profiling passes per query -> pass-1 profile + pass-2 bounds, then extract.
 gen_dataset() {
-  local label=$1 data=$2 queries=$3 canon=$4 profiles=$5 lo=$6 hi=$7
-  if [ ! -d "$data" ]; then echo "[$label] skip: no data dir $data" >&2; return; fi
+  local label=$1 data=$2 queries=$3 canon=$4 profiles=$5 dynf=$6 lo=$7 hi=$8
+  [ -d "$data" ] || { echo "[$label] skip: no data dir $data" >&2; return; }
   local db="$data/.duckdb_cache/$label.db"
-  mkdir -p "$data/.duckdb_cache" "$canon" "$profiles"
+  mkdir -p "$data/.duckdb_cache" "$canon" "$profiles" "$dynf"
 
-  # Rebuild the cached native DB if missing or if any parquet is newer than it.
   local rebuild=0
-  if [ ! -f "$db" ]; then
-    rebuild=1
-  elif [ -n "$(find "$data" -maxdepth 1 -name '*.parquet' -newer "$db" -print -quit)" ]; then
-    rebuild=1
-  fi
+  if [ ! -f "$db" ]; then rebuild=1
+  elif [ -n "$(find "$data" -maxdepth 1 -name '*.parquet' -newer "$db" -print -quit)" ]; then rebuild=1; fi
   if [ "$rebuild" = 1 ]; then
-    echo "[$label] importing parquet -> $db"
-    rm -f "$db" "$db.wal"
+    echo "[$label] importing parquet -> $db"; rm -f "$db" "$db.wal"
     for pq in "$data"/*.parquet; do
       local t; t=$(basename "$pq" .parquet)
       "$DUCKDB" "$db" -c "CREATE OR REPLACE TABLE \"$t\" AS SELECT * FROM read_parquet('$pq');"
@@ -108,44 +115,32 @@ gen_dataset() {
   for n in $(seq "$lo" "$hi"); do
     local q="q$n" sql="$queries/q$n.sql"
     [ -f "$sql" ] || continue
-    local prof="/tmp/peacock_duckdb_${label}_${q}.json"
-    rm -f "$prof"
-    if "$DUCKDB" "$db" >/dev/null 2>/tmp/peacock_duckdb_err <<SQL
-PRAGMA threads=1;
-SET enable_profiling='json';
-SET profiling_output='$prof';
-$(cat "$sql")
-SQL
-    then
-      if [ -s "$prof" ]; then
-        python3 "$COST_PY" normalize "$prof" "$profiles/$q.json"   # persist lean subset
-        local cost; cost=$(python3 "$COST_PY" extract "$profiles/$q.json" "$canon/$q.duckdb_cost.txt")
-        echo "[$label] $q: duckdb_cost=$cost"
-        ok=$((ok + 1))
-      else
-        echo "[$label] $q: FAILED (no profile written)" >&2
-        fail=$((fail + 1))
-      fi
-    else
-      echo "[$label] $q: FAILED -- $(tail -1 /tmp/peacock_duckdb_err)" >&2
-      fail=$((fail + 1))
+    local pon="/tmp/pk_${label}_${q}_on.json" poff="/tmp/pk_${label}_${q}_off.json"
+    profile "$db" "$sql" on  "$pon"   || true
+    profile "$db" "$sql" off "$poff"  || true
+    if [ ! -s "$poff" ]; then
+      echo "[$label] $q: FAILED -- $(tail -1 /tmp/peacock_duckdb_err 2>/dev/null)" >&2
+      fail=$((fail + 1)); continue
     fi
+    # pass 2 -> bounds-only (deterministic dynamic-filter ranges)
+    [ -s "$pon" ] && python3 "$COST_PY" dynfilters "$pon" "$dynf/$q.json"
+    # pass 1 -> lean cost profile
+    python3 "$COST_PY" normalize "$poff" "$profiles/$q.json"
+    extract_one "$profiles/$q.json" "$dynf" "$canon" "$data" "$q" "$label"
+    ok=$((ok + 1))
   done
   echo "[$label] generated=$ok failed=$fail"
 }
 
-TPCH_PROFILES="$TESTDATA/duckdb-profiles/tpch"
-TPCDS_PROFILES="$TESTDATA/duckdb-profiles/tpcds"
+TPCH_PROFILES="$TESTDATA/duckdb-profiles/tpch";   TPCDS_PROFILES="$TESTDATA/duckdb-profiles/tpcds"
+TPCH_DYNF="$TESTDATA/duckdb-dynfilters/tpch";      TPCDS_DYNF="$TESTDATA/duckdb-dynfilters/tpcds"
+TPCH_GOLD="$TESTDATA/goldens/tpch.sf1";            TPCDS_GOLD="$TESTDATA/goldens/tpcds.sf1"
 
-# Goldens live under the unified layout: testdata/goldens/<dataset>.sf<N>/
-TPCH_GOLD="$TESTDATA/goldens/tpch.sf1"
-TPCDS_GOLD="$TESTDATA/goldens/tpcds.sf1"
-
-if [ "$EXTRACT_ONLY" = 1 ]; then
-  extract_dataset tpch  "$TPCH_PROFILES"  "$TPCH_GOLD"
-  extract_dataset tpcds "$TPCDS_PROFILES" "$TPCDS_GOLD"
+if [ "$GEN" = 1 ]; then
+  gen_dataset tpch  "$TESTDATA/tpch.sf1"  "$TESTDATA/tpch-queries"  "$TPCH_GOLD"  "$TPCH_PROFILES"  "$TPCH_DYNF"  1 22
+  gen_dataset tpcds "$TESTDATA/tpcds.sf1" "$TESTDATA/tpcds-queries" "$TPCDS_GOLD" "$TPCDS_PROFILES" "$TPCDS_DYNF" 1 99
 else
-  gen_dataset tpch  "$TESTDATA/tpch.sf1"  "$TESTDATA/tpch-queries"  "$TPCH_GOLD"  "$TPCH_PROFILES"  1 22
-  gen_dataset tpcds "$TESTDATA/tpcds.sf1" "$TESTDATA/tpcds-queries" "$TPCDS_GOLD" "$TPCDS_PROFILES" 1 99
+  extract_dataset tpch  "$TPCH_PROFILES"  "$TPCH_DYNF"  "$TPCH_GOLD"  "$TESTDATA/tpch.sf1"
+  extract_dataset tpcds "$TPCDS_PROFILES" "$TPCDS_DYNF" "$TPCDS_GOLD" "$TESTDATA/tpcds.sf1"
 fi
 echo "done."

@@ -1,0 +1,1 @@
+["ca_address_sk>=3 AND ca_address_sk<=50000","c_customer_sk>=5 AND c_customer_sk<=99981","ca_address_sk>=7 AND ca_address_sk<=50000","ss_sold_date_sk>=2451181 AND ss_sold_date_sk<=2452274 AND ss_store_sk>=1 AND ss_store_sk<=10 AND ss_hdemo_sk>=480 AND ss_hdemo_sk<=6599","","",""]

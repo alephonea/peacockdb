@@ -1,0 +1,1 @@
+["i_item_sk>=304 AND i_item_sk<=17456","sr_ticket_number>=4271 AND sr_ticket_number<=238457 AND sr_item_sk>=30 AND sr_item_sk<=17995","ss_customer_sk>=21 AND ss_customer_sk<=99810 AND ss_store_sk>=2 AND ss_store_sk<=10","c_current_addr_sk>=176 AND c_current_addr_sk<=49871","ca_zip>='31904' AND ca_zip<='35709'",""]

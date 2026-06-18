@@ -1,0 +1,1 @@
+["ca_address_sk>=1 AND ca_address_sk<=50000","ss_sold_date_sk>=2451545 AND ss_sold_date_sk<=2451818","","ca_address_sk>=6 AND ca_address_sk<=49989","ws_sold_date_sk>=2451545 AND ws_sold_date_sk<=2451818",""]

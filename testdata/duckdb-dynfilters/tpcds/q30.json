@@ -1,0 +1,1 @@
+["ca_address_sk>=2 AND ca_address_sk<=49994","wr_returned_date_sk>=2452276 AND wr_returned_date_sk<=2452640","","c_current_addr_sk>=25 AND c_current_addr_sk<=49963 AND c_customer_sk>=6 AND c_customer_sk<=99993",""]

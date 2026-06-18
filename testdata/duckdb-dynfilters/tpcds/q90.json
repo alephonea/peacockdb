@@ -1,0 +1,1 @@
+["ws_ship_hdemo_sk>=720 AND ws_ship_hdemo_sk<=6839 AND ws_web_page_sk=32","","","t_time_sk>=31 AND t_time_sk<=86105","t_time_sk>=31 AND t_time_sk<=86105"]
