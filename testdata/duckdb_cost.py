@@ -1,31 +1,34 @@
 #!/usr/bin/env python3
-"""DuckDB cost-oracle extraction (Task 5/6, generation/extraction split #70).
+"""DuckDB cost-oracle extraction (Task 5/6/#10).
 
-Two phases, two subcommands:
+THREE subcommands, two committed inputs per query:
 
-  generate (verda, needs duckdb + data): the gen script runs each query under JSON
-    profiling and calls `normalize` to PERSIST a lean subset of the profiling tree
-    to testdata/duckdb-profiles/{tpch,tpcds}/<q>.json (committed).
+  normalize  (pass 1, JFP OFF): raw deterministic cost profile -> lean profile,
+    committed to testdata/duckdb-profiles/{tpch,tpcds}/<q>.json.
+  dynfilters (pass 2, JFP ON): raw profile -> per-scan dynamic-filter min/max BOUNDS
+    only (the flaky cardinalities are discarded), committed to
+    testdata/duckdb-dynfilters/{tpch,tpcds}/<q>.json.
+  extract: COMBINES the two inputs (+ parquet row-group stats) -> the
+    <q>.duckdb_cost.txt golden. Needs the parquet present (for the pruning section);
+    no duckdb / no query re-run.
 
-  extract (pure, runnable anywhere — no duckdb, no data): reads a persisted JSON
-    and writes the <q>.duckdb_cost.txt golden. Because it never re-executes a
-    query, golden regens for annotation/model tweaks are extraction-only.
+Why two passes: DuckDB's join_filter_pushdown installs OPTIONAL min/max dynamic
+filters on probe scans, applied opportunistically (build-vs-probe race) -> scan
+cardinality is NONDETERMINISTIC even at threads=1. Pass 1 disables it for a
+deterministic cost tree; pass 2 keeps it ON solely to OBSERVE the deterministic
+bound VALUES (never the flaky counts).
 
-Cost model (PROVISIONAL, directional-only — the report only displays it):
-`duckdb_cost = Σ bytes materialized at pipeline breakers`.
-  - Streaming operators (PROJECTION, FILTER, …) -> 0.
-  - Build-from-input breakers (group-by/sort/top-n/window/merge-join) -> Σ children
-    output_bytes (the INPUT they buffer, not their own tiny output).
-  - Join breakers -> own output_bytes + each child's output_bytes, mirroring
-    PeacockDB's Σ-over-every-node. Children that already self-count their output
-    (scans via the two-part cost, nested joins) or that re-read an
-    already-materialized buffer (DELIM_SCAN/CTE_SCAN/COLUMN_DATA_SCAN) are
-    excluded to avoid double-counting.
-  - TABLE_SCAN: two-part = bytes_read (storage, post-prune/pre-filter) +
-    output_bytes (post inline-filter), mirroring PeacockDB's split scan+filter.
-
-rows_read (operator_rows_scanned) is thread-sensitive, so goldens MUST be
-generated single-threaded (`PRAGMA threads=1`); the gen script enforces that.
+Cost = TWO deterministic, separately-weightable components (golden footer reports
+both + their sum):
+  - materialization_total = Σ node_materialized (pipeline-breaker model; a SCAN
+    contributes its OUTPUT only — post-static, capped at read). Streaming -> 0;
+    build/join breakers -> children/own output (double-count-avoided as before).
+  - storage_read_total = Σ scan bytes_read = the ACTUAL compressed parquet bytes of
+    the surviving row groups (post pass1-static ∩ pass2-dynamic min/max pruning) —
+    the SAME number the row-group-pruning section reports as bytes_fetched.
+  - duckdb_cost = materialization_total + storage_read_total.
+read >= output always (a scan can't output more than it read; output capped at
+rows_fetched). threads=1 throughout for reproducibility.
 """
 
 from __future__ import annotations
@@ -564,6 +567,63 @@ def iter_nodes(root: Node):
         stack.extend(reversed(n.children))
 
 
+def dim_date_key_minmax(parquet_path: str, key_col: str, ranges: dict):
+    """Reconstruct (min,max) of `key_col` (e.g. d_date_sk) over the rows of a dim
+    parquet that pass `ranges` (the dim's static filter parsed to col->[lo,hi]). Used
+    to CROSS-CHECK a fact scan's OBSERVED dynamic-filter date_sk bound against the
+    sibling filtered date_dim. None if unreadable or no rows. pyarrow lazy-imported."""
+    try:
+        import pyarrow.parquet as pq
+        import pyarrow.compute as pc
+    except ImportError:
+        return None
+    try:
+        cols = list({key_col} | set(ranges))
+        t = pq.read_table(parquet_path, columns=cols)
+    except Exception:
+        return None
+    mask = None
+    for col, r in ranges.items():
+        if col not in t.column_names:
+            return None  # can't faithfully reconstruct -> skip cross-check
+        c = t[col]
+        if r["lo"] is not None:
+            m = pc.greater_equal(c, r["lo"])
+            mask = m if mask is None else pc.and_(mask, m)
+        if r["hi"] is not None:
+            m = pc.less_equal(c, r["hi"])
+            mask = m if mask is None else pc.and_(mask, m)
+    if mask is not None:
+        t = t.filter(mask)
+    if t.num_rows == 0:
+        return None
+    k = t[key_col]
+    return (pc.min(k).as_py(), pc.max(k).as_py())
+
+
+def crosscheck_date_dynfilters(dyn_ranges: dict, dim_date_ranges: list, table: str, warn) -> None:
+    """WARN if a fact scan's OBSERVED dynamic-filter *_date_sk bound is NOT CONTAINED in
+    any sibling filtered date_dim's min/max(d_date_sk) range. Containment (not exact
+    equality) because the reconstructed date_dim range is a SUPERSET — parse_range_filters
+    drops clauses it can't parse (d_month_seq BETWEEN, IN-lists, …), so the true bound
+    should still fall inside it. A bound that falls OUTSIDE means the dynamic filter came
+    from an unexpected source. Pure (testable); never fabricates — the observed bound is
+    still used, this only flags a surprise."""
+    if not dim_date_ranges:
+        return  # no reconstructable date_dim range in this query -> can't cross-check
+    for col, r in dyn_ranges.items():
+        if not col.endswith("_date_sk"):
+            continue
+        lo, hi = r["lo"], r["hi"]
+        if lo is None or hi is None:
+            continue  # need both bounds to containment-check
+        contained = any(dmin <= lo and hi <= dmax for dmin, dmax in dim_date_ranges)
+        if not contained:
+            warn(f"{table}: dynamic-filter {col} bound ({lo},{hi}) falls OUTSIDE every "
+                 f"sibling date_dim min/max(d_date_sk) {dim_date_ranges} — unexpected "
+                 f"dynamic-filter source; pruning kept (bound is observed, not synthesized).")
+
+
 def compute_scan_pruning(root: Node, dynamic_filters: Optional[list],
                          data_dir: Optional[str], warn) -> None:
     """Attach per-scan pruning to the tree by COMBINING the two committed inputs —
@@ -574,8 +634,18 @@ def compute_scan_pruning(root: Node, dynamic_filters: Optional[list],
     import os
     if not data_dir:
         return
+    scans = [n for n in iter_nodes(root) if n.op in SCAN_OPS]
+    # Bounds are aligned to scans by PRE-ORDER INDEX, which is only valid because the
+    # JFP-on (pass 2) and JFP-off (pass 1) static plans are identical (verified 121/121).
+    # Assert the counts match so any future plan-shape drift FAILS LOUDLY rather than
+    # silently mis-attributing or dropping a scan's dynamic-filter bounds.
+    if dynamic_filters is not None and len(dynamic_filters) != len(scans):
+        raise SystemExit(
+            f"dynamic-filter/scan count mismatch: pass2 has {len(dynamic_filters)} "
+            f"bound entries but pass1 has {len(scans)} scans — plan shape drifted "
+            f"between the JFP-on and JFP-off passes; bounds can't be aligned by index.")
     dynamic_filters = dynamic_filters or []
-    for i, s in enumerate(n for n in iter_nodes(root) if n.op in SCAN_OPS):
+    for i, s in enumerate(scans):
         table = table_base(s.extra.get("Table", ""))
         stat = s.extra.get("Filters")
         if isinstance(stat, list):
@@ -593,6 +663,27 @@ def compute_scan_pruning(root: Node, dynamic_filters: Optional[list],
             s.rows_fetched = p["rows_fetched"]   # post-prune -> feeds scan_cost
         elif ranges:
             warn(f"{table}: parquet stats unreadable -> no-prune (100%)")
+
+    # CROSS-CHECK: each fact scan's OBSERVED dynamic *_date_sk bound should equal the
+    # min/max(d_date_sk) of a sibling FILTERED date_dim. Reconstruct the date_dim
+    # range(s) independently from parquet and warn on any mismatch (defensive — the
+    # bound is observed, never synthesized, so this only surfaces a surprise).
+    dim_date_ranges = []
+    for s in scans:
+        if table_base(s.extra.get("Table", "")) != "date_dim":
+            continue
+        dr = parse_range_filters(s.extra.get("Filters"))
+        if not dr:
+            continue  # date_dim filter not parseable to a range -> can't reconstruct
+        mm = dim_date_key_minmax(os.path.join(data_dir, "date_dim.parquet"), "d_date_sk", dr)
+        if mm:
+            dim_date_ranges.append(mm)
+    for s in scans:
+        # Only fact scans — the date_dim's OWN d_date_sk dynamic filter (from a
+        # different join) isn't a "sibling date_dim" cross-check.
+        if s.dyn_filter and table_base(s.extra.get("Table", "")) != "date_dim":
+            crosscheck_date_dynfilters(parse_range_filters(s.dyn_filter), dim_date_ranges,
+                                       table_base(s.extra.get("Table", "?")), warn)
 
 
 def format_pruning_section(root: Node) -> list[str]:

@@ -276,6 +276,37 @@ class TestDynamicFilters(unittest.TestCase):
         self.assertEqual(m["y"], {"lo": None, "hi": 4})
 
 
+class TestGuards(unittest.TestCase):
+    def test_scan_count_mismatch_fails_loud(self):
+        # pass2 bounds count != pass1 scan count -> SystemExit (plan-drift guard).
+        root = dc.Node("HASH_JOIN", 0, 0, 0, {})
+        root.children = [dc.Node("TABLE_SCAN", 10, 1, 1, {"Table": "t"})]
+        with self.assertRaises(SystemExit):
+            dc.compute_scan_pruning(root, ["a>=1", "b<=2"], "/no/such/dir", lambda *a: None)
+
+    def test_crosscheck_date_bound_match(self):
+        warned = []
+        # bound matches a reconstructed date_dim range -> no warning
+        dc.crosscheck_date_dynfilters({"ss_sold_date_sk": {"lo": 100, "hi": 200}},
+                                      [(100, 200)], "store_sales", lambda m: warned.append(m))
+        self.assertEqual(warned, [])
+
+    def test_crosscheck_date_bound_mismatch_warns(self):
+        warned = []
+        dc.crosscheck_date_dynfilters({"ss_sold_date_sk": {"lo": 100, "hi": 999}},
+                                      [(100, 200)], "store_sales", lambda m: warned.append(m))
+        self.assertEqual(len(warned), 1)
+
+    def test_crosscheck_skips_non_date_and_no_dim(self):
+        warned = []
+        # non-date_sk col ignored; and no dim ranges -> no cross-check at all
+        dc.crosscheck_date_dynfilters({"ss_item_sk": {"lo": 1, "hi": 9}}, [(100, 200)],
+                                      "store_sales", lambda m: warned.append(m))
+        dc.crosscheck_date_dynfilters({"ss_sold_date_sk": {"lo": 1, "hi": 9}}, [],
+                                      "store_sales", lambda m: warned.append(m))
+        self.assertEqual(warned, [])
+
+
 class TestSections(unittest.TestCase):
     def test_pruning_section_empty_without_pruning(self):
         # No compute_scan_pruning run (no parquet) -> no pruning attached -> omitted.

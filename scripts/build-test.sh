@@ -55,18 +55,19 @@ PULL_TESTDATA="" # --pull-testdata KIND[,KIND]: rsync remote testdata kinds -> l
 
 usage() {
   echo "Usage: $0 --host <ssh-dest> [--cpu|--gpu] [--remote-dir <path>] [--local-cudf-root <path>] [--remote-cudf-root <path>] [--gcc-version <n>] [--build] [--rsync] [--run] [--all] [--update-canonical] [--fetch-goldens] [--push-testdata KIND[,KIND]] [--pull-testdata KIND[,KIND]]"
-  echo "  testdata KIND: parquet | goldens | duckdb-profiles | queries"
+  echo "  testdata KIND: parquet | goldens | duckdb-profiles | duckdb-dynfilters | queries"
   exit 1
 }
 
 # Map a testdata KIND to its repo-relative dir(s) under testdata/.
 testdata_dirs_for_kind() {
   case "$1" in
-    parquet)         echo "tpch.sf1 tpcds.sf1 tpch.minimal" ;;
-    goldens)         echo "goldens" ;;
-    duckdb-profiles) echo "duckdb-profiles" ;;
-    queries)         echo "tpch-queries tpcds-queries" ;;
-    *) echo "error: unknown testdata kind '$1' (parquet|goldens|duckdb-profiles|queries)" >&2; exit 1 ;;
+    parquet)          echo "tpch.sf1 tpcds.sf1 tpch.minimal" ;;
+    goldens)          echo "goldens" ;;
+    duckdb-profiles)  echo "duckdb-profiles" ;;
+    duckdb-dynfilters) echo "duckdb-dynfilters" ;;
+    queries)          echo "tpch-queries tpcds-queries" ;;
+    *) echo "error: unknown testdata kind '$1' (parquet|goldens|duckdb-profiles|duckdb-dynfilters|queries)" >&2; exit 1 ;;
   esac
 }
 
