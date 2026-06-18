@@ -43,7 +43,18 @@ jobs:
           # DuckDB releases (e.g. INT32 vs INT64 surrogate keys), which would
           # shift row_width and target_batch_size across every plan golden.
           # generate_testdata.sh asserts $(duckdb --version) matches this.
-          conda install -y -n base -c conda-forge 'duckdb-cli=1.5.4'
+          #
+          # Use the official GitHub RELEASE binary (v1.5.4, build 08e34c447b) — the
+          # SAME build the committed goldens are generated with on local/verda, so CI's
+          # regenerated parquet is byte-identical. (conda-forge's duckdb-cli=1.5.4 was
+          # repackaged against icu 78, which conflicts with the base env's mamba pinned
+          # to icu 75 -> LibMambaUnsatisfiableError; and a different build risks
+          # different parquet bytes vs the goldens.)
+          curl -fsSL https://github.com/duckdb/duckdb/releases/download/v1.5.4/duckdb_cli-linux-amd64.zip -o /tmp/duckdb.zip
+          python3 -c "import zipfile; zipfile.ZipFile('/tmp/duckdb.zip').extractall('/tmp/duckdb-bin')"
+          chmod +x /tmp/duckdb-bin/duckdb
+          export DUCKDB=/tmp/duckdb-bin/duckdb
+          "$DUCKDB" --version
           testdata/generate_testdata.sh --bench tpch
           testdata/generate_testdata.sh --bench tpcds
 
