@@ -5,34 +5,34 @@ GpuSortExec: expr=[c_customer_id@0 ASC NULLS LAST, c_salutation@1 ASC NULLS LAST
         GpuProjectExec: expr=[ctr_state@0 as ctr_state, ctr_total_return@1 as ctr_total_return, ca_street_number@6 as ca_street_number, ca_street_name@7 as ca_street_name, ca_street_type@8 as ca_street_type, ca_suite_number@9 as ca_suite_number, ca_city@10 as ca_city, ca_county@11 as ca_county, ca_state@12 as ca_state, ca_zip@13 as ca_zip, ca_country@14 as ca_country, ca_gmt_offset@15 as ca_gmt_offset, ca_location_type@16 as ca_location_type, c_customer_id@2 as c_customer_id, c_salutation@3 as c_salutation, c_first_name@4 as c_first_name, c_last_name@5 as c_last_name], output_bytes=283053, output_rows=1405
           GpuCoalesceBatchesExec: target_batch_size=2064888, output_bytes=283053, output_rows=1405
             GpuHashJoinExec: join_type=Inner, on=[(c_current_addr_sk@3, ca_address_sk@0)], projection=[0, 1, 2, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18], output_bytes=283053, output_rows=1405
-              GpuCoalesceBatchesExec: target_batch_size=2064888, output_bytes=2041493, output_rows=27772
-                GpuHashJoinExec: join_type=Inner, on=[(ctr_customer_sk@0, c_customer_sk@0)], projection=[1, 2, 4, 5, 6, 7, 8], output_bytes=2041553, output_rows=27772
-                  GpuProjectExec: expr=[cr_returning_customer_sk@0 as ctr_customer_sk, ca_state@1 as ctr_state, sum(catalog_returns.cr_return_amt_inc_tax)@2 as ctr_total_return], output_bytes=732074, output_rows=27820
-                    GpuAggregateExec: group_by=[cr_returning_customer_sk, ca_state], aggr=[sum(catalog_returns.cr_return_amt_inc_tax)], output_bytes=732074, output_rows=27820
-                      GpuCoalesceBatchesExec: target_batch_size=2064888, output_bytes=743141, output_rows=28241
-                        GpuHashJoinExec: join_type=Inner, on=[(cr_returning_addr_sk@1, ca_address_sk@0)], projection=[0, 2, 4], output_bytes=743153, output_rows=28241
-                          GpuCoalesceBatchesExec: target_batch_size=2064888, output_bytes=701805, output_rows=28792
-                            GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, cr_returned_date_sk@0)], projection=[2, 3, 4], output_bytes=701805, output_rows=28792
-                              GpuCoalesceBatchesExec: target_batch_size=2064888, output_bytes=1510, output_rows=366
-                                GpuFilterExec: predicate=d_year@1 = 2000, projection=[0], output_bytes=1510, output_rows=366
-                                  GpuScanExec: table=date_dim, projections=[d_date_sk, d_year], batch_size=2064888, output_bytes=602656, output_rows=73049
-                              GpuScanExec: table=catalog_returns, projections=[cr_returned_date_sk, cr_returning_customer_sk, cr_returning_addr_sk, cr_return_amt_inc_tax], batch_size=2064888, output_bytes=4105912, output_rows=144067
-                          GpuScanExec: table=customer_address, projections=[ca_address_sk, ca_state], batch_size=2064888, output_bytes=509404, output_rows=50000
-                  GpuScanExec: table=customer, projections=[c_customer_sk, c_customer_id, c_current_addr_sk, c_salutation, c_first_name, c_last_name], batch_size=2064888, output_bytes=5542723, output_rows=100000
-              GpuCoalesceBatchesExec: target_batch_size=2064888, output_bytes=332247, output_rows=2446
-                GpuFilterExec: predicate=ca_state@7 = GA, output_bytes=332247, output_rows=2446
-                  GpuScanExec: table=customer_address, projections=[ca_address_sk, ca_street_number, ca_street_name, ca_street_type, ca_suite_number, ca_city, ca_county, ca_state, ca_zip, ca_country, ca_gmt_offset, ca_location_type], batch_size=2064888, output_bytes=6741358, output_rows=50000
+              GpuCoalesceBatchesExec: target_batch_size=2064888, output_bytes=2152581, output_rows=27772
+                GpuHashJoinExec: join_type=Inner, on=[(ctr_customer_sk@0, c_customer_sk@0)], projection=[1, 2, 4, 5, 6, 7, 8], output_bytes=2152641, output_rows=27772
+                  GpuProjectExec: expr=[cr_returning_customer_sk@0 as ctr_customer_sk, ca_state@1 as ctr_state, sum(catalog_returns.cr_return_amt_inc_tax)@2 as ctr_total_return], output_bytes=843354, output_rows=27820
+                    GpuAggregateExec: group_by=[cr_returning_customer_sk, ca_state], aggr=[sum(catalog_returns.cr_return_amt_inc_tax)], output_bytes=843354, output_rows=27820
+                      GpuCoalesceBatchesExec: target_batch_size=2064888, output_bytes=856105, output_rows=28241
+                        GpuHashJoinExec: join_type=Inner, on=[(cr_returning_addr_sk@1, ca_address_sk@0)], projection=[0, 2, 4], output_bytes=856117, output_rows=28241
+                          GpuCoalesceBatchesExec: target_batch_size=2064888, output_bytes=932141, output_rows=28792
+                            GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, cr_returned_date_sk@0)], projection=[2, 3, 4], output_bytes=932141, output_rows=28792
+                              GpuCoalesceBatchesExec: target_batch_size=2064888, output_bytes=2974, output_rows=366
+                                GpuFilterExec: predicate=d_year@1 = 2000, projection=[0], output_bytes=2974, output_rows=366
+                                  GpuScanExec: table=date_dim, projections=[d_date_sk, d_year], batch_size=2064888, output_bytes=1187048, output_rows=73049
+                              GpuScanExec: table=catalog_returns, projections=[cr_returned_date_sk, cr_returning_customer_sk, cr_returning_addr_sk, cr_return_amt_inc_tax], batch_size=2064888, output_bytes=5834716, output_rows=144067
+                          GpuScanExec: table=customer_address, projections=[ca_address_sk, ca_state], batch_size=2064888, output_bytes=709404, output_rows=50000
+                  GpuScanExec: table=customer, projections=[c_customer_sk, c_customer_id, c_current_addr_sk, c_salutation, c_first_name, c_last_name], batch_size=2064888, output_bytes=6342723, output_rows=100000
+              GpuCoalesceBatchesExec: target_batch_size=2064888, output_bytes=342031, output_rows=2446
+                GpuFilterExec: predicate=ca_state@7 = GA, output_bytes=342031, output_rows=2446
+                  GpuScanExec: table=customer_address, projections=[ca_address_sk, ca_street_number, ca_street_name, ca_street_type, ca_suite_number, ca_city, ca_county, ca_state, ca_zip, ca_country, ca_gmt_offset, ca_location_type], batch_size=2064888, output_bytes=6941358, output_rows=50000
         GpuProjectExec: expr=[CAST(CAST(avg(ctr2.ctr_total_return)@1 AS Float64) * 1.2 AS Decimal128(30, 15)) as avg(ctr2.ctr_total_return) * Float64(1.2), ctr_state@0 as ctr_state], output_bytes=1160, output_rows=52
           GpuAggregateExec: group_by=[ctr_state], aggr=[avg(ctr2.ctr_total_return)], output_bytes=1160, output_rows=52
             GpuProjectExec: expr=[ca_state@1 as ctr_state, sum(catalog_returns.cr_return_amt_inc_tax)@2 as ctr_total_return], output_bytes=617316, output_rows=27820
-              GpuAggregateExec: group_by=[cr_returning_customer_sk, ca_state], aggr=[sum(catalog_returns.cr_return_amt_inc_tax)], output_bytes=732074, output_rows=27820
-                GpuCoalesceBatchesExec: target_batch_size=2064888, output_bytes=743141, output_rows=28241
-                  GpuHashJoinExec: join_type=Inner, on=[(cr_returning_addr_sk@1, ca_address_sk@0)], projection=[0, 2, 4], output_bytes=743153, output_rows=28241
-                    GpuCoalesceBatchesExec: target_batch_size=2064888, output_bytes=701805, output_rows=28792
-                      GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, cr_returned_date_sk@0)], projection=[2, 3, 4], output_bytes=701805, output_rows=28792
-                        GpuCoalesceBatchesExec: target_batch_size=2064888, output_bytes=1510, output_rows=366
-                          GpuFilterExec: predicate=d_year@1 = 2000, projection=[0], output_bytes=1510, output_rows=366
-                            GpuScanExec: table=date_dim, projections=[d_date_sk, d_year], batch_size=2064888, output_bytes=602656, output_rows=73049
-                        GpuScanExec: table=catalog_returns, projections=[cr_returned_date_sk, cr_returning_customer_sk, cr_returning_addr_sk, cr_return_amt_inc_tax], batch_size=2064888, output_bytes=4105912, output_rows=144067
-                    GpuScanExec: table=customer_address, projections=[ca_address_sk, ca_state], batch_size=2064888, output_bytes=509404, output_rows=50000
-peacockdb_cost=37154368
+              GpuAggregateExec: group_by=[cr_returning_customer_sk, ca_state], aggr=[sum(catalog_returns.cr_return_amt_inc_tax)], output_bytes=843354, output_rows=27820
+                GpuCoalesceBatchesExec: target_batch_size=2064888, output_bytes=856105, output_rows=28241
+                  GpuHashJoinExec: join_type=Inner, on=[(cr_returning_addr_sk@1, ca_address_sk@0)], projection=[0, 2, 4], output_bytes=856117, output_rows=28241
+                    GpuCoalesceBatchesExec: target_batch_size=2064888, output_bytes=932141, output_rows=28792
+                      GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, cr_returned_date_sk@0)], projection=[2, 3, 4], output_bytes=932141, output_rows=28792
+                        GpuCoalesceBatchesExec: target_batch_size=2064888, output_bytes=2974, output_rows=366
+                          GpuFilterExec: predicate=d_year@1 = 2000, projection=[0], output_bytes=2974, output_rows=366
+                            GpuScanExec: table=date_dim, projections=[d_date_sk, d_year], batch_size=2064888, output_bytes=1187048, output_rows=73049
+                        GpuScanExec: table=catalog_returns, projections=[cr_returned_date_sk, cr_returning_customer_sk, cr_returning_addr_sk, cr_return_amt_inc_tax], batch_size=2064888, output_bytes=5834716, output_rows=144067
+                    GpuScanExec: table=customer_address, projections=[ca_address_sk, ca_state], batch_size=2064888, output_bytes=709404, output_rows=50000
+peacockdb_cost=45135400

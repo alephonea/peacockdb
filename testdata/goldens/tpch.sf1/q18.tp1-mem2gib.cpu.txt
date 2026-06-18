@@ -3,7 +3,7 @@ GpuSortExec: expr=[o_totalprice@4 DESC, o_orderdate@3 ASC NULLS LAST], fetch=100
     GpuCoalesceBatchesExec: target_batch_size=12201611, output_bytes=29830, output_rows=399
       GpuHashJoinExec: join_type=RightSemi, on=[(l_orderkey@0, o_orderkey@2)], output_bytes=29830, output_rows=399
         GpuCoalesceBatchesExec: target_batch_size=12201611, output_bytes=464, output_rows=57
-          GpuFilterExec: predicate=sum(lineitem.l_quantity)@1 > Some(30000),25,2, projection=[0], output_bytes=506, output_rows=57
+          GpuFilterExec: predicate=sum(lineitem.l_quantity)@1 > Some(30000),25,2, projection=[0], output_bytes=507, output_rows=57
             GpuAggregateExec: group_by=[l_orderkey], aggr=[sum(lineitem.l_quantity)], output_bytes=36375000, output_rows=1500000
               GpuScanExec: table=lineitem, projections=[l_orderkey, l_quantity], batch_size=12201611, output_bytes=145529464, output_rows=6001215
         GpuCoalesceBatchesExec: target_batch_size=12201611, output_bytes=448590826, output_rows=6001215
@@ -13,4 +13,4 @@ GpuSortExec: expr=[o_totalprice@4 DESC, o_orderdate@3 ASC NULLS LAST], fetch=100
                 GpuScanExec: table=customer, projections=[c_custkey, c_name], batch_size=12201611, output_bytes=4537508, output_rows=150000
                 GpuScanExec: table=orders, projections=[o_orderkey, o_custkey, o_totalprice, o_orderdate], batch_size=12201611, output_bytes=54750000, output_rows=1500000
             GpuScanExec: table=lineitem, projections=[l_orderkey, l_quantity], batch_size=12201611, output_bytes=145529464, output_rows=6001215
-peacockdb_cost=1459850926
+peacockdb_cost=1459850927

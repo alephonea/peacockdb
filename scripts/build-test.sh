@@ -31,6 +31,7 @@ LOCAL_CUDF_ROOT="/home/dmitry/data/miniforge3/envs/rapids"    # local cuDF (26.0
 REMOTE_CUDF_ROOT="/home/dmitry/miniforge3/envs/rapids-26.02"  # cuDF runtime libs on the remote
 GCC_VERSION=14                                                # gcc-N for the C++/cmake build (cuDF 26.02 / CUDA 12.x accepts 14)
 MODE=cpu                                                      # cpu | gpu (set via --cpu / --gpu)
+RUST_ONLY=0                                                   # --rust-only: build cpu/plan test bins with --features rust-only (NO C++/FFI); for golden regen + cpu/plan verify on verda
 
 # Dedicated 26.02 C++ build dir, separate from the default cpp/build (which is
 # kept at 25.02 on purpose). Using a distinct dir also avoids the find_package
@@ -54,7 +55,8 @@ PULL_TESTDATA="" # --pull-testdata KIND[,KIND]: rsync remote testdata kinds -> l
 # touching the (separately shipped) test binaries.
 
 usage() {
-  echo "Usage: $0 --host <ssh-dest> [--cpu|--gpu] [--remote-dir <path>] [--local-cudf-root <path>] [--remote-cudf-root <path>] [--gcc-version <n>] [--build] [--rsync] [--run] [--all] [--update-canonical] [--fetch-goldens] [--push-testdata KIND[,KIND]] [--pull-testdata KIND[,KIND]]"
+  echo "Usage: $0 --host <ssh-dest> [--cpu|--gpu|--rust-only] [--remote-dir <path>] [--local-cudf-root <path>] [--remote-cudf-root <path>] [--gcc-version <n>] [--build] [--rsync] [--run] [--all] [--update-canonical] [--fetch-goldens] [--push-testdata KIND[,KIND]] [--pull-testdata KIND[,KIND]]"
+  echo "  --rust-only: cpu/plan goldens via --features rust-only (no C++/FFI); regen with --update-canonical, fetch with --fetch-goldens, verify by re-running without --update-canonical"
   echo "  testdata KIND: parquet | goldens | duckdb-profiles | duckdb-dynfilters | queries"
   exit 1
 }
@@ -82,6 +84,7 @@ while [ $# -gt 0 ]; do
     --gcc-version)      GCC_VERSION="$2"; shift ;;
     --cpu)              MODE=cpu ;;
     --gpu)              MODE=gpu ;;
+    --rust-only)        MODE=cpu; RUST_ONLY=1 ;;
     --build)            BUILD=1 ;;
     --rsync)            RSYNC=1 ;;
     --run)              RUN=1 ;;
@@ -100,6 +103,16 @@ done
 if [ "$MODE" = "gpu" ]; then
   RUST_TESTS=(peacockdb-core:test_gpu_executor)
   CPP_TEST_BIN=peacock_plan_tests
+elif [ "$RUST_ONLY" -eq 1 ]; then
+  # rust-only golden regen / cpu+plan verify: no C++, no FFI. The two suites that own
+  # goldens (UPDATE_CANONICAL regenerates .plan.txt + .cpu.txt) + their companions.
+  RUST_TESTS=(
+    peacockdb-core:test_query_plan
+    peacockdb-core:test_query_plan_misc
+    peacockdb-core:test_cpu_executor
+    peacockdb-core:test_cpu_executor_misc
+  )
+  CPP_TEST_BIN=""
 else
   RUST_TESTS=(
     peacockdb-core:test_plan_serialiser
@@ -135,37 +148,46 @@ if [ -n "$PUSH_TESTDATA" ]; then
 fi
 
 if [ "$BUILD" -eq 1 ]; then
-  echo "==> build C++ in $BUILD_DIR against cuDF at $LOCAL_CUDF_ROOT (gcc-$GCC_VERSION)"
-  # cuDF env first on PATH so nvcc/cmake/ninja resolve from the rapids env.
-  export PATH="$LOCAL_CUDF_ROOT/bin:$PATH"
-  export CC=/usr/bin/gcc-${GCC_VERSION}
-  export CXX=/usr/bin/g++-${GCC_VERSION}
-  export CUDACXX="$LOCAL_CUDF_ROOT/bin/nvcc"
-  export LDFLAGS="-Wl,-rpath-link,$LOCAL_CUDF_ROOT/lib"
-  # Drive cmake directly (build.sh hardcodes cpp/build) so we land in cpp/build26
-  # and leave the 25.02 cpp/build untouched.
-  cmake -S cpp -B "$BUILD_DIR" -G Ninja \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_CUDA_ARCHITECTURES="$CUDA_ARCHITECTURES" \
-    -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
-    -DCMAKE_INSTALL_PREFIX="$INSTALL_DIR" \
-    -Dcudf_ROOT="$LOCAL_CUDF_ROOT"
-  cmake --build "$BUILD_DIR" --parallel "$(nproc)"
-  cmake --install "$BUILD_DIR"
+  CARGO_FEATURES=""
+  if [ "$RUST_ONLY" -eq 1 ]; then
+    # No C++/FFI — build the test binaries with --features rust-only (the part that
+    # compiles locally without the cuDF toolchain). Goldens are rust-only artifacts.
+    echo "==> build rust-only test binaries (no C++/FFI)"
+    CARGO_FEATURES="--features rust-only"
+    mkdir -p "$RUST_TESTS_STAGING"
+  else
+    echo "==> build C++ in $BUILD_DIR against cuDF at $LOCAL_CUDF_ROOT (gcc-$GCC_VERSION)"
+    # cuDF env first on PATH so nvcc/cmake/ninja resolve from the rapids env.
+    export PATH="$LOCAL_CUDF_ROOT/bin:$PATH"
+    export CC=/usr/bin/gcc-${GCC_VERSION}
+    export CXX=/usr/bin/g++-${GCC_VERSION}
+    export CUDACXX="$LOCAL_CUDF_ROOT/bin/nvcc"
+    export LDFLAGS="-Wl,-rpath-link,$LOCAL_CUDF_ROOT/lib"
+    # Drive cmake directly (build.sh hardcodes cpp/build) so we land in cpp/build26
+    # and leave the 25.02 cpp/build untouched.
+    cmake -S cpp -B "$BUILD_DIR" -G Ninja \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_CUDA_ARCHITECTURES="$CUDA_ARCHITECTURES" \
+      -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+      -DCMAKE_INSTALL_PREFIX="$INSTALL_DIR" \
+      -Dcudf_ROOT="$LOCAL_CUDF_ROOT"
+    cmake --build "$BUILD_DIR" --parallel "$(nproc)"
+    cmake --install "$BUILD_DIR"
 
-  echo "==> stage Rust $MODE test binaries"
-  mkdir -p "$RUST_TESTS_STAGING"
-  export CUDF_ROOT="$LOCAL_CUDF_ROOT"
-  # The FFI crate builds its own libpeacock_gpu via the cmake crate in cargo's
-  # OUT_DIR, which carries the same stale cudf_DIR risk as the C++ build dir.
-  # Clean it so it reconfigures against the 26.02 root selected above.
-  cargo clean -p peacockdb-ffi
+    echo "==> stage Rust $MODE test binaries"
+    mkdir -p "$RUST_TESTS_STAGING"
+    export CUDF_ROOT="$LOCAL_CUDF_ROOT"
+    # The FFI crate builds its own libpeacock_gpu via the cmake crate in cargo's
+    # OUT_DIR, which carries the same stale cudf_DIR risk as the C++ build dir.
+    # Clean it so it reconfigures against the 26.02 root selected above.
+    cargo clean -p peacockdb-ffi
+  fi
   for spec in "${RUST_TESTS[@]}"; do
     pkg="${spec%%:*}"
     t="${spec##*:}"
     # cargo test --no-run prints a json artifact line per built target; the
     # integration test we want has .target.name == $t and a non-null .executable.
-    exec_path=$(cargo test --no-run -p "$pkg" --test "$t" \
+    exec_path=$(cargo test --no-run $CARGO_FEATURES -p "$pkg" --test "$t" \
         --message-format=json \
       | python3 -c '
 import json, sys
@@ -196,7 +218,7 @@ if [ "$RSYNC" -eq 1 ]; then
   ssh "$HOST" "mkdir -p '$REMOTE_DIR/cpp/install'"
   rsync -r -P "$INSTALL_DIR"/* "$HOST:$REMOTE_DIR/cpp/install/"
 
-  if [ "$MODE" = "cpu" ] && [ -d testdata/goldens ]; then
+  if [ "$MODE" = "cpu" ] && [ "$RUST_ONLY" -eq 0 ] && [ -d testdata/goldens ]; then
     # Ship the committed goldens (testdata/goldens/<dataset>.sf<N>/) so they match
     # the just-built binaries — version-controlled fixtures, run-independent of the
     # remote's checked-out commit. Heavy parquet datasets are generated on the
@@ -217,9 +239,20 @@ if [ "$RUN" -eq 1 ]; then
   if [ "$MODE" = "gpu" ]; then
     THREADS_ARG="--test-threads=1"
     TESTDATA_ENV="export PEACOCK_TESTDATA_DIR=$REMOTE_DIR/testdata"
+  elif [ "$RUST_ONLY" -eq 1 ]; then
+    THREADS_ARG=""
+    # rust-only test crates honor PEACOCK_TESTDATA_DIR -> point at the remote testdata.
+    TESTDATA_ENV="export PEACOCK_TESTDATA_DIR=$REMOTE_DIR/testdata"
   else
     THREADS_ARG=""
     TESTDATA_ENV=":"
+  fi
+
+  # rust-only binaries link neither libpeacock_gpu nor cuDF, so skip LD_LIBRARY_PATH.
+  if [ "$RUST_ONLY" -eq 1 ]; then
+    LD_ENV=":"
+  else
+    LD_ENV="export LD_LIBRARY_PATH=$REMOTE_DIR/cpp/install/lib:$REMOTE_CUDF_ROOT/lib:\$LD_LIBRARY_PATH"
   fi
 
   # --update-canonical: the test binaries regenerate their goldens in-place
@@ -245,14 +278,16 @@ if [ "$RUN" -eq 1 ]; then
     # at the end if anything failed. Each result is OR'd into rc.
     # cpp/install/lib first so libpeacock_gpu.so resolves for the test binaries
     # (their baked rpath points at this build host); then the remote's cuDF libs.
-    export LD_LIBRARY_PATH="$REMOTE_DIR/cpp/install/lib:$REMOTE_CUDF_ROOT/lib:\$LD_LIBRARY_PATH"
+    $LD_ENV
     $TESTDATA_ENV
     $UPDATE_CANON_ENV
 
     rc=0
 
-    echo "==> $CPP_TEST_BIN (C++)"
-    "$REMOTE_DIR/cpp/install/bin/$CPP_TEST_BIN" || rc=1
+    if [ -n "$CPP_TEST_BIN" ]; then
+      echo "==> $CPP_TEST_BIN (C++)"
+      "$REMOTE_DIR/cpp/install/bin/$CPP_TEST_BIN" || rc=1
+    fi
 
     echo "==> Rust $MODE integration tests (filter='$PCK_TEST_FILTER')"
     for name in $RUST_TEST_NAMES; do

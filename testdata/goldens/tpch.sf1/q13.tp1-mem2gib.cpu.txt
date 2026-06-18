@@ -7,6 +7,6 @@ GpuSortExec: expr=[custdist@1 DESC, c_count@0 DESC], output_bytes=684, output_ro
             GpuHashJoinExec: join_type=Left, on=[(c_custkey@0, o_custkey@1)], projection=[0, 1], output_bytes=24932410, output_rows=1534302
               GpuScanExec: table=customer, projections=[c_custkey], batch_size=33554432, output_bytes=1218750, output_rows=150000
               GpuCoalesceBatchesExec: target_batch_size=33554432, output_bytes=24119844, output_rows=1484298
-                GpuFilterExec: predicate=o_comment@2 NOT LIKE %special%requests%, projection=[0, 1], output_bytes=24119856, output_rows=1484298
+                GpuFilterExec: predicate=o_comment@2 NOT LIKE %special%requests%, projection=[0, 1], output_bytes=24119854, output_rows=1484298
                   GpuScanExec: table=orders, projections=[o_orderkey, o_custkey, o_comment], batch_size=33554432, output_bytes=103333360, output_rows=1500000
-peacockdb_cost=206314930
+peacockdb_cost=206314928

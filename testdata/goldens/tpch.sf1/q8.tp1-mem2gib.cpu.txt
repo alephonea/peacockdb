@@ -23,16 +23,16 @@ GpuSortExec: expr=[o_year@0 ASC NULLS LAST], output_bytes=42, output_rows=2
                                 GpuCoalesceBatchesExec: target_batch_size=14128181, output_bytes=651042, output_rows=13389
                                   GpuHashJoinExec: join_type=Inner, on=[(o_orderkey@0, l_orderkey@0)], projection=[1, 2, 4, 5, 6], output_bytes=651042, output_rows=13389
                                     GpuCoalesceBatchesExec: target_batch_size=14128181, output_bytes=9316734, output_rows=457263
-                                      GpuFilterExec: predicate=o_orderdate@2 >= 1995-01-01 AND o_orderdate@2 <= 1996-12-31, output_bytes=9316755, output_rows=457263
-                                        GpuScanExec: table=orders, projections=[o_orderkey, o_custkey, o_orderdate], batch_size=14128181, output_bytes=30562500, output_rows=1500000
+                                      GpuFilterExec: predicate=o_orderdate@2 >= 1995-01-01 AND o_orderdate@2 <= 1996-12-31, output_bytes=9316737, output_rows=457263
+                                        GpuScanExec: table=orders, projections=[o_orderkey, o_custkey, o_orderdate], batch_size=14128181, output_bytes=12518400, output_rows=614400
                                     GpuProjectExec: expr=[l_orderkey@1 as l_orderkey, l_extendedprice@2 as l_extendedprice, l_discount@3 as l_discount, s_nationkey@0 as s_nationkey], output_bytes=1944340, output_rows=43693
                                       GpuCoalesceBatchesExec: target_batch_size=14128181, output_bytes=1944340, output_rows=43693
                                         GpuHashJoinExec: join_type=Inner, on=[(s_suppkey@0, l_suppkey@1)], projection=[1, 2, 4, 5], output_bytes=1944340, output_rows=43693
                                           GpuScanExec: table=supplier, projections=[s_suppkey, s_nationkey], batch_size=14128181, output_bytes=122500, output_rows=10000
                                           GpuCoalesceBatchesExec: target_batch_size=14128181, output_bytes=2119112, output_rows=43693
-                                            GpuHashJoinExec: join_type=Inner, on=[(p_partkey@0, l_partkey@1)], projection=[1, 3, 4, 5], output_bytes=2119184, output_rows=43693
+                                            GpuHashJoinExec: join_type=Inner, on=[(p_partkey@0, l_partkey@1)], projection=[1, 3, 4, 5], output_bytes=2119208, output_rows=43693
                                               GpuCoalesceBatchesExec: target_batch_size=14128181, output_bytes=11790, output_rows=1451
                                                 GpuFilterExec: predicate=p_type@1 = ECONOMY ANODIZED STEEL, projection=[0], output_bytes=11790, output_rows=1451
                                                   GpuScanExec: table=part, projections=[p_partkey, p_type], batch_size=14128181, output_bytes=6569954, output_rows=200000
                                               GpuScanExec: table=lineitem, projections=[l_orderkey, l_partkey, l_suppkey, l_extendedprice, l_discount], batch_size=14128181, output_bytes=339818800, output_rows=6001215
-peacockdb_cost=415583039
+peacockdb_cost=397538945
