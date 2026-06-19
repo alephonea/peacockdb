@@ -1,0 +1,27 @@
+GpuSortExec: expr=[value@1 DESC], output_bytes=669398, output_rows=27604
+  GpuProjectExec: expr=[ps_partkey@0 as ps_partkey, sum(partsupp.ps_supplycost * partsupp.ps_availqty)@1 as value], output_bytes=669398, output_rows=27604
+    GpuNestedLoopJoinExec: join_type=Inner, filter=CAST(sum(partsupp.ps_supplycost * partsupp.ps_availqty)@0 AS Decimal128(38, 15)) > sum(partsupp.ps_supplycost * partsupp.ps_availqty) * Float64(0.000002)@1, projection=[1, 2], output_bytes=669398, output_rows=27604
+      GpuProjectExec: expr=[CAST(CAST(sum(partsupp.ps_supplycost * partsupp.ps_availqty)@0 AS Float64) * 0.000002 AS Decimal128(38, 15)) as sum(partsupp.ps_supplycost * partsupp.ps_availqty) * Float64(0.000002)], output_bytes=17, output_rows=1
+        GpuAggregateExec: group_by=[], aggr=[sum(partsupp.ps_supplycost * partsupp.ps_availqty)], output_bytes=17, output_rows=1
+          GpuCoalesceBatchesExec: target_batch_size=1464193396, output_bytes=768240, output_rows=31680
+            GpuHashJoinExec: join_type=Inner, on=[(n_nationkey@0, s_nationkey@2)], projection=[1, 2], output_bytes=768240, output_rows=31680
+              GpuCoalesceBatchesExec: target_batch_size=1464193396, output_bytes=5, output_rows=1
+                GpuFilterExec: predicate=n_name@1 = GERMANY, projection=[0], output_bytes=5, output_rows=1
+                  GpuScanExec: table=nation, projections=[n_nationkey, n_name], batch_size=1464193396, output_bytes=389, output_rows=25
+              GpuProjectExec: expr=[ps_availqty@1 as ps_availqty, ps_supplycost@2 as ps_supplycost, s_nationkey@0 as s_nationkey], output_bytes=22700000, output_rows=800000
+                GpuCoalesceBatchesExec: target_batch_size=1464193396, output_bytes=22700000, output_rows=800000
+                  GpuHashJoinExec: join_type=Inner, on=[(s_suppkey@0, ps_suppkey@0)], projection=[1, 3, 4], output_bytes=22700000, output_rows=800000
+                    GpuScanExec: table=supplier, projections=[s_suppkey, s_nationkey], batch_size=1464193396, output_bytes=122500, output_rows=10000
+                    GpuScanExec: table=partsupp, projections=[ps_suppkey, ps_availqty, ps_supplycost], batch_size=1464193396, output_bytes=25900000, output_rows=800000
+      GpuAggregateExec: group_by=[ps_partkey], aggr=[sum(partsupp.ps_supplycost * partsupp.ps_availqty)], output_bytes=723088, output_rows=29818
+        GpuCoalesceBatchesExec: target_batch_size=1464193396, output_bytes=1025640, output_rows=31680
+          GpuHashJoinExec: join_type=Inner, on=[(n_nationkey@0, s_nationkey@3)], projection=[1, 2, 3], output_bytes=1025640, output_rows=31680
+            GpuCoalesceBatchesExec: target_batch_size=1464193396, output_bytes=5, output_rows=1
+              GpuFilterExec: predicate=n_name@1 = GERMANY, projection=[0], output_bytes=5, output_rows=1
+                GpuScanExec: table=nation, projections=[n_nationkey, n_name], batch_size=1464193396, output_bytes=389, output_rows=25
+            GpuProjectExec: expr=[ps_partkey@1 as ps_partkey, ps_availqty@2 as ps_availqty, ps_supplycost@3 as ps_supplycost, s_nationkey@0 as s_nationkey], output_bytes=29200000, output_rows=800000
+              GpuCoalesceBatchesExec: target_batch_size=1464193396, output_bytes=29200000, output_rows=800000
+                GpuHashJoinExec: join_type=Inner, on=[(s_suppkey@0, ps_suppkey@1)], projection=[1, 2, 4, 5], output_bytes=29200000, output_rows=800000
+                  GpuScanExec: table=supplier, projections=[s_suppkey, s_nationkey], batch_size=1464193396, output_bytes=122500, output_rows=10000
+                  GpuScanExec: table=partsupp, projections=[ps_partkey, ps_suppkey, ps_availqty, ps_supplycost], batch_size=1464193396, output_bytes=32400000, output_rows=800000
+peacockdb_cost=220564874
