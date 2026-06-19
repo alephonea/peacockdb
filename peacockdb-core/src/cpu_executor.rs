@@ -21,11 +21,83 @@ use datafusion::physical_plan::{
 use datafusion::physical_plan::union::{InterleaveExec, UnionExec};
 use futures::Stream;
 
+use std::collections::HashMap;
+
 use crate::gpu_rule::{
     GpuAggregateExec, GpuCoalesceBatchesExec, GpuCoalescePartitionsExec, GpuFilterExec,
     GpuHashJoinExec, GpuInterleaveExec, GpuProjectExec, GpuRepartitionExec, GpuScanExec,
     GpuSortExec, GpuSortPreservingMergeExec,
 };
+
+// ---------------------------------------------------------------------------
+// Resident-memory enforcement (Part 2): strict "GPU" memory budget, mid-run.
+// ---------------------------------------------------------------------------
+
+/// Tracks the modeled concurrently-resident data set during node-by-node
+/// execution and trips a budget the MOMENT it is crossed (before the query
+/// completes). The accounting is delegated to `resident::peak_from_skeleton`, the
+/// SAME path-sum logic as the offline `resident::check_resident_budget`, so the
+/// mid-run verdict can't drift from the reference. As each node's output stream
+/// completes its `output_bytes` is recorded; the peak is recomputed and grows
+/// monotonically toward the true peak, so the crossing is detected exactly when
+/// it happens.
+struct ResidentEnforcer {
+    budget: usize,
+    state: Mutex<EnforcerState>,
+}
+
+struct EnforcerState {
+    /// seq -> (stripped node name, child seqs). Built during `build_stream`.
+    skeleton: HashMap<usize, (String, Vec<usize>)>,
+    /// Post-order means the LAST node registered is the root.
+    root: usize,
+    /// Completed nodes' output_bytes (missing = not yet materialized = 0).
+    output_bytes: HashMap<usize, usize>,
+    tripped: Option<String>,
+}
+
+impl ResidentEnforcer {
+    fn new(budget: usize) -> Self {
+        Self {
+            budget,
+            state: Mutex::new(EnforcerState {
+                skeleton: HashMap::new(),
+                root: 0,
+                output_bytes: HashMap::new(),
+                tripped: None,
+            }),
+        }
+    }
+
+    fn register(&self, seq: usize, name: String, children: Vec<usize>) {
+        let mut s = self.state.lock().unwrap();
+        s.skeleton.insert(seq, (name, children));
+        s.root = seq;
+    }
+
+    fn on_complete(&self, seq: usize, output_bytes: usize) {
+        let mut s = self.state.lock().unwrap();
+        s.output_bytes.insert(seq, output_bytes);
+        if s.tripped.is_none() {
+            let peak = crate::resident::peak_from_skeleton(s.root, &s.skeleton, &s.output_bytes);
+            if peak > self.budget {
+                s.tripped = Some(format!(
+                    "resident GPU memory budget exceeded: peak {peak} bytes > budget {} bytes",
+                    self.budget
+                ));
+            }
+        }
+    }
+
+    fn tripped_error(&self) -> Option<DataFusionError> {
+        self.state
+            .lock()
+            .unwrap()
+            .tripped
+            .clone()
+            .map(DataFusionError::ResourcesExhausted)
+    }
+}
 
 // 
 fn strip_gpu(node: Arc<dyn ExecutionPlan>) -> (Arc<dyn ExecutionPlan>, Option<usize>) {
@@ -137,10 +209,34 @@ pub async fn execute_node_by_node(
     task_ctx: Arc<TaskContext>,
     on_node: &mut dyn FnMut(&str, &NodeMemoryStats),
 ) -> Result<Vec<RecordBatch>> {
+    execute_node_by_node_enforced(root, task_ctx, None, on_node).await
+}
+
+/// Like [`execute_node_by_node`], but when `budget` is `Some`, applies strict
+/// resident-memory control: the modeled concurrently-resident data set is tracked
+/// during execution and a `ResourcesExhausted` error is raised the moment it
+/// exceeds the budget (mid-run, before the query completes). `None` = no
+/// enforcement (the historical behaviour). Enforcement is an ADDED check only —
+/// it never alters the per-node stats / `output_bytes` accounting.
+pub async fn execute_node_by_node_enforced(
+    root: Arc<dyn ExecutionPlan>,
+    task_ctx: Arc<TaskContext>,
+    budget: Option<usize>,
+    on_node: &mut dyn FnMut(&str, &NodeMemoryStats),
+) -> Result<Vec<RecordBatch>> {
     let collector: Arc<Mutex<Vec<(usize, NodeMemoryStats)>>> = Arc::new(Mutex::new(Vec::new()));
     let seq_counter = Arc::new(AtomicUsize::new(0));
-    let stream = build_stream(root.clone(), task_ctx, collector.clone(), seq_counter)?;
+    let enforcer = budget.map(|b| Arc::new(ResidentEnforcer::new(b)));
+    let (stream, _) =
+        build_stream(root.clone(), task_ctx, collector.clone(), seq_counter, enforcer.clone())?;
     let batches = drain_stream(stream).await?;
+    // Safety net: if the budget was crossed only at the final (root) completion,
+    // no later poll observed the latch — surface it here instead of returning Ok.
+    if let Some(enf) = &enforcer {
+        if let Some(e) = enf.tripped_error() {
+            return Err(e);
+        }
+    }
     let mut stats = std::mem::take(&mut *collector.lock().unwrap());
     // Stats are pushed in stream-completion/Drop order. That is normally
     // post-order, but a LIMIT parent finalizes (returns None) before its
@@ -164,12 +260,26 @@ pub async fn execute_node_by_node_instrumented(
     execute_node_by_node(root, task_ctx, &mut |_, s| stats.push(s.clone())).await
 }
 
+/// [`execute_node_by_node_instrumented`] with strict resident-memory control at
+/// `budget` (see [`execute_node_by_node_enforced`]). Used by the cpu result tests
+/// (verifying the budget never trips at 2 GiB) and the tight-budget OOM tests.
+pub async fn execute_node_by_node_instrumented_enforced(
+    root: Arc<dyn ExecutionPlan>,
+    task_ctx: Arc<TaskContext>,
+    budget: usize,
+    stats: &mut Vec<NodeMemoryStats>,
+) -> Result<Vec<RecordBatch>> {
+    execute_node_by_node_enforced(root, task_ctx, Some(budget), &mut |_, s| stats.push(s.clone()))
+        .await
+}
+
 fn build_stream(
     root: Arc<dyn ExecutionPlan>,
     task_ctx: Arc<TaskContext>,
     collector: Arc<Mutex<Vec<(usize, NodeMemoryStats)>>>,
     seq_counter: Arc<AtomicUsize>,
-) -> Result<SendableRecordBatchStream> {
+    enforcer: Option<Arc<ResidentEnforcer>>,
+) -> Result<(SendableRecordBatchStream, usize)> {
     let (cpu_node, batch_size_override) = strip_gpu(root);
 
     let task_ctx = match batch_size_override {
@@ -178,6 +288,7 @@ fn build_stream(
     };
 
     let mut stream_children: Vec<Arc<dyn ExecutionPlan>> = Vec::new();
+    let mut child_seqs: Vec<usize> = Vec::new();
     for child in cpu_node.children() {
         let child_schema = child.schema();
         // Carry the child's equivalence properties (notably its output ordering)
@@ -186,8 +297,14 @@ fn build_stream(
         // BoundedWindowAggExec (mode=Sorted) reject their input
         // ("PARTITION BY expression to be ordered").
         let child_eq = child.properties().equivalence_properties().clone();
-        let child_stream =
-            build_stream(child.clone(), task_ctx.clone(), collector.clone(), seq_counter.clone())?;
+        let (child_stream, child_seq) = build_stream(
+            child.clone(),
+            task_ctx.clone(),
+            collector.clone(),
+            seq_counter.clone(),
+            enforcer.clone(),
+        )?;
+        child_seqs.push(child_seq);
         stream_children.push(Arc::new(StreamSourceExec::new(
             child_schema,
             child_eq,
@@ -213,17 +330,26 @@ fn build_stream(
     // (they incremented the counter first), so children always sort before their
     // parent regardless of stream-completion/Drop timing (see I2 / LIMIT case).
     let seq = seq_counter.fetch_add(1, Ordering::Relaxed);
+    // Register this node's accounting skeleton (seq -> name + child seqs) BEFORE it
+    // can complete, so the enforcer can recompute the path-sum peak as nodes finish.
+    if let Some(enf) = &enforcer {
+        enf.register(seq, node_name.clone(), child_seqs);
+    }
     // Use execute_stream (not execute(0)) so multi-partition nodes (UnionExec,
     // RepartitionExec, …) are coalesced into a single stream instead of
     // silently dropping all partitions but one.
     let inner = execute_stream(node, task_ctx)?;
-    Ok(Box::pin(InstrumentedStream::new(
+    Ok((
+        Box::pin(InstrumentedStream::new(
+            seq,
+            node_name,
+            node_schema,
+            inner,
+            collector,
+            enforcer,
+        )),
         seq,
-        node_name,
-        node_schema,
-        inner,
-        collector,
-    )))
+    ))
 }
 
 async fn drain_stream(mut stream: SendableRecordBatchStream) -> Result<Vec<RecordBatch>> {
@@ -335,6 +461,8 @@ struct InstrumentedStream {
     row_count: usize,
     max_batch_rows: usize,
     collector: Arc<Mutex<Vec<(usize, NodeMemoryStats)>>>,
+    /// Resident-budget enforcer (Part 2). `None` = no enforcement.
+    enforcer: Option<Arc<ResidentEnforcer>>,
     done: bool,
 }
 
@@ -345,6 +473,7 @@ impl InstrumentedStream {
         schema: SchemaRef,
         inner: SendableRecordBatchStream,
         collector: Arc<Mutex<Vec<(usize, NodeMemoryStats)>>>,
+        enforcer: Option<Arc<ResidentEnforcer>>,
     ) -> Self {
         // Fail fast (here, not in Drop) if any output column type isn't accountable.
         for f in schema.fields() {
@@ -361,6 +490,7 @@ impl InstrumentedStream {
             row_count: 0,
             max_batch_rows: 0,
             collector,
+            enforcer,
             done: false,
         }
     }
@@ -370,20 +500,26 @@ impl InstrumentedStream {
     fn push_stat(&mut self) {
         if !self.done {
             self.done = true;
+            // Logical size of the whole node output: each column's (and nested
+            // level's) overhead charged ONCE from the accumulated totals —
+            // independent of batch boundaries.
+            let output_bytes: usize = self
+                .cols
+                .iter()
+                .zip(self.schema.fields())
+                .map(|(c, f)| c.size(f.data_type()))
+                .sum();
+            // Feed the resident enforcer this node's materialized size so it can
+            // recompute the concurrent peak and trip the budget mid-run.
+            if let Some(enf) = &self.enforcer {
+                enf.on_complete(self.seq, output_bytes);
+            }
             self.collector.lock().unwrap().push((
                 self.seq,
                 NodeMemoryStats {
                     node_name: self.node_name.clone(),
                     allocated_bytes: self.allocated_bytes,
-                    // Logical size of the whole node output: each column's (and
-                    // nested level's) overhead charged ONCE from the accumulated
-                    // totals — independent of batch boundaries.
-                    output_bytes: self
-                        .cols
-                        .iter()
-                        .zip(self.schema.fields())
-                        .map(|(c, f)| c.size(f.data_type()))
-                        .sum(),
+                    output_bytes,
                     row_count: self.row_count,
                     max_batch_rows: self.max_batch_rows,
                 },
@@ -405,6 +541,15 @@ impl Stream for InstrumentedStream {
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let me = &mut *self;
+        // Strict resident control: if a node's completion (possibly elsewhere in the
+        // tree) has already pushed the modeled concurrent-resident over budget, fail
+        // here rather than finish the query.
+        if let Some(enf) = &me.enforcer {
+            if let Some(e) = enf.tripped_error() {
+                me.done = true;
+                return Poll::Ready(Some(Err(e)));
+            }
+        }
         let poll = Pin::new(&mut me.inner).poll_next(cx);
         if let Poll::Ready(item) = &poll {
             match item {

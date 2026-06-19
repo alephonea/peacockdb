@@ -15,7 +15,7 @@ use datafusion::execution::context::SessionContext;
 use datafusion::physical_plan::display::DisplayableExecutionPlan;
 use datafusion::physical_plan::{DisplayFormatType, ExecutionPlan};
 
-use peacockdb_core::cpu_executor::{execute_node_by_node_instrumented, NodeMemoryStats};
+use peacockdb_core::cpu_executor::{execute_node_by_node_instrumented_enforced, NodeMemoryStats};
 use peacockdb_core::gpu_rule::{analyze_memory, row_width};
 use peacockdb_core::plan_serializer;
 use peacockdb_core::{
@@ -455,12 +455,59 @@ pub async fn assert_cpu_results_match_datafusion(
     let cpu_ctx = create_context_with_tables(&data_dir, partitions, budget).await.unwrap();
     let plan = cpu_ctx.sql(&sql).await.unwrap().create_physical_plan().await.unwrap();
     let mut stats: Vec<NodeMemoryStats> = vec![];
-    let actual = execute_node_by_node_instrumented(plan.clone(), cpu_ctx.task_ctx(), &mut stats)
-        .await
-        .unwrap();
+    // Run WITH strict resident control at the device budget. At tp8-mem2gib the
+    // peak resident (~135 MB at SF1) is far under 2 GiB, so it never trips and these
+    // results are unchanged — this also continuously guards that enforcement is a
+    // pure ADDED check that doesn't perturb the 127 real-test outcomes.
+    let actual =
+        execute_node_by_node_instrumented_enforced(plan.clone(), cpu_ctx.task_ctx(), budget, &mut stats)
+            .await
+            .unwrap();
 
     assert_results_match(&expected, &actual, rel_tol, &format!("{dataset}/{query}"));
     assert_cpu_cost_canonical(&plan, &stats, &cpu_golden(dataset, sf, query, device));
+}
+
+// --- resident-memory OOM (Part 2) ------------------------------------------
+/// Plan + execute `query` at `target_partitions = 8` under STRICT resident control
+/// (in-engine, mid-run) at the raw `budget`; return whether execution completed
+/// (`Ok`) or was OOM-killed (`Err`). Resident size is the per-node `output_bytes`
+/// logical basis (Part-1 metric), independent of the batch size the budget induces.
+async fn run_cpu_enforced(query: &str, dataset: &str, sf: &str, budget: usize) -> Result<(), String> {
+    let data_dir = data_dir_for(dataset, sf);
+    let sql_path = queries_dir_for(dataset).join(format!("{query}.sql"));
+    let sql = std::fs::read_to_string(&sql_path)
+        .unwrap_or_else(|_| panic!("query file not found: {}", sql_path.display()));
+    let ctx = create_context_with_tables(&data_dir, TARGET_PARTITIONS, budget).await.unwrap();
+    let plan = ctx.sql(&sql).await.unwrap().create_physical_plan().await.unwrap();
+    let mut stats: Vec<NodeMemoryStats> = vec![];
+    execute_node_by_node_instrumented_enforced(plan, ctx.task_ctx(), budget, &mut stats)
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+/// Assert the query is OOM-killed mid-run (`ResourcesExhausted`) under strict
+/// resident control at `budget`. A query that flips pass→OOM moves to this
+/// assertion — never disabled.
+pub async fn assert_cpu_oom(dataset: &str, sf: &str, query: &str, budget: usize) {
+    let err = run_cpu_enforced(query, dataset, sf, budget).await.expect_err(&format!(
+        "{dataset}/{query}: expected resident OOM at budget {budget} bytes, but it completed"
+    ));
+    assert!(
+        err.contains("resident GPU memory budget exceeded"),
+        "{dataset}/{query}: expected a ResourcesExhausted resident error, got: {err}"
+    );
+}
+
+/// Assert the query COMPLETES within the resident budget (boundary-passing case:
+/// proves the OOM boundary is real, not "everything errors").
+pub async fn assert_cpu_fits(dataset: &str, sf: &str, query: &str, budget: usize) {
+    let res = run_cpu_enforced(query, dataset, sf, budget).await;
+    assert!(
+        res.is_ok(),
+        "{dataset}/{query}: expected to FIT resident budget {budget} bytes, but it OOM'd: {res:?}"
+    );
 }
 
 // --- plan/cpu bespoke-test helpers -----------------------------------------
@@ -594,7 +641,7 @@ macro_rules! cpu_result_test {
 }
 
 /// `cpu_result_approx_test!(dataset, sf, query, device)` — result compare with a
-/// relative tolerance of 1e-9 on Float64 columns. ONLY for queries whose sole
+/// relative tolerance of 1e-12 on Float64 columns. ONLY for queries whose sole
 /// divergence from the DataFusion oracle is float summation reassociation (~1 ULP)
 /// at tp>1. The output_bytes cost golden is still exact (float value doesn't
 /// change byte width).
@@ -609,7 +656,49 @@ macro_rules! cpu_result_approx_test {
                     stringify!($sf),
                     &stringify!($query).replace('_', "-"),
                     &stringify!($device).replace('_', "-"),
-                    Some(1e-9),
+                    Some(1e-12),
+                )
+                .await;
+            }
+        }
+    };
+}
+
+/// `cpu_result_error_test!(dataset, sf, query, budget)` — strict resident control
+/// (Part 2): asserts the query OOMs (`ResourcesExhausted`) at the raw `budget`.
+/// Used ONLY by the tight-budget OOM set; a query that flips pass→OOM moves here,
+/// it is never disabled. `budget` is raw bytes (no device label).
+#[macro_export]
+macro_rules! cpu_result_error_test {
+    ($dataset:ident, $sf:literal, $query:ident, $budget:expr) => {
+        paste::paste! {
+            #[tokio::test]
+            async fn [<cpu_oom_ $dataset _sf $sf _ $query>]() {
+                $crate::common::assert_cpu_oom(
+                    stringify!($dataset),
+                    stringify!($sf),
+                    &stringify!($query).replace('_', "-"),
+                    $budget,
+                )
+                .await;
+            }
+        }
+    };
+}
+
+/// `cpu_result_fits_test!(dataset, sf, query, budget)` — boundary-passing case:
+/// asserts the query FITS the same tight `budget` (proves the OOM boundary is real).
+#[macro_export]
+macro_rules! cpu_result_fits_test {
+    ($dataset:ident, $sf:literal, $query:ident, $budget:expr) => {
+        paste::paste! {
+            #[tokio::test]
+            async fn [<cpu_fits_ $dataset _sf $sf _ $query>]() {
+                $crate::common::assert_cpu_fits(
+                    stringify!($dataset),
+                    stringify!($sf),
+                    &stringify!($query).replace('_', "-"),
+                    $budget,
                 )
                 .await;
             }
