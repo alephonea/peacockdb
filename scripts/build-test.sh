@@ -112,6 +112,7 @@ elif [ "$RUST_ONLY" -eq 1 ]; then
     peacockdb-core:test_cpu_executor
     peacockdb-core:test_cpu_executor_misc
     peacockdb-core:test_cpu_oom
+    peacockdb-core:test_cpu_h200
   )
   CPP_TEST_BIN=""
 else
