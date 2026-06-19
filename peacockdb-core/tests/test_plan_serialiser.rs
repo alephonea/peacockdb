@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use peacockdb_core::generated::gpu_plan_generated::peacock::plan as fb;
 use peacockdb_core::plan_serializer::{deserialize_plan, serialize_plan};
@@ -250,6 +251,100 @@ async fn test_roundtrip_gpu_nested_loop_join() {
         "NLJ should carry a non-empty output projection"
     );
     assert_roundtrip_bytes_equal(&bytes);
+}
+
+/// Write a clustered single-column parquet: k = 0..count-1 (sorted), split into
+/// row groups of `rg_size` rows. Returns the temp dir holding `t.parquet`.
+fn write_clustered_fixture(tag: &str, count: i32, rg_size: usize) -> PathBuf {
+    use datafusion::arrow::array::Int32Array;
+    use datafusion::arrow::datatypes::{DataType, Field, Schema};
+    use datafusion::arrow::record_batch::RecordBatch;
+    use datafusion::parquet::arrow::ArrowWriter;
+    use datafusion::parquet::file::properties::WriterProperties;
+
+    let schema = Arc::new(Schema::new(vec![Field::new("k", DataType::Int32, false)]));
+    let batch = RecordBatch::try_new(
+        schema.clone(),
+        vec![Arc::new(Int32Array::from((0..count).collect::<Vec<i32>>()))],
+    )
+    .unwrap();
+    let dir = std::env::temp_dir().join(format!("pck_rg_fixture_{}_{}", std::process::id(), tag));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let props = WriterProperties::builder()
+        .set_max_row_group_size(rg_size)
+        .build();
+    let file = std::fs::File::create(dir.join("t.parquet")).unwrap();
+    let mut w = ArrowWriter::try_new(file, schema, Some(props)).unwrap();
+    w.write(&batch).unwrap();
+    w.close().unwrap();
+    dir
+}
+
+/// Survivor selection + roundtrip: a 12-row fixture in 3 row groups (k: [0-3],
+/// [4-7], [8-11]); `WHERE k >= 8` can only match the last group, so the GpuScan
+/// must carry row_groups == [2] (same pruning DataFusion applies on the CPU path),
+/// and that field must survive serialize -> deserialize -> serialize byte-for-byte.
+#[tokio::test]
+async fn test_gpu_scan_row_group_pruning() {
+    let dir = write_clustered_fixture("prune", 12, 4);
+    let ctx = peacockdb_core::create_context_with_tables(&dir, 1, 2 * 1024 * 1024 * 1024)
+        .await
+        .unwrap();
+    let plan = ctx
+        .sql("SELECT k FROM t WHERE k >= 8")
+        .await
+        .unwrap()
+        .create_physical_plan()
+        .await
+        .unwrap();
+    let bytes = serialize_plan(&plan).expect("serialization failed");
+
+    let nodes = nodes_of(&bytes);
+    let scan = nodes
+        .iter()
+        .find(|n| n.node_type() == fb::PlanNodeKind::GpuScan)
+        .expect("plan must contain a GpuScan node")
+        .node_as_gpu_scan()
+        .unwrap();
+    let rgs: Vec<u32> = scan
+        .row_groups()
+        .expect("GpuScan must carry pruned row_groups for a clustered predicate")
+        .iter()
+        .collect();
+    assert_eq!(rgs, vec![2u32], "only the k in [8,11] group survives k>=8");
+
+    assert_roundtrip_bytes_equal(&bytes); // row_groups field roundtrips
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// No predicate -> no pruning -> row_groups absent/empty (read all groups, as today).
+#[tokio::test]
+async fn test_gpu_scan_no_pruning_without_predicate() {
+    let dir = write_clustered_fixture("nopred", 12, 4);
+    let ctx = peacockdb_core::create_context_with_tables(&dir, 1, 2 * 1024 * 1024 * 1024)
+        .await
+        .unwrap();
+    let plan = ctx
+        .sql("SELECT k FROM t")
+        .await
+        .unwrap()
+        .create_physical_plan()
+        .await
+        .unwrap();
+    let bytes = serialize_plan(&plan).expect("serialization failed");
+    let nodes = nodes_of(&bytes);
+    let scan = nodes
+        .iter()
+        .find(|n| n.node_type() == fb::PlanNodeKind::GpuScan)
+        .expect("GpuScan node")
+        .node_as_gpu_scan()
+        .unwrap();
+    assert!(
+        scan.row_groups().map(|r| r.is_empty()).unwrap_or(true),
+        "no predicate -> no row_groups (read all)"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[tokio::test]

@@ -144,6 +144,20 @@ fn serialize_gpu_scan<'a>(
 
     let limit = config.limit.unwrap_or(0) as u64;
 
+    // Surviving row groups under the static pushdown predicate (same PruningPredicate
+    // DataFusion uses for the CPU path -> identical set -> parity with the .cpu.txt
+    // oracle). A deserialized scan carries the override verbatim (its reconstructed
+    // ParquetExec has no predicate to recompute from) so the roundtrip stays
+    // byte-stable; a fresh plan computes from the predicate. None/empty for the
+    // no-predicate / multi-file / #16-dynamic cases -> read all.
+    let survivors = scan
+        .row_groups_override()
+        .cloned()
+        .or_else(|| crate::gpu_rowgroup_prune::surviving_row_groups(parquet));
+    let row_groups = survivors
+        .filter(|v| !v.is_empty())
+        .map(|v| b.create_vector(&v));
+
     let gpu_scan = fb::GpuScan::create(
         b,
         &fb::GpuScanArgs {
@@ -152,6 +166,7 @@ fn serialize_gpu_scan<'a>(
             projection,
             batch_size: scan.gpu_batch_size as u32,
             limit,
+            row_groups,
         },
     );
 
@@ -1703,7 +1718,18 @@ fn deserialize_gpu_scan(
 
     let parquet = ParquetExec::builder(config).build_arc();
 
-    Ok(Arc::new(GpuScanExec::new(parquet, scan.batch_size() as usize)))
+    // Carry the surviving row groups verbatim so re-serialization reproduces them
+    // (the reconstructed ParquetExec has no predicate to recompute from).
+    let row_groups: Option<Vec<u32>> = scan
+        .row_groups()
+        .map(|v| (0..v.len()).map(|i| v.get(i)).collect::<Vec<u32>>())
+        .filter(|v| !v.is_empty());
+
+    Ok(Arc::new(GpuScanExec::with_row_groups(
+        parquet,
+        scan.batch_size() as usize,
+        row_groups,
+    )))
 }
 
 fn deserialize_gpu_filter(

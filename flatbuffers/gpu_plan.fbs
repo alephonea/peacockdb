@@ -313,6 +313,14 @@ table GpuScan {
   batch_size: uint32;
   /// Maximum rows to read (0 = unlimited).
   limit: uint64;
+  /// Surviving parquet row-group indices (single-source case), computed at
+  /// serialize time by the SAME DataFusion PruningPredicate that prunes the CPU
+  /// path (static predicate on a clustered column). Passed to cuDF read_parquet's
+  /// set_row_groups so the GPU scan decodes ONLY these groups, matching the CPU
+  /// oracle exactly. EMPTY = read all groups (no predicate, multi-file, or
+  /// join/dynamic filters — those are #16, out of scope here). Internal:
+  /// deliberately NOT shown in the plan-text display.
+  row_groups: [uint32];
 }
 
 /// Apply a boolean predicate, discarding non-matching rows.

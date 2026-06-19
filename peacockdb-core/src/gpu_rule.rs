@@ -269,6 +269,12 @@ impl GpuExtraDisplay for GpuWindowExec {
 pub struct GpuScanExec {
     inner: Arc<dyn ExecutionPlan>,
     pub gpu_batch_size: usize,
+    /// Explicit surviving row-group override. Set ONLY when reconstructed from a
+    /// flatbuffer (deserialize), so re-serialization emits the SAME indices and the
+    /// serialize -> deserialize -> serialize bytes stay equal (the reconstructed
+    /// ParquetExec has no predicate to recompute from). None for a fresh plan, where
+    /// the serializer computes survivors from the ParquetExec pushdown predicate.
+    row_groups: Option<Vec<u32>>,
 }
 
 impl GpuScanExec {
@@ -276,10 +282,28 @@ impl GpuScanExec {
         Self {
             inner,
             gpu_batch_size,
+            row_groups: None,
+        }
+    }
+    /// Reconstruction constructor (deserialize): carries the stored row-group override.
+    pub fn with_row_groups(
+        inner: Arc<dyn ExecutionPlan>,
+        gpu_batch_size: usize,
+        row_groups: Option<Vec<u32>>,
+    ) -> Self {
+        Self {
+            inner,
+            gpu_batch_size,
+            row_groups,
         }
     }
     pub fn inner(&self) -> &Arc<dyn ExecutionPlan> {
         &self.inner
+    }
+    /// Explicit survivor override (Some only on a deserialized plan); None => the
+    /// serializer computes survivors from the predicate.
+    pub fn row_groups_override(&self) -> Option<&Vec<u32>> {
+        self.row_groups.as_ref()
     }
 }
 
