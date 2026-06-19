@@ -61,7 +61,7 @@ cpu_result_test!(tpcds, 1, q12, tp8_mem2gib);
 cpu_result_test!(tpcds, 1, q13, tp8_mem2gib);
 // q14/q39: float (avg/stddev) summation reassociates across partitions at tp8 →
 // ~1 ULP result drift vs the single-partition DataFusion oracle. Tolerant result
-// compare (rel≤1e-9); output_bytes golden stays exact (float value doesn't change
+// compare (rel≤1e-12); output_bytes golden stays exact (float value doesn't change
 // byte width), so these remain tp8.
 cpu_result_approx_test!(tpcds, 1, q14, tp8_mem2gib);
 cpu_result_test!(tpcds, 1, q15, tp8_mem2gib);
