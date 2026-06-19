@@ -1077,7 +1077,32 @@ static TableResult execute_scan(const fb::GpuScan* scan) {
     opts.set_num_rows(static_cast<cudf::size_type>(scan->limit()));
   }
 
+  // Row-group pruning: decode ONLY the surviving groups the serializer computed
+  // (same DataFusion PruningPredicate as the CPU path). One inner vector = single
+  // source. Empty/absent => read all groups (no predicate / multi-file / #16).
+  if (scan->row_groups() && scan->row_groups()->size() > 0) {
+    std::vector<cudf::size_type> rgs;
+    rgs.reserve(scan->row_groups()->size());
+    for (auto rg : *scan->row_groups()) {
+      rgs.push_back(static_cast<cudf::size_type>(rg));
+    }
+    opts.set_row_groups({std::move(rgs)});
+  }
+
   auto result = cudf::io::read_parquet(opts);
+
+  // Optional diagnostic (PEACOCK_LOG_SCAN_ROWS=1): how many rows the GPU scan
+  // actually decoded + whether row-group pruning was applied. Evidence that a
+  // clustered-predicate scan reads only the surviving groups (e.g. q6 lineitem ->
+  // 983040, not 6001215). Off by default; no effect on results.
+  if (std::getenv("PEACOCK_LOG_SCAN_ROWS")) {
+    bool pruned = scan->row_groups() && scan->row_groups()->size() > 0;
+    std::fprintf(stderr, "[PEACOCK_SCAN] %s rows=%ld row_groups=%s(%u)\n",
+                 paths.empty() ? "?" : paths[0].c_str(),
+                 static_cast<long>(result.tbl->num_rows()),
+                 pruned ? "pruned" : "all",
+                 pruned ? scan->row_groups()->size() : 0u);
+  }
 
   // Use column names from the reader metadata.
   std::vector<std::string> col_names;

@@ -1,5 +1,6 @@
 pub mod gpu_rule;
 pub mod cpu_executor;
+pub mod gpu_rowgroup_prune;
 #[cfg(not(feature = "rust-only"))]
 pub mod gpu_executor;
 #[allow(unused_imports, dead_code, clippy::all)]
