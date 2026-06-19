@@ -9,7 +9,7 @@ use datafusion::arrow::array::{
     Array, BinaryArray, BinaryViewArray, LargeBinaryArray, LargeStringArray, ListArray, StringArray,
     StringViewArray,
 };
-use datafusion::arrow::datatypes::{DataType, SchemaRef};
+use datafusion::arrow::datatypes::{DataType, Schema, SchemaRef};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::error::{DataFusionError, Result};
 use datafusion::execution::{RecordBatchStream, SendableRecordBatchStream, TaskContext};
@@ -18,6 +18,7 @@ use datafusion::physical_plan::execution_plan::{Boundedness, EmissionType};
 use datafusion::physical_plan::{
     execute_stream, DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, PlanProperties,
 };
+use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
 use datafusion::physical_plan::union::{InterleaveExec, UnionExec};
 use futures::Stream;
 
@@ -271,6 +272,74 @@ pub async fn execute_node_by_node_instrumented_enforced(
 ) -> Result<Vec<RecordBatch>> {
     execute_node_by_node_enforced(root, task_ctx, Some(budget), &mut |_, s| stats.push(s.clone()))
         .await
+}
+
+/// Execute exactly ONE plan node, fed by its children's already-computed output
+/// batches (in child order), and return this node's output batches + stats.
+///
+/// This is the CPU backend of the unified node-executor interface
+/// (`node_executor::CpuNodeExecutor`): the orchestrator drives the tree post-order
+/// and hands each node its child outputs. Reuses the same machinery as the
+/// recursive executor — `strip_gpu`, the `StreamSourceExec` child stubs, the
+/// `InterleaveExec`→`UnionExec` substitution, and `InstrumentedStream` — so the
+/// per-node `NodeMemoryStats` are byte-identical to `execute_node_by_node`.
+pub async fn execute_single_node(
+    node: &Arc<dyn ExecutionPlan>,
+    inputs: Vec<Vec<RecordBatch>>,
+    task_ctx: Arc<TaskContext>,
+) -> Result<(Vec<RecordBatch>, NodeMemoryStats)> {
+    let (cpu_node, batch_size_override) = strip_gpu(node.clone());
+    let task_ctx = match batch_size_override {
+        Some(n) => with_batch_size(task_ctx, n),
+        None => task_ctx,
+    };
+
+    let children = cpu_node.children();
+    if children.len() != inputs.len() {
+        return Err(DataFusionError::Internal(format!(
+            "execute_single_node: {} expects {} inputs, got {}",
+            cpu_node.name(),
+            children.len(),
+            inputs.len()
+        )));
+    }
+    let mut stubs: Vec<Arc<dyn ExecutionPlan>> = Vec::with_capacity(children.len());
+    for (child, batches) in children.iter().zip(inputs.into_iter()) {
+        let child_schema = child.schema();
+        let child_eq = child.properties().equivalence_properties().clone();
+        let stream = Box::pin(RecordBatchStreamAdapter::new(
+            child_schema.clone(),
+            futures::stream::iter(batches.into_iter().map(Ok)),
+        )) as SendableRecordBatchStream;
+        stubs.push(Arc::new(StreamSourceExec::new(child_schema, child_eq, stream)));
+    }
+
+    let node_schema = cpu_node.schema();
+    let node_name = cpu_node.name().to_string();
+    let executable = match cpu_node.clone().with_new_children(stubs.clone()) {
+        Ok(n) => n,
+        Err(_) if cpu_node.as_any().is::<InterleaveExec>() => Arc::new(UnionExec::new(stubs)),
+        Err(e) => return Err(e),
+    };
+
+    let inner = execute_stream(executable, task_ctx)?;
+    let collector: Arc<Mutex<Vec<(usize, NodeMemoryStats)>>> = Arc::new(Mutex::new(Vec::new()));
+    let instrumented = Box::pin(InstrumentedStream::new(
+        0,
+        node_name,
+        node_schema,
+        inner,
+        collector.clone(),
+        None,
+    ));
+    let batches = drain_stream(instrumented).await?;
+    let stat = collector
+        .lock()
+        .unwrap()
+        .pop()
+        .map(|(_, s)| s)
+        .expect("InstrumentedStream must record one stat on completion");
+    Ok((batches, stat))
 }
 
 fn build_stream(
@@ -640,6 +709,23 @@ fn type_structural_size(dt: &DataType, rows: usize) -> usize {
         other => panic!("type_structural_size: unhandled DataType {other:?} — add a deterministic arm"),
     };
     bitmap_bytes + data_bytes
+}
+
+/// Logical `output_bytes` for a node from its output schema, total row count, and
+/// the Σ var-length CONTENT bytes (the data-dependent term). The Part-1 ColAccum
+/// metric reconstructed from rows+schema+content — the SINGLE source of the
+/// byte-accounting overhead (validity bitmap + fixed-width + var-length offset
+/// buffers). The GPU node-executor calls this with the content bytes measured by
+/// C++, so CPU-emulated and GPU costs are identical whenever rows (and content)
+/// match. (Flat columns only — nested `List` appears at tp>1 two-phase aggregation
+/// and is handled by `ColAccum`/Phase 2.)
+pub fn logical_size_from_schema(schema: &Schema, rows: usize, varlen_content_bytes: usize) -> usize {
+    schema
+        .fields()
+        .iter()
+        .map(|f| type_structural_size(f.data_type(), rows))
+        .sum::<usize>()
+        + varlen_content_bytes
 }
 
 /// Per-column var-length CONTENT bytes for one batch: `offsets[rows]-offsets[0]`

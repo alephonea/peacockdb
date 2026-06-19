@@ -12,6 +12,15 @@ pub mod raw {
         _opaque: [u8; 0],
     }
 
+    /// Actual per-node costs (node-by-node interface). Rust applies the shared
+    /// ColAccum overhead from rows+schema and adds `varlen_content_bytes`.
+    #[repr(C)]
+    #[derive(Clone, Copy, Default)]
+    pub struct PeacockNodeStats {
+        pub rows: u64,
+        pub varlen_content_bytes: u64,
+    }
+
     #[link(name = "peacock_gpu")]
     unsafe extern "C" {
         pub fn peacock_gpu_version() -> *const c_char;
@@ -33,6 +42,33 @@ pub mod raw {
 
         pub fn peacock_result_free(result_bytes: *mut u8);
         pub fn peacock_last_error(executor: *mut PeacockExecutor) -> *const c_char;
+
+        // --- node-by-node execution (unified node-executor interface) ---
+        pub fn peacock_executor_begin_plan(
+            executor: *mut PeacockExecutor,
+            plan_bytes: *const u8,
+            plan_len: u64,
+            out_node_count: *mut u64,
+        ) -> i32;
+
+        pub fn peacock_executor_execute_node(
+            executor: *mut PeacockExecutor,
+            seq: u64,
+            input_handles: *const u64,
+            n_inputs: u64,
+            out_handle: *mut u64,
+            out_stats: *mut PeacockNodeStats,
+        ) -> i32;
+
+        pub fn peacock_result_from_handle(
+            executor: *mut PeacockExecutor,
+            handle: u64,
+            out_ipc: *mut *mut u8,
+            out_ipc_len: *mut u64,
+        ) -> i32;
+
+        pub fn peacock_handle_release(executor: *mut PeacockExecutor, handle: u64);
+        pub fn peacock_executor_end_plan(executor: *mut PeacockExecutor);
     }
 }
 

@@ -9,6 +9,7 @@ pub mod generated {
         include!(concat!(env!("OUT_DIR"), "/gpu_plan_generated.rs"));
     }
 }
+pub mod node_executor;
 pub mod plan_serializer;
 pub mod resident;
 

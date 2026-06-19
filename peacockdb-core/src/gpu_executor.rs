@@ -5,6 +5,8 @@ use arrow::record_batch::RecordBatch;
 use datafusion::error::{DataFusionError, Result as DfResult};
 use datafusion::execution::context::SessionContext;
 
+use crate::cpu_executor::NodeMemoryStats;
+use crate::node_executor::{execute_node_by_node, GpuNodeExecutor};
 use crate::{create_context_with_tables, plan_serializer::serialize_plan};
 
 use peacockdb_ffi::raw::{
@@ -96,6 +98,26 @@ impl GpuExecutor {
         unsafe { peacock_result_free(out_ptr) };
 
         Ok(batches)
+    }
+
+    /// Execute `sql` on the GPU NODE-BY-NODE through the unified node-executor
+    /// interface, returning the result batches plus per-node [`NodeMemoryStats`]
+    /// (post-order). Intermediates stay GPU-resident; only the root crosses out.
+    /// This is the instrumented path the GPU equivalence tests compare against the
+    /// CPU golden; [`execute`] remains the all-at-once production fast path.
+    pub async fn execute_instrumented(
+        &self,
+        sql: &str,
+    ) -> DfResult<(
+        Vec<RecordBatch>,
+        std::sync::Arc<dyn datafusion::physical_plan::ExecutionPlan>,
+        Vec<NodeMemoryStats>,
+    )> {
+        let plan = self.ctx.sql(sql).await?.create_physical_plan().await?;
+        let plan_bytes = serialize_plan(&plan).map_err(|e| DataFusionError::External(e.into()))?;
+        let mut backend = GpuNodeExecutor::new(self.executor, &plan_bytes)?;
+        let (batches, stats) = execute_node_by_node(&plan, &mut backend).await?;
+        Ok((batches, plan, stats))
     }
 }
 
