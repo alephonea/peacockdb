@@ -1,0 +1,4 @@
+GpuCoalesceBatchesExec: target_batch_size=44739242, output_bytes=58253036, output_rows=2402187
+  GpuFilterExec: predicate=l_quantity@1 > Some(3000),15,2, output_bytes=58253036, output_rows=2402187
+    GpuScanExec: table=lineitem, projections=[l_orderkey, l_quantity], batch_size=44739242, output_bytes=145529464, output_rows=6001215
+peacockdb_cost=262035536

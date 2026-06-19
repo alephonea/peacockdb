@@ -316,9 +316,128 @@ pub fn assert_cpu_cost_canonical(plan: &Arc<dyn ExecutionPlan>, stats: &[NodeMem
     );
 }
 
+/// Order-independent result comparison with an OPTIONAL relative tolerance on
+/// `Float64` columns.
+///
+/// - `rel_tol = None`: exact sorted-string equality (the default).
+/// - `rel_tol = Some(tol)`: rows are grouped by their NON-float columns
+///   (formatted) and every `Float64` cell must agree within `tol` relative error.
+///   Used only where the sole divergence from the DataFusion oracle is float
+///   summation reassociation across partitions (~1 ULP), which the node-by-node
+///   executor incurs at tp>1 and exact-string compare can't tolerate.
+fn assert_results_match(
+    expected: &[RecordBatch],
+    actual: &[RecordBatch],
+    rel_tol: Option<f64>,
+    query: &str,
+) {
+    let Some(tol) = rel_tol else {
+        assert_eq!(
+            batches_to_sorted_str(actual),
+            batches_to_sorted_str(expected),
+            "CPU executor result for {query} differs from plain DataFusion"
+        );
+        return;
+    };
+
+    use std::collections::HashMap;
+
+    use datafusion::arrow::array::{Array, Float64Array};
+    use datafusion::arrow::datatypes::DataType;
+    use datafusion::arrow::util::display::{ArrayFormatter, FormatOptions};
+
+    // key (non-float columns, formatted) -> list of the row's Float64 cells.
+    fn index(batches: &[RecordBatch]) -> HashMap<String, Vec<Vec<f64>>> {
+        let mut m: HashMap<String, Vec<Vec<f64>>> = HashMap::new();
+        let opts = FormatOptions::default();
+        for b in batches {
+            let s = b.schema();
+            let floats: Vec<usize> = (0..s.fields().len())
+                .filter(|&i| s.field(i).data_type() == &DataType::Float64)
+                .collect();
+            for r in 0..b.num_rows() {
+                let mut key = String::new();
+                for c in 0..s.fields().len() {
+                    if floats.contains(&c) {
+                        continue;
+                    }
+                    let f = ArrayFormatter::try_new(b.column(c), &opts).unwrap();
+                    key.push_str(&f.value(r).to_string());
+                    key.push('\u{1}');
+                }
+                let vals = floats
+                    .iter()
+                    .map(|&c| {
+                        let a = b.column(c).as_any().downcast_ref::<Float64Array>().unwrap();
+                        if a.is_null(r) { f64::NAN } else { a.value(r) }
+                    })
+                    .collect();
+                m.entry(key).or_default().push(vals);
+            }
+        }
+        m
+    }
+
+    // Stable order for the float-tuples within one key group (NaN treated as equal).
+    fn tuple_cmp(a: &[f64], b: &[f64]) -> std::cmp::Ordering {
+        for (p, q) in a.iter().zip(b) {
+            match p.partial_cmp(q) {
+                Some(std::cmp::Ordering::Equal) | None => continue,
+                Some(o) => return o,
+            }
+        }
+        std::cmp::Ordering::Equal
+    }
+
+    let (mut em, am) = (index(expected), index(actual));
+    assert_eq!(
+        em.len(),
+        am.len(),
+        "approx compare: distinct non-float row keys differ for {query} (expected {}, actual {})",
+        em.len(),
+        am.len()
+    );
+    for (key, mut avs) in am {
+        let mut evs = em
+            .remove(&key)
+            .unwrap_or_else(|| panic!("approx compare: actual row key absent from expected for {query}"));
+        assert_eq!(
+            evs.len(),
+            avs.len(),
+            "approx compare: row multiplicity differs for a key in {query}"
+        );
+        evs.sort_by(|a, b| tuple_cmp(a, b));
+        avs.sort_by(|a, b| tuple_cmp(a, b));
+        for (ev, av) in evs.iter().zip(&avs) {
+            for (e, a) in ev.iter().zip(av) {
+                if e.is_nan() && a.is_nan() {
+                    continue;
+                }
+                let d = (e - a).abs();
+                let rel = if *e != 0.0 { d / e.abs() } else { d };
+                assert!(
+                    rel <= tol,
+                    "approx compare: float cell rel diff {rel:.3e} > tol {tol:.0e} for {query} (expected={e}, actual={a})"
+                );
+            }
+        }
+    }
+}
+
 /// Run a query through plain DataFusion (ground truth) and the CPU executor;
 /// assert results match (order-independent) and the cpu cost tree matches golden.
-pub async fn assert_cpu_results_match_datafusion(dataset: &str, sf: &str, query: &str, device: &str) {
+///
+/// `rel_tol` is `None` for the exact sorted-string comparison (the default for
+/// nearly all queries). A `Some(tol)` is passed ONLY via `cpu_result_approx_test!`
+/// for the handful of queries (q39, q14) whose only divergence from the oracle is
+/// float summation reassociation (~1 ULP) — see [`assert_results_match`].
+pub async fn assert_cpu_results_match_datafusion(
+    dataset: &str,
+    sf: &str,
+    query: &str,
+    device: &str,
+    rel_tol: Option<f64>,
+) {
     let data_dir = data_dir_for(dataset, sf);
     let sql_path = queries_dir_for(dataset).join(format!("{query}.sql"));
     let sql = std::fs::read_to_string(&sql_path)
@@ -327,8 +446,11 @@ pub async fn assert_cpu_results_match_datafusion(dataset: &str, sf: &str, query:
     df_ctx = register_tables_for(df_ctx, &data_dir).await.unwrap();
     let expected = df_ctx.sql(&sql).await.unwrap().collect().await.unwrap();
 
-    // Partitions+budget come from the device label; the cpu device (tp1-…) encodes
-    // the single-stream execution the cost canon needs for reproducible output_bytes.
+    // Partitions+budget come from the device label. output_bytes is accounted
+    // per-node from total rows + schema (cpu_executor), so the cost golden is
+    // reproducible at any partition count; most cpu devices are tp8 (matching the
+    // plan device), but LIMIT-without-total-order queries are canonized at tp1
+    // (their result row set isn't partition-invariant — see test_cpu_executor.rs).
     let (partitions, budget) = device_config(device);
     let cpu_ctx = create_context_with_tables(&data_dir, partitions, budget).await.unwrap();
     let plan = cpu_ctx.sql(&sql).await.unwrap().create_physical_plan().await.unwrap();
@@ -337,11 +459,7 @@ pub async fn assert_cpu_results_match_datafusion(dataset: &str, sf: &str, query:
         .await
         .unwrap();
 
-    assert_eq!(
-        batches_to_sorted_str(&actual),
-        batches_to_sorted_str(&expected),
-        "CPU executor result for {dataset}/{query} differs from plain DataFusion"
-    );
+    assert_results_match(&expected, &actual, rel_tol, &format!("{dataset}/{query}"));
     assert_cpu_cost_canonical(&plan, &stats, &cpu_golden(dataset, sf, query, device));
 }
 
@@ -455,7 +573,7 @@ macro_rules! query_plan_test {
     };
 }
 
-/// `cpu_result_test!(dataset, sf, query, device)`.
+/// `cpu_result_test!(dataset, sf, query, device)` — EXACT result compare.
 #[macro_export]
 macro_rules! cpu_result_test {
     ($dataset:ident, $sf:literal, $query:ident, $device:ident) => {
@@ -467,6 +585,31 @@ macro_rules! cpu_result_test {
                     stringify!($sf),
                     &stringify!($query).replace('_', "-"),
                     &stringify!($device).replace('_', "-"),
+                    None,
+                )
+                .await;
+            }
+        }
+    };
+}
+
+/// `cpu_result_approx_test!(dataset, sf, query, device)` — result compare with a
+/// relative tolerance of 1e-9 on Float64 columns. ONLY for queries whose sole
+/// divergence from the DataFusion oracle is float summation reassociation (~1 ULP)
+/// at tp>1. The output_bytes cost golden is still exact (float value doesn't
+/// change byte width).
+#[macro_export]
+macro_rules! cpu_result_approx_test {
+    ($dataset:ident, $sf:literal, $query:ident, $device:ident) => {
+        paste::paste! {
+            #[tokio::test]
+            async fn [<cpu_ $dataset _sf $sf _ $query _ $device>]() {
+                $crate::common::assert_cpu_results_match_datafusion(
+                    stringify!($dataset),
+                    stringify!($sf),
+                    &stringify!($query).replace('_', "-"),
+                    &stringify!($device).replace('_', "-"),
+                    Some(1e-9),
                 )
                 .await;
             }
