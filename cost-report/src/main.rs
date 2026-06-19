@@ -31,9 +31,11 @@ const RATIO_GREEN_MAX: f64 = 1.4;
 
 const PAGES_URL_DEFAULT: &str = "https://asymptote-tech.github.io/peacockdb/";
 const DEFAULT_REPO: &str = "asymptote-tech/peacockdb";
-/// Device label of the CPU-cost goldens (1 partition / 2 GiB), part of the
-/// `.cpu.txt` filename under the unified golden layout.
-const CPU_DEVICE: &str = "tp1-mem2gib";
+/// Device label of the CPU-cost goldens (8 partitions / 2 GiB), part of the
+/// `.cpu.txt` filename under the unified golden layout. MUST track the device the
+/// `cpu_result_test!` goldens are canonized at — #11 renamed these tp1 → tp8, so a
+/// stale label here makes every PeacockDB cell render "—" (now guarded in `main`).
+const CPU_DEVICE: &str = "tp8-mem2gib";
 /// Hidden marker so CI can find-and-update its single PR comment in place.
 const SENTINEL: &str = "<!-- peacockdb-cost-report -->";
 
@@ -139,6 +141,27 @@ fn main() {
     let tpch = build_dataset("TPC-H", 22, "testdata/goldens/tpch.sf1", &testdata.join("goldens/tpch.sf1"), &op_tpch);
     let tpcds = build_dataset("TPC-DS", 99, "testdata/goldens/tpcds.sf1", &testdata.join("goldens/tpcds.sf1"), &op_tpcds);
     let datasets = [tpch, tpcds];
+
+    // CI gate: every OPERATIONAL (enabled gpu_result_test!) query must have a
+    // PeacockDB cost. A missing one silently renders "—" (e.g. a stale CPU_DEVICE
+    // or an absent golden) and CI would stay green — so fail loudly instead.
+    // Non-operational/disabled queries are left lenient (a dash there is fine).
+    let mut missing: Vec<String> = Vec::new();
+    for d in &datasets {
+        for r in &d.rows {
+            if r.operational && r.peacockdb.is_none() {
+                missing.push(format!("{} q{}", d.label, r.n));
+            }
+        }
+    }
+    if !missing.is_empty() {
+        eprintln!(
+            "cost-report: missing PeacockDB cost for {} operational queries (stale CPU_DEVICE='{CPU_DEVICE}' or absent .cpu.txt goldens): {}",
+            missing.len(),
+            missing.join(", ")
+        );
+        std::process::exit(1);
+    }
 
     let freshness = freshness_line(links.sha.as_deref(), generated_at.as_deref());
 
