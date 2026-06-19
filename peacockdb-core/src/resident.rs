@@ -1,10 +1,10 @@
 //! Part 2: strict resident "GPU"-memory control.
 //!
 //! Simulates a fixed GPU memory budget. Streaming operators (filter, project,
-//! coalesce, repartition, sort-preserving merge) process batch-by-batch and
-//! release their input as they go, so their resident footprint is bounded by a
-//! batch. PIPELINE BREAKERS must hold a full materialized data set resident at
-//! once:
+//! coalesce, repartition, sort-preserving merge, bounded window) process
+//! batch-by-batch and release their input as they go, so their resident
+//! footprint is bounded by a batch. PIPELINE BREAKERS must hold a full
+//! materialized data set resident at once:
 //!   - `SortExec` — the whole input is buffered to sort it,
 //!   - `AggregateExec` — the group hash table holds every output group,
 //!   - `HashJoinExec` — the entire BUILD side is hashed and held while the probe
@@ -18,9 +18,16 @@
 //! NOT `allocated_bytes`/`get_array_memory_size`, which is allocation-padded and
 //! non-deterministic.
 //!
-//! First cut: peak resident = the MAX single breaker requirement. This is a lower
-//! bound on the true concurrent peak (nested joins stack build sides down a
-//! path); refine to a path-sum if the flip-set proves too lax.
+//! Peak resident is the PATH-SUM of concurrently-live breakers: a join's build
+//! side stays charged while its probe subtree (possibly nested joins) runs, so
+//! their build sides stack; sort/aggregate are sequential with their descendants.
+//! See [`ResidentNode::peak`].
+//!
+//! CAVEAT — window functions: `WindowAggExec` is classified as streaming (charge
+//! 0), which holds for the BOUNDED window variant only. An UNBOUNDED
+//! `WindowAggExec` buffers its whole partition resident; if a window query ever
+//! enters the OOM/tight-budget set, this would UNDER-count the peak and the
+//! classification must be revisited.
 
 use std::sync::Arc;
 
