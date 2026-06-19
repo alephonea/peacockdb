@@ -10,6 +10,16 @@
 //! stats => identical surviving set. SCOPE: single-source scans with a static
 //! pushdown predicate (TPC-H q6/q1/q14/q15-style). Multi-file, no predicate, or
 //! join/dynamic (date_dim) ranges => `None` (read all groups, as today; #16).
+//!
+//! STATS-ONLY pruning: this uses `PruningPredicate` over column-chunk min/max/null
+//! statistics, NOT the separate bloom-filter prune step cuDF/DataFusion can also do.
+//! Moot today: our DuckDB `COPY ... (FORMAT parquet)` files carry no bloom filters, so
+//! the CPU oracle doesn't bloom-prune either => the stats-only survivor set is EXACTLY
+//! the oracle's. If bloom-filter parquet is ever introduced, the CPU oracle would prune
+//! MORE (equality predicates); our stats-only survivors would then be a safe SUPERSET —
+//! the GPU reads a few extra groups and `GpuFilterExec` drops their rows, so NO data
+//! loss, but the GPU scan row count could exceed the `.cpu.txt` oracle. Add bloom
+//! pruning here too if that day comes.
 
 use std::sync::Arc;
 
@@ -86,6 +96,11 @@ pub fn surviving_row_groups(parquet: &ParquetExec) -> Option<Vec<u32>> {
     if files.len() != 1 {
         return None;
     }
+    // Reconstruct an absolute local path. `object_meta.location` is an object_store
+    // Path (leading '/' stripped during normalization); we assume a '/'-rooted LOCAL
+    // filesystem object store, which holds for the serialize-time use here (DataFusion
+    // registers absolute local parquet paths). Degrades SAFELY for any other store: the
+    // open below fails -> None -> read all groups (no data loss).
     let path = format!("/{}", files[0].object_meta.location);
 
     // Read row-group metadata (sync; the parquet is local at serialize time).

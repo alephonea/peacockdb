@@ -347,6 +347,39 @@ async fn test_gpu_scan_no_pruning_without_predicate() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// MIDDLE-group survivor: hardens the file-order absolute-index mapping (the one
+/// place a mis-map silently drops data). 3 groups [0-3],[4-7],[8-11]; `WHERE k>=4
+/// AND k<8` matches only the middle group, so survivors must be [1] (not [0] or [2]).
+#[tokio::test]
+async fn test_gpu_scan_row_group_pruning_middle() {
+    let dir = write_clustered_fixture("middle", 12, 4);
+    let ctx = peacockdb_core::create_context_with_tables(&dir, 1, 2 * 1024 * 1024 * 1024)
+        .await
+        .unwrap();
+    let plan = ctx
+        .sql("SELECT k FROM t WHERE k >= 4 AND k < 8")
+        .await
+        .unwrap()
+        .create_physical_plan()
+        .await
+        .unwrap();
+    let bytes = serialize_plan(&plan).expect("serialization failed");
+    let nodes = nodes_of(&bytes);
+    let scan = nodes
+        .iter()
+        .find(|n| n.node_type() == fb::PlanNodeKind::GpuScan)
+        .expect("plan must contain a GpuScan node")
+        .node_as_gpu_scan()
+        .unwrap();
+    let rgs: Vec<u32> = scan
+        .row_groups()
+        .expect("GpuScan must carry pruned row_groups")
+        .iter()
+        .collect();
+    assert_eq!(rgs, vec![1u32], "only the MIDDLE group (k in [4,7]) survives 4<=k<8");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[tokio::test]
 async fn test_roundtrip_gpu_left_mark_join() {
     // EXISTS inside a disjunction can't be decorrelated to a plain semi-join, so
