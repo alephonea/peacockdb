@@ -157,12 +157,12 @@ jobs:
       - name: Build and stage rust GPU test binaries
         run: |
           mkdir -p cpp/install/rust-tests
-          # test_gpu_executor = legacy whole-result verify; test_gpu_node =
-          # per-node (row counts + rows+schema cost) verify against the H200/tp1
-          # *.tp1-mem120gib.cpu.txt goldens. The node-by-node gate is what catches
-          # intermediate divergences the whole-result test misses (e.g. q14's
-          # INTERSECT NULL-semantics regression), so it MUST run in CI.
-          for t in test_gpu_executor test_gpu_node; do
+          # test_gpu = the MERGED per-query GPU verify (Phase 2 C2): one GPU run
+          # per query asserts BOTH per-node rows + rows+schema cost vs the H200/tp1
+          # *.tp1-mem120gib.cpu.txt goldens AND the final result. The node-by-node
+          # half is what catches intermediate divergences a whole-result check
+          # misses (e.g. q14's INTERSECT NULL-semantics regression), so it MUST gate.
+          for t in test_gpu; do
             exec_path=$(cargo test --no-run -p peacockdb-core --test "$t" \
                 --message-format=json \
               | python3 -c '

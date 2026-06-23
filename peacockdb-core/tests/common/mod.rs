@@ -341,7 +341,7 @@ fn assert_results_match(
         assert_eq!(
             batches_to_sorted_str(actual),
             batches_to_sorted_str(expected),
-            "CPU executor result for {query} differs from plain DataFusion"
+            "result for {query} differs from oracle (exact compare)"
         );
         return;
     };
@@ -626,6 +626,83 @@ pub async fn assert_gpu_nodes_match_golden(dataset: &str, sf: &str, query: &str,
     assert_cpu_cost_canonical(&plan, &stats, &cpu_golden(dataset, sf, query, device));
 }
 
+/// Per-query result-assertion mode for the merged GPU test (`gpu_test!`).
+/// `Exact` = sorted-string equality; `Approx(tol)` = float-tolerant (q14/q39, the
+/// cross-partition summation ULP at tp>1; trivially passes when values are exactly
+/// equal, e.g. at tp1); `Skip` = assert per-node only, not the final result (a
+/// non-deterministic LIMIT whose row set isn't partition-invariant — those are
+/// excluded from tp8 goldens entirely, so Skip is essentially a tp1-only escape).
+#[cfg(not(feature = "rust-only"))]
+#[derive(Clone, Copy)]
+pub enum GpuResultMode {
+    Exact,
+    Approx(f64),
+    Skip,
+}
+
+/// Map a mode keyword (from `gpu_test!`) to a `GpuResultMode`. `approx` uses the
+/// 1e-12 relative tolerance (#11 policy, same as `cpu_result_approx_test!`).
+#[cfg(not(feature = "rust-only"))]
+pub fn gpu_result_mode(s: &str) -> GpuResultMode {
+    match s {
+        "exact" => GpuResultMode::Exact,
+        "approx" => GpuResultMode::Approx(1e-12),
+        "skip" => GpuResultMode::Skip,
+        other => panic!("gpu_test!: unknown result mode '{other}' (expected exact|approx|skip)"),
+    }
+}
+
+/// Merged per-query GPU verification (Task #13 Phase 2, C2): a SINGLE GPU run
+/// (the node-by-node executor, which also materializes the final result) asserts
+/// BOTH (a) per-node exact rows + rows/schema cost vs the `.cpu.txt` golden
+/// (ALWAYS), AND (b) the final RESULT vs the peacock CPU oracle (per `result_mode`).
+/// Replaces the separate node-only + result-only GPU tests with one execution.
+#[cfg(not(feature = "rust-only"))]
+pub async fn assert_gpu_query(
+    dataset: &str,
+    sf: &str,
+    query: &str,
+    device: &str,
+    result_mode: GpuResultMode,
+) {
+    use peacockdb_core::gpu_executor::GpuExecutor;
+    use peacockdb_core::CpuExecutor;
+
+    let data_dir = data_dir_for(dataset, sf);
+    let sql_path = queries_dir_for(dataset).join(format!("{query}.sql"));
+    let sql = std::fs::read_to_string(&sql_path)
+        .unwrap_or_else(|_| panic!("query file not found: {}", sql_path.display()));
+    let (partitions, budget) = device_config(device);
+
+    // ONE GPU execution → final batches + plan + per-node stats.
+    let gpu = GpuExecutor::new(&data_dir, partitions, budget).await.unwrap();
+    let (actual, plan, stats) = gpu.execute_instrumented(&sql).await.unwrap();
+
+    // (a) per-node rows + rows/schema cost vs the golden — ALWAYS.
+    assert_cpu_cost_canonical(&plan, &stats, &cpu_golden(dataset, sf, query, device));
+
+    // (b) final result vs the peacock CPU oracle — per the query's result mode.
+    let rel_tol = match result_mode {
+        GpuResultMode::Skip => return,
+        GpuResultMode::Exact => None,
+        GpuResultMode::Approx(t) => Some(t),
+    };
+    let cpu = CpuExecutor::new(&data_dir, partitions, budget).await.unwrap();
+    let expected = cpu.execute(&sql).await.unwrap();
+    // Empty result sets: compare schema only when both carry a batch (q17 hits this).
+    if total_rows(&expected) == 0 && total_rows(&actual) == 0 {
+        if let (Some(e), Some(a)) = (expected.first(), actual.first()) {
+            assert_eq!(
+                e.schema().fields(),
+                a.schema().fields(),
+                "GPU result schema for {dataset}/{query} differs from peacock CPU (both empty)"
+            );
+        }
+        return;
+    }
+    assert_results_match(&expected, &actual, rel_tol, &format!("{dataset}/{query}"));
+}
+
 // --- unified test macros ----------------------------------------------------
 /// `query_plan_test!(dataset, sf, query, device)` — all idents/literals; the fn
 /// name is derived via paste!, hyphenated path parts come from `_` -> `-`.
@@ -766,6 +843,31 @@ macro_rules! gpu_result_test {
                     &$crate::common::data_dir_for(stringify!($dataset), stringify!($sf)),
                     &$crate::common::queries_dir_for(stringify!($dataset)),
                     &stringify!($query).replace('_', "-"),
+                )
+                .await;
+            }
+        }
+    };
+}
+
+/// `gpu_test!(dataset, sf, query, device, mode)` — the MERGED GPU test (Phase 2
+/// C2): one GPU run asserts per-node rows+cost vs the `.cpu.txt` golden AND the
+/// final result. `mode` ∈ { exact | approx | skip } (see `GpuResultMode`).
+/// Derived fn name `gpu_<ds>_sf<sf>_<query>_<device>` matches the old
+/// gpu_result_test names so CI/--exact filters keep working.
+#[macro_export]
+macro_rules! gpu_test {
+    ($dataset:ident, $sf:literal, $query:ident, $device:ident, $mode:ident) => {
+        paste::paste! {
+            #[cfg(not(feature = "rust-only"))]
+            #[tokio::test]
+            async fn [<gpu_ $dataset _sf $sf _ $query _ $device>]() {
+                $crate::common::assert_gpu_query(
+                    stringify!($dataset),
+                    stringify!($sf),
+                    &stringify!($query).replace('_', "-"),
+                    &stringify!($device).replace('_', "-"),
+                    $crate::common::gpu_result_mode(stringify!($mode)),
                 )
                 .await;
             }

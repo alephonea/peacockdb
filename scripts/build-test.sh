@@ -101,7 +101,7 @@ done
 # Suite selection. Each entry is <package>:<test-name>; each binary is staged
 # under <install>/rust-tests/<name> so the rsync step ships it.
 if [ "$MODE" = "gpu" ]; then
-  RUST_TESTS=(peacockdb-core:test_gpu_executor)
+  RUST_TESTS=(peacockdb-core:test_gpu)
   CPP_TEST_BIN=peacock_plan_tests
 elif [ "$RUST_ONLY" -eq 1 ]; then
   # rust-only golden regen / cpu+plan verify: no C++, no FFI. The two suites that own
