@@ -1733,6 +1733,12 @@ static TableResult execute_hash_join(const fb::GpuHashJoin* join) {
   bool semi_anti_type =
       jt == fb::JoinType_LeftSemi || jt == fb::JoinType_LeftAnti ||
       jt == fb::JoinType_RightSemi || jt == fb::JoinType_RightAnti;
+  // Per-join NULL key-equality, mirrored from DataFusion's null_equals_null
+  // (serialized into the plan). true → NULL keys match (set/INTERSECT, q14);
+  // false → NULL keys never match (SQL IN/EXISTS three-valued, q33). Drives the
+  // equi and SEMI cuDF null_equality. ANTI/mark stay EQUAL (see below).
+  auto join_nulls = join->null_equals_null() ? cudf::null_equality::EQUAL
+                                             : cudf::null_equality::UNEQUAL;
   ExprContext semi_ctx;
   const cudf::ast::expression* semi_pred = nullptr;
   if (semi_anti_type && join->filter()) {
@@ -1742,30 +1748,45 @@ static TableResult execute_hash_join(const fb::GpuHashJoin* join) {
     semi_pred = &build_expr(join->filter(), semi_ctx, join->filter_columns());
   }
 
-  // NOTE: semi/anti (and the mark join below) intentionally stay at
-  // null_equality::EQUAL, unlike the equi-joins in execute_hash_join which use
-  // UNEQUAL. Their NULL behavior is the SQL NOT IN/EXISTS three-valued-logic
-  // trap (`x NOT IN (..., NULL)` is NULL/false for every x), which neither
-  // EQUAL nor UNEQUAL implements on its own — a blind flip would be wrong for
-  // anti-join. No corpus query exercises a nullable semi/anti/mark key today;
-  // the dedicated semantics + golden are tracked in issue #59 before any change.
+  // NULL semantics by join kind (see #59 semi / #80 anti):
+  //  - SEMI (Left/Right) and the EQUI joins use `join_nulls`, mirrored from
+  //    DataFusion's per-join `null_equals_null` (serialized in the plan). The two
+  //    cases genuinely need OPPOSITE NULL behavior and only the source plan can
+  //    tell them apart, so a blanket choice is wrong:
+  //      * IN/EXISTS-derived semi (null_equals_null=false → UNEQUAL): SQL
+  //        `x IN (...)` excludes NULLs (NULL IN (...,NULL) = UNKNOWN). q33 hit
+  //        this — item has one Electronics row with NULL i_manufact_id; under
+  //        cuDF's default EQUAL the semi paired NULL↔NULL → a spurious extra
+  //        group (708 vs DuckDB/DataFusion's correct 707).
+  //      * INTERSECT-derived semi (null_equals_null=true → EQUAL): set semantics
+  //        treat NULLs as equal. q14 (cross-channel INTERSECT on
+  //        brand/class/category) needs NULL=NULL → 3837; UNEQUAL wrongly drops
+  //        the NULL-composite-key rows (3792).
+  //    cuDF honors compare_nulls on both the free `left_{semi}_join` and the
+  //    newer `filtered_join` (selected at compile time by __has_include; this
+  //    build uses the free functions — same compare_nulls contract).
+  //  - ANTI (Left/Right) and the mark join below intentionally STAY at EQUAL and
+  //    are NOT driven by the flag. Anti is the NOT IN/NOT EXISTS
+  //    three-valued-logic trap (`x NOT IN (..., NULL)` is NULL/false for every
+  //    x), which neither EQUAL nor UNEQUAL implements on its own; driving it from
+  //    the flag could regress. Dedicated NOT IN vs NOT EXISTS semantics + a
+  //    demonstrating test + a DuckDB oracle are tracked in issue #80.
   //
-  // cuDF replaced free `left_{semi,anti}_join` with `filtered_join` (build the
-  // hash table from one side, then probe). For Left{Semi,Anti} the right side
-  // is the filter; for Right{Semi,Anti} we swap.
+  // For Left{Semi,Anti} the right side is the membership/filter; for
+  // Right{Semi,Anti} we swap.
   switch (jt) {
     case fb::JoinType_LeftSemi: {
       if (semi_pred) {
         single_indices = cudf::mixed_left_semi_join(
-            left_keys, right_keys, ltv, rtv, *semi_pred,
-            cudf::null_equality::EQUAL);
+            left_keys, right_keys, ltv, rtv, *semi_pred, join_nulls);
       } else {
 #ifdef PEACOCK_HAVE_FILTERED_JOIN
-        cudf::filtered_join fj(right_keys, cudf::null_equality::EQUAL,
+        cudf::filtered_join fj(right_keys, join_nulls,
                                cudf::set_as_build_table::RIGHT, 0.5);
         single_indices = fj.semi_join(left_keys);
 #else
-        single_indices = cudf::left_semi_join(left_keys, right_keys);
+        single_indices = cudf::left_semi_join(left_keys, right_keys,
+                                              join_nulls);
 #endif
       }
       is_semi_or_anti = true;
@@ -1783,7 +1804,8 @@ static TableResult execute_hash_join(const fb::GpuHashJoin* join) {
                                cudf::set_as_build_table::RIGHT, 0.5);
         single_indices = fj.anti_join(left_keys);
 #else
-        single_indices = cudf::left_anti_join(left_keys, right_keys);
+        single_indices = cudf::left_anti_join(left_keys, right_keys,
+                                              cudf::null_equality::EQUAL);
 #endif
       }
       is_semi_or_anti = true;
@@ -1796,11 +1818,12 @@ static TableResult execute_hash_join(const fb::GpuHashJoin* join) {
             "residual filter on RightSemi join not supported (no swapped "
             "mixed-join path); should not arise from DataFusion decorrelation");
 #ifdef PEACOCK_HAVE_FILTERED_JOIN
-      cudf::filtered_join fj(left_keys, cudf::null_equality::EQUAL,
+      cudf::filtered_join fj(left_keys, join_nulls,
                              cudf::set_as_build_table::RIGHT, 0.5);
       single_indices = fj.semi_join(right_keys);
 #else
-      single_indices = cudf::left_semi_join(right_keys, left_keys);
+      single_indices = cudf::left_semi_join(right_keys, left_keys,
+                                            join_nulls);
 #endif
       is_semi_or_anti = true;
       emit_left = false;
@@ -1816,7 +1839,8 @@ static TableResult execute_hash_join(const fb::GpuHashJoin* join) {
                              cudf::set_as_build_table::RIGHT, 0.5);
       single_indices = fj.anti_join(right_keys);
 #else
-      single_indices = cudf::left_anti_join(right_keys, left_keys);
+      single_indices = cudf::left_anti_join(right_keys, left_keys,
+                                            cudf::null_equality::EQUAL);
 #endif
       is_semi_or_anti = true;
       emit_left = false;
@@ -1919,9 +1943,11 @@ static TableResult execute_hash_join(const fb::GpuHashJoin* join) {
   // but cuDF's join APIs default to null_equality::EQUAL, which pairs NULL keys
   // together and invents rows the SQL oracle excludes — e.g. TPC-DS q50/q6/q81,
   // where a spurious NULL=NULL match inflates a downstream count/sum by one.
-  // UNEQUAL restores SQL semantics for inner/left/full/right. (Non-null keys —
-  // the whole passing suite — are unaffected.)
-  constexpr auto kJoinNulls = cudf::null_equality::UNEQUAL;
+  // We drive this from DataFusion's per-join null_equals_null (join_nulls):
+  // its default false → UNEQUAL restores SQL semantics for inner/left/full/right
+  // (the whole passing suite, non-null keys, is unaffected), while a set-semantics
+  // join that asks for NULL=NULL gets EQUAL.
+  auto kJoinNulls = join_nulls;
 
   // Execute join — returns index pairs.
   auto [left_indices, right_indices] = [&]() {

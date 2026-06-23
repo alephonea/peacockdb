@@ -402,3 +402,44 @@ async fn test_roundtrip_gpu_left_mark_join() {
     );
     assert_roundtrip_bytes_equal(&bytes);
 }
+
+#[tokio::test]
+async fn test_roundtrip_gpu_hash_join_null_equals_null_true() {
+    // INTERSECT is set semantics where NULL = NULL, so DataFusion emits the semi
+    // HashJoinExec with null_equals_null = TRUE (unlike IN/EXISTS, which is
+    // false). All other fixtures serialize false, so the bytes-equal oracle alone
+    // can't tell whether the null_equals_null wire field survives — a dropped
+    // field would still round-trip byte-identical. This pins the TRUE path.
+    // (Integration: q14's INTERSECT semi needs NULL=NULL/EQUAL; q33's IN semi
+    // needs NULL!=NULL/UNEQUAL — same RightSemi op, opposite semantics.)
+    let bytes = serialize_query(
+        "SELECT n_regionkey FROM nation \
+         INTERSECT \
+         SELECT r_regionkey FROM region",
+    )
+    .await;
+    let nodes = nodes_of(&bytes);
+    let has_null_eq_true = nodes
+        .iter()
+        .filter(|n| n.node_type() == fb::PlanNodeKind::GpuHashJoin)
+        .any(|n| n.node_as_gpu_hash_join().unwrap().null_equals_null());
+    assert!(
+        has_null_eq_true,
+        "INTERSECT must produce a GpuHashJoin with null_equals_null = true"
+    );
+
+    // The field must survive serialize -> deserialize -> serialize. (If
+    // deserialize dropped it, re-serialize would write false and the bytes would
+    // differ — so this also proves the deserialize-read path.)
+    assert_roundtrip_bytes_equal(&bytes);
+    let reconstructed = deserialize_plan(&bytes).expect("deserialize failed");
+    let reserialized = serialize_plan(&reconstructed).expect("re-serialize failed");
+    let still_true = nodes_of(&reserialized)
+        .iter()
+        .filter(|n| n.node_type() == fb::PlanNodeKind::GpuHashJoin)
+        .any(|n| n.node_as_gpu_hash_join().unwrap().null_equals_null());
+    assert!(
+        still_true,
+        "null_equals_null = true must survive deserialize -> re-serialize"
+    );
+}

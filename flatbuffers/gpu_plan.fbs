@@ -394,6 +394,11 @@ table GpuHashJoin {
   right: PlanNode;
   /// Optional output projection (column indices to keep from the full join output).
   projection: [uint32];
+  /// DataFusion's per-join NULL key-equality (`null_equals_null`): true → NULL
+  /// keys match (set/INTERSECT semantics, e.g. q14), false → NULL keys never
+  /// match (SQL IN/EXISTS three-valued logic, e.g. q33). Drives cuDF
+  /// null_equality for the equi and SEMI paths. Default false = UNEQUAL.
+  null_equals_null: bool = false;
 }
 
 /// Cross join (cartesian product). Output is [left_cols..., right_cols...].
