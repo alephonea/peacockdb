@@ -6,6 +6,8 @@
 //! `#[macro_use] mod common;`. Every suite uses a subset, so dead code is fine.
 #![allow(dead_code)]
 
+pub mod cost_model;
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -61,6 +63,10 @@ pub fn plan_golden(dataset: &str, sf: &str, query: &str, device: &str) -> PathBu
 
 pub fn cpu_golden(dataset: &str, sf: &str, query: &str, device: &str) -> PathBuf {
     golden_dir_for(dataset, sf).join(format!("{query}.{device}.cpu.txt"))
+}
+
+pub fn cost_golden(dataset: &str, sf: &str, query: &str, device: &str) -> PathBuf {
+    golden_dir_for(dataset, sf).join(format!("{query}.{device}.cost.txt"))
 }
 
 pub fn testdata_dir() -> PathBuf {
@@ -286,9 +292,9 @@ pub fn cpu_stats_str(plan: &Arc<dyn ExecutionPlan>, stats: &[NodeMemoryStats]) -
     let root = collect(plan, stats, &mut 0);
     let mut lines = Vec::new();
     walk(&root, 0, &mut lines);
-    // Explicit total footer, symmetric with the duckdb golden's `duckdb_cost=`.
-    let total: usize = stats.iter().map(|s| s.output_bytes).sum();
-    lines.push(format!("peacockdb_cost={total}"));
+    // The total cost (and its per-category breakdown) now lives in the sibling
+    // `.cost.txt` golden, derived purely from this tree's text — see
+    // `cost_model::cost_text_from_cpu` and `test_cost_model.rs`.
     lines.join("\n")
 }
 

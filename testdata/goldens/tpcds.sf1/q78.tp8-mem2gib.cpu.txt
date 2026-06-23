@@ -88,4 +88,3 @@ GpuProjectExec: expr=[ss_sold_year@0 as ss_sold_year, ss_item_sk@1 as ss_item_sk
                                                 GpuCoalesceBatchesExec: target_batch_size=6882960, output_bytes=105052814, output_rows=1441548
                                                   GpuRepartitionExec: partitioning=Hash([cs_order_number@3, cs_item_sk@2], 8), input_partitions=8, output_bytes=105052814, output_rows=1441548
                                                     GpuScanExec: table=catalog_sales, projections=[cs_sold_date_sk, cs_bill_customer_sk, cs_item_sk, cs_order_number, cs_quantity, cs_wholesale_cost, cs_sales_price], batch_size=6882960, output_bytes=105052814, output_rows=1441548
-peacockdb_cost=4977423411

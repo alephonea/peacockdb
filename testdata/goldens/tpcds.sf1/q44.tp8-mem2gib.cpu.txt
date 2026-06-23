@@ -79,4 +79,3 @@ GpuSortPreservingMergeExec: [rnk@0 ASC NULLS LAST], output_bytes=537, output_row
             GpuRepartitionExec: partitioning=Hash([i_item_sk@0], 8), input_partitions=8, output_bytes=544554, output_rows=18000
               GpuRepartitionExec: partitioning=RoundRobinBatch(8), input_partitions=1, output_bytes=544554, output_rows=18000
                 GpuScanExec: table=item, projections=[i_item_sk, i_product_name], batch_size=13421772, output_bytes=544554, output_rows=18000
-peacockdb_cost=432052709

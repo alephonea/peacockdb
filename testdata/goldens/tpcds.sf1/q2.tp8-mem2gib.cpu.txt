@@ -61,4 +61,3 @@ GpuSortPreservingMergeExec: [d_week_seq1@0 ASC], output_bytes=163352, output_row
                                             GpuScanExec: table=web_sales, projections=[ws_sold_date_sk, ws_ext_sales_price], batch_size=2236962, output_bytes=17445062, output_rows=719384
                                           GpuProjectExec: expr=[cs_sold_date_sk@0 as sold_date_sk, cs_ext_sales_price@1 as sales_price], output_bytes=34957540, output_rows=1441548
                                             GpuScanExec: table=catalog_sales, projections=[cs_sold_date_sk, cs_ext_sales_price], batch_size=2236962, output_bytes=34957540, output_rows=1441548
-peacockdb_cost=1006144004

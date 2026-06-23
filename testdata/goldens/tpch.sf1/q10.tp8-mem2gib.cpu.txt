@@ -32,4 +32,3 @@ GpuSortPreservingMergeExec: [revenue@2 DESC], output_bytes=3898, output_rows=20
                                 GpuCoalesceBatchesExec: target_batch_size=4880644, output_bytes=59709377, output_rows=1478870
                                   GpuFilterExec: predicate=l_returnflag@3 = R, projection=[0, 1, 2], output_bytes=59709377, output_rows=1478870
                                     GpuScanExec: table=lineitem, projections=[l_orderkey, l_extendedprice, l_discount, l_returnflag], batch_size=4880644, output_bytes=139776004, output_rows=3072000
-peacockdb_cost=712474162

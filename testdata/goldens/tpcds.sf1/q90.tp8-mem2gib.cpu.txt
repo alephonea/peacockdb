@@ -73,4 +73,3 @@ GpuSortExec: expr=[am_pm_ratio@0 ASC NULLS LAST], fetch=100, output_bytes=17, ou
                                     GpuCoalesceBatchesExec: target_batch_size=44739242, output_bytes=17534985, output_rows=719384
                                       GpuRepartitionExec: partitioning=Hash([ws_ship_hdemo_sk@1], 8), input_partitions=8, output_bytes=17534985, output_rows=719384
                                         GpuScanExec: table=web_sales, projections=[ws_sold_time_sk, ws_ship_hdemo_sk, ws_web_page_sk], batch_size=44739242, output_bytes=17534985, output_rows=719384
-peacockdb_cost=121570558

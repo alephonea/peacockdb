@@ -62,4 +62,3 @@ GpuProjectExec: expr=[call_center@0 as call_center, call_center_name@1 as call_c
                                   GpuFilterExec: predicate=cd_marital_status@1 = M AND cd_education_status@2 = Unknown OR cd_marital_status@1 = W AND cd_education_status@2 = Advanced Degree, output_bytes=3114448, output_rows=109760
                                     GpuRepartitionExec: partitioning=RoundRobinBatch(8), input_partitions=1, output_bytes=51758708, output_rows=1920800
                                       GpuScanExec: table=customer_demographics, projections=[cd_demo_sk, cd_marital_status, cd_education_status], batch_size=5592405, output_bytes=51758708, output_rows=1920800
-peacockdb_cost=201772991

@@ -46,4 +46,3 @@ GpuProjectExec: expr=[Excess Discount Amount@0 as Excess Discount Amount], outpu
                               GpuCoalesceBatchesExec: target_batch_size=29826161, output_bytes=23290057, output_rows=719384
                                 GpuRepartitionExec: partitioning=Hash([ws_sold_date_sk@0], 8), input_partitions=8, output_bytes=23290057, output_rows=719384
                                   GpuScanExec: table=web_sales, projections=[ws_sold_date_sk, ws_item_sk, ws_ext_discount_amt], batch_size=29826161, output_bytes=23290057, output_rows=719384
-peacockdb_cost=146253437

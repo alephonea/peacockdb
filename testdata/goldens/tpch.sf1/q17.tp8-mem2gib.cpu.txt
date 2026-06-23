@@ -22,4 +22,3 @@ GpuProjectExec: expr=[CAST(sum(lineitem.l_extendedprice)@0 AS Float64) / 7 as av
                   GpuRepartitionExec: partitioning=Hash([l_partkey@0], 8), input_partitions=8, output_bytes=6475000, output_rows=200000
                     GpuAggregateExec: group_by=[l_partkey], aggr=[avg(lineitem.l_quantity)], output_bytes=6475000, output_rows=200000
                       GpuScanExec: table=lineitem, projections=[l_partkey, l_quantity], batch_size=24403223, output_bytes=145529464, output_rows=6001215
-peacockdb_cost=915094623

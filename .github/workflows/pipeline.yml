@@ -279,18 +279,33 @@ jobs:
           # from: the PR head commit on PRs (GITHUB_SHA is the merge ref there),
           # the pushed commit on master. GITHUB_REPOSITORY is read for the slug.
           REPORT_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          PAGES_URL: https://asymptote-tech.github.io/peacockdb
         run: |
           mkdir -p report
-          # Live "Full report" link only on the master run that deploys Pages;
-          # on PRs the page isn't published for this change yet (would 404).
-          PUBLISHED=
+          GENERATED_AT="$(TZ='America/Los_Angeles' date '+%Y-%m-%d %H:%M %Z')"
           if [ "$GITHUB_EVENT_NAME" = "push" ] && [ "$GITHUB_REF" = "refs/heads/master" ]; then
-            PUBLISHED=--published
+            # Pages deploy replaces the WHOLE site, so carry the prior page-per-sha
+            # reports + manifest forward from the live site (first deploy: history.tsv
+            # 404s and we start empty). Then assemble index.html (latest) + <sha>/ +
+            # history.html. --published makes the PR-comment "Full report" link live.
+            if curl -sfL --retry 3 "$PAGES_URL/history.tsv" -o report/history.tsv; then
+              while IFS=$'\t' read -r sha _; do
+                [ -n "$sha" ] || continue
+                mkdir -p "report/$sha"
+                curl -sfL --retry 3 "$PAGES_URL/$sha/index.html" -o "report/$sha/index.html" \
+                  || rmdir "report/$sha" 2>/dev/null || true
+              done < report/history.tsv
+            fi
+            cargo run -p cost-report -- --published \
+              --sha "$REPORT_SHA" --generated-at "$GENERATED_AT" \
+              --site report --md "$RUNNER_TEMP/pr_comment.md"
+          else
+            # PR: single standalone report for the artifact-less comment; the page
+            # isn't published for this change yet, so no --site / no nav links.
+            cargo run -p cost-report -- \
+              --sha "$REPORT_SHA" --generated-at "$GENERATED_AT" \
+              --html report/index.html --md "$RUNNER_TEMP/pr_comment.md"
           fi
-          cargo run -p cost-report -- $PUBLISHED \
-            --sha "$REPORT_SHA" \
-            --generated-at "$(TZ='America/Los_Angeles' date '+%Y-%m-%d %H:%M %Z')" \
-            --html report/index.html --md "$RUNNER_TEMP/pr_comment.md"
 
       # PR: upsert exactly one comment, keyed on the hidden sentinel. Restricted
       # to same-repo PRs — fork PRs get a read-only token, so a comment write

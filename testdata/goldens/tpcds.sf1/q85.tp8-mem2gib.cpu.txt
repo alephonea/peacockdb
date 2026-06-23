@@ -71,4 +71,3 @@ GpuProjectExec: expr=[substr(reason.r_reason_desc,Int64(1),Int64(20))@0 as subst
                                                 GpuRepartitionExec: partitioning=Hash([cd_demo_sk@0, cd_marital_status@1, cd_education_status@2], 8), input_partitions=8, output_bytes=51758708, output_rows=1920800
                                                   GpuRepartitionExec: partitioning=RoundRobinBatch(8), input_partitions=1, output_bytes=51758708, output_rows=1920800
                                                     GpuScanExec: table=customer_demographics, projections=[cd_demo_sk, cd_marital_status, cd_education_status], batch_size=6391320, output_bytes=51758708, output_rows=1920800
-peacockdb_cost=421137484

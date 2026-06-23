@@ -31,4 +31,3 @@ GpuSortPreservingMergeExec: [s_suppkey@0 ASC NULLS LAST], output_bytes=103, outp
                             GpuCoalesceBatchesExec: target_batch_size=8388608, output_bytes=9122895, output_rows=225954
                               GpuFilterExec: predicate=l_shipdate@3 >= 1996-01-01 AND l_shipdate@3 < 1996-04-01, projection=[0, 1, 2], output_bytes=9122895, output_rows=225954
                                 GpuScanExec: table=lineitem, projections=[l_suppkey, l_extendedprice, l_discount, l_shipdate], batch_size=8388608, output_bytes=16404480, output_rows=368640
-peacockdb_cost=78568051
