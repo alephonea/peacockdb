@@ -1,6 +1,0 @@
-GpuAggregateExec: group_by=[], aggr=[count(*), sum(l.l_quantity), sum(o.o_totalprice)], output_bytes=43, output_rows=1
-  GpuCoalesceBatchesExec: target_batch_size=24403223, output_bytes=143966290, output_rows=4464071
-    GpuHashJoinExec: join_type=Inner, on=[(o_orderkey@0, l_orderkey@0)], filter=l_shipdate@1 >= o_orderdate@0 AND l_shipdate@1 <= o_orderdate@0 + IntervalMonthDayNano { months: 0, days: 90, nanoseconds: 0 }, projection=[1, 4], output_bytes=143966914, output_rows=4464071
-      GpuScanExec: table=orders, projections=[o_orderkey, o_totalprice, o_orderdate], batch_size=24403223, output_bytes=42562500, output_rows=1500000
-      GpuScanExec: table=lineitem, projections=[l_orderkey, l_quantity, l_shipdate], batch_size=24403223, output_bytes=170284476, output_rows=6001215
-peacockdb_cost=500780223

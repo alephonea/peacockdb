@@ -1,0 +1,31 @@
+GpuProjectExec: expr=[brand_id@0 as brand_id, brand@1 as brand, ext_price@2 as ext_price], output_bytes=4425, output_rows=100
+  GpuSortPreservingMergeExec: [ext_price@2 DESC, i_brand_id@3 ASC NULLS LAST], output_bytes=5238, output_rows=100
+    GpuSortExec: expr=[ext_price@2 DESC, i_brand_id@3 ASC NULLS LAST], fetch=100, output_bytes=5238, output_rows=100
+      GpuProjectExec: expr=[i_brand_id@1 as brand_id, i_brand@0 as brand, sum(store_sales.ss_ext_sales_price)@2 as ext_price, i_brand_id@1 as i_brand_id], output_bytes=5451, output_rows=104
+        GpuAggregateExec: group_by=[i_brand, i_brand_id], aggr=[sum(store_sales.ss_ext_sales_price)], output_bytes=4606, output_rows=104
+          GpuCoalesceBatchesExec: target_batch_size=16777216, output_bytes=4606, output_rows=104
+            GpuRepartitionExec: partitioning=Hash([i_brand@0, i_brand_id@1], 8), input_partitions=8, output_bytes=4606, output_rows=104
+              GpuAggregateExec: group_by=[i_brand, i_brand_id], aggr=[sum(store_sales.ss_ext_sales_price)], output_bytes=4606, output_rows=104
+                GpuProjectExec: expr=[ss_ext_sales_price@2 as ss_ext_sales_price, i_brand_id@0 as i_brand_id, i_brand@1 as i_brand], output_bytes=76097, output_rows=1713
+                  GpuCoalesceBatchesExec: target_batch_size=16777216, output_bytes=76097, output_rows=1713
+                    GpuHashJoinExec: join_type=Inner, on=[(i_item_sk@0, ss_item_sk@0)], projection=[1, 2, 4], output_bytes=76097, output_rows=1713
+                      GpuCoalesceBatchesExec: target_batch_size=16777216, output_bytes=12430, output_rows=339
+                        GpuRepartitionExec: partitioning=Hash([i_item_sk@0], 8), input_partitions=8, output_bytes=12430, output_rows=339
+                          GpuCoalesceBatchesExec: target_batch_size=16777216, output_bytes=12430, output_rows=339
+                            GpuFilterExec: predicate=i_manager_id@3 = 28, projection=[0, 1, 2], output_bytes=12430, output_rows=339
+                              GpuRepartitionExec: partitioning=RoundRobinBatch(8), input_partitions=1, output_bytes=803897, output_rows=18000
+                                GpuScanExec: table=item, projections=[i_item_sk, i_brand_id, i_brand, i_manager_id], batch_size=16777216, output_bytes=803897, output_rows=18000
+                      GpuCoalesceBatchesExec: target_batch_size=16777216, output_bytes=2093092, output_rows=86313
+                        GpuRepartitionExec: partitioning=Hash([ss_item_sk@0], 8), input_partitions=8, output_bytes=2093092, output_rows=86313
+                          GpuCoalesceBatchesExec: target_batch_size=16777216, output_bytes=2093092, output_rows=86313
+                            GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ss_sold_date_sk@0)], projection=[2, 3], output_bytes=2093092, output_rows=86313
+                              GpuCoalesceBatchesExec: target_batch_size=16777216, output_bytes=244, output_rows=30
+                                GpuRepartitionExec: partitioning=Hash([d_date_sk@0], 8), input_partitions=8, output_bytes=244, output_rows=30
+                                  GpuCoalesceBatchesExec: target_batch_size=16777216, output_bytes=244, output_rows=30
+                                    GpuFilterExec: predicate=d_moy@2 = 11 AND d_year@1 = 1999, projection=[0], output_bytes=244, output_rows=30
+                                      GpuRepartitionExec: partitioning=RoundRobinBatch(8), input_partitions=1, output_bytes=1780572, output_rows=73049
+                                        GpuScanExec: table=date_dim, projections=[d_date_sk, d_year, d_moy], batch_size=16777216, output_bytes=1780572, output_rows=73049
+                              GpuCoalesceBatchesExec: target_batch_size=16777216, output_bytes=93253081, output_rows=2880404
+                                GpuRepartitionExec: partitioning=Hash([ss_sold_date_sk@0], 8), input_partitions=8, output_bytes=93253081, output_rows=2880404
+                                  GpuScanExec: table=store_sales, projections=[ss_sold_date_sk, ss_item_sk, ss_ext_sales_price], batch_size=16777216, output_bytes=93253081, output_rows=2880404
+peacockdb_cost=293618312

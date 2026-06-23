@@ -1,0 +1,18 @@
+GpuProjectExec: expr=[sum(lineitem.l_extendedprice * Int64(1) - lineitem.l_discount)@0 as revenue], output_bytes=17, output_rows=1
+  GpuAggregateExec: group_by=[], aggr=[sum(lineitem.l_extendedprice * Int64(1) - lineitem.l_discount)], output_bytes=17, output_rows=1
+    GpuCoalescePartitionsExec, output_bytes=17, output_rows=1
+      GpuAggregateExec: group_by=[], aggr=[sum(lineitem.l_extendedprice * Int64(1) - lineitem.l_discount)], output_bytes=17, output_rows=1
+        GpuCoalesceBatchesExec: target_batch_size=12201611, output_bytes=3904, output_rows=121
+          GpuHashJoinExec: join_type=Inner, on=[(p_partkey@0, l_partkey@0)], filter=p_brand@1 = Brand#12 AND (p_container@3 = SM CASE OR p_container@3 = SM BOX OR p_container@3 = SM PACK OR p_container@3 = SM PKG) AND l_quantity@0 >= Some(100),15,2 AND l_quantity@0 <= Some(1100),15,2 AND p_size@2 <= 5 OR p_brand@1 = Brand#23 AND (p_container@3 = MED BAG OR p_container@3 = MED BOX OR p_container@3 = MED PKG OR p_container@3 = MED PACK) AND l_quantity@0 >= Some(1000),15,2 AND l_quantity@0 <= Some(2000),15,2 AND p_size@2 <= 10 OR p_brand@1 = Brand#34 AND (p_container@3 = LG CASE OR p_container@3 = LG BOX OR p_container@3 = LG PACK OR p_container@3 = LG PKG) AND l_quantity@0 >= Some(2000),15,2 AND l_quantity@0 <= Some(3000),15,2 AND p_size@2 <= 15, projection=[6, 7], output_bytes=3904, output_rows=121
+            GpuCoalesceBatchesExec: target_batch_size=12201611, output_bytes=17111, output_rows=485
+              GpuRepartitionExec: partitioning=Hash([p_partkey@0], 8), input_partitions=8, output_bytes=17111, output_rows=485
+                GpuCoalesceBatchesExec: target_batch_size=12201611, output_bytes=17111, output_rows=485
+                  GpuFilterExec: predicate=(p_brand@1 = Brand#12 AND (p_container@3 = SM CASE OR p_container@3 = SM BOX OR p_container@3 = SM PACK OR p_container@3 = SM PKG) AND p_size@2 <= 5 OR p_brand@1 = Brand#23 AND (p_container@3 = MED BAG OR p_container@3 = MED BOX OR p_container@3 = MED PKG OR p_container@3 = MED PACK) AND p_size@2 <= 10 OR p_brand@1 = Brand#34 AND (p_container@3 = LG CASE OR p_container@3 = LG BOX OR p_container@3 = LG PACK OR p_container@3 = LG PKG) AND p_size@2 <= 15) AND p_size@2 >= 1, output_bytes=17111, output_rows=485
+                    GpuRepartitionExec: partitioning=RoundRobinBatch(8), input_partitions=1, output_bytes=7214979, output_rows=200000
+                      GpuScanExec: table=part, projections=[p_partkey, p_brand, p_size, p_container], batch_size=12201611, output_bytes=7214979, output_rows=200000
+            GpuCoalesceBatchesExec: target_batch_size=12201611, output_bytes=7252964, output_rows=128371
+              GpuRepartitionExec: partitioning=Hash([l_partkey@0], 8), input_partitions=8, output_bytes=7252964, output_rows=128371
+                GpuCoalesceBatchesExec: target_batch_size=12201611, output_bytes=7252964, output_rows=128371
+                  GpuFilterExec: predicate=(l_quantity@1 >= Some(100),15,2 AND l_quantity@1 <= Some(1100),15,2 OR l_quantity@1 >= Some(1000),15,2 AND l_quantity@1 <= Some(2000),15,2 OR l_quantity@1 >= Some(2000),15,2 AND l_quantity@1 <= Some(3000),15,2) AND (l_shipmode@5 = AIR OR l_shipmode@5 = AIR REG) AND l_shipinstruct@4 = DELIVER IN PERSON, projection=[0, 1, 2, 3], output_bytes=7252964, output_rows=128371
+                    GpuScanExec: table=lineitem, projections=[l_partkey, l_quantity, l_extendedprice, l_discount, l_shipinstruct, l_shipmode], batch_size=12201611, output_bytes=486302123, output_rows=6001215
+peacockdb_cost=529820257

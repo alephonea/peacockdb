@@ -10,6 +10,7 @@ pub mod generated {
     }
 }
 pub mod plan_serializer;
+pub mod resident;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

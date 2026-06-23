@@ -1,3 +1,0 @@
-GpuAggregateExec: group_by=[l_returnflag], aggr=[sum(lineitem.l_quantity)], output_bytes=69, output_rows=3
-  GpuScanExec: table=lineitem, projections=[l_quantity, l_returnflag], batch_size=22369621, output_bytes=127526015, output_rows=6001215
-peacockdb_cost=127526084

@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 
 use datafusion::arrow::array::{
-    Array, BinaryArray, BinaryViewArray, LargeBinaryArray, LargeStringArray, StringArray,
+    Array, BinaryArray, BinaryViewArray, LargeBinaryArray, LargeStringArray, ListArray, StringArray,
     StringViewArray,
 };
 use datafusion::arrow::datatypes::{DataType, SchemaRef};
@@ -21,11 +21,83 @@ use datafusion::physical_plan::{
 use datafusion::physical_plan::union::{InterleaveExec, UnionExec};
 use futures::Stream;
 
+use std::collections::HashMap;
+
 use crate::gpu_rule::{
     GpuAggregateExec, GpuCoalesceBatchesExec, GpuCoalescePartitionsExec, GpuFilterExec,
-    GpuHashJoinExec, GpuProjectExec, GpuRepartitionExec, GpuScanExec, GpuSortExec,
-    GpuSortPreservingMergeExec,
+    GpuHashJoinExec, GpuInterleaveExec, GpuProjectExec, GpuRepartitionExec, GpuScanExec,
+    GpuSortExec, GpuSortPreservingMergeExec,
 };
+
+// ---------------------------------------------------------------------------
+// Resident-memory enforcement (Part 2): strict "GPU" memory budget, mid-run.
+// ---------------------------------------------------------------------------
+
+/// Tracks the modeled concurrently-resident data set during node-by-node
+/// execution and trips a budget the MOMENT it is crossed (before the query
+/// completes). The accounting is delegated to `resident::peak_from_skeleton`, the
+/// SAME path-sum logic as the offline `resident::check_resident_budget`, so the
+/// mid-run verdict can't drift from the reference. As each node's output stream
+/// completes its `output_bytes` is recorded; the peak is recomputed and grows
+/// monotonically toward the true peak, so the crossing is detected exactly when
+/// it happens.
+struct ResidentEnforcer {
+    budget: usize,
+    state: Mutex<EnforcerState>,
+}
+
+struct EnforcerState {
+    /// seq -> (stripped node name, child seqs). Built during `build_stream`.
+    skeleton: HashMap<usize, (String, Vec<usize>)>,
+    /// Post-order means the LAST node registered is the root.
+    root: usize,
+    /// Completed nodes' output_bytes (missing = not yet materialized = 0).
+    output_bytes: HashMap<usize, usize>,
+    tripped: Option<String>,
+}
+
+impl ResidentEnforcer {
+    fn new(budget: usize) -> Self {
+        Self {
+            budget,
+            state: Mutex::new(EnforcerState {
+                skeleton: HashMap::new(),
+                root: 0,
+                output_bytes: HashMap::new(),
+                tripped: None,
+            }),
+        }
+    }
+
+    fn register(&self, seq: usize, name: String, children: Vec<usize>) {
+        let mut s = self.state.lock().unwrap();
+        s.skeleton.insert(seq, (name, children));
+        s.root = seq;
+    }
+
+    fn on_complete(&self, seq: usize, output_bytes: usize) {
+        let mut s = self.state.lock().unwrap();
+        s.output_bytes.insert(seq, output_bytes);
+        if s.tripped.is_none() {
+            let peak = crate::resident::peak_from_skeleton(s.root, &s.skeleton, &s.output_bytes);
+            if peak > self.budget {
+                s.tripped = Some(format!(
+                    "resident GPU memory budget exceeded: peak {peak} bytes > budget {} bytes",
+                    self.budget
+                ));
+            }
+        }
+    }
+
+    fn tripped_error(&self) -> Option<DataFusionError> {
+        self.state
+            .lock()
+            .unwrap()
+            .tripped
+            .clone()
+            .map(DataFusionError::ResourcesExhausted)
+    }
+}
 
 // 
 fn strip_gpu(node: Arc<dyn ExecutionPlan>) -> (Arc<dyn ExecutionPlan>, Option<usize>) {
@@ -51,6 +123,11 @@ fn strip_gpu(node: Arc<dyn ExecutionPlan>) -> (Arc<dyn ExecutionPlan>, Option<us
     try_strip!(GpuCoalescePartitionsExec);
     try_strip!(GpuRepartitionExec);
     try_strip!(GpuSortPreservingMergeExec);
+    // Strip to the bare InterleaveExec so build_stream's substitution sees it:
+    // with single-partition stream stubs InterleaveExec::try_new can't interleave,
+    // so it's rebuilt as a (semantically-equivalent) UnionExec. Without stripping,
+    // the wrapper's with_new_children surfaces that error and it isn't recognised.
+    try_strip!(GpuInterleaveExec);
 
     // Plain CPU node — pass through unchanged.
     (node, None)
@@ -132,10 +209,34 @@ pub async fn execute_node_by_node(
     task_ctx: Arc<TaskContext>,
     on_node: &mut dyn FnMut(&str, &NodeMemoryStats),
 ) -> Result<Vec<RecordBatch>> {
+    execute_node_by_node_enforced(root, task_ctx, None, on_node).await
+}
+
+/// Like [`execute_node_by_node`], but when `budget` is `Some`, applies strict
+/// resident-memory control: the modeled concurrently-resident data set is tracked
+/// during execution and a `ResourcesExhausted` error is raised the moment it
+/// exceeds the budget (mid-run, before the query completes). `None` = no
+/// enforcement (the historical behaviour). Enforcement is an ADDED check only —
+/// it never alters the per-node stats / `output_bytes` accounting.
+pub async fn execute_node_by_node_enforced(
+    root: Arc<dyn ExecutionPlan>,
+    task_ctx: Arc<TaskContext>,
+    budget: Option<usize>,
+    on_node: &mut dyn FnMut(&str, &NodeMemoryStats),
+) -> Result<Vec<RecordBatch>> {
     let collector: Arc<Mutex<Vec<(usize, NodeMemoryStats)>>> = Arc::new(Mutex::new(Vec::new()));
     let seq_counter = Arc::new(AtomicUsize::new(0));
-    let stream = build_stream(root.clone(), task_ctx, collector.clone(), seq_counter)?;
+    let enforcer = budget.map(|b| Arc::new(ResidentEnforcer::new(b)));
+    let (stream, _) =
+        build_stream(root.clone(), task_ctx, collector.clone(), seq_counter, enforcer.clone())?;
     let batches = drain_stream(stream).await?;
+    // Safety net: if the budget was crossed only at the final (root) completion,
+    // no later poll observed the latch — surface it here instead of returning Ok.
+    if let Some(enf) = &enforcer {
+        if let Some(e) = enf.tripped_error() {
+            return Err(e);
+        }
+    }
     let mut stats = std::mem::take(&mut *collector.lock().unwrap());
     // Stats are pushed in stream-completion/Drop order. That is normally
     // post-order, but a LIMIT parent finalizes (returns None) before its
@@ -159,12 +260,26 @@ pub async fn execute_node_by_node_instrumented(
     execute_node_by_node(root, task_ctx, &mut |_, s| stats.push(s.clone())).await
 }
 
+/// [`execute_node_by_node_instrumented`] with strict resident-memory control at
+/// `budget` (see [`execute_node_by_node_enforced`]). Used by the cpu result tests
+/// (verifying the budget never trips at 2 GiB) and the tight-budget OOM tests.
+pub async fn execute_node_by_node_instrumented_enforced(
+    root: Arc<dyn ExecutionPlan>,
+    task_ctx: Arc<TaskContext>,
+    budget: usize,
+    stats: &mut Vec<NodeMemoryStats>,
+) -> Result<Vec<RecordBatch>> {
+    execute_node_by_node_enforced(root, task_ctx, Some(budget), &mut |_, s| stats.push(s.clone()))
+        .await
+}
+
 fn build_stream(
     root: Arc<dyn ExecutionPlan>,
     task_ctx: Arc<TaskContext>,
     collector: Arc<Mutex<Vec<(usize, NodeMemoryStats)>>>,
     seq_counter: Arc<AtomicUsize>,
-) -> Result<SendableRecordBatchStream> {
+    enforcer: Option<Arc<ResidentEnforcer>>,
+) -> Result<(SendableRecordBatchStream, usize)> {
     let (cpu_node, batch_size_override) = strip_gpu(root);
 
     let task_ctx = match batch_size_override {
@@ -173,6 +288,7 @@ fn build_stream(
     };
 
     let mut stream_children: Vec<Arc<dyn ExecutionPlan>> = Vec::new();
+    let mut child_seqs: Vec<usize> = Vec::new();
     for child in cpu_node.children() {
         let child_schema = child.schema();
         // Carry the child's equivalence properties (notably its output ordering)
@@ -181,8 +297,14 @@ fn build_stream(
         // BoundedWindowAggExec (mode=Sorted) reject their input
         // ("PARTITION BY expression to be ordered").
         let child_eq = child.properties().equivalence_properties().clone();
-        let child_stream =
-            build_stream(child.clone(), task_ctx.clone(), collector.clone(), seq_counter.clone())?;
+        let (child_stream, child_seq) = build_stream(
+            child.clone(),
+            task_ctx.clone(),
+            collector.clone(),
+            seq_counter.clone(),
+            enforcer.clone(),
+        )?;
+        child_seqs.push(child_seq);
         stream_children.push(Arc::new(StreamSourceExec::new(
             child_schema,
             child_eq,
@@ -208,17 +330,26 @@ fn build_stream(
     // (they incremented the counter first), so children always sort before their
     // parent regardless of stream-completion/Drop timing (see I2 / LIMIT case).
     let seq = seq_counter.fetch_add(1, Ordering::Relaxed);
+    // Register this node's accounting skeleton (seq -> name + child seqs) BEFORE it
+    // can complete, so the enforcer can recompute the path-sum peak as nodes finish.
+    if let Some(enf) = &enforcer {
+        enf.register(seq, node_name.clone(), child_seqs);
+    }
     // Use execute_stream (not execute(0)) so multi-partition nodes (UnionExec,
     // RepartitionExec, …) are coalesced into a single stream instead of
     // silently dropping all partitions but one.
     let inner = execute_stream(node, task_ctx)?;
-    Ok(Box::pin(InstrumentedStream::new(
+    Ok((
+        Box::pin(InstrumentedStream::new(
+            seq,
+            node_name,
+            node_schema,
+            inner,
+            collector,
+            enforcer,
+        )),
         seq,
-        node_name,
-        node_schema,
-        inner,
-        collector,
-    )))
+    ))
 }
 
 async fn drain_stream(mut stream: SendableRecordBatchStream) -> Result<Vec<RecordBatch>> {
@@ -322,10 +453,16 @@ struct InstrumentedStream {
     schema: SchemaRef,
     inner: SendableRecordBatchStream,
     allocated_bytes: usize,
-    output_bytes: usize,
+    // Per-column accumulators (one per output field). Each level's bitmap/offset
+    // overhead is charged ONCE at finalize from the accumulated totals, so
+    // `output_bytes` is deterministic regardless of how rows are chunked into
+    // batches (i.e. regardless of target_partitions). See `ColAccum`.
+    cols: Vec<ColAccum>,
     row_count: usize,
     max_batch_rows: usize,
     collector: Arc<Mutex<Vec<(usize, NodeMemoryStats)>>>,
+    /// Resident-budget enforcer (Part 2). `None` = no enforcement.
+    enforcer: Option<Arc<ResidentEnforcer>>,
     done: bool,
 }
 
@@ -336,17 +473,24 @@ impl InstrumentedStream {
         schema: SchemaRef,
         inner: SendableRecordBatchStream,
         collector: Arc<Mutex<Vec<(usize, NodeMemoryStats)>>>,
+        enforcer: Option<Arc<ResidentEnforcer>>,
     ) -> Self {
+        // Fail fast (here, not in Drop) if any output column type isn't accountable.
+        for f in schema.fields() {
+            assert_type_accountable(f.data_type());
+        }
+        let cols = vec![ColAccum::default(); schema.fields().len()];
         Self {
             seq,
             node_name,
             schema,
             inner,
             allocated_bytes: 0,
-            output_bytes: 0,
+            cols,
             row_count: 0,
             max_batch_rows: 0,
             collector,
+            enforcer,
             done: false,
         }
     }
@@ -356,12 +500,26 @@ impl InstrumentedStream {
     fn push_stat(&mut self) {
         if !self.done {
             self.done = true;
+            // Logical size of the whole node output: each column's (and nested
+            // level's) overhead charged ONCE from the accumulated totals —
+            // independent of batch boundaries.
+            let output_bytes: usize = self
+                .cols
+                .iter()
+                .zip(self.schema.fields())
+                .map(|(c, f)| c.size(f.data_type()))
+                .sum();
+            // Feed the resident enforcer this node's materialized size so it can
+            // recompute the concurrent peak and trip the budget mid-run.
+            if let Some(enf) = &self.enforcer {
+                enf.on_complete(self.seq, output_bytes);
+            }
             self.collector.lock().unwrap().push((
                 self.seq,
                 NodeMemoryStats {
                     node_name: self.node_name.clone(),
                     allocated_bytes: self.allocated_bytes,
-                    output_bytes: self.output_bytes,
+                    output_bytes,
                     row_count: self.row_count,
                     max_batch_rows: self.max_batch_rows,
                 },
@@ -383,12 +541,23 @@ impl Stream for InstrumentedStream {
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let me = &mut *self;
+        // Strict resident control: if a node's completion (possibly elsewhere in the
+        // tree) has already pushed the modeled concurrent-resident over budget, fail
+        // here rather than finish the query.
+        if let Some(enf) = &me.enforcer {
+            if let Some(e) = enf.tripped_error() {
+                me.done = true;
+                return Poll::Ready(Some(Err(e)));
+            }
+        }
         let poll = Pin::new(&mut me.inner).poll_next(cx);
         if let Poll::Ready(item) = &poll {
             match item {
                 Some(Ok(batch)) => {
                     me.allocated_bytes += batch_allocated_size(batch);
-                    me.output_bytes += batch_logical_size(batch);
+                    for (acc, col) in me.cols.iter_mut().zip(batch.columns()) {
+                        acc.add(col.as_ref());
+                    }
                     me.row_count += batch.num_rows();
                     if batch.num_rows() > me.max_batch_rows {
                         me.max_batch_rows = batch.num_rows();
@@ -425,132 +594,189 @@ pub fn batch_allocated_size(batch: &RecordBatch) -> usize {
         .sum()
 }
 
-/// Exact logical byte size of a `RecordBatch`.
+/// Per-column STRUCTURAL byte size: the part that depends only on the column
+/// type and the row count, NOT on how rows are split into batches — the
+/// validity bitmap plus either the fixed-width data buffer or the var-length
+/// OFFSET buffer. This is the single source of truth for per-type widths.
 ///
-/// For fixed-width types this is derived from the schema and row count.
-/// For variable-width types (`Utf8`, `Binary`, etc.) the offsets buffer is
-/// read to get the exact data byte count.  Unknown / nested types contribute 0.
+/// Because it is batch-independent it can be evaluated once per node from the
+/// total row count, which is what makes `output_bytes` deterministic at
+/// `target_partitions > 1` (the per-batch overhead — bitmap rounding + the
+/// offset buffer's `+1` — was the only thing that wobbled with batch boundaries).
+fn type_structural_size(dt: &DataType, rows: usize) -> usize {
+    let bitmap_bytes = (rows + 7) / 8;
+    let data_bytes = match dt {
+        DataType::Boolean => (rows + 7) / 8,
+        DataType::Int8 | DataType::UInt8 => rows,
+        DataType::Int16 | DataType::UInt16 => rows * 2,
+        DataType::Int32 | DataType::UInt32 | DataType::Float32 | DataType::Date32 => rows * 4,
+        DataType::Int64 | DataType::UInt64 | DataType::Float64 | DataType::Date64 => rows * 8,
+        DataType::Timestamp(_, _) => rows * 8,
+        // Var-length: only the offset buffer is structural; the content is
+        // accumulated separately (see `array_content_size`). View layouts also
+        // carry an (rows+1)*4 offset-equivalent, mirroring the old formula.
+        DataType::Utf8 | DataType::Binary | DataType::Utf8View | DataType::BinaryView => {
+            (rows + 1) * 4 // i32 offsets
+        }
+        DataType::LargeUtf8 | DataType::LargeBinary => (rows + 1) * 8, // i64 offsets
+        DataType::Decimal128(_, _) => rows * 16,
+        DataType::Decimal256(_, _) => rows * 32,
+        DataType::FixedSizeBinary(n) => rows * (*n as usize),
+        // Dictionary: count the keys deterministically (rows × key width).
+        // Values are deduped/small; omitting them slightly undercounts but
+        // keeps the golden deterministic (no allocation-size dependency).
+        DataType::Dictionary(key_type, _) => rows * key_type.primitive_width().unwrap_or(4),
+        // Nested types are NOT handled here — `ColAccum` computes them from
+        // per-level totals (List child overhead can't be derived from the parent
+        // row count alone). `assert_type_accountable` recurses into them.
+        //
+        // HARD fail on any other unhandled type: the old silent 0 undercounted
+        // decimals/Utf8View, and an allocation-based fallback
+        // (get_array_memory_size) would make goldens non-deterministic. Panicking
+        // forces a deterministic per-type arm to be added rather than silently
+        // producing a wrong/unstable size. The guard is reached at stream
+        // construction (see `assert_type_accountable`), NOT in a destructor, so it
+        // unwinds as a normal test failure instead of aborting the process.
+        other => panic!("type_structural_size: unhandled DataType {other:?} — add a deterministic arm"),
+    };
+    bitmap_bytes + data_bytes
+}
+
+/// Per-column var-length CONTENT bytes for one batch: `offsets[rows]-offsets[0]`
+/// for offset layouts, or Σ value byte lengths for View layouts. Fixed-width
+/// types contribute 0. This term telescopes across batches (the sum over batches
+/// equals the value for the whole node), so it carries NO per-batch overhead and
+/// is safe to accumulate as batches arrive.
+fn array_content_size(dt: &DataType, col: &dyn Array, rows: usize) -> usize {
+    // offsets[rows]-offsets[0]; offsets are i32 (Utf8/Binary) or i64 (Large*).
+    macro_rules! offset_content {
+        ($arr:ty) => {
+            col.as_any()
+                .downcast_ref::<$arr>()
+                .map(|a| {
+                    let o = a.value_offsets();
+                    if o.is_empty() {
+                        0usize
+                    } else {
+                        (o[rows] - o[0]) as usize
+                    }
+                })
+                .unwrap_or(0)
+        };
+    }
+    match dt {
+        DataType::Utf8 => offset_content!(StringArray),
+        DataType::LargeUtf8 => offset_content!(LargeStringArray),
+        DataType::Binary => offset_content!(BinaryArray),
+        DataType::LargeBinary => offset_content!(LargeBinaryArray),
+        // View layouts: Σ value byte lengths. Must NOT use get_array_memory_size
+        // here — that's allocation-dependent (buffer capacity) and varies
+        // run-to-run, making the goldens non-deterministic.
+        DataType::Utf8View => col
+            .as_any()
+            .downcast_ref::<StringViewArray>()
+            .map(|a| (0..a.len()).filter(|&i| a.is_valid(i)).map(|i| a.value(i).len()).sum())
+            .unwrap_or(0),
+        DataType::BinaryView => col
+            .as_any()
+            .downcast_ref::<BinaryViewArray>()
+            .map(|a| (0..a.len()).filter(|&i| a.is_valid(i)).map(|i| a.value(i).len()).sum())
+            .unwrap_or(0),
+        _ => 0,
+    }
+}
+
+/// Per-column accumulator that makes `output_bytes` deterministic for nested
+/// (`List`) columns too, not just flat ones.
+///
+/// The wobble being removed is per-batch OVERHEAD (validity bitmap rounding +
+/// the offset buffer's `+1`) double-counted across batch boundaries. For flat
+/// columns the level total is just the row count, so the overhead can be
+/// computed once from the schema. For a `List`, the CHILD level's element count
+/// is data-dependent and is NOT a function of the parent row count — so we must
+/// accumulate it. `ColAccum` mirrors the array's nesting, summing each level's
+/// element `count` and the leaf var-length `content` bytes across all batches;
+/// `size` then charges every level's bitmap/offset overhead ONCE from its total.
+/// Counts and content are order-independent sums, so the result is identical
+/// regardless of how the coalesced stream chunks rows into batches.
+#[derive(Clone, Default)]
+struct ColAccum {
+    count: usize,            // total elements at this level across all batches
+    content: usize,          // leaf var-length content bytes (telescopes)
+    children: Vec<ColAccum>, // sub-array accumulators (List child)
+}
+
+impl ColAccum {
+    fn child(&mut self) -> &mut ColAccum {
+        if self.children.is_empty() {
+            self.children.push(ColAccum::default());
+        }
+        &mut self.children[0]
+    }
+
+    /// Fold one batch's array (for this column) into the running totals.
+    fn add(&mut self, array: &dyn Array) {
+        let len = array.len();
+        self.count += len;
+        match array.data_type() {
+            DataType::List(_) => {
+                let la = array.as_any().downcast_ref::<ListArray>().unwrap();
+                let o = la.value_offsets();
+                // Slice the child to just the range these rows reference (the
+                // array may itself be a slice, so start at o[0] not 0).
+                let (start, end) = (o[0] as usize, o[len] as usize);
+                let child = la.values().slice(start, end - start);
+                self.child().add(child.as_ref());
+            }
+            dt => self.content += array_content_size(dt, array, len),
+        }
+    }
+
+    /// Logical size of this whole accumulated level: bitmap + (offset|fixed) +
+    /// content / child, all charged ONCE from the accumulated totals.
+    fn size(&self, dt: &DataType) -> usize {
+        match dt {
+            DataType::List(field) => {
+                let bitmap = (self.count + 7) / 8;
+                let offsets = (self.count + 1) * 4; // i32 offsets
+                bitmap + offsets + self.children.first().map_or(0, |c| c.size(field.data_type()))
+            }
+            // Flat: type_structural_size already counts bitmap + fixed/offset; add
+            // the accumulated var-length content (0 for fixed-width types).
+            flat => type_structural_size(flat, self.count) + self.content,
+        }
+    }
+}
+
+/// Fail at stream CONSTRUCTION (not in `Drop`) if a column type has no
+/// deterministic accounting, recursing into `List` children. Calling the guard
+/// here means an unhandled type unwinds as a normal test failure rather than
+/// aborting the process from inside `InstrumentedStream`'s destructor.
+fn assert_type_accountable(dt: &DataType) {
+    match dt {
+        DataType::List(field) => assert_type_accountable(field.data_type()),
+        other => {
+            let _ = type_structural_size(other, 0); // panics here if unhandled
+        }
+    }
+}
+
+/// Exact logical byte size of a single `RecordBatch` (structural + content).
+///
+/// Note: the per-node `output_bytes` metric is NOT this summed per batch — it is
+/// a [`ColAccum`] over the whole node output, so each level's overhead is charged
+/// once and the value does not depend on batch boundaries. This helper is
+/// retained for callers that genuinely want a single batch's size.
 pub fn batch_logical_size(batch: &RecordBatch) -> usize {
-    let rows = batch.num_rows();
     batch
         .schema()
         .fields()
         .iter()
         .zip(batch.columns().iter())
         .map(|(field, col)| {
-            let bitmap_bytes = (rows + 7) / 8;
-            let data_bytes = match field.data_type() {
-                DataType::Boolean => (rows + 7) / 8,
-                DataType::Int8 | DataType::UInt8 => rows,
-                DataType::Int16 | DataType::UInt16 => rows * 2,
-                DataType::Int32
-                | DataType::UInt32
-                | DataType::Float32
-                | DataType::Date32 => rows * 4,
-                DataType::Int64
-                | DataType::UInt64
-                | DataType::Float64
-                | DataType::Date64 => rows * 8,
-                DataType::Timestamp(_, _) => rows * 8,
-                DataType::Utf8 => {
-                    let offset_bytes = (rows + 1) * 4; // i32 offsets
-                    let data = col
-                        .as_any()
-                        .downcast_ref::<StringArray>()
-                        .map(|arr| {
-                            let offsets = arr.value_offsets();
-                            if offsets.is_empty() {
-                                0usize
-                            } else {
-                                (offsets[rows] - offsets[0]) as usize
-                            }
-                        })
-                        .unwrap_or(0);
-                    offset_bytes + data
-                }
-                DataType::LargeUtf8 => {
-                    let offset_bytes = (rows + 1) * 8; // i64 offsets
-                    let data = col
-                        .as_any()
-                        .downcast_ref::<LargeStringArray>()
-                        .map(|arr| {
-                            let offsets = arr.value_offsets();
-                            if offsets.is_empty() {
-                                0usize
-                            } else {
-                                (offsets[rows] - offsets[0]) as usize
-                            }
-                        })
-                        .unwrap_or(0);
-                    offset_bytes + data
-                }
-                DataType::Binary => {
-                    let offset_bytes = (rows + 1) * 4;
-                    let data = col
-                        .as_any()
-                        .downcast_ref::<BinaryArray>()
-                        .map(|arr| {
-                            let offsets = arr.value_offsets();
-                            if offsets.is_empty() {
-                                0usize
-                            } else {
-                                (offsets[rows] - offsets[0]) as usize
-                            }
-                        })
-                        .unwrap_or(0);
-                    offset_bytes + data
-                }
-                DataType::LargeBinary => {
-                    let offset_bytes = (rows + 1) * 8;
-                    let data = col
-                        .as_any()
-                        .downcast_ref::<LargeBinaryArray>()
-                        .map(|arr| {
-                            let offsets = arr.value_offsets();
-                            if offsets.is_empty() {
-                                0usize
-                            } else {
-                                (offsets[rows] - offsets[0]) as usize
-                            }
-                        })
-                        .unwrap_or(0);
-                    offset_bytes + data
-                }
-                DataType::Decimal128(_, _) => rows * 16,
-                DataType::Decimal256(_, _) => rows * 32,
-                DataType::FixedSizeBinary(n) => rows * (*n as usize),
-                // View layouts: count CONTENT (Σ value byte lengths + offsets),
-                // mirroring the Utf8/Binary arms. Must NOT use get_array_memory_size
-                // here — that's allocation-dependent (buffer capacity) and varies
-                // run-to-run, making the goldens non-deterministic.
-                DataType::Utf8View => {
-                    let data = col
-                        .as_any()
-                        .downcast_ref::<StringViewArray>()
-                        .map(|a| (0..a.len()).filter(|&i| a.is_valid(i)).map(|i| a.value(i).len()).sum::<usize>())
-                        .unwrap_or(0);
-                    (rows + 1) * 4 + data
-                }
-                DataType::BinaryView => {
-                    let data = col
-                        .as_any()
-                        .downcast_ref::<BinaryViewArray>()
-                        .map(|a| (0..a.len()).filter(|&i| a.is_valid(i)).map(|i| a.value(i).len()).sum::<usize>())
-                        .unwrap_or(0);
-                    (rows + 1) * 4 + data
-                }
-                // Dictionary: count the keys deterministically (rows × key width).
-                // Values are deduped/small; omitting them slightly undercounts but
-                // keeps the golden deterministic (no allocation-size dependency).
-                DataType::Dictionary(key_type, _) => rows * key_type.primitive_width().unwrap_or(4),
-                // HARD fail on an unhandled type (in debug AND release): the old
-                // silent 0 undercounted decimals/Utf8View, and an allocation-based
-                // fallback (get_array_memory_size) would make goldens
-                // non-deterministic. Panicking forces a deterministic per-type arm to
-                // be added rather than silently producing a wrong/unstable size.
-                other => panic!("batch_logical_size: unhandled DataType {other:?} — add a deterministic arm"),
-            };
-            bitmap_bytes + data_bytes
+            let mut acc = ColAccum::default();
+            acc.add(col.as_ref());
+            acc.size(field.data_type())
         })
         .sum()
 }
