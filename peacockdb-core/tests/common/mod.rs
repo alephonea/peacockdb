@@ -32,6 +32,12 @@ pub const FULL_BUDGET: usize = 2 * 1024 * 1024 * 1024;
 pub const TIGHT_BUDGET: usize = 10 * 1024;
 pub const GPU_BUDGET: usize = 2 * 1024 * 1024 * 1024;
 
+/// Max rendered size for a committed `.result.txt` golden. Above this the golden is
+/// NOT written (full-result text doesn't scale — e.g. tpch anti-join renders ~240
+/// MB / 1.2M rows and trips the repo's push size guard). Large-result queries fall
+/// back to the live CPU oracle in the merged GPU test (Inc0.5, dmitry's size rule).
+pub const RESULT_GOLDEN_MAX_BYTES: usize = 256 * 1024;
+
 // --- parameterized testdata layout -----------------------------------------
 //   data    = <root>/<dataset>.sf<sf>/        (parquet)
 //   queries = <root>/<dataset>-queries/<query>.sql
@@ -65,8 +71,17 @@ pub fn cpu_golden(dataset: &str, sf: &str, query: &str, device: &str) -> PathBuf
     golden_dir_for(dataset, sf).join(format!("{query}.{device}.cpu.txt"))
 }
 
+/// Total-cost + per-category breakdown golden (#83), derived from the `.cpu.txt`
+/// per-node tree via `cost_model::cost_text_from_cpu`; verified by `test_cost_model.rs`.
 pub fn cost_golden(dataset: &str, sf: &str, query: &str, device: &str) -> PathBuf {
     golden_dir_for(dataset, sf).join(format!("{query}.{device}.cost.txt"))
+}
+
+/// Frozen final-result snapshot (`batches_to_sorted_str`), generated ONLY from the
+/// CPU oracle under UPDATE_CANONICAL (never the GPU), so the merged GPU test can
+/// assert the final result without a live CPU run (Inc0.5).
+pub fn result_golden(dataset: &str, sf: &str, query: &str, device: &str) -> PathBuf {
+    golden_dir_for(dataset, sf).join(format!("{query}.{device}.result.txt"))
 }
 
 pub fn testdata_dir() -> PathBuf {
@@ -298,16 +313,26 @@ pub fn cpu_stats_str(plan: &Arc<dyn ExecutionPlan>, stats: &[NodeMemoryStats]) -
     lines.join("\n")
 }
 
+/// CPU-oracle cost-golden assert: WRITES under UPDATE_CANONICAL, else verifies.
+/// Only the CPU path may use this (it can write). The GPU path uses the read-only
+/// `assert_cost_golden_verify` so a UPDATE_CANONICAL on the GPU host can never
+/// overwrite cost goldens from GPU stats (Inc0.5 req#1, extended to cost).
 pub fn assert_cpu_cost_canonical(plan: &Arc<dyn ExecutionPlan>, stats: &[NodeMemoryStats], canonical_path: &Path) {
-    let name = canonical_path.file_name().and_then(|s| s.to_str()).unwrap_or("?");
-    let actual = cpu_stats_str(plan, stats);
-
     if std::env::var("UPDATE_CANONICAL").is_ok() {
+        let actual = cpu_stats_str(plan, stats);
         std::fs::create_dir_all(canonical_path.parent().unwrap()).unwrap();
         std::fs::write(canonical_path, &actual).unwrap();
         eprintln!("Updated CPU canonical: {}", canonical_path.display());
         return;
     }
+    assert_cost_golden_verify(plan, stats, canonical_path);
+}
+
+/// Read-only cost-golden verify (NEVER writes, ignores UPDATE_CANONICAL). Used by
+/// the GPU path. Fail-closed: a missing golden PANICS.
+pub fn assert_cost_golden_verify(plan: &Arc<dyn ExecutionPlan>, stats: &[NodeMemoryStats], canonical_path: &Path) {
+    let name = canonical_path.file_name().and_then(|s| s.to_str()).unwrap_or("?");
+    let actual = cpu_stats_str(plan, stats);
     let canonical = std::fs::read_to_string(canonical_path).unwrap_or_else(|_| {
         panic!(
             "CPU canonical file not found: {}\nRun with UPDATE_CANONICAL=1 to generate it.",
@@ -430,6 +455,160 @@ fn assert_results_match(
     }
 }
 
+/// Write the final-result golden (`batches_to_sorted_str`) under UPDATE_CANONICAL.
+/// Called ONLY on the CPU oracle path (Inc0.5 req #1: goldens never come from GPU).
+/// A no-op when UPDATE_CANONICAL is unset.
+pub fn maybe_write_result_golden(batches: &[RecordBatch], golden_path: &Path) {
+    if std::env::var("UPDATE_CANONICAL").is_err() {
+        return;
+    }
+    let s = batches_to_sorted_str(batches);
+    if s.len() >= RESULT_GOLDEN_MAX_BYTES {
+        // Too large to commit → write NO golden and clear any stale one. The GPU
+        // test detects the absent golden and falls back to the live CPU oracle.
+        let _ = std::fs::remove_file(golden_path);
+        eprintln!(
+            "Result too large ({} bytes >= {}); no golden (GPU test uses live oracle): {}",
+            s.len(),
+            RESULT_GOLDEN_MAX_BYTES,
+            golden_path.display()
+        );
+        return;
+    }
+    std::fs::create_dir_all(golden_path.parent().unwrap()).unwrap();
+    std::fs::write(golden_path, s).unwrap();
+    eprintln!("Updated result golden: {}", golden_path.display());
+}
+
+/// Float-tolerant comparison of two `batches_to_sorted_str` renderings. The data
+/// rows are grouped by their NON-numeric cells (so a ULP difference in a numeric
+/// cell can't reorder the sorted lines and break pairing — same idea as
+/// `assert_results_match`'s float path), and every numeric cell must agree within
+/// `tol` relative error. Used for the result-golden approx path (q14/q39).
+fn assert_sorted_str_approx(golden: &str, actual: &str, tol: f64, query: &str) {
+    use std::collections::HashMap;
+
+    fn split_cells(line: &str) -> Vec<String> {
+        let parts: Vec<&str> = line.split('|').collect();
+        if parts.len() < 2 {
+            return vec![line.trim().to_string()];
+        }
+        parts[1..parts.len() - 1].iter().map(|c| c.trim().to_string()).collect()
+    }
+    // (header lines [0..3], data rows as cells). Header/border must match exactly.
+    fn parse(s: &str) -> (Vec<String>, Vec<Vec<String>>) {
+        let lines: Vec<&str> = s.lines().collect();
+        if lines.len() <= 4 {
+            return (lines.iter().map(|l| l.to_string()).collect(), vec![]);
+        }
+        let header = lines[..3].iter().map(|l| l.to_string()).collect();
+        let data = lines[3..lines.len() - 1].iter().map(|l| split_cells(l)).collect();
+        (header, data)
+    }
+    // key = non-numeric cells joined; vals = the numeric cells (as f64) per row.
+    fn index(rows: &[Vec<String>]) -> HashMap<String, Vec<Vec<f64>>> {
+        let mut m: HashMap<String, Vec<Vec<f64>>> = HashMap::new();
+        for row in rows {
+            let mut key = String::new();
+            let mut nums = Vec::new();
+            for cell in row {
+                match cell.parse::<f64>() {
+                    Ok(v) => nums.push(v),
+                    Err(_) => {
+                        key.push_str(cell);
+                        key.push('\u{1}');
+                    }
+                }
+            }
+            m.entry(key).or_default().push(nums);
+        }
+        m
+    }
+    fn tuple_cmp(a: &[f64], b: &[f64]) -> std::cmp::Ordering {
+        for (p, q) in a.iter().zip(b) {
+            match p.partial_cmp(q) {
+                Some(std::cmp::Ordering::Equal) | None => continue,
+                Some(o) => return o,
+            }
+        }
+        std::cmp::Ordering::Equal
+    }
+
+    let (gh, gd) = parse(golden);
+    let (ah, ad) = parse(actual);
+    assert_eq!(gh, ah, "result header/schema for {query} differs from golden");
+    let (mut gm, am) = (index(&gd), index(&ad));
+    assert_eq!(
+        gm.len(),
+        am.len(),
+        "approx result: distinct non-numeric row keys differ for {query} (golden {}, actual {})",
+        gm.len(),
+        am.len()
+    );
+    for (key, mut avs) in am {
+        let mut evs = gm
+            .remove(&key)
+            .unwrap_or_else(|| panic!("approx result: actual row key absent from golden for {query}"));
+        assert_eq!(evs.len(), avs.len(), "approx result: row multiplicity differs for a key in {query}");
+        evs.sort_by(|a, b| tuple_cmp(a, b));
+        avs.sort_by(|a, b| tuple_cmp(a, b));
+        for (ev, av) in evs.iter().zip(&avs) {
+            assert_eq!(ev.len(), av.len(), "approx result: numeric-cell count differs for {query}");
+            for (e, a) in ev.iter().zip(av) {
+                let d = (e - a).abs();
+                let rel = if *e != 0.0 { d / e.abs() } else { d };
+                assert!(
+                    rel <= tol,
+                    "approx result: cell rel diff {rel:.3e} > tol {tol:.0e} for {query} (golden={e}, actual={a})"
+                );
+            }
+        }
+    }
+}
+
+/// Assert `actual` matches the frozen result golden at `golden_path` (fail-closed:
+/// a missing golden PANICS, mirroring `assert_cpu_cost_canonical`). `rel_tol`
+/// `None` = exact sorted-string equality; `Some(tol)` = float-tolerant (q14/q39).
+/// Never writes (the GPU side never updates canon — Inc0.5 req #1).
+pub fn assert_result_golden(
+    actual: &[RecordBatch],
+    golden_path: &Path,
+    rel_tol: Option<f64>,
+    query: &str,
+) {
+    let golden = std::fs::read_to_string(golden_path).unwrap_or_else(|_| {
+        panic!(
+            "result golden not found: {}\nGenerate it on the CPU oracle with UPDATE_CANONICAL=1.",
+            golden_path.display()
+        )
+    });
+    let golden = golden.trim_end();
+    // Empty-result robustness: `[]` (no batch) and `[empty_batch_with_schema]` do
+    // NOT render identically via batches_to_sorted_str, and the GPU vs the CPU
+    // oracle may pick different empty representations (q17). Per-node cost already
+    // verified the structure, so when the GPU produced 0 rows, accept iff the
+    // golden also has no data rows — otherwise it's a real divergence.
+    if total_rows(actual) == 0 {
+        let golden_data_rows = golden.lines().count().saturating_sub(4);
+        assert!(
+            golden_data_rows == 0,
+            "result for {query}: GPU produced 0 rows but golden has {golden_data_rows} data row(s) at {}",
+            golden_path.display()
+        );
+        return;
+    }
+    let actual_str = batches_to_sorted_str(actual);
+    match rel_tol {
+        None => assert_eq!(
+            actual_str,
+            golden.trim_end(),
+            "result for {query} does not match golden {}",
+            golden_path.display()
+        ),
+        Some(tol) => assert_sorted_str_approx(golden.trim_end(), &actual_str, tol, query),
+    }
+}
+
 /// Run a query through plain DataFusion (ground truth) and the CPU executor;
 /// assert results match (order-independent) and the cpu cost tree matches golden.
 ///
@@ -472,6 +651,9 @@ pub async fn assert_cpu_results_match_datafusion(
 
     assert_results_match(&expected, &actual, rel_tol, &format!("{dataset}/{query}"));
     assert_cpu_cost_canonical(&plan, &stats, &cpu_golden(dataset, sf, query, device));
+    // Snapshot the (DataFusion-validated) result for the merged GPU test to verify
+    // against, so the GPU run needs no live CPU oracle (Inc0.5). UPDATE_CANONICAL only.
+    maybe_write_result_golden(&actual, &result_golden(dataset, sf, query, device));
 }
 
 // --- resident-memory OOM (Part 2) ------------------------------------------
@@ -623,32 +805,37 @@ pub async fn assert_gpu_nodes_match_golden(dataset: &str, sf: &str, query: &str,
     let (partitions, budget) = device_config(device);
     let gpu = GpuExecutor::new(&data_dir, partitions, budget).await.unwrap();
     let (_batches, plan, stats) = gpu.execute_instrumented(&sql).await.unwrap();
-    assert_cpu_cost_canonical(&plan, &stats, &cpu_golden(dataset, sf, query, device));
+    assert_cost_golden_verify(&plan, &stats, &cpu_golden(dataset, sf, query, device));
 }
 
-/// Per-query result-assertion mode for the merged GPU test (`gpu_test!`).
-/// `Exact` = sorted-string equality; `Approx(tol)` = float-tolerant (q14/q39, the
-/// cross-partition summation ULP at tp>1; trivially passes when values are exactly
-/// equal, e.g. at tp1); `Skip` = assert per-node only, not the final result (a
-/// non-deterministic LIMIT whose row set isn't partition-invariant — those are
-/// excluded from tp8 goldens entirely, so Skip is essentially a tp1-only escape).
+/// Per-query result-assertion mode for the merged GPU test (`gpu_test!`) — chosen
+/// EXPLICITLY at each call site so a reader sees, per query, golden vs live oracle.
+/// `GoldenExact`  = static result-golden, exact compare (fail-closed: missing panics).
+/// `GoldenApprox` = static result-golden, 1e-12 float-tolerant (q14/q39).
+/// `Oracle`       = live CPU-oracle compare, NO golden — for results too large to
+///                  commit as text (>= RESULT_GOLDEN_MAX_BYTES, e.g. anti-join's
+///                  ~240MB/1.2M rows). R4 preserved: still result-validated, live.
+/// `Skip`         = per-node only (non-deterministic LIMIT; tp8-only escape).
 #[cfg(not(feature = "rust-only"))]
 #[derive(Clone, Copy)]
 pub enum GpuResultMode {
-    Exact,
-    Approx(f64),
+    GoldenExact,
+    GoldenApprox,
+    Oracle,
     Skip,
 }
 
-/// Map a mode keyword (from `gpu_test!`) to a `GpuResultMode`. `approx` uses the
-/// 1e-12 relative tolerance (#11 policy, same as `cpu_result_approx_test!`).
+/// Map a mode keyword (from `gpu_test!`) to a `GpuResultMode`.
 #[cfg(not(feature = "rust-only"))]
 pub fn gpu_result_mode(s: &str) -> GpuResultMode {
     match s {
-        "exact" => GpuResultMode::Exact,
-        "approx" => GpuResultMode::Approx(1e-12),
+        "golden_exact" => GpuResultMode::GoldenExact,
+        "golden_approx" => GpuResultMode::GoldenApprox,
+        "oracle" => GpuResultMode::Oracle,
         "skip" => GpuResultMode::Skip,
-        other => panic!("gpu_test!: unknown result mode '{other}' (expected exact|approx|skip)"),
+        other => panic!(
+            "gpu_test!: unknown result mode '{other}' (expected golden_exact|golden_approx|oracle|skip)"
+        ),
     }
 }
 
@@ -673,34 +860,49 @@ pub async fn assert_gpu_query(
     let sql = std::fs::read_to_string(&sql_path)
         .unwrap_or_else(|_| panic!("query file not found: {}", sql_path.display()));
     let (partitions, budget) = device_config(device);
+    let qlabel = format!("{dataset}/{query}");
 
     // ONE GPU execution → final batches + plan + per-node stats.
     let gpu = GpuExecutor::new(&data_dir, partitions, budget).await.unwrap();
     let (actual, plan, stats) = gpu.execute_instrumented(&sql).await.unwrap();
 
-    // (a) per-node rows + rows/schema cost vs the golden — ALWAYS.
-    assert_cpu_cost_canonical(&plan, &stats, &cpu_golden(dataset, sf, query, device));
+    // (a) per-node rows + rows/schema cost vs the golden — ALWAYS (fail-closed,
+    //     READ-ONLY: the GPU side must never write/overwrite a cost golden).
+    assert_cost_golden_verify(&plan, &stats, &cpu_golden(dataset, sf, query, device));
 
-    // (b) final result vs the peacock CPU oracle — per the query's result mode.
-    let rel_tol = match result_mode {
-        GpuResultMode::Skip => return,
-        GpuResultMode::Exact => None,
-        GpuResultMode::Approx(t) => Some(t),
-    };
-    let cpu = CpuExecutor::new(&data_dir, partitions, budget).await.unwrap();
-    let expected = cpu.execute(&sql).await.unwrap();
-    // Empty result sets: compare schema only when both carry a batch (q17 hits this).
-    if total_rows(&expected) == 0 && total_rows(&actual) == 0 {
-        if let (Some(e), Some(a)) = (expected.first(), actual.first()) {
-            assert_eq!(
-                e.schema().fields(),
-                a.schema().fields(),
-                "GPU result schema for {dataset}/{query} differs from peacock CPU (both empty)"
-            );
+    // (b) final result — dispatch on the explicitly-declared mode.
+    match result_mode {
+        GpuResultMode::Skip => {}
+        GpuResultMode::GoldenExact => assert_result_golden(
+            &actual,
+            &result_golden(dataset, sf, query, device),
+            None,
+            &qlabel,
+        ),
+        GpuResultMode::GoldenApprox => assert_result_golden(
+            &actual,
+            &result_golden(dataset, sf, query, device),
+            Some(1e-12),
+            &qlabel,
+        ),
+        GpuResultMode::Oracle => {
+            // Result too large to commit as a golden → validate against a LIVE CPU
+            // oracle run (exact). Still result-validated (R4), just not frozen.
+            let cpu = CpuExecutor::new(&data_dir, partitions, budget).await.unwrap();
+            let expected = cpu.execute(&sql).await.unwrap();
+            if total_rows(&expected) == 0 && total_rows(&actual) == 0 {
+                if let (Some(e), Some(a)) = (expected.first(), actual.first()) {
+                    assert_eq!(
+                        e.schema().fields(),
+                        a.schema().fields(),
+                        "GPU result schema for {qlabel} differs from peacock CPU (both empty)"
+                    );
+                }
+                return;
+            }
+            assert_results_match(&expected, &actual, None, &qlabel);
         }
-        return;
     }
-    assert_results_match(&expected, &actual, rel_tol, &format!("{dataset}/{query}"));
 }
 
 // --- unified test macros ----------------------------------------------------
