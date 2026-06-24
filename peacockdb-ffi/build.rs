@@ -12,6 +12,13 @@ fn main() {
 
     let mut cfg = cmake::Config::new(&cpp_dir);
 
+    // Build the C++/CUDA executor optimized. The cmake crate otherwise mirrors
+    // cargo's profile (Debug for `cargo build`/`cargo test`), which builds the
+    // cuDF-backed executor unoptimized and far too slow. RelWithDebInfo is
+    // release-grade optimization (same runtime as Release) while keeping -g debug
+    // symbols, matching the debug=true we keep on the Rust side for backtraces.
+    cfg.profile("RelWithDebInfo");
+
     let cudf_root = std::env::var("CUDF_ROOT").ok();
     let build_from_source = std::env::var("CUDF_BUILD_FROM_SOURCE")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("on") || v.eq_ignore_ascii_case("true"))
