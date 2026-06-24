@@ -265,6 +265,14 @@ impl GpuExtraDisplay for GpuWindowExec {
 // GpuScanExec — wraps ParquetExec to override batch_size at execution time
 // ---------------------------------------------------------------------------
 
+/// One entry of the scan's explicit row-group→batch→partition MAP (Phase 2 Inc1):
+/// a group of WHOLE row groups read as one batch, landing in output `partition`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ScanBatchMap {
+    pub row_groups: Vec<u32>,
+    pub partition: u32,
+}
+
 #[derive(Debug)]
 pub struct GpuScanExec {
     inner: Arc<dyn ExecutionPlan>,
@@ -275,6 +283,12 @@ pub struct GpuScanExec {
     /// ParquetExec has no predicate to recompute from). None for a fresh plan, where
     /// the serializer computes survivors from the ParquetExec pushdown predicate.
     row_groups: Option<Vec<u32>>,
+    /// Explicit RG→batch→partition MAP (Phase 2 Inc1). EMPTY = legacy
+    /// single-partition read (tp1, byte-unchanged). When set, the scan emits one
+    /// batch per entry into its `partition` — both the CPU golden generator and
+    /// the GPU replay this identical map. Set on a deserialized plan (carried
+    /// verbatim) or by the tp8 partitioning optimizer step.
+    batches: Vec<ScanBatchMap>,
 }
 
 impl GpuScanExec {
@@ -283,6 +297,7 @@ impl GpuScanExec {
             inner,
             gpu_batch_size,
             row_groups: None,
+            batches: Vec::new(),
         }
     }
     /// Reconstruction constructor (deserialize): carries the stored row-group override.
@@ -295,7 +310,13 @@ impl GpuScanExec {
             inner,
             gpu_batch_size,
             row_groups,
+            batches: Vec::new(),
         }
+    }
+    /// Builder: attach the explicit RG→batch→partition map (deserialize / optimizer).
+    pub fn with_batches(mut self, batches: Vec<ScanBatchMap>) -> Self {
+        self.batches = batches;
+        self
     }
     pub fn inner(&self) -> &Arc<dyn ExecutionPlan> {
         &self.inner
@@ -304,6 +325,10 @@ impl GpuScanExec {
     /// serializer computes survivors from the predicate.
     pub fn row_groups_override(&self) -> Option<&Vec<u32>> {
         self.row_groups.as_ref()
+    }
+    /// The explicit RG→batch→partition map (empty = legacy single-partition).
+    pub fn batches_map(&self) -> &[ScanBatchMap] {
+        &self.batches
     }
 }
 

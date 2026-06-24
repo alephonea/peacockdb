@@ -158,6 +158,25 @@ fn serialize_gpu_scan<'a>(
         .filter(|v| !v.is_empty())
         .map(|v| b.create_vector(&v));
 
+    // Explicit RG→batch→partition map (Phase 2 Inc1). Empty = legacy
+    // single-partition read (tp1, byte-unchanged: None adds no bytes).
+    let batches = if scan.batches_map().is_empty() {
+        None
+    } else {
+        let offsets: Vec<_> = scan
+            .batches_map()
+            .iter()
+            .map(|sb| {
+                let rgs = b.create_vector(&sb.row_groups);
+                fb::ScanBatch::create(
+                    b,
+                    &fb::ScanBatchArgs { row_groups: Some(rgs), partition: sb.partition },
+                )
+            })
+            .collect();
+        Some(b.create_vector(&offsets))
+    };
+
     let gpu_scan = fb::GpuScan::create(
         b,
         &fb::GpuScanArgs {
@@ -167,6 +186,7 @@ fn serialize_gpu_scan<'a>(
             batch_size: scan.gpu_batch_size as u32,
             limit,
             row_groups,
+            batches,
         },
     );
 
@@ -1726,11 +1746,27 @@ fn deserialize_gpu_scan(
         .map(|v| (0..v.len()).map(|i| v.get(i)).collect::<Vec<u32>>())
         .filter(|v| !v.is_empty());
 
-    Ok(Arc::new(GpuScanExec::with_row_groups(
-        parquet,
-        scan.batch_size() as usize,
-        row_groups,
-    )))
+    // Carry the explicit RG→batch→partition map verbatim (Phase 2 Inc1).
+    let batches: Vec<crate::gpu_rule::ScanBatchMap> = scan
+        .batches()
+        .map(|v| {
+            (0..v.len())
+                .map(|i| {
+                    let sb = v.get(i);
+                    let rgs = sb
+                        .row_groups()
+                        .map(|r| (0..r.len()).map(|j| r.get(j)).collect())
+                        .unwrap_or_default();
+                    crate::gpu_rule::ScanBatchMap { row_groups: rgs, partition: sb.partition() }
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    Ok(Arc::new(
+        GpuScanExec::with_row_groups(parquet, scan.batch_size() as usize, row_groups)
+            .with_batches(batches),
+    ))
 }
 
 fn deserialize_gpu_filter(
