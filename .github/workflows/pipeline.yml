@@ -58,6 +58,30 @@ jobs:
           testdata/generate_testdata.sh --bench tpch
           testdata/generate_testdata.sh --bench tpcds
 
+      # Build and run are split into two steps so a compile failure is visibly
+      # distinct from a test failure, and build vs run time is legible (the
+      # opt-level bump made the build phase much heavier). The two steps MUST
+      # share a byte-identical env: cargo's fingerprint includes RUSTFLAGS, so any
+      # drift would make the run step silently recompile, defeating the split.
+      - name: Build Rust tests
+        run: |
+          cargo test --no-run -p peacockdb-core --test test_plan_serialiser --test test_query_plan --test test_cpu_executor
+          cargo test --no-run -p peacockdb-ffi --test test_ffi
+        env:
+          CMAKE_GENERATOR: Ninja
+          LD_LIBRARY_PATH: /opt/conda/lib
+          CUDF_ROOT: /opt/conda
+          # Strip debug info from all Rust artifacts. The test binaries link the
+          # full DataFusion/Arrow stack plus libpeacock_gpu; with debuginfo the
+          # largest one (test_query_plan, with the TPC-DS suite merged in)
+          # overflows the container's tmpfs while lld writes its mmap'd output,
+          # crashing with SIGBUS. Debug info is dead weight for pass/fail CI.
+          RUSTFLAGS: "-C debuginfo=0"
+
+      # Pure run: the targets were already compiled by "Build Rust tests" above
+      # with the identical env below, so cargo finds matching fingerprints and
+      # does NOT recompile here (no "Compiling …"). The env block must stay
+      # byte-identical to the build step — especially RUSTFLAGS.
       - name: Run Rust tests
         run: |
           cargo test -p peacockdb-core --test test_plan_serialiser
