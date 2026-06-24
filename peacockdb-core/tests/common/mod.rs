@@ -599,6 +599,27 @@ pub async fn assert_gpu_results_match_cpu(data_dir: &Path, queries_dir: &Path, n
     );
 }
 
+/// GPU node-by-node verification (Task #13): run the query through the GPU
+/// node-executor interface and assert its per-node stats (exact row counts + the
+/// rows+schema-derived cost) match the CPU-emulated `.cpu.txt` golden for `device`.
+/// The golden is produced by the CPU path; this just compares the GPU run against
+/// it (never UPDATE_CANONICAL from GPU). Use the H200/tp1 device (tp1-mem120gib):
+/// at tp1 the plan is single-partition, so GPU and CPU emulation share node
+/// structure + row counts exactly (no partial-aggregate divergence).
+#[cfg(not(feature = "rust-only"))]
+pub async fn assert_gpu_nodes_match_golden(dataset: &str, sf: &str, query: &str, device: &str) {
+    use peacockdb_core::gpu_executor::GpuExecutor;
+
+    let data_dir = data_dir_for(dataset, sf);
+    let sql_path = queries_dir_for(dataset).join(format!("{query}.sql"));
+    let sql = std::fs::read_to_string(&sql_path)
+        .unwrap_or_else(|_| panic!("query file not found: {}", sql_path.display()));
+    let (partitions, budget) = device_config(device);
+    let gpu = GpuExecutor::new(&data_dir, partitions, budget).await.unwrap();
+    let (_batches, plan, stats) = gpu.execute_instrumented(&sql).await.unwrap();
+    assert_cpu_cost_canonical(&plan, &stats, &cpu_golden(dataset, sf, query, device));
+}
+
 // --- unified test macros ----------------------------------------------------
 /// `query_plan_test!(dataset, sf, query, device)` — all idents/literals; the fn
 /// name is derived via paste!, hyphenated path parts come from `_` -> `-`.
@@ -699,6 +720,28 @@ macro_rules! cpu_result_fits_test {
                     stringify!($sf),
                     &stringify!($query).replace('_', "-"),
                     $budget,
+                )
+                .await;
+            }
+        }
+    };
+}
+
+/// `gpu_node_test!(dataset, sf, query, device)` — GPU node-by-node verification
+/// (Task #13): run the GPU node-executor and assert per-node rows + derived cost
+/// match the CPU-emulated `.cpu.txt` golden. Gated to non-rust-only (needs the GPU).
+#[macro_export]
+macro_rules! gpu_node_test {
+    ($dataset:ident, $sf:literal, $query:ident, $device:ident) => {
+        paste::paste! {
+            #[cfg(not(feature = "rust-only"))]
+            #[tokio::test]
+            async fn [<gpu_node_ $dataset _sf $sf _ $query _ $device>]() {
+                $crate::common::assert_gpu_nodes_match_golden(
+                    stringify!($dataset),
+                    stringify!($sf),
+                    &stringify!($query).replace('_', "-"),
+                    &stringify!($device).replace('_', "-"),
                 )
                 .await;
             }

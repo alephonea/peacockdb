@@ -108,7 +108,12 @@ jobs:
       - name: Build and stage rust GPU test binaries
         run: |
           mkdir -p cpp/install/rust-tests
-          for t in test_gpu_executor; do
+          # test_gpu_executor = legacy whole-result verify; test_gpu_node =
+          # per-node (row counts + rows+schema cost) verify against the H200/tp1
+          # *.tp1-mem120gib.cpu.txt goldens. The node-by-node gate is what catches
+          # intermediate divergences the whole-result test misses (e.g. q14's
+          # INTERSECT NULL-semantics regression), so it MUST run in CI.
+          for t in test_gpu_executor test_gpu_node; do
             exec_path=$(cargo test --no-run -p peacockdb-core --test "$t" \
                 --message-format=json \
               | python3 -c '
@@ -185,8 +190,12 @@ jobs:
           ssh gpu "mkdir -p $REMOTE_DIR/cpp/install $REMOTE_DIR/testdata $REMOTE_DIR/scripts"
           # Fresh binaries — --delete keeps cpp/install/ clean across runs.
           rsync -a --delete cpp/install/ gpu:$REMOTE_DIR/cpp/install/
-          # Query SQL + minimal dataset + testdata generator.
+          # Query SQL + minimal dataset + testdata generator + committed goldens.
+          # testdata/goldens carries the *.tp1-mem120gib.cpu.txt H200/tp1 node-by-node
+          # goldens (29 tpch + 78 tpcds) that test_gpu_node asserts against; without
+          # them the node-by-node verify cannot run.
           rsync -a testdata/tpch-queries testdata/tpcds-queries testdata/tpch.minimal \
+            testdata/goldens \
             testdata/generate_testdata.sh \
             gpu:$REMOTE_DIR/testdata/
           # Ship the updated setup-glibc.sh so its patch_rust_dir step is

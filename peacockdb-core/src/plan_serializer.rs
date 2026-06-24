@@ -439,6 +439,7 @@ fn serialize_gpu_hash_join<'a>(
             left: Some(left),
             right: Some(right),
             projection,
+            null_equals_null: join.null_equals_null(),
         },
     );
     Ok((fb::PlanNodeKind::GpuHashJoin, node.as_union_value()))
@@ -1971,7 +1972,7 @@ fn deserialize_gpu_hash_join(
         &join_type,
         projection,
         datafusion::physical_plan::joins::PartitionMode::CollectLeft,
-        false, // null_equals_null
+        join.null_equals_null(), // mirrors DataFusion's per-join NULL key-equality
     )
     .map_err(|e| format!("HashJoinExec: {e}"))?;
 

@@ -41,6 +41,7 @@
 #include <cudf/strings/combine.hpp>
 #include <cudf/strings/contains.hpp>
 #include <cudf/strings/slice.hpp>
+#include <cudf/strings/strings_column_view.hpp>
 #include <cudf/unary.hpp>
 #include <cudf/round.hpp>
 #include <cudf/scalar/scalar_factories.hpp>
@@ -58,6 +59,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <stdexcept>
+#include <unordered_map>
 
 #include <cuda_runtime.h>
 #include <rmm/cuda_stream_view.hpp>
@@ -122,6 +124,7 @@ using JoinFilterColMap = flatbuffers::Vector<const fb::JoinFilterColumn*>;
 
 // Forward declarations
 static TableResult execute_node(const fb::PlanNode* node);
+static TableResult run_op(const fb::PlanNode* node);
 static cudf::ast::expression& build_expr(const fb::Expr* expr, ExprContext& ctx,
                                          const JoinFilterColMap* col_map = nullptr);
 static bool is_predicate_op(fb::BinaryOp op);
@@ -1730,6 +1733,12 @@ static TableResult execute_hash_join(const fb::GpuHashJoin* join) {
   bool semi_anti_type =
       jt == fb::JoinType_LeftSemi || jt == fb::JoinType_LeftAnti ||
       jt == fb::JoinType_RightSemi || jt == fb::JoinType_RightAnti;
+  // Per-join NULL key-equality, mirrored from DataFusion's null_equals_null
+  // (serialized into the plan). true → NULL keys match (set/INTERSECT, q14);
+  // false → NULL keys never match (SQL IN/EXISTS three-valued, q33). Drives the
+  // equi and SEMI cuDF null_equality. ANTI/mark stay EQUAL (see below).
+  auto join_nulls = join->null_equals_null() ? cudf::null_equality::EQUAL
+                                             : cudf::null_equality::UNEQUAL;
   ExprContext semi_ctx;
   const cudf::ast::expression* semi_pred = nullptr;
   if (semi_anti_type && join->filter()) {
@@ -1739,30 +1748,45 @@ static TableResult execute_hash_join(const fb::GpuHashJoin* join) {
     semi_pred = &build_expr(join->filter(), semi_ctx, join->filter_columns());
   }
 
-  // NOTE: semi/anti (and the mark join below) intentionally stay at
-  // null_equality::EQUAL, unlike the equi-joins in execute_hash_join which use
-  // UNEQUAL. Their NULL behavior is the SQL NOT IN/EXISTS three-valued-logic
-  // trap (`x NOT IN (..., NULL)` is NULL/false for every x), which neither
-  // EQUAL nor UNEQUAL implements on its own — a blind flip would be wrong for
-  // anti-join. No corpus query exercises a nullable semi/anti/mark key today;
-  // the dedicated semantics + golden are tracked in issue #59 before any change.
+  // NULL semantics by join kind (see #59 semi / #80 anti):
+  //  - SEMI (Left/Right) and the EQUI joins use `join_nulls`, mirrored from
+  //    DataFusion's per-join `null_equals_null` (serialized in the plan). The two
+  //    cases genuinely need OPPOSITE NULL behavior and only the source plan can
+  //    tell them apart, so a blanket choice is wrong:
+  //      * IN/EXISTS-derived semi (null_equals_null=false → UNEQUAL): SQL
+  //        `x IN (...)` excludes NULLs (NULL IN (...,NULL) = UNKNOWN). q33 hit
+  //        this — item has one Electronics row with NULL i_manufact_id; under
+  //        cuDF's default EQUAL the semi paired NULL↔NULL → a spurious extra
+  //        group (708 vs DuckDB/DataFusion's correct 707).
+  //      * INTERSECT-derived semi (null_equals_null=true → EQUAL): set semantics
+  //        treat NULLs as equal. q14 (cross-channel INTERSECT on
+  //        brand/class/category) needs NULL=NULL → 3837; UNEQUAL wrongly drops
+  //        the NULL-composite-key rows (3792).
+  //    cuDF honors compare_nulls on both the free `left_{semi}_join` and the
+  //    newer `filtered_join` (selected at compile time by __has_include; this
+  //    build uses the free functions — same compare_nulls contract).
+  //  - ANTI (Left/Right) and the mark join below intentionally STAY at EQUAL and
+  //    are NOT driven by the flag. Anti is the NOT IN/NOT EXISTS
+  //    three-valued-logic trap (`x NOT IN (..., NULL)` is NULL/false for every
+  //    x), which neither EQUAL nor UNEQUAL implements on its own; driving it from
+  //    the flag could regress. Dedicated NOT IN vs NOT EXISTS semantics + a
+  //    demonstrating test + a DuckDB oracle are tracked in issue #80.
   //
-  // cuDF replaced free `left_{semi,anti}_join` with `filtered_join` (build the
-  // hash table from one side, then probe). For Left{Semi,Anti} the right side
-  // is the filter; for Right{Semi,Anti} we swap.
+  // For Left{Semi,Anti} the right side is the membership/filter; for
+  // Right{Semi,Anti} we swap.
   switch (jt) {
     case fb::JoinType_LeftSemi: {
       if (semi_pred) {
         single_indices = cudf::mixed_left_semi_join(
-            left_keys, right_keys, ltv, rtv, *semi_pred,
-            cudf::null_equality::EQUAL);
+            left_keys, right_keys, ltv, rtv, *semi_pred, join_nulls);
       } else {
 #ifdef PEACOCK_HAVE_FILTERED_JOIN
-        cudf::filtered_join fj(right_keys, cudf::null_equality::EQUAL,
+        cudf::filtered_join fj(right_keys, join_nulls,
                                cudf::set_as_build_table::RIGHT, 0.5);
         single_indices = fj.semi_join(left_keys);
 #else
-        single_indices = cudf::left_semi_join(left_keys, right_keys);
+        single_indices = cudf::left_semi_join(left_keys, right_keys,
+                                              join_nulls);
 #endif
       }
       is_semi_or_anti = true;
@@ -1780,7 +1804,8 @@ static TableResult execute_hash_join(const fb::GpuHashJoin* join) {
                                cudf::set_as_build_table::RIGHT, 0.5);
         single_indices = fj.anti_join(left_keys);
 #else
-        single_indices = cudf::left_anti_join(left_keys, right_keys);
+        single_indices = cudf::left_anti_join(left_keys, right_keys,
+                                              cudf::null_equality::EQUAL);
 #endif
       }
       is_semi_or_anti = true;
@@ -1793,11 +1818,12 @@ static TableResult execute_hash_join(const fb::GpuHashJoin* join) {
             "residual filter on RightSemi join not supported (no swapped "
             "mixed-join path); should not arise from DataFusion decorrelation");
 #ifdef PEACOCK_HAVE_FILTERED_JOIN
-      cudf::filtered_join fj(left_keys, cudf::null_equality::EQUAL,
+      cudf::filtered_join fj(left_keys, join_nulls,
                              cudf::set_as_build_table::RIGHT, 0.5);
       single_indices = fj.semi_join(right_keys);
 #else
-      single_indices = cudf::left_semi_join(right_keys, left_keys);
+      single_indices = cudf::left_semi_join(right_keys, left_keys,
+                                            join_nulls);
 #endif
       is_semi_or_anti = true;
       emit_left = false;
@@ -1813,7 +1839,8 @@ static TableResult execute_hash_join(const fb::GpuHashJoin* join) {
                              cudf::set_as_build_table::RIGHT, 0.5);
       single_indices = fj.anti_join(right_keys);
 #else
-      single_indices = cudf::left_anti_join(right_keys, left_keys);
+      single_indices = cudf::left_anti_join(right_keys, left_keys,
+                                            cudf::null_equality::EQUAL);
 #endif
       is_semi_or_anti = true;
       emit_left = false;
@@ -1916,9 +1943,11 @@ static TableResult execute_hash_join(const fb::GpuHashJoin* join) {
   // but cuDF's join APIs default to null_equality::EQUAL, which pairs NULL keys
   // together and invents rows the SQL oracle excludes — e.g. TPC-DS q50/q6/q81,
   // where a spurious NULL=NULL match inflates a downstream count/sum by one.
-  // UNEQUAL restores SQL semantics for inner/left/full/right. (Non-null keys —
-  // the whole passing suite — are unaffected.)
-  constexpr auto kJoinNulls = cudf::null_equality::UNEQUAL;
+  // We drive this from DataFusion's per-join null_equals_null (join_nulls):
+  // its default false → UNEQUAL restores SQL semantics for inner/left/full/right
+  // (the whole passing suite, non-null keys, is unaffected), while a set-semantics
+  // join that asks for NULL=NULL gets EQUAL.
+  auto kJoinNulls = join_nulls;
 
   // Execute join — returns index pairs.
   auto [left_indices, right_indices] = [&]() {
@@ -2447,7 +2476,19 @@ static const char* plan_node_kind_name(fb::PlanNodeKind k) {
   }
 }
 
-static TableResult execute_node(const fb::PlanNode* node) {
+// When set (single-node `execute_one` mode), `execute_node` does NOT recurse:
+// each child reference resolves to the next pre-supplied input (in child order)
+// instead. This lets every `execute_*` op stay UNCHANGED — they still call
+// `execute_node(child)`, which transparently returns the already-resident input.
+// The walk is sequential (one node at a time per FFI call) so a thread_local is safe.
+namespace {
+thread_local std::vector<TableResult>* g_node_inputs = nullptr;
+thread_local size_t g_node_input_idx = 0;
+}  // namespace
+
+// Run one node's op (the dispatch switch). In recursive mode each op's
+// `execute_node(child)` recurses here; in single-node mode it returns inputs.
+static TableResult run_op(const fb::PlanNode* node) {
   if (!node) throw std::runtime_error("null PlanNode");
 
   const char* kind = plan_node_kind_name(node->node_type());
@@ -2506,6 +2547,44 @@ static TableResult execute_node(const fb::PlanNode* node) {
   return result;
 }
 
+// Recursive driver (production fast path) OR single-node child resolver.
+static TableResult execute_node(const fb::PlanNode* node) {
+  if (g_node_inputs) {
+    if (g_node_input_idx >= g_node_inputs->size()) {
+      throw std::runtime_error("execute_one: not enough input handles for node");
+    }
+    return std::move((*g_node_inputs)[g_node_input_idx++]);
+  }
+  return run_op(node);
+}
+
+TableResult execute_one(const fb::PlanNode* node, std::vector<TableResult> inputs) {
+  g_node_inputs = &inputs;
+  g_node_input_idx = 0;
+  struct Restore {
+    ~Restore() {
+      g_node_inputs = nullptr;
+      g_node_input_idx = 0;
+    }
+  } restore;
+  return run_op(node);
+}
+
+uint64_t varlen_content_bytes(const cudf::table_view& table) {
+  uint64_t total = 0;
+  for (cudf::size_type i = 0; i < table.num_columns(); ++i) {
+    auto col = table.column(i);
+    // Only flat string columns carry var-length content at tp1 (no nested List
+    // until two-phase aggregation at tp>1 — handled in Phase 2). Matches the Rust
+    // ColAccum content term (Σ value byte lengths = offsets[n]-offsets[0]).
+    if (col.type().id() == cudf::type_id::STRING) {
+      total += static_cast<uint64_t>(
+          cudf::strings_column_view(col).chars_size(cudf::get_default_stream()));
+    }
+  }
+  return total;
+}
+
 // ============================================================================
 // Public API
 // ============================================================================
@@ -2527,5 +2606,122 @@ TableResult execute_plan(const uint8_t* plan_bytes, uint64_t plan_len) {
 
   return execute_node(root);
 }
+
+// ============================================================================
+// Node-by-node session (unified CPU/GPU node-executor interface)
+// ============================================================================
+
+// Children of a plan node in canonical order — MUST match the Rust walk's child
+// order so the caller's input handles line up with each node's inputs.
+static std::vector<const fb::PlanNode*> node_children(const fb::PlanNode* node) {
+  switch (node->node_type()) {
+    case fb::PlanNodeKind_GpuScan:
+      return {};
+    case fb::PlanNodeKind_GpuFilter:
+      return {node->node_as_GpuFilter()->input()};
+    case fb::PlanNodeKind_GpuProject:
+      return {node->node_as_GpuProject()->input()};
+    case fb::PlanNodeKind_GpuAggregate:
+      return {node->node_as_GpuAggregate()->input()};
+    case fb::PlanNodeKind_GpuHashJoin:
+      return {node->node_as_GpuHashJoin()->left(), node->node_as_GpuHashJoin()->right()};
+    case fb::PlanNodeKind_GpuCrossJoin:
+      return {node->node_as_GpuCrossJoin()->left(), node->node_as_GpuCrossJoin()->right()};
+    case fb::PlanNodeKind_GpuNestedLoopJoin:
+      return {node->node_as_GpuNestedLoopJoin()->left(),
+              node->node_as_GpuNestedLoopJoin()->right()};
+    case fb::PlanNodeKind_GpuSort:
+      return {node->node_as_GpuSort()->input()};
+    case fb::PlanNodeKind_GpuCoalesceBatches:
+      return {node->node_as_GpuCoalesceBatches()->input()};
+    case fb::PlanNodeKind_GpuCoalescePartitions:
+      return {node->node_as_GpuCoalescePartitions()->input()};
+    case fb::PlanNodeKind_GpuRepartition:
+      return {node->node_as_GpuRepartition()->input()};
+    case fb::PlanNodeKind_GpuSortPreservingMerge:
+      return {node->node_as_GpuSortPreservingMerge()->input()};
+    case fb::PlanNodeKind_GpuUnion: {
+      std::vector<const fb::PlanNode*> kids;
+      if (auto* in = node->node_as_GpuUnion()->inputs()) {
+        for (flatbuffers::uoffset_t i = 0; i < in->size(); ++i) kids.push_back(in->Get(i));
+      }
+      return kids;
+    }
+    case fb::PlanNodeKind_GpuLimit:
+      return {node->node_as_GpuLimit()->input()};
+    case fb::PlanNodeKind_GpuWindow:
+      return {node->node_as_GpuWindow()->input()};
+    default:
+      throw std::runtime_error("node_children: unsupported PlanNodeKind: " +
+                               std::to_string(node->node_type()));
+  }
+}
+
+struct NodeSession::Impl {
+  std::vector<uint8_t> buf;  // own the plan bytes so fb pointers stay valid
+  const fb::GpuPlan* plan = nullptr;
+  std::vector<const fb::PlanNode*> post_order;
+  std::unordered_map<uint64_t, TableResult> registry;
+  uint64_t next_handle = 1;
+
+  void index_post_order(const fb::PlanNode* node) {
+    for (auto* child : node_children(node)) index_post_order(child);
+    post_order.push_back(node);
+  }
+};
+
+NodeSession::NodeSession(const uint8_t* plan_bytes, uint64_t plan_len)
+    : impl_(std::make_unique<Impl>()) {
+  impl_->buf.assign(plan_bytes, plan_bytes + plan_len);
+  impl_->plan = fb::GetGpuPlan(impl_->buf.data());
+  if (!impl_->plan) throw std::runtime_error("failed to parse FlatBuffer GpuPlan");
+  flatbuffers::Verifier verifier(impl_->buf.data(), impl_->buf.size(), /*max_depth=*/1024);
+  if (!impl_->plan->Verify(verifier))
+    throw std::runtime_error("FlatBuffer verification failed");
+  auto* root = impl_->plan->root();
+  if (!root) throw std::runtime_error("GpuPlan has no root node");
+  impl_->index_post_order(root);
+}
+
+NodeSession::~NodeSession() = default;
+
+size_t NodeSession::node_count() const { return impl_->post_order.size(); }
+
+uint64_t NodeSession::execute_node(uint64_t seq, const uint64_t* input_handles,
+                                   size_t n_inputs, NodeStats* out) {
+  if (seq >= impl_->post_order.size())
+    throw std::runtime_error("NodeSession::execute_node: seq out of range");
+  const fb::PlanNode* node = impl_->post_order[seq];
+
+  // Consume the child handles (in child order) out of the registry.
+  std::vector<TableResult> inputs;
+  inputs.reserve(n_inputs);
+  for (size_t i = 0; i < n_inputs; ++i) {
+    auto it = impl_->registry.find(input_handles[i]);
+    if (it == impl_->registry.end())
+      throw std::runtime_error("NodeSession::execute_node: unknown input handle");
+    inputs.push_back(std::move(it->second));
+    impl_->registry.erase(it);
+  }
+
+  TableResult result = execute_one(node, std::move(inputs));
+  if (out) {
+    auto tv = result.table->view();
+    out->rows = static_cast<uint64_t>(tv.num_rows());
+    out->varlen_content_bytes = varlen_content_bytes(tv);
+  }
+  uint64_t handle = impl_->next_handle++;
+  impl_->registry.emplace(handle, std::move(result));
+  return handle;
+}
+
+const TableResult& NodeSession::table_for(uint64_t handle) const {
+  auto it = impl_->registry.find(handle);
+  if (it == impl_->registry.end())
+    throw std::runtime_error("NodeSession::table_for: unknown handle");
+  return it->second;
+}
+
+void NodeSession::release(uint64_t handle) { impl_->registry.erase(handle); }
 
 }  // namespace peacock

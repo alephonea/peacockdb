@@ -1,0 +1,24 @@
+GpuSortExec: expr=[w_warehouse_name@0 ASC, i_item_id@1 ASC], fetch=100, output_bytes=4060, output_rows=100
+  GpuProjectExec: expr=[w_warehouse_name@0 as w_warehouse_name, i_item_id@1 as i_item_id, sum(CASE WHEN date_dim.d_date < Utf8("2000-03-11") THEN inventory.inv_quantity_on_hand ELSE Int64(0) END)@2 as inv_before, sum(CASE WHEN date_dim.d_date >= Utf8("2000-03-11") THEN inventory.inv_quantity_on_hand ELSE Int64(0) END)@3 as inv_after], output_bytes=88007, output_rows=1607
+    GpuCoalesceBatchesExec: target_batch_size=766958445, output_bytes=88007, output_rows=1607
+      GpuFilterExec: predicate=__common_expr_5@0 >= 0.6666666666666666 AND __common_expr_5@0 <= 1.5, projection=[1, 2, 3, 4], output_bytes=88007, output_rows=1607
+        GpuProjectExec: expr=[CASE WHEN sum(CASE WHEN date_dim.d_date < Utf8("2000-03-11") THEN inventory.inv_quantity_on_hand ELSE Int64(0) END)@2 > 0 THEN CAST(sum(CASE WHEN date_dim.d_date >= Utf8("2000-03-11") THEN inventory.inv_quantity_on_hand ELSE Int64(0) END)@3 AS Float64) / CAST(sum(CASE WHEN date_dim.d_date < Utf8("2000-03-11") THEN inventory.inv_quantity_on_hand ELSE Int64(0) END)@2 AS Float64) END as __common_expr_5, w_warehouse_name@0 as w_warehouse_name, i_item_id@1 as i_item_id, sum(CASE WHEN date_dim.d_date < Utf8("2000-03-11") THEN inventory.inv_quantity_on_hand ELSE Int64(0) END)@2 as sum(CASE WHEN date_dim.d_date < Utf8("2000-03-11") THEN inventory.inv_quantity_on_hand ELSE Int64(0) END), sum(CASE WHEN date_dim.d_date >= Utf8("2000-03-11") THEN inventory.inv_quantity_on_hand ELSE Int64(0) END)@3 as sum(CASE WHEN date_dim.d_date >= Utf8("2000-03-11") THEN inventory.inv_quantity_on_hand ELSE Int64(0) END)], output_bytes=175607, output_rows=2795
+          GpuAggregateExec: group_by=[w_warehouse_name, i_item_id], aggr=[sum(CASE WHEN date_dim.d_date < Utf8("2000-03-11") THEN inventory.inv_quantity_on_hand ELSE Int64(0) END), sum(CASE WHEN date_dim.d_date >= Utf8("2000-03-11") THEN inventory.inv_quantity_on_hand ELSE Int64(0) END)], output_bytes=152897, output_rows=2795
+            GpuProjectExec: expr=[d_date@0 as __common_expr_2, inv_quantity_on_hand@1 as inv_quantity_on_hand, w_warehouse_name@2 as w_warehouse_name, i_item_id@3 as i_item_id], output_bytes=1174749, output_rows=25155
+              GpuCoalesceBatchesExec: target_batch_size=766958445, output_bytes=1174749, output_rows=25155
+                GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, inv_date_sk@0)], projection=[1, 3, 4, 5], output_bytes=1174749, output_rows=25155
+                  GpuCoalesceBatchesExec: target_batch_size=766958445, output_bytes=748, output_rows=61
+                    GpuFilterExec: predicate=d_date@1 >= 2000-02-10 AND d_date@1 <= 2000-04-10, output_bytes=748, output_rows=61
+                      GpuScanExec: table=date_dim, projections=[d_date_sk, d_date], batch_size=766958445, output_bytes=894852, output_rows=73049
+                  GpuProjectExec: expr=[inv_date_sk@1 as inv_date_sk, inv_quantity_on_hand@2 as inv_quantity_on_hand, w_warehouse_name@3 as w_warehouse_name, i_item_id@0 as i_item_id], output_bytes=36851306, output_rows=726850
+                    GpuCoalesceBatchesExec: target_batch_size=766958445, output_bytes=36851306, output_rows=726850
+                      GpuHashJoinExec: join_type=Inner, on=[(i_item_sk@0, inv_item_sk@1)], projection=[1, 2, 4, 5], output_bytes=36851306, output_rows=726850
+                        GpuCoalesceBatchesExec: target_batch_size=766958445, output_bytes=31192, output_rows=1104
+                          GpuFilterExec: predicate=i_current_price@2 >= Some(99),7,2 AND i_current_price@2 <= Some(149),7,2, projection=[0, 1], output_bytes=31192, output_rows=1104
+                            GpuScanExec: table=item, projections=[i_item_sk, i_item_id, i_current_price], batch_size=766958445, output_bytes=798754, output_rows=18000
+                        GpuProjectExec: expr=[inv_date_sk@1 as inv_date_sk, inv_item_sk@2 as inv_item_sk, inv_quantity_on_hand@3 as inv_quantity_on_hand, w_warehouse_name@0 as w_warehouse_name], output_bytes=454531504, output_rows=11745000
+                          GpuCoalesceBatchesExec: target_batch_size=766958445, output_bytes=454531504, output_rows=11745000
+                            GpuHashJoinExec: join_type=Inner, on=[(w_warehouse_sk@0, inv_warehouse_sk@2)], projection=[1, 2, 3, 5], output_bytes=454531504, output_rows=11745000
+                              GpuScanExec: table=warehouse, projections=[w_warehouse_sk, w_warehouse_name], batch_size=766958445, output_bytes=137, output_rows=5
+                              GpuScanExec: table=inventory, projections=[inv_date_sk, inv_item_sk, inv_warehouse_sk, inv_quantity_on_hand], batch_size=766958445, output_bytes=334732500, output_rows=11745000
+peacockdb_cost=1814759385

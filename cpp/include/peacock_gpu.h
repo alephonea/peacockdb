@@ -67,6 +67,55 @@ void peacock_result_free(uint8_t* result_bytes);
 /// The returned pointer is valid until the next call on this executor.
 const char* peacock_last_error(peacock_executor_t* executor);
 
+// ---------------------------------------------------------------------------
+// Node-by-node execution (unified CPU/GPU node-executor interface)
+//
+// The Rust orchestrator drives ONE plan node at a time: load the plan once, then
+// for each node (canonical post-order) call peacock_executor_execute_node with the
+// child output handles. Intermediates stay GPU-resident behind handles; Arrow IPC
+// crosses the boundary only once, at peacock_result_from_handle (root).
+// ---------------------------------------------------------------------------
+
+/// Actual per-node costs. Rust applies the shared ColAccum overhead (validity +
+/// fixed-width + var-length offset buffers, from rows+schema) and adds
+/// varlen_content_bytes — keeping the byte-accounting formula single-sourced in Rust.
+typedef struct PeacockNodeStats {
+  uint64_t rows;
+  uint64_t varlen_content_bytes;
+} PeacockNodeStats;
+
+/// Load a plan for node-by-node execution. Parses + verifies once and indexes
+/// nodes in post-order. Replaces any previously loaded plan on this executor.
+/// @param out_node_count  Set to the number of plan nodes (post-order 0..n-1).
+/// @return 0 on success, non-zero on failure (see peacock_last_error).
+int peacock_executor_begin_plan(peacock_executor_t* executor,
+                                const uint8_t* plan_bytes, uint64_t plan_len,
+                                uint64_t* out_node_count);
+
+/// Execute the node at post-order `seq` with already-resident child output
+/// handles (in child order). Stores the output as a new resident handle.
+/// @param out_handle  Set to the new output handle.
+/// @param out_stats   Filled with the node's actual rows + var-len content bytes.
+/// @return 0 on success, non-zero on failure.
+int peacock_executor_execute_node(peacock_executor_t* executor,
+                                  uint64_t seq,
+                                  const uint64_t* input_handles, uint64_t n_inputs,
+                                  uint64_t* out_handle,
+                                  PeacockNodeStats* out_stats);
+
+/// Materialize a resident handle to an Arrow IPC stream (called once, at root).
+/// Caller frees *out_ipc with peacock_result_free(). Empty result → *out_ipc_len==0.
+/// Does NOT release the handle.
+/// @return 0 on success, non-zero on failure.
+int peacock_result_from_handle(peacock_executor_t* executor, uint64_t handle,
+                               uint8_t** out_ipc, uint64_t* out_ipc_len);
+
+/// Release a resident intermediate handle (idempotent).
+void peacock_handle_release(peacock_executor_t* executor, uint64_t handle);
+
+/// Drop the loaded plan and all remaining resident handles.
+void peacock_executor_end_plan(peacock_executor_t* executor);
+
 #ifdef __cplusplus
 } // extern "C"
 #endif

@@ -1,0 +1,12 @@
+GpuSortExec: expr=[o_orderpriority@0 ASC NULLS LAST], output_bytes=108, output_rows=5
+  GpuProjectExec: expr=[o_orderpriority@0 as o_orderpriority, count(*)@1 as order_count], output_bytes=108, output_rows=5
+    GpuAggregateExec: group_by=[o_orderpriority], aggr=[count(*)], output_bytes=108, output_rows=5
+      GpuCoalesceBatchesExec: target_batch_size=1533916891, output_bytes=658325, output_rows=52523
+        GpuHashJoinExec: join_type=LeftSemi, on=[(o_orderkey@0, l_orderkey@0)], projection=[1], output_bytes=658325, output_rows=52523
+          GpuCoalesceBatchesExec: target_batch_size=1533916891, output_bytes=1182021, output_rows=57218
+            GpuFilterExec: predicate=o_orderdate@1 >= 1993-07-01 AND o_orderdate@1 < 1993-10-01, projection=[0, 2], output_bytes=1182021, output_rows=57218
+              GpuScanExec: table=orders, projections=[o_orderkey, o_orderdate, o_orderpriority], batch_size=1533916891, output_bytes=6088034, output_rows=245760
+          GpuCoalesceBatchesExec: target_batch_size=1533916891, output_bytes=30820530, output_rows=3793296
+            GpuFilterExec: predicate=l_receiptdate@2 > l_commitdate@1, projection=[0], output_bytes=30820530, output_rows=3793296
+              GpuScanExec: table=lineitem, projections=[l_orderkey, l_commitdate, l_receiptdate], batch_size=1533916891, output_bytes=98269896, output_rows=6001215
+peacockdb_cost=169680006

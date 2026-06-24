@@ -1,0 +1,15 @@
+GpuSortExec: expr=[sumsales@1 ASC, ss_customer_sk@0 ASC], fetch=100, output_bytes=2426, output_rows=100
+  GpuProjectExec: expr=[ss_customer_sk@0 as ss_customer_sk, sum(t.act_sales)@1 as sumsales], output_bytes=173850, output_rows=7169
+    GpuAggregateExec: group_by=[ss_customer_sk], aggr=[sum(t.act_sales)], output_bytes=173850, output_rows=7169
+      GpuProjectExec: expr=[ss_customer_sk@0 as ss_customer_sk, CASE WHEN sr_return_quantity@3 IS NOT NULL THEN CAST(ss_quantity@1 - sr_return_quantity@3 AS Decimal128(20, 0)) * ss_sales_price@2 ELSE CAST(ss_quantity@1 AS Decimal128(20, 0)) * ss_sales_price@2 END as act_sales], output_bytes=191988, output_rows=7917
+        GpuCoalesceBatchesExec: target_batch_size=1006632960, output_bytes=320640, output_rows=7917
+          GpuHashJoinExec: join_type=Inner, on=[(r_reason_sk@0, sr_reason_sk@3)], projection=[1, 2, 3, 5], output_bytes=320640, output_rows=7917
+            GpuCoalesceBatchesExec: target_batch_size=1006632960, output_bytes=9, output_rows=1
+              GpuFilterExec: predicate=r_reason_desc@1 = reason 28, projection=[0], output_bytes=9, output_rows=1
+                GpuScanExec: table=reason, projections=[r_reason_sk, r_reason_desc], batch_size=1006632960, output_bytes=1012, output_rows=35
+            GpuProjectExec: expr=[ss_customer_sk@2 as ss_customer_sk, ss_quantity@3 as ss_quantity, ss_sales_price@4 as ss_sales_price, sr_reason_sk@0 as sr_reason_sk, sr_return_quantity@1 as sr_return_quantity], output_bytes=140059647, output_rows=2880404
+              GpuCoalesceBatchesExec: target_batch_size=1006632960, output_bytes=140059647, output_rows=2880404
+                GpuHashJoinExec: join_type=Right, on=[(sr_item_sk@0, ss_item_sk@0), (sr_ticket_number@2, ss_ticket_number@2)], projection=[1, 3, 5, 7, 8], output_bytes=140059647, output_rows=2880404
+                  GpuScanExec: table=store_returns, projections=[sr_item_sk, sr_reason_sk, sr_ticket_number, sr_return_quantity], batch_size=1006632960, output_bytes=9355680, output_rows=287867
+                  GpuScanExec: table=store_sales, projections=[ss_item_sk, ss_customer_sk, ss_ticket_number, ss_quantity, ss_sales_price], batch_size=1006632960, output_bytes=140059647, output_rows=2880404
+peacockdb_cost=570778692
