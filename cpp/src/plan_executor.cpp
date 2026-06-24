@@ -1034,7 +1034,9 @@ static std::unique_ptr<cudf::column> build_column(
 // GpuScan — read Parquet files
 // ============================================================================
 
-static TableResult execute_scan(const fb::GpuScan* scan) {
+static TableResult execute_scan(
+    const fb::GpuScan* scan,
+    const flatbuffers::Vector<uint32_t>* row_groups_override = nullptr) {
   if (!scan->file_paths() || scan->file_paths()->size() == 0)
     throw std::runtime_error("GpuScan: no file paths");
 
@@ -1083,10 +1085,15 @@ static TableResult execute_scan(const fb::GpuScan* scan) {
   // Row-group pruning: decode ONLY the surviving groups the serializer computed
   // (same DataFusion PruningPredicate as the CPU path). One inner vector = single
   // source. Empty/absent => read all groups (no predicate / multi-file / #16).
-  if (scan->row_groups() && scan->row_groups()->size() > 0) {
+  // A per-partition override (Inc1 RG→partition map) takes precedence over the
+  // scan's single-partition `row_groups`; both name the SAME global RG indices, so
+  // the GPU decodes exactly the groups the CPU oracle / golden generator read.
+  const flatbuffers::Vector<uint32_t>* rg_src =
+      row_groups_override ? row_groups_override : scan->row_groups();
+  if (rg_src && rg_src->size() > 0) {
     std::vector<cudf::size_type> rgs;
-    rgs.reserve(scan->row_groups()->size());
-    for (auto rg : *scan->row_groups()) {
+    rgs.reserve(rg_src->size());
+    for (auto rg : *rg_src) {
       rgs.push_back(static_cast<cudf::size_type>(rg));
     }
     opts.set_row_groups({std::move(rgs)});
@@ -1099,12 +1106,12 @@ static TableResult execute_scan(const fb::GpuScan* scan) {
   // clustered-predicate scan reads only the surviving groups (e.g. q6 lineitem ->
   // 983040, not 6001215). Off by default; no effect on results.
   if (std::getenv("PEACOCK_LOG_SCAN_ROWS")) {
-    bool pruned = scan->row_groups() && scan->row_groups()->size() > 0;
+    bool pruned = rg_src && rg_src->size() > 0;
     std::fprintf(stderr, "[PEACOCK_SCAN] %s rows=%ld row_groups=%s(%u)\n",
                  paths.empty() ? "?" : paths[0].c_str(),
                  static_cast<long>(result.tbl->num_rows()),
                  pruned ? "pruned" : "all",
-                 pruned ? scan->row_groups()->size() : 0u);
+                 pruned ? rg_src->size() : 0u);
   }
 
   // Use column names from the reader metadata.
@@ -2705,12 +2712,70 @@ void NodeSession::execute_node(uint64_t seq, const uint64_t* input_handles,
     off += cnt;
   }
 
+  // (iii) GpuScan with an explicit RG→batch→partition MAP → emit N partitions, one
+  // per ScanBatch, each a set_row_groups read of that entry's row groups. This is
+  // the SAME map the Rust CpuNodeExecutor / golden generator replay, so per-partition
+  // row counts match by construction. EMPTY map => fall through to the generic path
+  // (single-partition read of `row_groups`, tp1 byte-identical).
+  if (node->node_type() == fb::PlanNodeKind_GpuScan) {
+    const fb::GpuScan* scan = node->node_as_GpuScan();
+    if (scan->batches() && scan->batches()->size() > 0) {
+      size_t n = scan->batches()->size();
+      if (n > out_cap)
+        throw std::runtime_error("NodeSession::execute_node: out_handles buffer too small");
+      NodeStats acc{};
+      for (size_t p = 0; p < n; ++p) {
+        const fb::ScanBatch* b = scan->batches()->Get(static_cast<flatbuffers::uoffset_t>(p));
+        TableResult result = execute_scan(scan, b->row_groups());
+        auto tv = result.table->view();
+        acc.rows += static_cast<uint64_t>(tv.num_rows());
+        acc.varlen_content_bytes += varlen_content_bytes(tv);
+        uint64_t handle = impl_->next_handle++;
+        impl_->registry.emplace(handle, std::move(result));
+        out_handles[p] = handle;  // map entries are stored in partition order 0..n-1
+      }
+      *out_count = n;
+      if (out) *out = acc;
+      return;
+    }
+  }
+
+  // (iii) GpuCoalescePartitions → concatenate ALL M child partitions into ONE
+  // output (BUFFERING: the full concatenated table is resident), in partition-index
+  // order to match the Rust CpuNodeExecutor's concat. NOT a per-partition passthrough.
+  if (node->node_type() == fb::PlanNodeKind_GpuCoalescePartitions) {
+    std::vector<TableResult> owned;
+    std::vector<cudf::table_view> views;
+    owned.reserve(child[0].size());
+    views.reserve(child[0].size());
+    for (uint64_t h : child[0]) {
+      auto it = impl_->registry.find(h);
+      if (it == impl_->registry.end())
+        throw std::runtime_error("NodeSession::execute_node: unknown input handle");
+      owned.push_back(std::move(it->second));
+      impl_->registry.erase(it);
+      views.push_back(owned.back().table->view());
+    }
+    TableResult result;
+    result.column_names = owned.empty() ? std::vector<std::string>{} : owned[0].column_names;
+    result.table = cudf::concatenate(views);
+    auto tv = result.table->view();
+    NodeStats acc{};
+    acc.rows = static_cast<uint64_t>(tv.num_rows());
+    acc.varlen_content_bytes = varlen_content_bytes(tv);
+    uint64_t handle = impl_->next_handle++;
+    impl_->registry.emplace(handle, std::move(result));
+    out_handles[0] = handle;
+    *out_count = 1;
+    if (out) *out = acc;
+    return;
+  }
+
   // Output partition count. Ordinary ops MAP over their children's partitions
-  // (all children carry the same count), so n_out = child[0]'s count. A leaf scan
-  // produces 1 here (its map-driven N-partition read is Inc1 step iii);
-  // CoalescePartitions' M->1 concat is also step iii. So today every node is
-  // single-partition (n_out == 1) and this loop runs once = byte-identical to the
-  // pre-multi-handle path.
+  // (all children carry the same count), so n_out = child[0]'s count. Partition-
+  // collapsing ops (GpuScan map, GpuCoalescePartitions) are handled above; every
+  // remaining node maps 1:1 (tp1 empty-map scans give n_out == 1 = byte-identical
+  // to the pre-multi-handle path).
   size_t n_out = (n_children > 0) ? child[0].size() : 1;
   if (n_out == 0) n_out = 1;
   if (n_out > out_cap)
