@@ -92,16 +92,11 @@ pub fn surviving_row_groups(parquet: &ParquetExec) -> Option<Vec<u32>> {
     let config = parquet.base_config();
 
     // Single-source only — cuDF set_row_groups is per-source; keep scope tight.
-    let files: Vec<_> = config.file_groups.iter().flatten().collect();
-    if files.len() != 1 {
-        return None;
-    }
-    // Reconstruct an absolute local path. `object_meta.location` is an object_store
-    // Path (leading '/' stripped during normalization); we assume a '/'-rooted LOCAL
-    // filesystem object store, which holds for the serialize-time use here (DataFusion
-    // registers absolute local parquet paths). Degrades SAFELY for any other store: the
-    // open below fails -> None -> read all groups (no data loss).
-    let path = format!("/{}", files[0].object_meta.location);
+    // At target_partitions>1 DataFusion splits ONE physical file into several
+    // byte-RANGE PartitionedFile entries (all the same path), so accept any number
+    // of entries as long as they all reference the SAME file; reject genuine
+    // multi-file scans (distinct paths, #16).
+    let path = single_source_path(config)?;
 
     // Read row-group metadata (sync; the parquet is local at serialize time).
     let file = std::fs::File::open(&path).ok()?;
@@ -135,17 +130,29 @@ pub fn surviving_row_groups(parquet: &ParquetExec) -> Option<Vec<u32>> {
     }
 }
 
+/// Absolute local path of the single physical file backing a ParquetExec, or
+/// `None` if the scan touches more than one distinct file. At target_partitions>1
+/// DataFusion splits one file into several byte-range `PartitionedFile` entries —
+/// all the same path — so we key on the distinct path set, not the entry count.
+/// `object_meta.location` is an object_store Path (leading '/' stripped); we
+/// assume a '/'-rooted LOCAL filesystem object store, which holds for the
+/// serialize-time / planner use here. Degrades SAFELY otherwise (open fails → None).
+fn single_source_path(config: &datafusion::datasource::physical_plan::FileScanConfig) -> Option<String> {
+    let mut iter = config.file_groups.iter().flatten();
+    let first = iter.next()?.object_meta.location.clone();
+    if iter.any(|f| f.object_meta.location != first) {
+        return None; // genuine multi-file scan — out of scope (#16)
+    }
+    Some(format!("/{first}"))
+}
+
 /// All row-group indices `0..N` of a single-source ParquetExec (no pruning).
 /// Used by the tp8 partitioning step when there is no static predicate to prune
 /// by, so the scan-batch→partition map still covers every group. `None` for the
 /// multi-file / unreadable cases (the caller then leaves the scan single-partition).
 pub fn all_row_groups(parquet: &ParquetExec) -> Option<Vec<u32>> {
     let config = parquet.base_config();
-    let files: Vec<_> = config.file_groups.iter().flatten().collect();
-    if files.len() != 1 {
-        return None;
-    }
-    let path = format!("/{}", files[0].object_meta.location);
+    let path = single_source_path(config)?;
     let file = std::fs::File::open(&path).ok()?;
     let reader = SerializedFileReader::new(file).ok()?;
     let n = reader.metadata().num_row_groups();

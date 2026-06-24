@@ -97,9 +97,117 @@ pub async fn execute_node_by_node<E: NodeExecutor>(
 
 use std::collections::HashMap;
 
+use datafusion::datasource::physical_plan::parquet::{ParquetAccessPlan, RowGroupAccess};
+use datafusion::datasource::physical_plan::ParquetExec;
 use datafusion::execution::TaskContext;
 
+use datafusion::error::DataFusionError;
+use datafusion::physical_plan::coalesce_partitions::CoalescePartitionsExec;
+use datafusion::physical_plan::sorts::sort_preserving_merge::SortPreservingMergeExec;
+
 use crate::cpu_executor::execute_single_node;
+use crate::gpu_rowgroup_prune::all_row_groups;
+use crate::gpu_rule::{GpuCoalescePartitionsExec, GpuScanExec, GpuSortPreservingMergeExec};
+
+/// Partition-collapsing nodes: N input partitions → 1 output (the CPU oracle
+/// realizes this by concatenating all child partitions into a single input). Every
+/// other single-child node maps over its input partitions (count preserved).
+fn collapses_partitions(node: &Arc<dyn ExecutionPlan>) -> bool {
+    let any = node.as_any();
+    any.is::<GpuCoalescePartitionsExec>()
+        || any.is::<GpuSortPreservingMergeExec>()
+        || any.is::<CoalescePartitionsExec>()
+        || any.is::<SortPreservingMergeExec>()
+}
+
+/// Σ-over-partitions accumulation of per-partition [`NodeMemoryStats`]: row counts
+/// and (per-partition `ColAccum`) byte sizes ADD; `max_batch_rows` takes the max.
+/// This is exactly the GPU's per-node accounting (each partition charged its own
+/// overhead), so the tp8 cost golden generated here matches the real 8-way GPU.
+fn merge_stats(acc: &mut Option<NodeMemoryStats>, s: NodeMemoryStats) {
+    match acc {
+        None => *acc = Some(s),
+        Some(a) => {
+            a.allocated_bytes += s.allocated_bytes;
+            a.output_bytes += s.output_bytes;
+            a.row_count += s.row_count;
+            a.max_batch_rows = a.max_batch_rows.max(s.max_batch_rows);
+        }
+    }
+}
+
+/// Execute a `GpuScanExec` carrying a non-empty RG→batch→partition map, returning
+/// one materialized partition per map entry plus the Σ-over-partitions stats.
+///
+/// Each partition restricts the underlying `ParquetExec` to exactly that entry's
+/// row groups via a [`ParquetAccessPlan`] on the file's `extensions` — the SAME
+/// row-group→partition assignment the GPU replays (cuDF `set_row_groups`), so
+/// per-partition row counts match by construction. The scan's predicate + parquet
+/// options are preserved, so each partition's rows are identical to what the full
+/// DataFusion scan would yield for those groups (peacock RG-prunes but does NOT
+/// push row filters into the scan, so all rows of the selected groups are read).
+async fn cpu_scan_partitions(
+    scan: &GpuScanExec,
+    task_ctx: Arc<TaskContext>,
+) -> DfResult<(Vec<Vec<RecordBatch>>, NodeMemoryStats)> {
+    let parquet = scan.inner().as_any().downcast_ref::<ParquetExec>().ok_or_else(|| {
+        DataFusionError::Internal("cpu_scan_partitions: GpuScanExec inner is not a ParquetExec".into())
+    })?;
+    // Access-plan length MUST equal the file's true row-group count or DataFusion
+    // rejects the plan.
+    let total_rgs = all_row_groups(parquet).map(|v| v.len()).ok_or_else(|| {
+        DataFusionError::Internal(
+            "cpu_scan_partitions: cannot determine row-group count for partitioned scan".into(),
+        )
+    })?;
+    let base_file = parquet
+        .base_config()
+        .file_groups
+        .iter()
+        .flatten()
+        .next()
+        .cloned()
+        .ok_or_else(|| DataFusionError::Internal("cpu_scan_partitions: scan has no source file".into()))?;
+
+    let mut out_parts: Vec<Vec<RecordBatch>> = Vec::with_capacity(scan.batches_map().len());
+    let mut acc: Option<NodeMemoryStats> = None;
+    for entry in scan.batches_map() {
+        // Scan ONLY this partition's row groups; skip every other group.
+        let mut access = ParquetAccessPlan::new(vec![RowGroupAccess::Skip; total_rgs]);
+        for &rg in &entry.row_groups {
+            access.scan(rg as usize);
+        }
+        let mut file = base_file.clone();
+        // The base file may carry a byte RANGE (DataFusion's tp8 split); clear it so
+        // the access plan ALONE decides which row groups this partition reads.
+        file.range = None;
+        file.extensions = Some(Arc::new(access) as Arc<dyn std::any::Any + Send + Sync>);
+
+        let mut config = parquet.base_config().clone();
+        config.file_groups = vec![vec![file]];
+        let mut builder = ParquetExec::builder(config)
+            .with_table_parquet_options(parquet.table_parquet_options().clone());
+        if let Some(pred) = parquet.predicate() {
+            builder = builder.with_predicate(pred.clone());
+        }
+        let part_parquet: Arc<dyn ExecutionPlan> = Arc::new(builder.build());
+        // Re-wrap so execute_single_node applies the same gpu_batch_size override
+        // and records the node as "ParquetExec" (matching the recursive oracle).
+        let part_scan: Arc<dyn ExecutionPlan> =
+            Arc::new(GpuScanExec::new(part_parquet, scan.gpu_batch_size));
+        let (batches, stat) = execute_single_node(&part_scan, vec![], task_ctx.clone()).await?;
+        out_parts.push(batches);
+        merge_stats(&mut acc, stat);
+    }
+    let stat = acc.unwrap_or_else(|| NodeMemoryStats {
+        node_name: "ParquetExec".to_string(),
+        allocated_bytes: 0,
+        output_bytes: 0,
+        row_count: 0,
+        max_batch_rows: 0,
+    });
+    Ok((out_parts, stat))
+}
 
 /// CPU backend: handles are `Vec<RecordBatch>` held in a local registry; each
 /// node runs through the same DataFusion machinery as the recursive executor, so
@@ -114,6 +222,13 @@ impl CpuNodeExecutor {
     pub fn new(task_ctx: Arc<TaskContext>) -> Self {
         Self { task_ctx, registry: HashMap::new(), next_handle: 1 }
     }
+
+    fn store(&mut self, batches: Vec<RecordBatch>) -> u64 {
+        let handle = self.next_handle;
+        self.next_handle += 1;
+        self.registry.insert(handle, batches);
+        handle
+    }
 }
 
 impl NodeExecutor for CpuNodeExecutor {
@@ -123,25 +238,45 @@ impl NodeExecutor for CpuNodeExecutor {
         node: &Arc<dyn ExecutionPlan>,
         input_handles: &[Vec<u64>],
     ) -> DfResult<(Vec<u64>, NodeMemoryStats)> {
-        // Step (ii): single-partition behavior under the multi-handle interface —
-        // each child's partition handles are concatenated into one input and the
-        // node runs once → one output partition. (Step iii adds the map-based
-        // N-partition scan + CoalescePartitions M→1 concat; the Σ-over-partitions
-        // stat then falls out of running per-partition and summing.)
-        let inputs: Vec<Vec<RecordBatch>> = input_handles
+        // (iii) SCAN with an explicit RG→batch→partition map → N partition handles.
+        if let Some(scan) = node.as_any().downcast_ref::<GpuScanExec>() {
+            if !scan.batches_map().is_empty() {
+                let (parts, stat) = cpu_scan_partitions(scan, self.task_ctx.clone()).await?;
+                let handles: Vec<u64> = parts.into_iter().map(|b| self.store(b)).collect();
+                return Ok((handles, stat));
+            }
+        }
+
+        // Materialize each child's partition batches (consuming registry handles).
+        let child_parts: Vec<Vec<Vec<RecordBatch>>> = input_handles
             .iter()
-            .map(|child_parts| {
-                let mut batches = Vec::new();
-                for h in child_parts {
-                    batches.extend(self.registry.remove(h).unwrap_or_default());
-                }
-                batches
-            })
+            .map(|child| child.iter().map(|h| self.registry.remove(h).unwrap_or_default()).collect())
             .collect();
+
+        // Ordinary single-child op with the multi-partition map active → MAP the
+        // node over each input partition (count preserved); the Σ-over-partitions
+        // stat falls out of summing per-partition runs. Partition-collapsing ops
+        // (CoalescePartitions / SortPreservingMerge) and any multi-/zero-child node
+        // fall through to the concat-into-one path — which also covers tp1 (single
+        // partition) byte-identically (one partition in → one run → one out).
+        if !collapses_partitions(node) && child_parts.len() == 1 && !child_parts[0].is_empty() {
+            let mut handles = Vec::with_capacity(child_parts[0].len());
+            let mut acc: Option<NodeMemoryStats> = None;
+            for part in &child_parts[0] {
+                let (batches, stat) =
+                    execute_single_node(node, vec![part.clone()], self.task_ctx.clone()).await?;
+                handles.push(self.store(batches));
+                merge_stats(&mut acc, stat);
+            }
+            return Ok((handles, acc.expect("non-empty child has at least one partition")));
+        }
+
+        // Concat-into-one: each child's partitions concatenated into a single input,
+        // the node runs once → one output partition.
+        let inputs: Vec<Vec<RecordBatch>> =
+            child_parts.into_iter().map(|child| child.into_iter().flatten().collect()).collect();
         let (batches, stat) = execute_single_node(node, inputs, self.task_ctx.clone()).await?;
-        let handle = self.next_handle;
-        self.next_handle += 1;
-        self.registry.insert(handle, batches);
+        let handle = self.store(batches);
         Ok((vec![handle], stat))
     }
 
