@@ -310,4 +310,3 @@ GpuProjectExec: expr=[product_name@0 as product_name, store_name@1 as store_name
                                       GpuFilterExec: predicate=(i_color@2 = purple OR i_color@2 = burlywood OR i_color@2 = indian OR i_color@2 = spring OR i_color@2 = floral OR i_color@2 = medium) AND i_current_price@1 >= Some(6400),7,2 AND i_current_price@1 <= Some(7400),7,2 AND i_current_price@1 >= Some(6500),7,2 AND i_current_price@1 <= Some(7900),7,2, projection=[0, 3], output_bytes=389, output_rows=12
                                         GpuRepartitionExec: partitioning=RoundRobinBatch(8), input_partitions=1, output_bytes=1005794, output_rows=18000
                                           GpuScanExec: table=item, projections=[i_item_sk, i_current_price, i_color, i_product_name], batch_size=2064888, output_bytes=1005794, output_rows=18000
-peacockdb_cost=4295898664

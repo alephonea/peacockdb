@@ -63,4 +63,3 @@ GpuProjectExec: expr=[brand_id@0 as brand_id, brand@1 as brand, t_hour@2 as t_ho
                           GpuFilterExec: predicate=t_meal_time@3 = breakfast OR t_meal_time@3 = dinner, projection=[0, 1, 2], output_bytes=614250, output_rows=25200
                             GpuRepartitionExec: partitioning=RoundRobinBatch(8), input_partitions=1, output_bytes=2710804, output_rows=86400
                               GpuScanExec: table=time_dim, projections=[t_time_sk, t_hour, t_minute, t_meal_time], batch_size=4473924, output_bytes=2710804, output_rows=86400
-peacockdb_cost=664301693

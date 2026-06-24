@@ -24,4 +24,3 @@ GpuSortPreservingMergeExec: [i_product_name@0 ASC NULLS LAST], output_bytes=91, 
                                   GpuProjectExec: expr=[i_category@0 = Women as __common_expr_5, i_category@0 as i_category, i_manufact@1 as i_manufact, i_size@2 as i_size, i_color@3 as i_color, i_units@4 as i_units], output_bytes=935268, output_rows=18000
                                     GpuRepartitionExec: partitioning=RoundRobinBatch(8), input_partitions=1, output_bytes=930768, output_rows=18000
                                       GpuScanExec: table=item, projections=[i_category, i_manufact, i_size, i_color, i_units], batch_size=6100805, output_bytes=930768, output_rows=18000
-peacockdb_cost=4495378

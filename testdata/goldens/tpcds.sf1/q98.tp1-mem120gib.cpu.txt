@@ -15,4 +15,3 @@ GpuSortExec: expr=[i_category@2 ASC, i_class@3 ASC, i_item_id@0 ASC, i_item_desc
                       GpuFilterExec: predicate=i_category@5 = Sports OR i_category@5 = Books OR i_category@5 = Home, output_bytes=903246, output_rows=5323
                         GpuScanExec: table=item, projections=[i_item_sk, i_item_id, i_item_desc, i_current_price, i_class, i_category], batch_size=366048349, output_bytes=3075665, output_rows=18000
                     GpuScanExec: table=store_sales, projections=[ss_sold_date_sk, ss_item_sk, ss_ext_sales_price], batch_size=366048349, output_bytes=93253081, output_rows=2880404
-peacockdb_cost=579288718

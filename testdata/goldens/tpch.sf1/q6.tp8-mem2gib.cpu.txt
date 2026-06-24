@@ -5,4 +5,3 @@ GpuProjectExec: expr=[sum(lineitem.l_extendedprice * lineitem.l_discount)@0 as r
         GpuCoalesceBatchesExec: target_batch_size=25565281, output_bytes=3681660, output_rows=114160
           GpuFilterExec: predicate=l_shipdate@3 >= 1994-01-01 AND l_shipdate@3 < 1995-01-01 AND l_discount@2 >= Some(5),15,2 AND l_discount@2 <= Some(7),15,2 AND l_quantity@0 < Some(2400),15,2, projection=[1, 2], output_bytes=3681660, output_rows=114160
             GpuScanExec: table=lineitem, projections=[l_quantity, l_extendedprice, l_discount, l_shipdate], batch_size=25565281, output_bytes=51609600, output_rows=983040
-peacockdb_cost=58972988

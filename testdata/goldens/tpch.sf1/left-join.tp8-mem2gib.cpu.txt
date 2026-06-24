@@ -9,4 +9,3 @@ GpuAggregateExec: group_by=[], aggr=[count(*), sum(l.l_quantity), sum(o.o_totalp
           GpuCoalesceBatchesExec: target_batch_size=26843545, output_bytes=145529464, output_rows=6001215
             GpuRepartitionExec: partitioning=Hash([l_orderkey@0], 8), input_partitions=8, output_bytes=145529464, output_rows=6001215
               GpuScanExec: table=lineitem, projections=[l_orderkey, l_quantity], batch_size=26843545, output_bytes=145529464, output_rows=6001215
-peacockdb_cost=932791889

@@ -34,4 +34,3 @@ GpuProjectExec: expr=[substr(reason.r_reason_desc,Int64(1),Int64(20))@0 as subst
                                 GpuFilterExec: predicate=cd_marital_status@1 = M AND cd_education_status@2 = Advanced Degree OR cd_marital_status@1 = S AND cd_education_status@2 = College OR cd_marital_status@1 = W AND cd_education_status@2 = 2 yr Degree, output_bytes=4671668, output_rows=164640
                                   GpuScanExec: table=customer_demographics, projections=[cd_demo_sk, cd_marital_status, cd_education_status], batch_size=383479222, output_bytes=51758708, output_rows=1920800
                           GpuScanExec: table=customer_demographics, projections=[cd_demo_sk, cd_marital_status, cd_education_status], batch_size=383479222, output_bytes=51758708, output_rows=1920800
-peacockdb_cost=179372884

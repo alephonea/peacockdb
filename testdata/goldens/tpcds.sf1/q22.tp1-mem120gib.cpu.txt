@@ -12,4 +12,3 @@ GpuSortExec: expr=[qoh@4 ASC, i_product_name@0 ASC, i_brand@1 ASC, i_class@2 ASC
                     GpuFilterExec: predicate=d_month_seq@1 >= 1200 AND d_month_seq@1 <= 1211, projection=[0], output_bytes=2974, output_rows=366
                       GpuScanExec: table=date_dim, projections=[d_date_sk, d_month_seq], batch_size=456911414, output_bytes=1187048, output_rows=73049
                   GpuScanExec: table=inventory, projections=[inv_date_sk, inv_item_sk, inv_quantity_on_hand], batch_size=456911414, output_bytes=239304375, output_rows=11745000
-peacockdb_cost=786729019

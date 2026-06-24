@@ -30,4 +30,3 @@ GpuSortExec: expr=[s_store_name@0 ASC NULLS LAST], fetch=100, output_bytes=126, 
                     GpuFilterExec: predicate=d_qoy@2 = 2 AND d_year@1 = 1998, projection=[0], output_bytes=740, output_rows=91
                       GpuScanExec: table=date_dim, projections=[d_date_sk, d_year, d_qoy], batch_size=575218834, output_bytes=1780572, output_rows=73049
                   GpuScanExec: table=store_sales, projections=[ss_sold_date_sk, ss_store_sk, ss_net_profit], batch_size=575218834, output_bytes=93253081, output_rows=2880404
-peacockdb_cost=114498220

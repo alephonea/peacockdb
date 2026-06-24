@@ -47,4 +47,3 @@ GpuSortExec: expr=[segment@0 ASC, num_customers@1 ASC, segment_base@2 ASC NULLS 
                 GpuCoalesceBatchesExec: target_batch_size=374561101, output_bytes=252, output_rows=31
                   GpuFilterExec: predicate=d_year@1 = 1998 AND d_moy@2 = 12, projection=[0], output_bytes=252, output_rows=31
                     GpuScanExec: table=date_dim, projections=[d_month_seq, d_year, d_moy], batch_size=374561101, output_bytes=1780572, output_rows=73049
-peacockdb_cost=271156719

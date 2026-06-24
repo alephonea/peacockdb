@@ -36,4 +36,3 @@ GpuSortExec: expr=[cd_gender@0 ASC NULLS LAST, cd_marital_status@1 ASC NULLS LAS
                     GpuFilterExec: predicate=d_year@1 = 2002 AND d_moy@2 >= 1 AND d_moy@2 <= 4, projection=[0], output_bytes=975, output_rows=120
                       GpuScanExec: table=date_dim, projections=[d_date_sk, d_year, d_moy], batch_size=298261617, output_bytes=1780572, output_rows=73049
                   GpuScanExec: table=catalog_sales, projections=[cs_sold_date_sk, cs_ship_customer_sk], batch_size=298261617, output_bytes=23425156, output_rows=1441548
-peacockdb_cost=233359062

@@ -34,4 +34,3 @@ GpuProjectExec: expr=[order count@0 as order count, total shipping cost@1 as tot
                     GpuHashJoinExec: join_type=Inner, on=[(ws_order_number@1, ws_order_number@1)], filter=ws_warehouse_sk@1 != ws_warehouse_sk@0, projection=[1], output_bytes=53984710, output_rows=6644272
                       GpuScanExec: table=web_sales, projections=[ws_warehouse_sk, ws_order_number], batch_size=1006632960, output_bytes=11689990, output_rows=719384
                       GpuScanExec: table=web_sales, projections=[ws_warehouse_sk, ws_order_number], batch_size=1006632960, output_bytes=11689990, output_rows=719384
-peacockdb_cost=456471656

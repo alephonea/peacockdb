@@ -57,4 +57,3 @@ GpuSortPreservingMergeExec: [s_store_name@0 ASC, i_item_desc@1 ASC], output_byte
                                   GpuCoalesceBatchesExec: target_batch_size=6710886, output_bytes=116656364, output_rows=2880404
                                     GpuRepartitionExec: partitioning=Hash([ss_sold_date_sk@0], 8), input_partitions=8, output_bytes=116656364, output_rows=2880404
                                       GpuScanExec: table=store_sales, projections=[ss_sold_date_sk, ss_item_sk, ss_store_sk, ss_sales_price], batch_size=6710886, output_bytes=116656364, output_rows=2880404
-peacockdb_cost=860551241

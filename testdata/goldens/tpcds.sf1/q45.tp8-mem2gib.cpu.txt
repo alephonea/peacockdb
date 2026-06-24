@@ -54,4 +54,3 @@ GpuSortPreservingMergeExec: [ca_zip@0 ASC NULLS LAST, ca_city@1 ASC NULLS LAST],
                           GpuFilterExec: predicate=i_item_sk@0 = 2 OR i_item_sk@0 = 3 OR i_item_sk@0 = 5 OR i_item_sk@0 = 7 OR i_item_sk@0 = 11 OR i_item_sk@0 = 13 OR i_item_sk@0 = 17 OR i_item_sk@0 = 19 OR i_item_sk@0 = 23 OR i_item_sk@0 = 29, projection=[1], output_bytes=206, output_rows=10
                             GpuRepartitionExec: partitioning=RoundRobinBatch(8), input_partitions=1, output_bytes=508504, output_rows=18000
                               GpuScanExec: table=item, projections=[i_item_sk, i_item_id], batch_size=8388608, output_bytes=508504, output_rows=18000
-peacockdb_cost=458607713

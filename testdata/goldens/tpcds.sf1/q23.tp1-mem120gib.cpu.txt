@@ -116,4 +116,3 @@ GpuSortPreservingMergeExec: [c_last_name@0 ASC, c_first_name@1 ASC, sales@2 ASC]
                             GpuHashJoinExec: join_type=Inner, on=[(c_customer_sk@0, ss_customer_sk@0)], projection=[0, 2, 3], output_bytes=89064015, output_rows=2751012
                               GpuScanExec: table=customer, projections=[c_customer_sk], batch_size=402653184, output_bytes=812500, output_rows=100000
                               GpuScanExec: table=store_sales, projections=[ss_customer_sk, ss_quantity, ss_sales_price], batch_size=402653184, output_bytes=93253081, output_rows=2880404
-peacockdb_cost=3811837543

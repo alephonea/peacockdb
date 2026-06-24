@@ -47,4 +47,3 @@ GpuProjectExec: expr=[customer_id@0 as customer_id, customername@1 as customerna
             GpuCoalesceBatchesExec: target_batch_size=8947848, output_bytes=2338920, output_rows=287867
               GpuRepartitionExec: partitioning=Hash([sr_cdemo_sk@0], 8), input_partitions=8, output_bytes=2338920, output_rows=287867
                 GpuScanExec: table=store_returns, projections=[sr_cdemo_sk], batch_size=8947848, output_bytes=2338920, output_rows=287867
-peacockdb_cost=98338252

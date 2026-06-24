@@ -25,4 +25,3 @@ GpuProjectExec: expr=[order count@0 as order count, total shipping cost@1 as tot
                               GpuScanExec: table=catalog_sales, projections=[cs_ship_date_sk, cs_ship_addr_sk, cs_call_center_sk, cs_warehouse_sk, cs_order_number, cs_ext_ship_cost, cs_net_profit], batch_size=894784853, output_bytes=105052814, output_rows=1441548
                   GpuScanExec: table=catalog_sales, projections=[cs_warehouse_sk, cs_order_number], batch_size=894784853, output_bytes=23425156, output_rows=1441548
               GpuScanExec: table=catalog_returns, projections=[cr_order_number], batch_size=894784853, output_bytes=1170545, output_rows=144067
-peacockdb_cost=138506996

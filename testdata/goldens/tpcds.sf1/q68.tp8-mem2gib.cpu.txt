@@ -63,4 +63,3 @@ GpuSortPreservingMergeExec: [c_last_name@0 ASC, ss_ticket_number@4 ASC], output_
             GpuRepartitionExec: partitioning=Hash([ca_address_sk@0], 8), input_partitions=8, output_bytes=1046069, output_rows=50000
               GpuRepartitionExec: partitioning=RoundRobinBatch(8), input_partitions=1, output_bytes=1046069, output_rows=50000
                 GpuScanExec: table=customer_address, projections=[ca_address_sk, ca_city], batch_size=5592405, output_bytes=1046069, output_rows=50000
-peacockdb_cost=955926378

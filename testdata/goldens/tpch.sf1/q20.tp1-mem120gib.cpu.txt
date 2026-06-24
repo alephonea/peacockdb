@@ -20,4 +20,3 @@ GpuSortExec: expr=[s_name@0 ASC NULLS LAST], output_bytes=9553, output_rows=186
               GpuCoalesceBatchesExec: target_batch_size=847690913, output_bytes=29443606, output_rows=909455
                 GpuFilterExec: predicate=l_shipdate@3 >= 1994-01-01 AND l_shipdate@3 < 1995-01-01, projection=[0, 1, 2], output_bytes=29443606, output_rows=909455
                   GpuScanExec: table=lineitem, projections=[l_partkey, l_suppkey, l_quantity, l_shipdate], batch_size=847690913, output_bytes=35880960, output_rows=983040
-peacockdb_cost=155352566

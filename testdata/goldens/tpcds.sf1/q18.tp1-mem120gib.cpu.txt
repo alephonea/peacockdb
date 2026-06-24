@@ -32,4 +32,3 @@ GpuSortExec: expr=[ca_country@1 ASC, ca_state@2 ASC, ca_county@3 ASC, i_item_id@
                                       GpuScanExec: table=catalog_sales, projections=[cs_sold_date_sk, cs_bill_customer_sk, cs_bill_cdemo_sk, cs_item_sk, cs_quantity, cs_list_price, cs_sales_price, cs_coupon_amt, cs_net_profit], batch_size=239496317, output_bytes=151542738, output_rows=1441548
                           GpuScanExec: table=customer_demographics, projections=[cd_demo_sk], batch_size=239496317, output_bytes=15606500, output_rows=1920800
             GpuScanExec: table=item, projections=[i_item_sk, i_item_id], batch_size=239496317, output_bytes=508504, output_rows=18000
-peacockdb_cost=318004051

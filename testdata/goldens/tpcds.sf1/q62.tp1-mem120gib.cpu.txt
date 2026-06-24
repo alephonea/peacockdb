@@ -21,4 +21,3 @@ GpuSortExec: expr=[w_substr@0 ASC, sm_type@1 ASC, web_name@2 ASC], fetch=100, ou
                               GpuProjectExec: expr=[substr(w_warehouse_name@1, 1, 20) as w_substr, w_warehouse_sk@0 as w_warehouse_sk], output_bytes=137, output_rows=5
                                 GpuScanExec: table=warehouse, projections=[w_warehouse_sk, w_warehouse_name], batch_size=473709628, output_bytes=137, output_rows=5
                               GpuScanExec: table=web_sales, projections=[ws_sold_date_sk, ws_ship_date_sk, ws_web_site_sk, ws_ship_mode_sk, ws_warehouse_sk], batch_size=473709628, output_bytes=29224975, output_rows=719384
-peacockdb_cost=401827570

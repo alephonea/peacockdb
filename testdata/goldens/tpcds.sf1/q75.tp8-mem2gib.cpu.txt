@@ -215,4 +215,3 @@ GpuSortPreservingMergeExec: [sales_cnt_diff@8 ASC NULLS LAST, sales_amt_diff@9 A
                                           GpuRepartitionExec: partitioning=Hash([wr_order_number@1, wr_item_sk@0], 8), input_partitions=8, output_bytes=2901988, output_rows=71654
                                             GpuRepartitionExec: partitioning=RoundRobinBatch(8), input_partitions=1, output_bytes=2901988, output_rows=71654
                                               GpuScanExec: table=web_returns, projections=[wr_item_sk, wr_order_number, wr_return_quantity, wr_return_amt], batch_size=3195660, output_bytes=2901988, output_rows=71654
-peacockdb_cost=2212507563

@@ -68,4 +68,3 @@ GpuProjectExec: expr=[state@0 as state, cnt@1 as cnt], output_bytes=658, output_
                                     GpuAggregateExec: group_by=[i_category], aggr=[avg(j.i_current_price)], output_bytes=377, output_rows=11
                                       GpuRepartitionExec: partitioning=RoundRobinBatch(8), input_partitions=1, output_bytes=470353, output_rows=18000
                                         GpuScanExec: table=item, projections=[i_current_price, i_category], batch_size=11184810, output_bytes=470353, output_rows=18000
-peacockdb_cost=1329578002

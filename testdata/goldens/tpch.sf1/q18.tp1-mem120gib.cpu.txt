@@ -13,4 +13,3 @@ GpuSortExec: expr=[o_totalprice@4 DESC, o_orderdate@3 ASC NULLS LAST], fetch=100
                 GpuScanExec: table=customer, projections=[c_custkey, c_name], batch_size=732096698, output_bytes=4537504, output_rows=150000
                 GpuScanExec: table=orders, projections=[o_orderkey, o_custkey, o_totalprice, o_orderdate], batch_size=732096698, output_bytes=54750000, output_rows=1500000
             GpuScanExec: table=lineitem, projections=[l_orderkey, l_quantity], batch_size=732096698, output_bytes=145529464, output_rows=6001215
-peacockdb_cost=1459847220

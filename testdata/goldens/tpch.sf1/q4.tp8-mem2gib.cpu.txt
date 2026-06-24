@@ -17,4 +17,3 @@ GpuSortPreservingMergeExec: [o_orderpriority@0 ASC NULLS LAST], output_bytes=108
                       GpuCoalesceBatchesExec: target_batch_size=25565281, output_bytes=30820530, output_rows=3793296
                         GpuFilterExec: predicate=l_receiptdate@2 > l_commitdate@1, projection=[0], output_bytes=30820530, output_rows=3793296
                           GpuScanExec: table=lineitem, projections=[l_orderkey, l_commitdate, l_receiptdate], batch_size=25565281, output_bytes=98269896, output_rows=6001215
-peacockdb_cost=233685540

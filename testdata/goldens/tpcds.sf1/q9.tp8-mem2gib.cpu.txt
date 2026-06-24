@@ -116,4 +116,3 @@ GpuProjectExec: expr=[CASE WHEN count(*)@0 > 74129 THEN avg(store_sales.ss_ext_d
             GpuCoalesceBatchesExec: target_batch_size=7669584, output_bytes=8886601, output_rows=551107
               GpuFilterExec: predicate=ss_quantity@0 >= 81 AND ss_quantity@0 <= 100, projection=[1], output_bytes=8886601, output_rows=551107
                 GpuScanExec: table=store_sales, projections=[ss_quantity, ss_net_paid], batch_size=7669584, output_bytes=69849798, output_rows=2880404
-peacockdb_cost=1037626000

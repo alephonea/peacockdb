@@ -24,4 +24,3 @@ GpuProjectExec: expr=[Excess Discount Amount@0 as Excess Discount Amount], outpu
                       GpuFilterExec: predicate=d_date@1 >= 2000-01-27 AND d_date@1 <= 2000-04-26, projection=[0], output_bytes=740, output_rows=91
                         GpuScanExec: table=date_dim, projections=[d_date_sk, d_date], batch_size=1789569706, output_bytes=894852, output_rows=73049
                     GpuScanExec: table=web_sales, projections=[ws_sold_date_sk, ws_item_sk, ws_ext_discount_amt], batch_size=1789569706, output_bytes=23290057, output_rows=719384
-peacockdb_cost=50153919

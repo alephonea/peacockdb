@@ -64,4 +64,3 @@ GpuProjectExec: expr=[order count@0 as order count, total shipping cost@1 as tot
                           GpuCoalesceBatchesExec: target_batch_size=16777216, output_bytes=11689990, output_rows=719384
                             GpuRepartitionExec: partitioning=Hash([ws_order_number@1], 8), input_partitions=8, output_bytes=11689990, output_rows=719384
                               GpuScanExec: table=web_sales, projections=[ws_warehouse_sk, ws_order_number], batch_size=16777216, output_bytes=11689990, output_rows=719384
-peacockdb_cost=650093624

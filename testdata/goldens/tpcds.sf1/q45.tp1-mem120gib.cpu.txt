@@ -25,4 +25,3 @@ GpuSortExec: expr=[ca_zip@0 ASC NULLS LAST, ca_city@1 ASC NULLS LAST], fetch=100
             GpuCoalesceBatchesExec: target_batch_size=503316480, output_bytes=206, output_rows=10
               GpuFilterExec: predicate=i_item_sk@0 = 2 OR i_item_sk@0 = 3 OR i_item_sk@0 = 5 OR i_item_sk@0 = 7 OR i_item_sk@0 = 11 OR i_item_sk@0 = 13 OR i_item_sk@0 = 17 OR i_item_sk@0 = 19 OR i_item_sk@0 = 23 OR i_item_sk@0 = 29, projection=[1], output_bytes=206, output_rows=10
                 GpuScanExec: table=item, projections=[i_item_sk, i_item_id], batch_size=503316480, output_bytes=508504, output_rows=18000
-peacockdb_cost=246576785

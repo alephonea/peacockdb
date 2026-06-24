@@ -86,4 +86,3 @@ GpuSortExec: expr=[ca_county@0 ASC NULLS LAST], output_bytes=2573, output_rows=4
                             GpuScanExec: table=date_dim, projections=[d_date_sk, d_year, d_qoy], batch_size=383479222, output_bytes=1780572, output_rows=73049
                         GpuScanExec: table=web_sales, projections=[ws_sold_date_sk, ws_bill_addr_sk, ws_ext_sales_price], batch_size=383479222, output_bytes=23290057, output_rows=719384
                   GpuScanExec: table=customer_address, projections=[ca_address_sk, ca_county], batch_size=383479222, output_bytes=1290073, output_rows=50000
-peacockdb_cost=470684304

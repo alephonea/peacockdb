@@ -19,4 +19,3 @@ GpuSortExec: expr=[s_store_name@0 ASC NULLS LAST, s_company_id@1 ASC NULLS LAST,
                           GpuHashJoinExec: join_type=Inner, on=[(sr_ticket_number@3, ss_ticket_number@4), (sr_item_sk@1, ss_item_sk@1), (sr_customer_sk@2, ss_customer_sk@2)], projection=[0, 4, 7], output_bytes=5104542, output_rows=209417
                             GpuScanExec: table=store_returns, projections=[sr_returned_date_sk, sr_item_sk, sr_customer_sk, sr_ticket_number], batch_size=191739611, output_bytes=9355680, output_rows=287867
                             GpuScanExec: table=store_sales, projections=[ss_sold_date_sk, ss_item_sk, ss_customer_sk, ss_store_sk, ss_ticket_number], batch_size=191739611, output_bytes=117016415, output_rows=2880404
-peacockdb_cost=262724304

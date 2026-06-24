@@ -35,4 +35,3 @@ GpuSortExec: expr=[o_year@0 ASC NULLS LAST], output_bytes=42, output_rows=2
                                                 GpuFilterExec: predicate=p_type@1 = ECONOMY ANODIZED STEEL, projection=[0], output_bytes=11790, output_rows=1451
                                                   GpuScanExec: table=part, projections=[p_partkey, p_type], batch_size=847690913, output_bytes=6569950, output_rows=200000
                                               GpuScanExec: table=lineitem, projections=[l_orderkey, l_partkey, l_suppkey, l_extendedprice, l_discount], batch_size=847690913, output_bytes=339818800, output_rows=6001215
-peacockdb_cost=397538838

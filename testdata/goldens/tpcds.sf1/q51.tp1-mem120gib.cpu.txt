@@ -33,4 +33,3 @@ GpuSortExec: expr=[item_sk@0 ASC, d_date@1 ASC], fetch=100, output_bytes=7678, o
                                 GpuCoalesceBatchesExec: target_batch_size=847690913, output_bytes=93253081, output_rows=2880404
                                   GpuFilterExec: predicate=ss_item_sk@1 IS NOT NULL, output_bytes=93253081, output_rows=2880404
                                     GpuScanExec: table=store_sales, projections=[ss_sold_date_sk, ss_item_sk, ss_sales_price], batch_size=847690913, output_bytes=93253081, output_rows=2880404
-peacockdb_cost=670944248

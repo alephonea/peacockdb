@@ -21,4 +21,3 @@ GpuSortExec: expr=[sum_sales@6 - avg_monthly_sales@7 ASC NULLS LAST, s_store_nam
                                 GpuFilterExec: predicate=(i_category@3 = Books OR i_category@3 = Electronics OR i_category@3 = Sports) AND (i_class@2 = computers OR i_class@2 = stereo OR i_class@2 = football) OR (i_category@3 = Men OR i_category@3 = Jewelry OR i_category@3 = Women) AND (i_class@2 = shirts OR i_class@2 = birdal OR i_class@2 = dresses), output_bytes=65014, output_rows=1368
                                   GpuScanExec: table=item, projections=[i_item_sk, i_brand, i_class, i_category], batch_size=322122547, output_bytes=905412, output_rows=18000
                               GpuScanExec: table=store_sales, projections=[ss_sold_date_sk, ss_item_sk, ss_store_sk, ss_sales_price], batch_size=322122547, output_bytes=116656364, output_rows=2880404
-peacockdb_cost=172016695

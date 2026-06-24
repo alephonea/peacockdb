@@ -111,6 +111,9 @@ fn main() {
     let testdata = PathBuf::from(opt("--testdata", "testdata"));
     let tests = PathBuf::from(opt("--tests", "peacockdb-core/tests/test_gpu_executor.rs"));
     let html_out = opt("--html", "cost_report.html");
+    // When set, assemble the page-per-sha Pages site here instead of writing a
+    // single --html file (master deploy); see `assemble_site`.
+    let site = opt("--site", "");
     let md_out = opt("--md", "");
     let pages_url = opt("--pages-url", PAGES_URL_DEFAULT);
     let published = args.iter().any(|a| a == "--published");
@@ -156,7 +159,7 @@ fn main() {
     }
     if !missing.is_empty() {
         eprintln!(
-            "cost-report: missing PeacockDB cost for {} operational queries (stale CPU_DEVICE='{CPU_DEVICE}' or absent .cpu.txt goldens): {}",
+            "cost-report: missing PeacockDB cost for {} operational queries (stale CPU_DEVICE='{CPU_DEVICE}' or absent .cost.txt goldens): {}",
             missing.len(),
             missing.join(", ")
         );
@@ -165,9 +168,14 @@ fn main() {
 
     let freshness = freshness_line(links.sha.as_deref(), generated_at.as_deref());
 
-    let html = render_html(&datasets, &pages_url, &links, generated_at.as_deref());
-    std::fs::write(&html_out, &html).unwrap_or_else(|e| panic!("write {html_out}: {e}"));
-    eprintln!("wrote {html_out}");
+    if site.is_empty() {
+        let html = render_html(&datasets, &pages_url, &links, generated_at.as_deref(), None);
+        std::fs::write(&html_out, &html).unwrap_or_else(|e| panic!("write {html_out}: {e}"));
+        eprintln!("wrote {html_out}");
+    } else {
+        assemble_site(Path::new(&site), &datasets, &pages_url, &links, generated_at.as_deref(), links.sha.as_deref());
+        eprintln!("assembled page-per-sha site at {site}/");
+    }
 
     let md = render_markdown(&datasets, &pages_url, published, &links, freshness.as_deref());
     if md_out.is_empty() {
@@ -221,7 +229,9 @@ fn build_dataset(
         .map(|n| Row {
             n,
             operational: operational.contains(&n),
-            peacockdb: read_total(&canon.join(format!("q{n}.{CPU_DEVICE}.cpu.txt")), "peacockdb_cost="),
+            // PeacockDB total now lives in the cheap-to-regenerate .cost.txt (the
+            // .cpu.txt no longer carries a footer); same `peacockdb_cost=` key.
+            peacockdb: read_total(&canon.join(format!("q{n}.{CPU_DEVICE}.cost.txt")), "peacockdb_cost="),
             duckdb: read_total(&canon.join(format!("q{n}.duckdb_cost.txt")), "duckdb_cost="),
         })
         .collect();
@@ -291,6 +301,42 @@ fn cost_cell_md(value: Option<u64>, url: Option<String>) -> String {
     }
 }
 
+/// PeacockDB Σout cell: the cost total, then "plan"/"cost" links to the `.cpu.txt`
+/// (per-node tree) and `.cost.txt` (cost components) goldens. Links render only
+/// when the value AND a sha-based URL exist (plain bytes on dry runs / no sha);
+/// a missing value is an em-dash, never a link.
+fn peacock_cell_html(value: Option<u64>, plan_url: Option<String>, cost_url: Option<String>) -> String {
+    let Some(v) = value else { return "—".to_string() };
+    let mut links = Vec::new();
+    if let Some(u) = plan_url {
+        links.push(format!("<a href=\"{u}\">plan</a>"));
+    }
+    if let Some(u) = cost_url {
+        links.push(format!("<a href=\"{u}\">cost</a>"));
+    }
+    if links.is_empty() {
+        fmt_bytes(v)
+    } else {
+        format!("{} ({})", fmt_bytes(v), links.join(", "))
+    }
+}
+
+fn peacock_cell_md(value: Option<u64>, plan_url: Option<String>, cost_url: Option<String>) -> String {
+    let Some(v) = value else { return "—".to_string() };
+    let mut links = Vec::new();
+    if let Some(u) = plan_url {
+        links.push(format!("[plan]({u})"));
+    }
+    if let Some(u) = cost_url {
+        links.push(format!("[cost]({u})"));
+    }
+    if links.is_empty() {
+        fmt_bytes(v)
+    } else {
+        format!("{} ({})", fmt_bytes(v), links.join(", "))
+    }
+}
+
 /// Visible "regenerated each run" marker for the upserted PR comment (and HTML
 /// header). Needs both the commit and a render timestamp; omitted otherwise.
 fn freshness_line(sha: Option<&str>, generated_at: Option<&str>) -> Option<String> {
@@ -300,7 +346,17 @@ fn freshness_line(sha: Option<&str>, generated_at: Option<&str>) -> Option<Strin
     Some(format!("♻️ _Cost report regenerated for `{short}` at {at}_"))
 }
 
-fn render_html(datasets: &[Dataset], pages_url: &str, links: &Links, generated_at: Option<&str>) -> String {
+/// `nav_prefix`: `Some(p)` adds a "latest · all reports" nav whose links are
+/// relative to `p` (`""` on the site root `index.html`, `"../"` on a per-sha page);
+/// `None` (standalone / PR / dry run) omits the nav, since those pages aren't part
+/// of the published page-per-sha site.
+fn render_html(
+    datasets: &[Dataset],
+    pages_url: &str,
+    links: &Links,
+    generated_at: Option<&str>,
+    nav_prefix: Option<&str>,
+) -> String {
     let mut s = String::new();
     s.push_str("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">");
     s.push_str("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">");
@@ -321,6 +377,13 @@ fn render_html(datasets: &[Dataset], pages_url: &str, links: &Links, generated_a
     );
     s.push_str("</style></head><body>");
     s.push_str("<h1>PeacockDB GPU coverage &amp; output-size report</h1>");
+
+    if let Some(p) = nav_prefix {
+        let _ = write!(
+            s,
+            "<p class=\"foot\"><a href=\"{p}index.html\">latest</a> · <a href=\"{p}history.html\">all reports</a></p>"
+        );
+    }
 
     let mut summary = String::new();
     for d in datasets {
@@ -351,7 +414,8 @@ fn render_html(datasets: &[Dataset], pages_url: &str, links: &Links, generated_a
         let _ = write!(s, "<h2>{}</h2><table><tr><th>Query</th><th>Status</th>\
             <th>PeacockDB Σout</th><th>DuckDB Σout</th><th>Ratio</th></tr>", d.label);
         for r in &d.rows {
-            let pk_url = r.peacockdb.and_then(|_| links.golden_url(d.canon_rel, r.n, &format!("{CPU_DEVICE}.cpu.txt")));
+            let plan_url = r.peacockdb.and_then(|_| links.golden_url(d.canon_rel, r.n, &format!("{CPU_DEVICE}.cpu.txt")));
+            let cost_url = r.peacockdb.and_then(|_| links.golden_url(d.canon_rel, r.n, &format!("{CPU_DEVICE}.cost.txt")));
             let dk_url = r.duckdb.and_then(|_| links.golden_url(d.canon_rel, r.n, "duckdb_cost.txt"));
             let _ = write!(
                 s,
@@ -360,7 +424,7 @@ fn render_html(datasets: &[Dataset], pages_url: &str, links: &Links, generated_a
                 r.bucket(),
                 r.n,
                 r.status(),
-                cost_cell_html(r.peacockdb, pk_url),
+                peacock_cell_html(r.peacockdb, plan_url, cost_url),
                 cost_cell_html(r.duckdb, dk_url),
                 ratio_or_dash(r.ratio()),
             );
@@ -421,7 +485,8 @@ fn render_markdown(datasets: &[Dataset], pages_url: &str, published: bool, links
             d.total
         );
         for r in &d.rows {
-            let pk_url = r.peacockdb.and_then(|_| links.golden_url(d.canon_rel, r.n, &format!("{CPU_DEVICE}.cpu.txt")));
+            let plan_url = r.peacockdb.and_then(|_| links.golden_url(d.canon_rel, r.n, &format!("{CPU_DEVICE}.cpu.txt")));
+            let cost_url = r.peacockdb.and_then(|_| links.golden_url(d.canon_rel, r.n, &format!("{CPU_DEVICE}.cost.txt")));
             let dk_url = r.duckdb.and_then(|_| links.golden_url(d.canon_rel, r.n, "duckdb_cost.txt"));
             // Markdown can't set a row background, so flag the >threshold rows
             // with 🔴 — the comment-side equivalent of the HTML light-red row.
@@ -434,7 +499,7 @@ fn render_markdown(datasets: &[Dataset], pages_url: &str, published: bool, links
                 "| q{} | {} | {} | {} | {} |\n",
                 r.n,
                 r.status(),
-                cost_cell_md(r.peacockdb, pk_url),
+                peacock_cell_md(r.peacockdb, plan_url, cost_url),
                 cost_cell_md(r.duckdb, dk_url),
                 ratio_cell,
             );
@@ -448,6 +513,90 @@ fn render_markdown(datasets: &[Dataset], pages_url: &str, published: bool, links
          different plan trees, so the ratio is a **provisional, directional-only** proxy — not a comparable \
          execution cost — and asserts nothing._\n"
     );
+    s
+}
+
+// --- page-per-sha Pages site (ticket #77) -----------------------------------
+/// Assemble the page-per-sha site under `dir` (master deploy):
+///   `<dir>/index.html`        latest report (this run)
+///   `<dir>/<sha>/index.html`  this run, addressable by commit
+///   `<dir>/history.tsv`       manifest, newest-first: `<sha>\t<generated_at>`
+///   `<dir>/history.html`      rendered history index, newest-first
+///
+/// Prior `<sha>/` pages and `history.tsv` are pre-seeded into `dir` from the live
+/// site by the CI step (the Pages deploy replaces the whole site, so carrying them
+/// forward is what keeps old reports reachable). With no `sha` (local dry run) only
+/// `index.html` is written.
+fn assemble_site(
+    dir: &Path,
+    datasets: &[Dataset],
+    pages_url: &str,
+    links: &Links,
+    generated_at: Option<&str>,
+    sha: Option<&str>,
+) {
+    std::fs::create_dir_all(dir).unwrap_or_else(|e| panic!("create {}: {e}", dir.display()));
+    let root = render_html(datasets, pages_url, links, generated_at, Some(""));
+    std::fs::write(dir.join("index.html"), &root).unwrap_or_else(|e| panic!("write index.html: {e}"));
+
+    let Some(sha) = sha else { return };
+    let per_sha = render_html(datasets, pages_url, links, generated_at, Some("../"));
+    let sha_dir = dir.join(sha);
+    std::fs::create_dir_all(&sha_dir).unwrap_or_else(|e| panic!("create {}: {e}", sha_dir.display()));
+    std::fs::write(sha_dir.join("index.html"), &per_sha).unwrap_or_else(|e| panic!("write {sha}/index.html: {e}"));
+
+    let prior = std::fs::read_to_string(dir.join("history.tsv")).unwrap_or_default();
+    let manifest = update_history(&prior, sha, generated_at.unwrap_or(""));
+    std::fs::write(dir.join("history.tsv"), serialize_history(&manifest)).unwrap_or_else(|e| panic!("write history.tsv: {e}"));
+    std::fs::write(dir.join("history.html"), render_history(&manifest)).unwrap_or_else(|e| panic!("write history.html: {e}"));
+}
+
+/// Parse the `<sha>\t<generated_at>` manifest (newest-first), skipping blank lines.
+fn parse_history(text: &str) -> Vec<(String, String)> {
+    text.lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| {
+            let (sha, at) = l.split_once('\t').unwrap_or((l, ""));
+            (sha.trim().to_string(), at.trim().to_string())
+        })
+        .collect()
+}
+
+/// Prepend `(sha, at)` newest-first, dropping any prior entry for the same sha (a
+/// re-run of a commit moves to the front carrying its new timestamp).
+fn update_history(prior: &str, sha: &str, at: &str) -> Vec<(String, String)> {
+    let mut out = vec![(sha.to_string(), at.to_string())];
+    out.extend(parse_history(prior).into_iter().filter(|(s, _)| s != sha));
+    out
+}
+
+fn serialize_history(manifest: &[(String, String)]) -> String {
+    let mut s = manifest.iter().map(|(sha, at)| format!("{sha}\t{at}")).collect::<Vec<_>>().join("\n");
+    s.push('\n');
+    s
+}
+
+/// Self-contained history index: every report newest-first, linking to `<sha>/`.
+fn render_history(manifest: &[(String, String)]) -> String {
+    let mut s = String::new();
+    s.push_str("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">");
+    s.push_str("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">");
+    s.push_str("<title>PeacockDB cost report history</title><style>");
+    s.push_str(
+        "body{font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;margin:2rem;color:#1b1f23;}\
+         h1{font-size:1.4rem;}ul{line-height:1.7;}code{background:#f6f8fa;padding:.1rem .3rem;border-radius:4px;}\
+         .foot{margin-top:1.5rem;color:#57606a;font-size:.85rem;}",
+    );
+    s.push_str("</style></head><body>");
+    s.push_str("<h1>PeacockDB cost report — history</h1>");
+    s.push_str("<p class=\"foot\"><a href=\"index.html\">latest</a></p><ul>");
+    for (i, (sha, at)) in manifest.iter().enumerate() {
+        let short = &sha[..sha.len().min(7)];
+        let when = if at.is_empty() { String::new() } else { format!(" — {at}") };
+        let latest = if i == 0 { " <em>(latest)</em>" } else { "" };
+        let _ = write!(s, "<li><a href=\"{sha}/index.html\"><code>{short}</code></a>{when}{latest}</li>");
+    }
+    s.push_str("</ul></body></html>");
     s
 }
 
@@ -528,5 +677,51 @@ gpu_result_test!(tpcds, 1, q5, H200);
         assert_eq!(row(14, 10, true).bucket(), "green"); // ratio 1.4 → green (≤)
         assert_eq!(row(141, 100, true).bucket(), "red"); // ratio 1.41 → red
         assert_eq!(row(14, 10, false).bucket(), "grey"); // not operational → grey
+    }
+
+    #[test]
+    fn peacock_cell_renders_plan_and_cost_links() {
+        let plan = Some("https://x/q1.tp8-mem2gib.cpu.txt".to_string());
+        let cost = Some("https://x/q1.tp8-mem2gib.cost.txt".to_string());
+        let html = peacock_cell_html(Some(43_308_088), plan.clone(), cost.clone());
+        assert!(html.contains(">plan</a>") && html.contains(">cost</a>") && html.starts_with("41.30 MB ("));
+        let md = peacock_cell_md(Some(43_308_088), plan, cost);
+        assert_eq!(md, "41.30 MB ([plan](https://x/q1.tp8-mem2gib.cpu.txt), [cost](https://x/q1.tp8-mem2gib.cost.txt))");
+        // value but no urls (dry run) → plain bytes, no links.
+        assert_eq!(peacock_cell_html(Some(43_308_088), None, None), "41.30 MB");
+        assert_eq!(peacock_cell_md(Some(43_308_088), None, None), "41.30 MB");
+        // missing value → em-dash regardless of urls.
+        assert_eq!(peacock_cell_html(None, Some("u".into()), Some("v".into())), "—");
+        assert_eq!(peacock_cell_md(None, Some("u".into()), Some("v".into())), "—");
+    }
+
+    #[test]
+    fn history_prepends_newest_first_and_dedups_sha() {
+        let prior = "old1\t2026-06-20 10:00\nold2\t2026-06-19 09:00\n";
+        let m = update_history(prior, "new", "2026-06-23 12:00");
+        assert_eq!(m[0], ("new".to_string(), "2026-06-23 12:00".to_string()));
+        assert_eq!(m.len(), 3);
+        // re-running an existing sha moves it to the front with the new timestamp,
+        // never duplicating it.
+        let m2 = update_history(&serialize_history(&m), "old1", "2026-06-24 08:00");
+        assert_eq!(m2[0], ("old1".to_string(), "2026-06-24 08:00".to_string()));
+        assert_eq!(m2.iter().filter(|(s, _)| s == "old1").count(), 1);
+        assert_eq!(m2.len(), 3);
+        // parse/serialize roundtrip is stable.
+        assert_eq!(parse_history(&serialize_history(&m2)), m2);
+    }
+
+    #[test]
+    fn render_history_lists_newest_first_with_links() {
+        let m = vec![
+            ("abc1234def".to_string(), "2026-06-23 12:00".to_string()),
+            ("0009999aaa".to_string(), "2026-06-20 10:00".to_string()),
+        ];
+        let html = render_history(&m);
+        assert!(html.contains("href=\"abc1234def/index.html\""));
+        assert!(html.contains("<code>abc1234</code>")); // shortened
+        assert!(html.contains("(latest)")); // first entry flagged
+        // newest entry appears before the older one.
+        assert!(html.find("abc1234def").unwrap() < html.find("0009999aaa").unwrap());
     }
 }

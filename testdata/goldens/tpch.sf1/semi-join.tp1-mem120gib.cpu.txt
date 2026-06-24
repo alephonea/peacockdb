@@ -4,4 +4,3 @@ GpuCoalesceBatchesExec: target_batch_size=374561101, output_bytes=39533243, outp
       GpuFilterExec: predicate=c_mktsegment@1 = BUILDING, projection=[0], output_bytes=244904, output_rows=30142
         GpuScanExec: table=customer, projections=[c_custkey, c_mktsegment], batch_size=374561101, output_bytes=3187114, output_rows=150000
     GpuScanExec: table=orders, projections=[o_orderkey, o_custkey, o_orderstatus, o_totalprice, o_orderdate, o_orderpriority, o_clerk, o_shippriority, o_comment], batch_size=374561101, output_bytes=195058153, output_rows=1500000
-peacockdb_cost=277801561
