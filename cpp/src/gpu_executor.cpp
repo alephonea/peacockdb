@@ -162,17 +162,22 @@ int peacock_executor_begin_plan(peacock_executor_t* executor,
 }
 
 int peacock_executor_execute_node(peacock_executor_t* executor, uint64_t seq,
-                                  const uint64_t* input_handles, uint64_t n_inputs,
-                                  uint64_t* out_handle, PeacockNodeStats* out_stats) {
-  if (!executor || !out_handle || (n_inputs > 0 && !input_handles)) return 1;
+                                  const uint64_t* input_handles,
+                                  const uint64_t* input_child_counts, uint64_t n_children,
+                                  uint64_t* out_handles, uint64_t out_cap,
+                                  uint64_t* out_count, PeacockNodeStats* out_stats) {
+  if (!executor || !out_handles || !out_count) return 1;
   if (!executor->session) {
     executor->last_error = "no plan loaded (call peacock_executor_begin_plan first)";
     return 1;
   }
   try {
     peacock::NodeStats stats;
-    *out_handle = executor->session->execute_node(seq, input_handles,
-                                                  static_cast<size_t>(n_inputs), &stats);
+    size_t n_out = 0;
+    executor->session->execute_node(seq, input_handles, input_child_counts,
+                                    static_cast<size_t>(n_children), out_handles,
+                                    static_cast<size_t>(out_cap), &n_out, &stats);
+    *out_count = static_cast<uint64_t>(n_out);
     if (out_stats) {
       out_stats->rows = stats.rows;
       out_stats->varlen_content_bytes = stats.varlen_content_bytes;

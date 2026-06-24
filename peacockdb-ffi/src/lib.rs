@@ -55,8 +55,11 @@ pub mod raw {
             executor: *mut PeacockExecutor,
             seq: u64,
             input_handles: *const u64,
-            n_inputs: u64,
-            out_handle: *mut u64,
+            input_child_counts: *const u64,
+            n_children: u64,
+            out_handles: *mut u64,
+            out_cap: u64,
+            out_count: *mut u64,
             out_stats: *mut PeacockNodeStats,
         ) -> i32;
 

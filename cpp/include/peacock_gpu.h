@@ -97,10 +97,18 @@ int peacock_executor_begin_plan(peacock_executor_t* executor,
 /// @param out_handle  Set to the new output handle.
 /// @param out_stats   Filled with the node's actual rows + var-len content bytes.
 /// @return 0 on success, non-zero on failure.
+/// Multi-handle (Phase 2): each child contributes a vector of partition handles.
+/// `input_handles` = flattened handles grouped by child; `input_child_counts[c]` =
+/// child c's partition count; `n_children` = number of children. Output partition
+/// handles are written to `out_handles[0..*out_count]` (caller buffer of `out_cap`;
+/// partition count is bounded by target_partitions). `*out_stats` = Σ-over-partitions.
 int peacock_executor_execute_node(peacock_executor_t* executor,
                                   uint64_t seq,
-                                  const uint64_t* input_handles, uint64_t n_inputs,
-                                  uint64_t* out_handle,
+                                  const uint64_t* input_handles,
+                                  const uint64_t* input_child_counts,
+                                  uint64_t n_children,
+                                  uint64_t* out_handles, uint64_t out_cap,
+                                  uint64_t* out_count,
                                   PeacockNodeStats* out_stats);
 
 /// Materialize a resident handle to an Arrow IPC stream (called once, at root).

@@ -55,11 +55,17 @@ class NodeSession {
   /// Number of plan nodes (post-order positions 0..count-1).
   size_t node_count() const;
 
-  /// Execute the node at post-order `seq` with the given child output handles
-  /// (in child order). Stores the output as a NEW resident handle; returns it
-  /// and fills `*out`. The input handles are CONSUMED (released from the registry).
-  uint64_t execute_node(uint64_t seq, const uint64_t* input_handles, size_t n_inputs,
-                        NodeStats* out);
+  /// Execute the node at post-order `seq` (multi-handle model, Phase 2). Each
+  /// child contributes a VECTOR of partition handles: `input_handles` is the
+  /// flattened concatenation grouped by child, `input_child_counts[c]` = child
+  /// c's partition count, `n_children` = number of children. The node's output
+  /// partition handles are written to `out_handles[0..*out_count]` (caller buffer
+  /// of `out_cap`; partition count is bounded by target_partitions), and `*out`
+  /// is filled with the Σ-over-partitions stats. Input handles are CONSUMED.
+  void execute_node(uint64_t seq, const uint64_t* input_handles,
+                    const uint64_t* input_child_counts, size_t n_children,
+                    uint64_t* out_handles, size_t out_cap, size_t* out_count,
+                    NodeStats* out);
 
   /// Borrow the resident table behind `handle` (for materialization at root).
   const TableResult& table_for(uint64_t handle) const;

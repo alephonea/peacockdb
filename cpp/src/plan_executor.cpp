@@ -2687,32 +2687,57 @@ NodeSession::~NodeSession() = default;
 
 size_t NodeSession::node_count() const { return impl_->post_order.size(); }
 
-uint64_t NodeSession::execute_node(uint64_t seq, const uint64_t* input_handles,
-                                   size_t n_inputs, NodeStats* out) {
+void NodeSession::execute_node(uint64_t seq, const uint64_t* input_handles,
+                               const uint64_t* input_child_counts, size_t n_children,
+                               uint64_t* out_handles, size_t out_cap, size_t* out_count,
+                               NodeStats* out) {
   if (seq >= impl_->post_order.size())
     throw std::runtime_error("NodeSession::execute_node: seq out of range");
   const fb::PlanNode* node = impl_->post_order[seq];
 
-  // Consume the child handles (in child order) out of the registry.
-  std::vector<TableResult> inputs;
-  inputs.reserve(n_inputs);
-  for (size_t i = 0; i < n_inputs; ++i) {
-    auto it = impl_->registry.find(input_handles[i]);
-    if (it == impl_->registry.end())
-      throw std::runtime_error("NodeSession::execute_node: unknown input handle");
-    inputs.push_back(std::move(it->second));
-    impl_->registry.erase(it);
+  // Each child contributes a VECTOR of partition handles (multi-handle model,
+  // Phase 2). The flat `input_handles` is grouped by child via `input_child_counts`.
+  std::vector<std::vector<uint64_t>> child(n_children);
+  size_t off = 0;
+  for (size_t c = 0; c < n_children; ++c) {
+    size_t cnt = input_child_counts ? static_cast<size_t>(input_child_counts[c]) : 0;
+    child[c].assign(input_handles + off, input_handles + off + cnt);
+    off += cnt;
   }
 
-  TableResult result = execute_one(node, std::move(inputs));
-  if (out) {
+  // Output partition count. Ordinary ops MAP over their children's partitions
+  // (all children carry the same count), so n_out = child[0]'s count. A leaf scan
+  // produces 1 here (its map-driven N-partition read is Inc1 step iii);
+  // CoalescePartitions' M->1 concat is also step iii. So today every node is
+  // single-partition (n_out == 1) and this loop runs once = byte-identical to the
+  // pre-multi-handle path.
+  size_t n_out = (n_children > 0) ? child[0].size() : 1;
+  if (n_out == 0) n_out = 1;
+  if (n_out > out_cap)
+    throw std::runtime_error("NodeSession::execute_node: out_handles buffer too small");
+
+  NodeStats acc{};
+  for (size_t p = 0; p < n_out; ++p) {
+    std::vector<TableResult> inputs;
+    inputs.reserve(n_children);
+    for (size_t c = 0; c < n_children; ++c) {
+      uint64_t h = child[c][p];  // partition p of child c (ordinary op maps per partition)
+      auto it = impl_->registry.find(h);
+      if (it == impl_->registry.end())
+        throw std::runtime_error("NodeSession::execute_node: unknown input handle");
+      inputs.push_back(std::move(it->second));
+      impl_->registry.erase(it);
+    }
+    TableResult result = execute_one(node, std::move(inputs));
     auto tv = result.table->view();
-    out->rows = static_cast<uint64_t>(tv.num_rows());
-    out->varlen_content_bytes = varlen_content_bytes(tv);
+    acc.rows += static_cast<uint64_t>(tv.num_rows());
+    acc.varlen_content_bytes += varlen_content_bytes(tv);
+    uint64_t handle = impl_->next_handle++;
+    impl_->registry.emplace(handle, std::move(result));
+    out_handles[p] = handle;
   }
-  uint64_t handle = impl_->next_handle++;
-  impl_->registry.emplace(handle, std::move(result));
-  return handle;
+  *out_count = n_out;
+  if (out) *out = acc;
 }
 
 const TableResult& NodeSession::table_for(uint64_t handle) const {
