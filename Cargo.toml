@@ -6,3 +6,24 @@ members = [
   "cost-report",
 ]
 resolver = "2"
+
+# Speed up the .cpu.txt/.cost.txt verification tests, which drive the full
+# DataFusion/Arrow/parquet stack plus our own node-by-node executor loop over SF-1
+# data. In a plain debug build that all runs unoptimized (~20-50x slow: tpch q1
+# took 40s). Fixes, keeping debug symbols (debug=true) everywhere for backtraces:
+#  - deps at opt-level 3: one-time optimized compile, then cached. This is the bulk
+#    of the win (q6 1.6s->0.15s, tpch q1 40s->10s, tpcds q14 119s->10s).
+#  - workspace crates at opt-level 1: the per-query executor loop is our code, so
+#    opt 0 left the heavy queries 3-10s; opt 1 roughly halves them again. Measured
+#    opt 1 == opt 2 == opt 3 on runtime (the rest is genuine compute, incl. the
+#    oracle+executor double-run), so opt 1 is the plateau — higher levels only slow
+#    the workspace rebuild for no runtime gain. Typical SF-1 queries are now <1s;
+#    the few heavy double-run queries (tpch q1/q9, tpcds q14) stay a few seconds,
+#    bounded by compute, not codegen.
+# profile.test inherits both from dev.
+[profile.dev]
+opt-level = 1
+debug = true
+
+[profile.dev.package."*"]
+opt-level = 3
