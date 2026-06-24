@@ -134,3 +134,23 @@ pub fn surviving_row_groups(parquet: &ParquetExec) -> Option<Vec<u32>> {
         Some(survivors)
     }
 }
+
+/// All row-group indices `0..N` of a single-source ParquetExec (no pruning).
+/// Used by the tp8 partitioning step when there is no static predicate to prune
+/// by, so the scan-batch→partition map still covers every group. `None` for the
+/// multi-file / unreadable cases (the caller then leaves the scan single-partition).
+pub fn all_row_groups(parquet: &ParquetExec) -> Option<Vec<u32>> {
+    let config = parquet.base_config();
+    let files: Vec<_> = config.file_groups.iter().flatten().collect();
+    if files.len() != 1 {
+        return None;
+    }
+    let path = format!("/{}", files[0].object_meta.location);
+    let file = std::fs::File::open(&path).ok()?;
+    let reader = SerializedFileReader::new(file).ok()?;
+    let n = reader.metadata().num_row_groups();
+    if n == 0 {
+        return None;
+    }
+    Some((0..n as u32).collect())
+}

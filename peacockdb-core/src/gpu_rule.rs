@@ -273,6 +273,33 @@ pub struct ScanBatchMap {
     pub partition: u32,
 }
 
+/// Build the RG→batch→partition map (Phase 2 Inc1): split the row groups to read
+/// (`rgs`) into `n_parts` CONTIGUOUS chunks, one batch each, chunk p → partition p.
+/// Deterministic + reader-independent (explicit RG indices). At a large budget each
+/// partition is one batch (>per-partition-budget multi-batch splitting is deferred).
+/// Returns EMPTY (= legacy single-partition) when there's nothing to split N-way
+/// (n_parts<=1, no RGs, or fewer RGs than would yield >1 partition) — so tp1 and
+/// tiny single-RG scans stay byte-identical.
+pub fn build_scan_map(rgs: &[u32], n_parts: usize) -> Vec<ScanBatchMap> {
+    if rgs.is_empty() || n_parts <= 1 {
+        return Vec::new();
+    }
+    let n = n_parts.min(rgs.len());
+    if n <= 1 {
+        return Vec::new();
+    }
+    let per = rgs.len() / n;
+    let rem = rgs.len() % n;
+    let mut map = Vec::with_capacity(n);
+    let mut idx = 0usize;
+    for p in 0..n {
+        let cnt = per + if p < rem { 1 } else { 0 };
+        map.push(ScanBatchMap { row_groups: rgs[idx..idx + cnt].to_vec(), partition: p as u32 });
+        idx += cnt;
+    }
+    map
+}
+
 #[derive(Debug)]
 pub struct GpuScanExec {
     inner: Arc<dyn ExecutionPlan>,
@@ -934,8 +961,23 @@ impl PhysicalOptimizerRule for GpuMemoryBudgetRule {
 
         let result = plan.transform_up(|node: Arc<dyn ExecutionPlan>| {
             if node.as_any().is::<ParquetExec>() {
+                // tp8 (target_partitions>1): attach the explicit RG→batch→partition
+                // map so the scan emits N partitions (dissolving RoundRobin into the
+                // scan). The RGs to read = #12 survivors if a static predicate prunes,
+                // else all groups. tp1 (=1) gets an empty map = legacy single-partition.
+                let n_parts = config.execution.target_partitions;
+                let batches = if n_parts > 1 {
+                    let parquet = node.as_any().downcast_ref::<ParquetExec>().unwrap();
+                    crate::gpu_rowgroup_prune::surviving_row_groups(parquet)
+                        .or_else(|| crate::gpu_rowgroup_prune::all_row_groups(parquet))
+                        .map(|rgs| build_scan_map(&rgs, n_parts))
+                        .unwrap_or_default()
+                } else {
+                    Vec::new()
+                };
                 Ok(Transformed::yes(
-                    Arc::new(GpuScanExec::new(node, batch_size)) as Arc<dyn ExecutionPlan>,
+                    Arc::new(GpuScanExec::new(node, batch_size).with_batches(batches))
+                        as Arc<dyn ExecutionPlan>,
                 ))
             } else if node.as_any().is::<GpuCoalesceBatchesExec>() {
                 let gpu_cb = node.as_any().downcast_ref::<GpuCoalesceBatchesExec>().unwrap();
