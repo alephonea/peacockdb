@@ -60,12 +60,14 @@ class NodeSession {
   /// flattened concatenation grouped by child, `input_child_counts[c]` = child
   /// c's partition count, `n_children` = number of children. The node's output
   /// partition handles are written to `out_handles[0..*out_count]` (caller buffer
-  /// of `out_cap`; partition count is bounded by target_partitions), and `*out`
-  /// is filled with the Σ-over-partitions stats. Input handles are CONSUMED.
+  /// of `out_cap`; partition count is bounded by target_partitions), and
+  /// `out_stats[0..*out_count]` is filled with PER-PARTITION stats (parallel to
+  /// out_handles) so Rust can sum the ColAccum overhead per partition — the cost is
+  /// Σ_p ColAccum(rows_p), NOT ColAccum(Σ rows). Input handles are CONSUMED.
   void execute_node(uint64_t seq, const uint64_t* input_handles,
                     const uint64_t* input_child_counts, size_t n_children,
                     uint64_t* out_handles, size_t out_cap, size_t* out_count,
-                    NodeStats* out);
+                    NodeStats* out_stats);
 
   /// Borrow the resident table behind `handle` (for materialization at root).
   const TableResult& table_for(uint64_t handle) const;

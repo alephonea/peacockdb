@@ -45,6 +45,14 @@ cpu_result_test!(tpch, 1, q20, tp8_mem2gib);
 cpu_result_test!(tpch, 1, q21, tp8_mem2gib);
 cpu_result_test!(tpch, 1, q22, tp8_mem2gib);
 
+// ── H200/tp8 (Phase 2 Inc1): real 8-way partitioning ────────────────────────
+// The scan's RG→partition map drives this through the #13 CpuNodeExecutor, so
+// per-node stats are Σ-over-8 partitions (partial-agg = 8 rows, CoalescePartitions
+// concat 8→1) — the SAME the real 8-way GPU produces. Cross-checks #13-CPU vs
+// DataFusion on the CPU tier; the GPU verifies against this device's .cpu.txt.
+// q6 = scan→filter→partial-agg→CoalescePartitions→final-agg (no hash; Inc1 proof).
+cpu_result_test!(tpch, 1, q6, tp8_mem120gib);
+
 // ── TPC-DS ────────────────────────────────────────────────────────────────
 cpu_result_test!(tpcds, 1, q1, tp8_mem2gib);
 cpu_result_test!(tpcds, 1, q2, tp8_mem2gib);

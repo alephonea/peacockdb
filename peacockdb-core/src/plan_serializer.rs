@@ -123,15 +123,22 @@ fn serialize_gpu_scan<'a>(
     // normalization, so we re-add it here. ListingTableUrl canonicalizes to
     // absolute at registration time, so the original input was always absolute
     // by the time we get here.
-    let path_strings: Vec<String> = config
-        .file_groups
-        .iter()
-        .flat_map(|group| {
-            group
-                .iter()
-                .map(|pf| format!("/{}", pf.object_meta.location))
-        })
-        .collect();
+    // DISTINCT physical files only. At target_partitions>1 DataFusion splits ONE
+    // file into several byte-RANGE PartitionedFile entries (all the same path); the
+    // peacock model reads WHOLE row groups (the RG→partition map drives partitioning,
+    // not byte ranges), and cuDF's source_info would otherwise see N identical
+    // sources but receive a single row-group vector ("Must specify row groups for
+    // each source"). Dedup preserves first-seen order; genuine multi-file scans keep
+    // all distinct paths; tp1 (one group) is unchanged.
+    let mut path_strings: Vec<String> = Vec::new();
+    for group in &config.file_groups {
+        for pf in group {
+            let p = format!("/{}", pf.object_meta.location);
+            if !path_strings.contains(&p) {
+                path_strings.push(p);
+            }
+        }
+    }
     let paths: Vec<_> = path_strings.iter().map(|s| b.create_string(s)).collect();
     let file_paths = b.create_vector(&paths);
 

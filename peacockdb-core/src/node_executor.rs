@@ -368,7 +368,8 @@ mod gpu {
             const OUT_CAP: usize = 64;
             let mut out_buf = [0u64; OUT_CAP];
             let mut out_count: u64 = 0;
-            let mut st = PeacockNodeStats::default();
+            // Per-partition stats (parallel to out_handles); see the FFI contract.
+            let mut out_stats = [PeacockNodeStats::default(); OUT_CAP];
             let rc = unsafe {
                 peacock_executor_execute_node(
                     self.executor,
@@ -379,27 +380,36 @@ mod gpu {
                     out_buf.as_mut_ptr(),
                     OUT_CAP as u64,
                     &mut out_count,
-                    &mut st,
+                    out_stats.as_mut_ptr(),
                 )
             };
             if rc != 0 {
                 return Err(last_error(self.executor, "peacock_executor_execute_node"));
             }
-            let out_handles: Vec<u64> = out_buf[..out_count as usize].to_vec();
-            let rows = st.rows as usize;
-            // Single-source cost: Rust applies the ColAccum overhead from the
-            // node's output schema + (Σ-over-partitions) rows, plus the var-len
-            // content C++ measured. (Per-partition overhead accounting for >1
-            // partition is Inc1 step iii.)
+            let n = out_count as usize;
+            let out_handles: Vec<u64> = out_buf[..n].to_vec();
+            // Cost = Σ-over-partitions of the PER-PARTITION ColAccum overhead (each
+            // partition charged its own bitmap/offset +1 fixed terms) + the var-len
+            // content C++ measured — matching the #13 CpuNodeExecutor's Σ-over-
+            // partition golden, NOT ColAccum(Σ rows). Rust owns the byte formula
+            // (logical_size_from_schema), single-sourced → no CPU/GPU drift.
             let schema = node.schema();
-            let output_bytes =
-                logical_size_from_schema(&schema, rows, st.varlen_content_bytes as usize);
+            let mut rows = 0usize;
+            let mut output_bytes = 0usize;
+            let mut max_batch_rows = 0usize;
+            for st in &out_stats[..n] {
+                let rp = st.rows as usize;
+                rows += rp;
+                output_bytes +=
+                    logical_size_from_schema(&schema, rp, st.varlen_content_bytes as usize);
+                max_batch_rows = max_batch_rows.max(rp);
+            }
             let stat = NodeMemoryStats {
                 node_name: node.name().to_string(),
                 allocated_bytes: 0, // not modeled on GPU (VRAM layout not compared)
                 output_bytes,
                 row_count: rows,
-                max_batch_rows: rows,
+                max_batch_rows,
             };
             Ok((out_handles, stat))
         }

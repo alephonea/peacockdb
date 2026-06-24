@@ -101,7 +101,9 @@ int peacock_executor_begin_plan(peacock_executor_t* executor,
 /// `input_handles` = flattened handles grouped by child; `input_child_counts[c]` =
 /// child c's partition count; `n_children` = number of children. Output partition
 /// handles are written to `out_handles[0..*out_count]` (caller buffer of `out_cap`;
-/// partition count is bounded by target_partitions). `*out_stats` = Σ-over-partitions.
+/// partition count is bounded by target_partitions). `out_stats[0..*out_count]` is a
+/// caller array filled PER PARTITION (parallel to out_handles), so Rust sums the
+/// ColAccum overhead per partition (cost = Σ_p ColAccum(rows_p), not ColAccum(Σ rows)).
 int peacock_executor_execute_node(peacock_executor_t* executor,
                                   uint64_t seq,
                                   const uint64_t* input_handles,

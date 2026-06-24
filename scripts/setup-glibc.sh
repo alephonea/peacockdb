@@ -196,11 +196,14 @@ patch_rpath() {
   current="$(patchelf --print-rpath "$target" 2>/dev/null || true)"
 
   # Strip previous glibc and cuda entries to make this idempotent.
+  # `|| true`: under `set -euo pipefail`, if `grep -v` filters out EVERY line (an
+  # already-patched lib whose only rpath entry is the one being stripped) grep exits
+  # 1 and pipefail would abort the whole script — making re-patching non-idempotent.
   local cleaned
-  cleaned="$(echo "$current" | tr ':' '\n' \
+  cleaned="$( { echo "$current" | tr ':' '\n' \
     | grep -v "^${PREFIX}/lib\$" \
     | { if [ -n "$CUDA_LIB_DIR" ]; then grep -v "^${CUDA_LIB_DIR}\$"; else cat; fi; } \
-    | paste -sd ':')"
+    | paste -sd ':'; } || true)"
 
   # Build new rpath: glibc first, then cuda, then original entries.
   local new_rpath="${PREFIX}/lib"
@@ -274,11 +277,13 @@ patch_rust_dir() {
     # Same approach as patch_rpath, plus a $ORIGIN/../lib entry so libpeacock_gpu.so
     # resolves from the sibling lib/ dir without depending on LD_LIBRARY_PATH.
     current="$(patchelf --print-rpath "$f" 2>/dev/null || true)"
-    cleaned="$(echo "$current" | tr ':' '\n' \
+    # `|| true`: tolerate grep -v filtering out every entry (idempotent re-patch) —
+    # otherwise pipefail aborts before the next binary / the rust-tests step.
+    cleaned="$( { echo "$current" | tr ':' '\n' \
       | grep -v "^${PREFIX}/lib\$" \
       | { if [ -n "$CUDA_LIB_DIR" ]; then grep -v "^${CUDA_LIB_DIR}\$"; else cat; fi; } \
       | grep -vF '$ORIGIN/../lib' \
-      | paste -sd ':')"
+      | paste -sd ':'; } || true)"
 
     new_rpath="${PREFIX}/lib"
     if [ -n "$CUDA_LIB_DIR" ]; then

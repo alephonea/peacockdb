@@ -2697,7 +2697,7 @@ size_t NodeSession::node_count() const { return impl_->post_order.size(); }
 void NodeSession::execute_node(uint64_t seq, const uint64_t* input_handles,
                                const uint64_t* input_child_counts, size_t n_children,
                                uint64_t* out_handles, size_t out_cap, size_t* out_count,
-                               NodeStats* out) {
+                               NodeStats* out_stats) {
   if (seq >= impl_->post_order.size())
     throw std::runtime_error("NodeSession::execute_node: seq out of range");
   const fb::PlanNode* node = impl_->post_order[seq];
@@ -2723,19 +2723,17 @@ void NodeSession::execute_node(uint64_t seq, const uint64_t* input_handles,
       size_t n = scan->batches()->size();
       if (n > out_cap)
         throw std::runtime_error("NodeSession::execute_node: out_handles buffer too small");
-      NodeStats acc{};
       for (size_t p = 0; p < n; ++p) {
         const fb::ScanBatch* b = scan->batches()->Get(static_cast<flatbuffers::uoffset_t>(p));
         TableResult result = execute_scan(scan, b->row_groups());
         auto tv = result.table->view();
-        acc.rows += static_cast<uint64_t>(tv.num_rows());
-        acc.varlen_content_bytes += varlen_content_bytes(tv);
+        if (out_stats)
+          out_stats[p] = NodeStats{static_cast<uint64_t>(tv.num_rows()), varlen_content_bytes(tv)};
         uint64_t handle = impl_->next_handle++;
         impl_->registry.emplace(handle, std::move(result));
         out_handles[p] = handle;  // map entries are stored in partition order 0..n-1
       }
       *out_count = n;
-      if (out) *out = acc;
       return;
     }
   }
@@ -2760,14 +2758,12 @@ void NodeSession::execute_node(uint64_t seq, const uint64_t* input_handles,
     result.column_names = owned.empty() ? std::vector<std::string>{} : owned[0].column_names;
     result.table = cudf::concatenate(views);
     auto tv = result.table->view();
-    NodeStats acc{};
-    acc.rows = static_cast<uint64_t>(tv.num_rows());
-    acc.varlen_content_bytes = varlen_content_bytes(tv);
+    if (out_stats)
+      out_stats[0] = NodeStats{static_cast<uint64_t>(tv.num_rows()), varlen_content_bytes(tv)};
     uint64_t handle = impl_->next_handle++;
     impl_->registry.emplace(handle, std::move(result));
     out_handles[0] = handle;
     *out_count = 1;
-    if (out) *out = acc;
     return;
   }
 
@@ -2781,7 +2777,6 @@ void NodeSession::execute_node(uint64_t seq, const uint64_t* input_handles,
   if (n_out > out_cap)
     throw std::runtime_error("NodeSession::execute_node: out_handles buffer too small");
 
-  NodeStats acc{};
   for (size_t p = 0; p < n_out; ++p) {
     std::vector<TableResult> inputs;
     inputs.reserve(n_children);
@@ -2795,14 +2790,13 @@ void NodeSession::execute_node(uint64_t seq, const uint64_t* input_handles,
     }
     TableResult result = execute_one(node, std::move(inputs));
     auto tv = result.table->view();
-    acc.rows += static_cast<uint64_t>(tv.num_rows());
-    acc.varlen_content_bytes += varlen_content_bytes(tv);
+    if (out_stats)
+      out_stats[p] = NodeStats{static_cast<uint64_t>(tv.num_rows()), varlen_content_bytes(tv)};
     uint64_t handle = impl_->next_handle++;
     impl_->registry.emplace(handle, std::move(result));
     out_handles[p] = handle;
   }
   *out_count = n_out;
-  if (out) *out = acc;
 }
 
 const TableResult& NodeSession::table_for(uint64_t handle) const {

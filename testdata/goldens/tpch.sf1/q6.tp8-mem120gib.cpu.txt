@@ -1,0 +1,7 @@
+GpuProjectExec: expr=[sum(lineitem.l_extendedprice * lineitem.l_discount)@0 as revenue], output_bytes=17, output_rows=1
+  GpuAggregateExec: group_by=[], aggr=[sum(lineitem.l_extendedprice * lineitem.l_discount)], output_bytes=17, output_rows=1
+    GpuCoalescePartitionsExec, output_bytes=129, output_rows=8
+      GpuAggregateExec: group_by=[], aggr=[sum(lineitem.l_extendedprice * lineitem.l_discount)], output_bytes=136, output_rows=8
+        GpuCoalesceBatchesExec: target_batch_size=1533916891, output_bytes=3681668, output_rows=114160
+          GpuFilterExec: predicate=l_shipdate@3 >= 1994-01-01 AND l_shipdate@3 < 1995-01-01 AND l_discount@2 >= Some(5),15,2 AND l_discount@2 <= Some(7),15,2 AND l_quantity@0 < Some(2400),15,2, projection=[1, 2], output_bytes=3681668, output_rows=114160
+            GpuScanExec: table=lineitem, projections=[l_quantity, l_extendedprice, l_discount, l_shipdate], batch_size=1533916891, output_bytes=51609600, output_rows=983040

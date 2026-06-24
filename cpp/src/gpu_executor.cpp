@@ -172,16 +172,15 @@ int peacock_executor_execute_node(peacock_executor_t* executor, uint64_t seq,
     return 1;
   }
   try {
-    peacock::NodeStats stats;
+    // out_stats is a caller array of out_cap, filled PER PARTITION (parallel to
+    // out_handles); PeacockNodeStats and peacock::NodeStats are layout-identical
+    // ({uint64 rows; uint64 varlen_content_bytes}).
     size_t n_out = 0;
-    executor->session->execute_node(seq, input_handles, input_child_counts,
-                                    static_cast<size_t>(n_children), out_handles,
-                                    static_cast<size_t>(out_cap), &n_out, &stats);
+    executor->session->execute_node(
+        seq, input_handles, input_child_counts, static_cast<size_t>(n_children),
+        out_handles, static_cast<size_t>(out_cap), &n_out,
+        reinterpret_cast<peacock::NodeStats*>(out_stats));
     *out_count = static_cast<uint64_t>(n_out);
-    if (out_stats) {
-      out_stats->rows = stats.rows;
-      out_stats->varlen_content_bytes = stats.varlen_content_bytes;
-    }
     return 0;
   } catch (const std::exception& e) {
     executor->last_error = e.what();

@@ -18,7 +18,8 @@ use datafusion::physical_plan::display::DisplayableExecutionPlan;
 use datafusion::physical_plan::{DisplayFormatType, ExecutionPlan};
 
 use peacockdb_core::cpu_executor::{execute_node_by_node_instrumented_enforced, NodeMemoryStats};
-use peacockdb_core::gpu_rule::{analyze_memory, row_width};
+use peacockdb_core::gpu_rule::{analyze_memory, row_width, GpuScanExec};
+use peacockdb_core::node_executor::{execute_node_by_node, CpuNodeExecutor};
 use peacockdb_core::plan_serializer;
 use peacockdb_core::{
     build_session_state, build_session_state_with_gpu_rules, create_context_with_tables,
@@ -616,6 +617,18 @@ pub fn assert_result_golden(
 /// nearly all queries). A `Some(tol)` is passed ONLY via `cpu_result_approx_test!`
 /// for the handful of queries (q39, q14) whose only divergence from the oracle is
 /// float summation reassociation (~1 ULP) — see [`assert_results_match`].
+/// True if the plan's scan carries a non-empty RG→partition map (tp>1 multi-
+/// partition) — the signal to drive it through the #13 CpuNodeExecutor so per-node
+/// stats are Σ-over-partitions (matching the real 8-way GPU). Empty map = tp1.
+fn plan_has_scan_map(plan: &Arc<dyn ExecutionPlan>) -> bool {
+    if let Some(s) = plan.as_any().downcast_ref::<GpuScanExec>() {
+        if !s.batches_map().is_empty() {
+            return true;
+        }
+    }
+    plan.children().iter().any(|c| plan_has_scan_map(c))
+}
+
 pub async fn assert_cpu_results_match_datafusion(
     dataset: &str,
     sf: &str,
@@ -639,15 +652,30 @@ pub async fn assert_cpu_results_match_datafusion(
     let (partitions, budget) = device_config(device);
     let cpu_ctx = create_context_with_tables(&data_dir, partitions, budget).await.unwrap();
     let plan = cpu_ctx.sql(&sql).await.unwrap().create_physical_plan().await.unwrap();
-    let mut stats: Vec<NodeMemoryStats> = vec![];
-    // Run WITH strict resident control at the device budget. At tp8-mem2gib the
-    // peak resident (~135 MB at SF1) is far under 2 GiB, so it never trips and these
-    // results are unchanged — this also continuously guards that enforcement is a
-    // pure ADDED check that doesn't perturb the 127 real-test outcomes.
-    let actual =
-        execute_node_by_node_instrumented_enforced(plan.clone(), cpu_ctx.task_ctx(), budget, &mut stats)
-            .await
-            .unwrap();
+
+    // Multi-partition (tp>1) plans whose scan carries an explicit RG→partition MAP are
+    // driven by the #13 CpuNodeExecutor: it maintains N partitions across nodes
+    // (partial-agg = Σ-over-partitions, CoalescePartitions concat N→1), producing the
+    // SAME Σ-over-8 per-node stats + result the real 8-way GPU does — the natural home
+    // for the tp8-mem120gib golden. Plans with no map (tp1, single-partition) keep the
+    // #11 instrumented-enforced path (strict resident control at the device budget;
+    // also backs the resident-OOM tests). Both yield post-order stats + a coalesced
+    // result, so the cost-golden + result assertions below are identical downstream.
+    let (actual, stats): (Vec<RecordBatch>, Vec<NodeMemoryStats>) = if plan_has_scan_map(&plan) {
+        let mut backend = CpuNodeExecutor::new(cpu_ctx.task_ctx());
+        execute_node_by_node(&plan, &mut backend).await.unwrap()
+    } else {
+        let mut stats: Vec<NodeMemoryStats> = vec![];
+        let actual = execute_node_by_node_instrumented_enforced(
+            plan.clone(),
+            cpu_ctx.task_ctx(),
+            budget,
+            &mut stats,
+        )
+        .await
+        .unwrap();
+        (actual, stats)
+    };
 
     assert_results_match(&expected, &actual, rel_tol, &format!("{dataset}/{query}"));
     assert_cpu_cost_canonical(&plan, &stats, &cpu_golden(dataset, sf, query, device));
