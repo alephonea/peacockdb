@@ -24,4 +24,3 @@ GpuSortExec: expr=[value@1 DESC], output_bytes=669398, output_rows=27604
                 GpuHashJoinExec: join_type=Inner, on=[(s_suppkey@0, ps_suppkey@1)], projection=[1, 2, 4, 5], output_bytes=29200000, output_rows=800000
                   GpuScanExec: table=supplier, projections=[s_suppkey, s_nationkey], batch_size=1464193396, output_bytes=122500, output_rows=10000
                   GpuScanExec: table=partsupp, projections=[ps_partkey, ps_suppkey, ps_availqty, ps_supplycost], batch_size=1464193396, output_bytes=32400000, output_rows=800000
-peacockdb_cost=220564874

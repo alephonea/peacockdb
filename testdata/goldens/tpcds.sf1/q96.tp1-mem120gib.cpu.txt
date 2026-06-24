@@ -17,4 +17,3 @@ GpuGlobalLimitExec: skip=0, fetch=100, output_bytes=9, output_rows=1
                     GpuFilterExec: predicate=hd_dep_count@1 = 7, projection=[0], output_bytes=5850, output_rows=720
                       GpuScanExec: table=household_demographics, projections=[hd_demo_sk, hd_dep_count], batch_size=2684354560, output_bytes=117000, output_rows=7200
                   GpuScanExec: table=store_sales, projections=[ss_sold_time_sk, ss_hdemo_sk, ss_store_sk], batch_size=2684354560, output_bytes=70209849, output_rows=2880404
-peacockdb_cost=81479192

@@ -32,4 +32,3 @@ GpuProjectExec: expr=[state@0 as state, cnt@1 as cnt], output_bytes=658, output_
                     GpuProjectExec: expr=[CAST(avg(j.i_current_price)@1 AS Float64) as avg(j.i_current_price), i_category@0 as i_category], output_bytes=199, output_rows=11
                       GpuAggregateExec: group_by=[i_category], aggr=[avg(j.i_current_price)], output_bytes=287, output_rows=11
                         GpuScanExec: table=item, projections=[i_current_price, i_category], batch_size=671088640, output_bytes=470353, output_rows=18000
-peacockdb_cost=710557384

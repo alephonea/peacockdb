@@ -5,4 +5,3 @@ GpuSortExec: expr=[l_returnflag@0 ASC NULLS LAST, l_linestatus@1 ASC NULLS LAST]
         GpuCoalesceBatchesExec: target_batch_size=350133203, output_bytes=442265186, output_rows=5916591
           GpuFilterExec: predicate=l_shipdate@6 <= 1998-09-02, projection=[0, 1, 2, 3, 4, 5], output_bytes=442265186, output_rows=5916591
             GpuScanExec: table=lineitem, projections=[l_quantity, l_extendedprice, l_discount, l_tax, l_returnflag, l_linestatus, l_shipdate], batch_size=350133203, output_bytes=473345842, output_rows=6001215
-peacockdb_cost=1895548044

@@ -68,4 +68,3 @@ GpuSortExec: expr=[i_item_id@0 ASC NULLS LAST, total_sales@1 ASC NULLS LAST], fe
                                     GpuScanExec: table=date_dim, projections=[d_date_sk, d_year, d_moy], batch_size=447392426, output_bytes=1780572, output_rows=73049
                                 GpuScanExec: table=web_sales, projections=[ws_sold_date_sk, ws_item_sk, ws_bill_addr_sk, ws_ext_sales_price], batch_size=447392426, output_bytes=29135052, output_rows=719384
                         GpuScanExec: table=item, projections=[i_item_sk, i_item_id], batch_size=447392426, output_bytes=508504, output_rows=18000
-peacockdb_cost=231268345

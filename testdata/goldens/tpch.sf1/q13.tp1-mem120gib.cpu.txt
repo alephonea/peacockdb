@@ -9,4 +9,3 @@ GpuSortExec: expr=[custdist@1 DESC, c_count@0 DESC], output_bytes=684, output_ro
               GpuCoalesceBatchesExec: target_batch_size=2013265920, output_bytes=24119844, output_rows=1484298
                 GpuFilterExec: predicate=o_comment@2 NOT LIKE %special%requests%, projection=[0, 1], output_bytes=24119844, output_rows=1484298
                   GpuScanExec: table=orders, projections=[o_orderkey, o_custkey, o_comment], batch_size=2013265920, output_bytes=103333312, output_rows=1500000
-peacockdb_cost=206314868

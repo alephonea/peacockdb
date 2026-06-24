@@ -27,4 +27,3 @@ GpuSortExec: expr=[c_customer_id@0 ASC NULLS LAST], fetch=100, output_bytes=2017
                     GpuFilterExec: predicate=d_year@1 = 2000, projection=[0], output_bytes=2974, output_rows=366
                       GpuScanExec: table=date_dim, projections=[d_date_sk, d_year], batch_size=1006632960, output_bytes=1187048, output_rows=73049
                   GpuScanExec: table=store_returns, projections=[sr_returned_date_sk, sr_customer_sk, sr_store_sk, sr_return_amt], batch_size=1006632960, output_bytes=11658616, output_rows=287867
-peacockdb_cost=49894471

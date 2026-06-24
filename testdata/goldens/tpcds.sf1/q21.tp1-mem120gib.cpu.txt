@@ -21,4 +21,3 @@ GpuSortExec: expr=[w_warehouse_name@0 ASC, i_item_id@1 ASC], fetch=100, output_b
                             GpuHashJoinExec: join_type=Inner, on=[(w_warehouse_sk@0, inv_warehouse_sk@2)], projection=[1, 2, 3, 5], output_bytes=454531504, output_rows=11745000
                               GpuScanExec: table=warehouse, projections=[w_warehouse_sk, w_warehouse_name], batch_size=766958445, output_bytes=137, output_rows=5
                               GpuScanExec: table=inventory, projections=[inv_date_sk, inv_item_sk, inv_warehouse_sk, inv_quantity_on_hand], batch_size=766958445, output_bytes=334732500, output_rows=11745000
-peacockdb_cost=1814759385

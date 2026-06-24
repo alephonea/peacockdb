@@ -39,4 +39,3 @@ GpuSortExec: expr=[am_pm_ratio@0 ASC NULLS LAST], fetch=100, output_bytes=17, ou
                           GpuFilterExec: predicate=hd_dep_count@1 = 6, projection=[0], output_bytes=5850, output_rows=720
                             GpuScanExec: table=household_demographics, projections=[hd_demo_sk, hd_dep_count], batch_size=2684354560, output_bytes=117000, output_rows=7200
                         GpuScanExec: table=web_sales, projections=[ws_sold_time_sk, ws_ship_hdemo_sk, ws_web_page_sk], batch_size=2684354560, output_bytes=17534985, output_rows=719384
-peacockdb_cost=43255426

@@ -273,6 +273,13 @@ jobs:
       - name: cost-report unit tests (Rust)
         run: cargo test -p cost-report
 
+      # Verify every committed .cost.txt exactly matches regeneration from its
+      # sibling .cpu.txt plan golden (full-file, not just the total), and the
+      # cost-model unit test. Pure text over committed goldens — no executor, no
+      # dataset, no GPU — so it stays in this cheap golden-only tier.
+      - name: Cost goldens match plan-golden regeneration (Rust)
+        run: cargo test --features rust-only -p peacockdb-core --test test_cost_model
+
       - name: Generate report
         env:
           # Golden cell links point at the code version the report was generated

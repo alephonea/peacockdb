@@ -163,4 +163,3 @@ GpuProjectExec: expr=[h8_30_to_9@1 as h8_30_to_9, h9_to_9_30@2 as h9_to_9_30, h9
                                               GpuFilterExec: predicate=hd_dep_count@1 = 4 AND hd_vehicle_count@2 <= 6 OR hd_dep_count@1 = 2 AND hd_vehicle_count@2 <= 4 OR hd_dep_count@1 = 0 AND hd_vehicle_count@2 <= 2, projection=[0], output_bytes=15600, output_rows=1920
                                                 GpuScanExec: table=household_demographics, projections=[hd_demo_sk, hd_dep_count, hd_vehicle_count], batch_size=1006632960, output_bytes=146700, output_rows=7200
                                             GpuScanExec: table=store_sales, projections=[ss_sold_time_sk, ss_hdemo_sk, ss_store_sk], batch_size=1006632960, output_bytes=70209849, output_rows=2880404
-peacockdb_cost=775577758

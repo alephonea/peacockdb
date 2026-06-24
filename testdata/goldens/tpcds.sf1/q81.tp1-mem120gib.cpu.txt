@@ -35,4 +35,3 @@ GpuSortExec: expr=[c_customer_id@0 ASC NULLS LAST, c_salutation@1 ASC NULLS LAST
                             GpuScanExec: table=date_dim, projections=[d_date_sk, d_year], batch_size=123893287, output_bytes=1187048, output_rows=73049
                         GpuScanExec: table=catalog_returns, projections=[cr_returned_date_sk, cr_returning_customer_sk, cr_returning_addr_sk, cr_return_amt_inc_tax], batch_size=123893287, output_bytes=5834716, output_rows=144067
                     GpuScanExec: table=customer_address, projections=[ca_address_sk, ca_state], batch_size=123893287, output_bytes=709404, output_rows=50000
-peacockdb_cost=45135268

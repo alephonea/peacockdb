@@ -1,0 +1,14 @@
+storage_read_bytes=640311877 # GpuScanExec
+cuda_filter_bytes=137280 # GpuFilterExec
+cuda_hash_join_bytes=841289826 # GpuHashJoinExec
+cuda_aggregate_bytes=167219101 # GpuAggregateExec
+cuda_sort_bytes=319 # GpuSortExec, GpuSortPreservingMergeExec
+cuda_join_bytes=266848168 # GpuNestedLoopJoinExec, GpuCrossJoinExec
+cuda_window_bytes=0 # GpuWindowExec
+cuda_limit_bytes=0 # GpuGlobalLimitExec
+cuda_shuffle_bytes=154 # GpuRepartitionExec, GpuInterleaveExec, GpuCoalescePartitionsExec, GpuUnionExec
+cuda_passthrough_bytes=1896030818 # GpuCoalesceBatchesExec, GpuProjectExec
+ram_to_vram_bytes=0 # (placeholder, no node mapping)
+cuda_decompress_bytes=0 # (placeholder, no node mapping)
+cuda_rle_decode_bytes=0 # (placeholder, no node mapping)
+peacockdb_cost=3811837543

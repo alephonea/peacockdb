@@ -22,4 +22,3 @@ GpuSortExec: expr=[c_last_name@0 ASC, c_first_name@1 ASC, substr(ms.s_city,Int64
                             GpuFilterExec: predicate=d_dow@2 = 1 AND (d_year@1 = 1999 OR d_year@1 = 2000 OR d_year@1 = 2001), projection=[0], output_bytes=1276, output_rows=157
                               GpuScanExec: table=date_dim, projections=[d_date_sk, d_year, d_dow], batch_size=447392426, output_bytes=1780572, output_rows=73049
                           GpuScanExec: table=store_sales, projections=[ss_sold_date_sk, ss_customer_sk, ss_hdemo_sk, ss_addr_sk, ss_store_sk, ss_ticket_number, ss_coupon_amt, ss_net_profit], batch_size=447392426, output_bytes=233312728, output_rows=2880404
-peacockdb_cost=327969723

@@ -8,4 +8,3 @@ GpuProjectExec: expr=[sum(lineitem.l_extendedprice * Int64(1) - lineitem.l_disco
         GpuCoalesceBatchesExec: target_batch_size=732096698, output_bytes=7252964, output_rows=128371
           GpuFilterExec: predicate=(l_quantity@1 >= Some(100),15,2 AND l_quantity@1 <= Some(1100),15,2 OR l_quantity@1 >= Some(1000),15,2 AND l_quantity@1 <= Some(2000),15,2 OR l_quantity@1 >= Some(2000),15,2 AND l_quantity@1 <= Some(3000),15,2) AND (l_shipmode@5 = AIR OR l_shipmode@5 = AIR REG) AND l_shipinstruct@4 = DELIVER IN PERSON, projection=[0, 1, 2, 3], output_bytes=7252964, output_rows=128371
             GpuScanExec: table=lineitem, projections=[l_partkey, l_quantity, l_extendedprice, l_discount, l_shipinstruct, l_shipmode], batch_size=732096698, output_bytes=486302123, output_rows=6001215
-peacockdb_cost=508065094

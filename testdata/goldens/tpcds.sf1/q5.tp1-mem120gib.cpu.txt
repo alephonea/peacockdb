@@ -64,4 +64,3 @@ GpuSortExec: expr=[channel@0 ASC, id@1 ASC], fetch=100, output_bytes=9902, outpu
                                       GpuHashJoinExec: join_type=Left, on=[(wr_item_sk@1, ws_item_sk@0), (wr_order_number@2, ws_order_number@2)], output_bytes=5803976, output_rows=71654
                                         GpuScanExec: table=web_returns, projections=[wr_returned_date_sk, wr_item_sk, wr_order_number, wr_return_amt, wr_net_loss], batch_size=95021400, output_bytes=4057409, output_rows=71654
                                         GpuScanExec: table=web_sales, projections=[ws_item_sk, ws_web_site_sk, ws_order_number], batch_size=95021400, output_bytes=17534985, output_rows=719384
-peacockdb_cost=1219900033

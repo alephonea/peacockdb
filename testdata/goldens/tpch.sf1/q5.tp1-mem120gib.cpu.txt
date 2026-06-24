@@ -23,4 +23,3 @@ GpuSortExec: expr=[revenue@1 DESC], output_bytes=137, output_rows=5
                                 GpuFilterExec: predicate=o_orderdate@2 >= 1994-01-01 AND o_orderdate@2 < 1995-01-01, projection=[0, 1], output_bytes=3698452, output_rows=227597
                                   GpuScanExec: table=orders, projections=[o_orderkey, o_custkey, o_orderdate], batch_size=894784853, output_bytes=7511040, output_rows=368640
                           GpuScanExec: table=lineitem, projections=[l_orderkey, l_suppkey, l_extendedprice, l_discount], batch_size=894784853, output_bytes=291058928, output_rows=6001215
-peacockdb_cost=404282740

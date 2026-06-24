@@ -8,4 +8,3 @@ GpuSortExec: expr=[l_shipmode@0 ASC NULLS LAST], output_bytes=55, output_rows=2
               GpuFilterExec: predicate=(l_shipmode@4 = MAIL OR l_shipmode@4 = SHIP) AND l_receiptdate@3 > l_commitdate@2 AND l_shipdate@1 < l_commitdate@2 AND l_receiptdate@3 >= 1994-01-01 AND l_receiptdate@3 < 1995-01-01, projection=[0, 4], output_bytes=503560, output_rows=30988
                 GpuScanExec: table=lineitem, projections=[l_orderkey, l_shipdate, l_commitdate, l_receiptdate, l_shipmode], batch_size=894784853, output_bytes=31973409, output_rows=1105920
             GpuScanExec: table=orders, projections=[o_orderkey, o_orderpriority], batch_size=894784853, output_bytes=30974833, output_rows=1500000
-peacockdb_cost=65878728

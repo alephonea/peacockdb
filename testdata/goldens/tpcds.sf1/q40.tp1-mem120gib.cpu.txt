@@ -22,4 +22,3 @@ GpuSortExec: expr=[w_state@0 ASC NULLS LAST, i_item_id@1 ASC NULLS LAST], fetch=
                             GpuHashJoinExec: join_type=Right, on=[(cr_order_number@1, cs_order_number@3), (cr_item_sk@0, cs_item_sk@2)], projection=[2, 3, 4, 5, 7], output_bytes=81627658, output_rows=1441548
                               GpuScanExec: table=catalog_returns, projections=[cr_item_sk, cr_order_number, cr_refunded_cash], batch_size=575218834, output_bytes=4664171, output_rows=144067
                               GpuScanExec: table=catalog_sales, projections=[cs_sold_date_sk, cs_warehouse_sk, cs_item_sk, cs_order_number, cs_sales_price], batch_size=575218834, output_bytes=70095274, output_rows=1441548
-peacockdb_cost=574620984

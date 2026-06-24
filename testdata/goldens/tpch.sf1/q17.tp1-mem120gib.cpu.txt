@@ -12,4 +12,3 @@ GpuProjectExec: expr=[CAST(sum(lineitem.l_extendedprice)@0 AS Float64) / 7 as av
         GpuProjectExec: expr=[CAST(0.2 * CAST(avg(lineitem.l_quantity)@1 AS Float64) AS Decimal128(30, 15)) as Float64(0.2) * avg(lineitem.l_quantity), l_partkey@0 as l_partkey], output_bytes=4850000, output_rows=200000
           GpuAggregateExec: group_by=[l_partkey], aggr=[avg(lineitem.l_quantity)], output_bytes=4850000, output_rows=200000
             GpuScanExec: table=lineitem, projections=[l_partkey, l_quantity], batch_size=1464193396, output_bytes=145529464, output_rows=6001215
-peacockdb_cost=404678182

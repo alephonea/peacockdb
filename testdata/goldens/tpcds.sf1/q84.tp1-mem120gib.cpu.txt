@@ -22,4 +22,3 @@ GpuProjectExec: expr=[customer_id@0 as customer_id, customername@1 as customerna
                             GpuScanExec: table=customer, projections=[c_customer_id, c_current_cdemo_sk, c_current_hdemo_sk, c_current_addr_sk, c_first_name, c_last_name], batch_size=536870912, output_bytes=6429629, output_rows=100000
                         GpuScanExec: table=customer_demographics, projections=[cd_demo_sk], batch_size=536870912, output_bytes=15606500, output_rows=1920800
           GpuScanExec: table=store_returns, projections=[sr_cdemo_sk], batch_size=536870912, output_bytes=2338920, output_rows=287867
-peacockdb_cost=25931919

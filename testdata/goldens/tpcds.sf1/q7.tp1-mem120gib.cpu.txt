@@ -21,4 +21,3 @@ GpuSortExec: expr=[i_item_id@0 ASC NULLS LAST], fetch=100, output_bytes=7669, ou
                           GpuFilterExec: predicate=cd_gender@1 = M AND cd_marital_status@2 = S AND cd_education_status@3 = College, projection=[0], output_bytes=222950, output_rows=27440
                             GpuScanExec: table=customer_demographics, projections=[cd_demo_sk, cd_gender, cd_marital_status, cd_education_status], batch_size=619466436, output_bytes=61602812, output_rows=1920800
                         GpuScanExec: table=store_sales, projections=[ss_sold_date_sk, ss_item_sk, ss_cdemo_sk, ss_promo_sk, ss_quantity, ss_list_price, ss_sales_price, ss_coupon_amt], batch_size=619466436, output_bytes=256355960, output_rows=2880404
-peacockdb_cost=331643960
