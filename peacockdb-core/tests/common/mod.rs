@@ -1,7 +1,7 @@
 //! Shared test harness for the plan / cpu / gpu suites.
 //!
 //! All helper functions and the unified test macros live here; the suite files
-//! (test_query_plan.rs, test_cpu_executor.rs, test_gpu_executor.rs) contain only
+//! (test_query_plan.rs, test_cpu_executor.rs, test_gpu.rs) contain only
 //! macro invocations. Each integration-test crate includes this via
 //! `#[macro_use] mod common;`. Every suite uses a subset, so dead code is fine.
 #![allow(dead_code)]
@@ -1012,51 +1012,12 @@ macro_rules! cpu_result_fits_test {
     };
 }
 
-/// `gpu_node_test!(dataset, sf, query, device)` — GPU node-by-node verification
-/// (Task #13): run the GPU node-executor and assert per-node rows + derived cost
-/// match the CPU-emulated `.cpu.txt` golden. Gated to non-rust-only (needs the GPU).
-#[macro_export]
-macro_rules! gpu_node_test {
-    ($dataset:ident, $sf:literal, $query:ident, $device:ident) => {
-        paste::paste! {
-            #[cfg(not(feature = "rust-only"))]
-            #[tokio::test]
-            async fn [<gpu_node_ $dataset _sf $sf _ $query _ $device>]() {
-                $crate::common::assert_gpu_nodes_match_golden(
-                    stringify!($dataset),
-                    stringify!($sf),
-                    &stringify!($query).replace('_', "-"),
-                    &stringify!($device).replace('_', "-"),
-                )
-                .await;
-            }
-        }
-    };
-}
-
-/// `gpu_result_test!(dataset, sf, query, device)` — device H200, no golden.
-#[macro_export]
-macro_rules! gpu_result_test {
-    ($dataset:ident, $sf:literal, $query:ident, $device:ident) => {
-        paste::paste! {
-            #[tokio::test]
-            async fn [<gpu_ $dataset _sf $sf _ $query _ $device>]() {
-                $crate::common::assert_gpu_results_match_cpu(
-                    &$crate::common::data_dir_for(stringify!($dataset), stringify!($sf)),
-                    &$crate::common::queries_dir_for(stringify!($dataset)),
-                    &stringify!($query).replace('_', "-"),
-                )
-                .await;
-            }
-        }
-    };
-}
-
 /// `gpu_test!(dataset, sf, query, device, mode)` — the MERGED GPU test (Phase 2
 /// C2): one GPU run asserts per-node rows+cost vs the `.cpu.txt` golden AND the
-/// final result. `mode` ∈ { exact | approx | skip } (see `GpuResultMode`).
-/// Derived fn name `gpu_<ds>_sf<sf>_<query>_<device>` matches the old
-/// gpu_result_test names so CI/--exact filters keep working.
+/// final result. `mode` ∈ { golden_exact | golden_approx | oracle | skip } (see
+/// `GpuResultMode`). Derived fn name `gpu_<ds>_sf<sf>_<query>_<device>` matches the
+/// former gpu_result_test names so CI/--exact filters keep working. (Replaces the
+/// old gpu_node_test! + gpu_result_test! macros, removed in Inc0.)
 #[macro_export]
 macro_rules! gpu_test {
     ($dataset:ident, $sf:literal, $query:ident, $device:ident, $mode:ident) => {

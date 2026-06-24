@@ -184,7 +184,7 @@ jobs:
           CMAKE_GENERATOR: Ninja
           LD_LIBRARY_PATH: /opt/conda/lib
           CUDF_ROOT: /opt/conda
-          # Same as the cpp-cpu job: without this, linking test_gpu_executor
+          # Same as the cpp-cpu job: without this, linking test_gpu
           # (full DataFusion/Arrow + libpeacock_gpu, now larger with the TPC-DS
           # suite merged in) overflows the container tmpfs while lld writes its
           # mmap'd output and crashes with SIGBUS. The failure is at *link* time,
@@ -241,7 +241,7 @@ jobs:
           rsync -a --delete cpp/install/ gpu:$REMOTE_DIR/cpp/install/
           # Query SQL + minimal dataset + testdata generator + committed goldens.
           # testdata/goldens carries the *.tp1-mem120gib.cpu.txt H200/tp1 node-by-node
-          # goldens (29 tpch + 78 tpcds) that test_gpu_node asserts against; without
+          # goldens (29 tpch + 78 tpcds) that test_gpu asserts against; without
           # them the node-by-node verify cannot run.
           rsync -a testdata/tpch-queries testdata/tpcds-queries testdata/tpch.minimal \
             testdata/goldens \

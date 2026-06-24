@@ -9,7 +9,7 @@ set -e
 #   --cpu  C++ peacock_cpu_tests + the Rust CPU integration tests
 #          (test_plan_serialiser, test_query_plan, test_cpu_executor, test_ffi).
 #   --gpu  C++ peacock_plan_tests + the Rust GPU integration test
-#          (test_gpu_executor, TPC-H + TPC-DS), run one-at-a-time on the GPU.
+#          (test_gpu, TPC-H + TPC-DS), run one-at-a-time on the GPU.
 #
 # The remote host is NOT hardcoded — pass it with --host. We build locally
 # against a cuDF that matches the remote's ABI (default: a local cudf-26.02

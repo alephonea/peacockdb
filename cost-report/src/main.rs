@@ -7,7 +7,7 @@
 //!   - DuckDB Σout    = pipeline-breaker materialized bytes computed from the
 //!                      `<q>.duckdb_cost.txt` profiling tree (see [`duckdb_cost`]).
 //!   - GPU coverage   = whether the query's GPU result test is enabled in
-//!                      `test_gpu_executor.rs` (uncommented macro invocation).
+//!                      `test_gpu.rs` (uncommented macro invocation).
 //!
 //! Both sides are deterministic, measured byte sums — NOT wall-clock cost, and
 //! the two engines emit different plan trees, so the ratio is a provisional,
@@ -122,7 +122,7 @@ fn main() {
     let env = |k: &str| std::env::var(k).ok().filter(|s| !s.is_empty());
 
     let testdata = PathBuf::from(opt("--testdata", "testdata"));
-    let tests = PathBuf::from(opt("--tests", "peacockdb-core/tests/test_gpu_executor.rs"));
+    let tests = PathBuf::from(opt("--tests", "peacockdb-core/tests/test_gpu.rs"));
     let html_out = opt("--html", "cost_report.html");
     // When set, assemble the page-per-sha Pages site here instead of writing a
     // single --html file (master deploy); see `assemble_site`.
@@ -174,7 +174,7 @@ fn main() {
     let tpcds = build_dataset("TPC-DS", 99, "testdata/goldens/tpcds.sf1", "testdata/tpcds-queries", &testdata.join("goldens/tpcds.sf1"), &op_tpcds);
     let datasets = [tpch, tpcds];
 
-    // CI gate: every OPERATIONAL (enabled gpu_result_test!) query must have a
+    // CI gate: every OPERATIONAL (enabled gpu_test!) query must have a
     // PeacockDB cost. A missing one silently renders "—" (e.g. a stale CPU_DEVICE
     // or an absent golden) and CI would stay green — so fail loudly instead.
     // Non-operational/disabled queries are left lenient (a dash there is fine).
@@ -216,12 +216,12 @@ fn main() {
 }
 
 /// Query numbers whose GPU result test is enabled for `dataset`. A query is
-/// operational iff an uncommented `gpu_result_test!(<dataset>, <sf>, q<N>, …)`
+/// operational iff an uncommented `gpu_test!(<dataset>, <sf>, q<N>, …)`
 /// invocation appears (the repo disables one by commenting its macro line).
 /// Only `q<N>` queries are counted (synthetic micro-queries like `scan_limit`
 /// aren't in the numbered coverage table).
 fn operational_set(src: &str, dataset: &str) -> BTreeSet<u32> {
-    let needle = format!("gpu_result_test!({dataset},");
+    let needle = format!("gpu_test!({dataset},");
     let mut set = BTreeSet::new();
     for line in src.lines() {
         let t = line.trim_start();
@@ -888,12 +888,12 @@ mod tests {
     #[test]
     fn operational_set_honors_comment_convention() {
         let src = "\
-gpu_result_test!(tpch, 1, q1, H200);
-gpu_result_test!(tpch, 1, q11, H200);
-gpu_result_test!(tpch, 1, scan_limit, H200);
-// gpu_result_test!(tpch, 1, q9, H200);
-gpu_result_test!(tpcds, 1, q5, H200);
-//gpu_result_test!(tpcds, 1, q28, H200);
+gpu_test!(tpch, 1, q1, tp1_mem120gib, golden_exact);
+gpu_test!(tpch, 1, q11, tp1_mem120gib, oracle);
+gpu_test!(tpch, 1, scan_limit, tp1_mem120gib, golden_exact);
+// gpu_test!(tpch, 1, q9, tp1_mem120gib, golden_exact);
+gpu_test!(tpcds, 1, q5, tp1_mem120gib, golden_exact);
+//gpu_test!(tpcds, 1, q28, tp1_mem120gib, golden_exact);
 ";
         let tpch = operational_set(src, "tpch");
         let tpcds = operational_set(src, "tpcds");

@@ -2,7 +2,7 @@
 //!
 //! Device `tp1-mem120gib` = single-partition execution at the H200's 120 GiB
 //! budget. These `.cpu.txt` goldens are produced by the CPU oracle and are the
-//! verification target for the GPU node-by-node tests (`test_gpu_node.rs`): at
+//! verification target for the merged GPU test (`test_gpu.rs`): at
 //! tp1 the plan is single-partition, so GPU and CPU emulation share node
 //! structure + per-node row counts exactly. At tp1 there is no float
 //! reassociation (single partition), so exact compare holds even for avg/stddev.
@@ -11,7 +11,7 @@
 #[macro_use]
 mod common;
 
-// ── TPC-H (the GPU-supported set; mirrors test_gpu_node.rs) ─────────────────
+// ── TPC-H (the GPU-supported set; mirrors test_gpu.rs) ─────────────────
 cpu_result_test!(tpch, 1, scan_limit, tp1_mem120gib);
 cpu_result_test!(tpch, 1, filter_project, tp1_mem120gib);
 cpu_result_test!(tpch, 1, aggregate_groupby, tp1_mem120gib);
