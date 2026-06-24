@@ -20,7 +20,7 @@
 //!   cost-report [--testdata DIR] [--tests FILE] [--html FILE] [--md FILE]
 //!               [--pages-url URL] [--sha SHA] [--repo OWNER/REPO] [--published]
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
@@ -38,6 +38,9 @@ const DEFAULT_REPO: &str = "asymptote-tech/peacockdb";
 const CPU_DEVICE: &str = "tp8-mem2gib";
 /// Hidden marker so CI can find-and-update its single PR comment in place.
 const SENTINEL: &str = "<!-- peacockdb-cost-report -->";
+/// Separate marker for the cost-regression gate widget, so it upserts as its own
+/// PR comment independently of the coverage/ratio report above.
+const DIFF_SENTINEL: &str = "<!-- peacockdb-cost-regression -->";
 
 struct Row {
     n: u32,
@@ -117,6 +120,19 @@ fn main() {
     let md_out = opt("--md", "");
     let pages_url = opt("--pages-url", PAGES_URL_DEFAULT);
     let published = args.iter().any(|a| a == "--published");
+
+    // Cost-regression gate (separate mode): diff this tree's .cost.txt totals
+    // against a base, render a per-query change widget, and exit non-zero on any
+    // regression. Self-contained — does not build the coverage report below.
+    if args.iter().any(|a| a == "--cost-diff") {
+        run_cost_diff(
+            &testdata,
+            &opt("--base", ""),
+            &opt("--html", "cost_diff.html"),
+            &md_out,
+        );
+        return;
+    }
 
     // Code version the report was generated from, for golden cell links. Degrades
     // to plain (unlinked) cells when unavailable (e.g. a local dry run).
@@ -600,6 +616,217 @@ fn render_history(manifest: &[(String, String)]) -> String {
     s
 }
 
+// --- cost-regression gate (cost-diff mode) ----------------------------------
+/// One query's PeacockDB CPU cost (`peacockdb_cost=` total) between base and PR.
+struct DiffRow {
+    label: String,
+    old: u64,
+    new: u64,
+}
+
+impl DiffRow {
+    fn is_regression(&self) -> bool {
+        self.new > self.old
+    }
+    fn is_improvement(&self) -> bool {
+        self.new < self.old
+    }
+    fn changed(&self) -> bool {
+        self.new != self.old
+    }
+    /// `(new - old) / old * 100`. `None` when `old == 0` (delta undefined — shown
+    /// as "—"); classification still uses the exact integer compare above.
+    fn delta_pct(&self) -> Option<f64> {
+        (self.old != 0).then(|| (self.new as f64 - self.old as f64) / self.old as f64 * 100.0)
+    }
+}
+
+/// Pure comparison seam (unit-testable with no git/fs): one row per query present
+/// in BOTH maps, sorted by label. A query missing from `old` (no baseline — a new
+/// query, or a base that predates the .cost.txt goldens) is omitted, never counted
+/// as a regression — this is what stops the introducing PR from self-failing.
+fn cost_diff(old: &BTreeMap<String, u64>, new: &BTreeMap<String, u64>) -> Vec<DiffRow> {
+    let mut rows: Vec<DiffRow> = new
+        .iter()
+        .filter_map(|(label, &n)| old.get(label).map(|&o| DiffRow { label: label.clone(), old: o, new: n }))
+        .collect();
+    rows.sort_by(|a, b| a.label.cmp(&b.label));
+    rows
+}
+
+fn fmt_delta(pct: Option<f64>) -> String {
+    pct.map(|p| format!("{p:+.2}%")).unwrap_or_else(|| "—".to_string())
+}
+
+/// Display label for a `.cost.txt` golden: `<dataset>/<query>` (device segment and
+/// extension dropped — each query has exactly one golden, so this stays unique).
+fn diff_label(rel: &Path) -> String {
+    let dataset = rel.parent().and_then(|p| p.file_name()).and_then(|s| s.to_str()).unwrap_or("?");
+    let file = rel.file_name().and_then(|s| s.to_str()).unwrap_or("?");
+    let query = file.split('.').next().unwrap_or(file);
+    format!("{dataset}/{query}")
+}
+
+/// Walk the working tree's `.cost.txt` goldens. Returns `(label, working path, repo
+/// path)` where the repo path (`<testdata_arg>/goldens/…`) is what `git show
+/// <ref>:<repo path>` reads for the base side.
+fn collect_cost_goldens(testdata: &Path) -> Vec<(String, PathBuf, String)> {
+    let mut out = Vec::new();
+    for sub in ["goldens/tpch.sf1", "goldens/tpcds.sf1"] {
+        let dir = testdata.join(sub);
+        let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+        for entry in rd.flatten() {
+            let path = entry.path();
+            if !path.to_str().map(|s| s.ends_with(".cost.txt")).unwrap_or(false) {
+                continue;
+            }
+            let rel = Path::new(sub).join(path.file_name().unwrap());
+            let label = diff_label(&rel);
+            let repo_path = format!("{}/{}", testdata.display(), rel.display());
+            out.push((label, path, repo_path));
+        }
+    }
+    out.sort();
+    out
+}
+
+/// Base-side `.cost.txt` total. `base` is a directory (read `<base>/goldens/…`) or
+/// else a git ref (`git show <base>:<repo path>`). `None` when the file is absent
+/// in the base → that query has no baseline and is omitted by [`cost_diff`].
+fn base_total(base: &str, repo_path: &str, testdata: &Path) -> Option<u64> {
+    let base_dir = Path::new(base);
+    if base_dir.is_dir() {
+        // repo_path is "<testdata>/goldens/…"; strip the testdata prefix to re-root
+        // it under the base dir.
+        let rel = Path::new(repo_path).strip_prefix(testdata).unwrap_or(Path::new(repo_path));
+        return read_total(&base_dir.join(rel), "peacockdb_cost=");
+    }
+    let out = std::process::Command::new("git").args(["show", &format!("{base}:{repo_path}")]).output().ok()?;
+    if !out.status.success() {
+        return None; // not in base → no baseline
+    }
+    read_total_str(&String::from_utf8_lossy(&out.stdout), "peacockdb_cost=")
+}
+
+/// Self-contained HTML artifact: only CHANGED queries, green row = improvement,
+/// red row = regression (same row classes as the coverage report).
+fn render_diff_html(rows: &[DiffRow]) -> String {
+    let changed: Vec<&DiffRow> = rows.iter().filter(|r| r.changed()).collect();
+    let regr = changed.iter().filter(|r| r.is_regression()).count();
+    let impr = changed.iter().filter(|r| r.is_improvement()).count();
+    let mut s = String::new();
+    s.push_str("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">");
+    s.push_str("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">");
+    s.push_str("<title>PeacockDB CPU cost change vs base</title><style>");
+    s.push_str(
+        "body{font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;margin:2rem;color:#1b1f23;}\
+         h1{font-size:1.4rem;}table{border-collapse:collapse;max-width:680px;margin-top:.5rem;}\
+         th,td{border:1px solid #d0d7de;padding:.35rem .6rem;text-align:left;font-variant-numeric:tabular-nums;}\
+         th{background:#f6f8fa;}td.num{text-align:right;}\
+         tr.green{background:#e9f7ee;}tr.red{background:#ffe0e0;}\
+         tr.green td:first-child{border-left:4px solid #1a7f37;}tr.red td:first-child{border-left:4px solid #cf222e;}\
+         .foot{margin-top:1.2rem;color:#57606a;font-size:.85rem;}",
+    );
+    s.push_str("</style></head><body>");
+    s.push_str("<h1>PeacockDB CPU cost change vs base</h1>");
+    let _ = write!(s, "<p>{impr} improvement(s), {regr} regression(s).</p>");
+    if changed.is_empty() {
+        s.push_str("<p>No PeacockDB CPU cost change across compared queries.</p></body></html>");
+        return s;
+    }
+    s.push_str("<table><tr><th>Query</th><th>Base Σout</th><th>PR Σout</th><th>Δ%</th></tr>");
+    for r in &changed {
+        let cls = if r.is_regression() { "red" } else { "green" };
+        let _ = write!(
+            s,
+            "<tr class=\"{cls}\"><td>{}</td><td class=\"num\">{}</td><td class=\"num\">{}</td><td class=\"num\">{}</td></tr>",
+            r.label,
+            fmt_bytes(r.old),
+            fmt_bytes(r.new),
+            fmt_delta(r.delta_pct()),
+        );
+    }
+    s.push_str("</table><p class=\"foot\">Σout = Σ per-operator output bytes (PeacockDB CPU cost). \
+        A regression (PeacockDB CPU Σout increased vs base) fails CI; exact integer compare, no tolerance. \
+        New queries with no base .cost.txt are omitted.</p></body></html>");
+    s
+}
+
+/// PR-comment markdown: only CHANGED queries, 🔴 regression / 🟢 improvement (GitHub
+/// comments can't set a row background — same marker convention as the ratio report).
+fn render_diff_markdown(rows: &[DiffRow]) -> String {
+    let changed: Vec<&DiffRow> = rows.iter().filter(|r| r.changed()).collect();
+    let regr = changed.iter().filter(|r| r.is_regression()).count();
+    let impr = changed.iter().filter(|r| r.is_improvement()).count();
+    let mut s = String::new();
+    s.push_str(DIFF_SENTINEL);
+    s.push('\n');
+    if changed.is_empty() {
+        s.push_str("**PeacockDB CPU cost gate** — ✅ no cost change vs base across compared queries.\n");
+        return s;
+    }
+    let verdict = if regr > 0 { " — 🔴 **build failing**" } else { " — ✅" };
+    let _ = write!(s, "**PeacockDB CPU cost gate** — {impr} improvement(s), {regr} regression(s) vs base{verdict}\n\n");
+    s.push_str("| Query | Base Σout | PR Σout | Δ% |\n|---|---:|---:|---:|\n");
+    for r in &changed {
+        let mark = if r.is_regression() { "🔴" } else { "🟢" };
+        let _ = write!(
+            s,
+            "| {} | {} | {} | {mark} {} |\n",
+            r.label,
+            fmt_bytes(r.old),
+            fmt_bytes(r.new),
+            fmt_delta(r.delta_pct()),
+        );
+    }
+    let _ = write!(
+        s,
+        "\n_🔴 regression (PeacockDB CPU Σout increased) fails CI; 🟢 improvement. Exact integer byte-sum \
+         compare, no tolerance. New queries with no base .cost.txt are omitted (never a regression)._\n"
+    );
+    s
+}
+
+/// Drive the gate: build the PR (working-tree) and base cost maps, render the
+/// widget (always), write the artifacts, and exit non-zero iff ≥1 regression.
+/// With no resolvable base (e.g. a master run), every query is omitted → 0
+/// regressions → clean exit 0.
+fn run_cost_diff(testdata: &Path, base: &str, html_out: &str, md_out: &str) {
+    let goldens = collect_cost_goldens(testdata);
+    let mut new_map = BTreeMap::new();
+    let mut old_map = BTreeMap::new();
+    for (label, path, repo_path) in &goldens {
+        if let Some(n) = read_total(path, "peacockdb_cost=") {
+            new_map.insert(label.clone(), n);
+        }
+        if !base.is_empty() {
+            if let Some(o) = base_total(base, repo_path, testdata) {
+                old_map.insert(label.clone(), o);
+            }
+        }
+    }
+
+    let rows = cost_diff(&old_map, &new_map);
+    let regressions = rows.iter().filter(|r| r.is_regression()).count();
+
+    // Render ALWAYS; the exit-code decision is separate from rendering.
+    std::fs::write(html_out, render_diff_html(&rows)).unwrap_or_else(|e| panic!("write {html_out}: {e}"));
+    eprintln!("wrote {html_out}");
+    let md = render_diff_markdown(&rows);
+    if md_out.is_empty() {
+        print!("{md}");
+    } else {
+        std::fs::write(md_out, &md).unwrap_or_else(|e| panic!("write {md_out}: {e}"));
+        eprintln!("wrote {md_out}");
+    }
+
+    let changed = rows.iter().filter(|r| r.changed()).count();
+    eprintln!("cost-diff: {} compared, {changed} changed, {regressions} regression(s)", rows.len());
+    if regressions > 0 {
+        std::process::exit(1);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -709,6 +936,63 @@ gpu_result_test!(tpcds, 1, q5, H200);
         assert_eq!(m2.len(), 3);
         // parse/serialize roundtrip is stable.
         assert_eq!(parse_history(&serialize_history(&m2)), m2);
+    }
+
+    fn map(pairs: &[(&str, u64)]) -> BTreeMap<String, u64> {
+        pairs.iter().map(|(k, v)| (k.to_string(), *v)).collect()
+    }
+
+    #[test]
+    fn cost_diff_classifies_and_omits_no_baseline() {
+        let old = map(&[("a", 100), ("b", 100), ("c", 100)]);
+        // a improves, b regresses, c unchanged, d is brand-new (no baseline).
+        let new = map(&[("a", 80), ("b", 120), ("c", 100), ("d", 50)]);
+        let rows = cost_diff(&old, &new);
+        assert_eq!(rows.len(), 3); // d omitted — no base entry
+        assert!(rows.iter().all(|r| r.label != "d"));
+        let a = rows.iter().find(|r| r.label == "a").unwrap();
+        assert!(a.is_improvement() && a.changed() && !a.is_regression());
+        assert_eq!(a.delta_pct(), Some(-20.0));
+        let b = rows.iter().find(|r| r.label == "b").unwrap();
+        assert!(b.is_regression() && b.changed());
+        assert_eq!(b.delta_pct(), Some(20.0));
+        let c = rows.iter().find(|r| r.label == "c").unwrap();
+        assert!(!c.changed() && !c.is_regression() && !c.is_improvement());
+    }
+
+    #[test]
+    fn regression_count_drives_exit_decision() {
+        // Mixed (1 improvement, 1 regression, 1 unchanged) → exactly 1 regression.
+        let rows = cost_diff(&map(&[("a", 100), ("b", 100), ("c", 100)]), &map(&[("a", 90), ("b", 110), ("c", 100)]));
+        assert_eq!(rows.iter().filter(|r| r.is_regression()).count(), 1); // → exit 1
+        // Pure improvement → 0 regressions (→ exit 0).
+        let rows = cost_diff(&map(&[("a", 100)]), &map(&[("a", 50)]));
+        assert_eq!(rows.iter().filter(|r| r.is_regression()).count(), 0);
+        // No baseline at all (master / pre-task-1 base) → 0 comparable, 0 regressions.
+        let rows = cost_diff(&map(&[]), &map(&[("a", 50), ("b", 99)]));
+        assert!(rows.is_empty());
+    }
+
+    #[test]
+    fn diff_markdown_marks_regressions_and_omits_unchanged() {
+        let rows = cost_diff(&map(&[("a", 100), ("b", 100), ("c", 100)]), &map(&[("a", 80), ("b", 120), ("c", 100)]));
+        let md = render_diff_markdown(&rows);
+        assert!(md.starts_with(DIFF_SENTINEL));
+        assert!(md.contains("1 improvement(s), 1 regression(s)") && md.contains("build failing"));
+        assert!(md.contains("| a |") && md.contains("🟢") && md.contains("-20.00%"));
+        assert!(md.contains("| b |") && md.contains("🔴") && md.contains("+20.00%"));
+        assert!(!md.contains("| c |")); // unchanged omitted from the widget
+        // No-change case still upserts a benign comment (clears a prior regression).
+        let clean = render_diff_markdown(&cost_diff(&map(&[("a", 100)]), &map(&[("a", 100)])));
+        assert!(clean.starts_with(DIFF_SENTINEL) && clean.contains("no cost change"));
+    }
+
+    #[test]
+    fn delta_pct_guards_zero_base() {
+        let rows = cost_diff(&map(&[("a", 0)]), &map(&[("a", 5)]));
+        assert_eq!(rows[0].delta_pct(), None); // undefined, shown as "—"
+        assert!(rows[0].is_regression()); // classification still works (0 → 5)
+        assert_eq!(fmt_delta(None), "—");
     }
 
     #[test]
