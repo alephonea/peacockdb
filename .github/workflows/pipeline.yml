@@ -34,6 +34,17 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      # Cache ~/.cargo + target/ so the opt-level-3 DataFusion/Arrow dep tree
+      # compiles once and restores on warm runs. shared-key (not the default
+      # per-job key) makes the two cudf matrix legs (25.02/26.02) share ONE cache:
+      # the cudf version only affects the C++ side, which rust-cache doesn't touch,
+      # so their Rust deps are byte-identical. Same RUSTFLAGS (-C debuginfo=0) as
+      # the build/run steps below, so restored artifacts fingerprint-match.
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: rust-cudf
+
       - name: Run CPU tests (CPP)
         run: ctest --test-dir cpp/build -L cpu --output-on-failure
 
@@ -128,6 +139,16 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+
+      # Cache the Rust dep tree for the GPU test-binary build. Own shared-key: this
+      # job builds a different target set (test_gpu_executor/test_gpu_node) than
+      # cpp-cpu and runs in PARALLEL with it, so a shared key would only invite
+      # same-run save contention for no same-run gain. It uses the same
+      # RUSTFLAGS=-C debuginfo=0, so it warm-restores its own opt-3 deps.
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: rust-gpu-build
 
       - name: Build and stage rust GPU test binaries
         run: |
@@ -292,6 +313,18 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+
+      # Cache the Rust dep tree so this job restores the opt-3 deps instead of
+      # recompiling the whole DataFusion/Arrow stack (the opt-level bump pushed this
+      # job 3m30s -> 15m40s cold). Own shared-key, NOT cpp-cpu's: this job sets no
+      # RUSTFLAGS (keeps debug symbols), whereas cpp-cpu builds with -C debuginfo=0,
+      # so the dep fingerprints differ — a shared key would fingerprint-miss and
+      # rebuild anyway. With its own key it warm-restores its own opt-3 deps, which
+      # is what makes the 2nd-run cost-report time drop.
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: rust-cost-report
 
       # Guard the extractor + report logic on every PR (before generating), so a
       # broken classifier/normalizer fails CI fast. python3 is preinstalled.
