@@ -261,6 +261,10 @@ jobs:
       pull-requests: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history so the PR base commit is present for the cost-regression
+          # gate's `git show <base.sha>:…` baseline read (default checkout is shallow).
+          fetch-depth: 0
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -336,6 +340,63 @@ jobs:
             } else {
               await github.rest.issues.createComment({ owner, repo, issue_number, body });
             }
+
+      # --- PeacockDB CPU cost-regression gate (PR only) -----------------------
+      # Diff this PR's .cost.txt totals against the PR's BASE commit, post a
+      # per-query widget, and fail the build on any regression. Split into three
+      # steps so the comment is visible even when the gate fails: compute (captures
+      # the exit code without failing) → upsert comment (always) → fail iff regression.
+      # The push/master path skips all three (no base diff, no PR) and no-ops cleanly.
+      - name: Cost-regression gate — compute + render
+        id: cost_gate
+        if: github.event_name == 'pull_request'
+        env:
+          # The PR's actual base commit (not master tip), so the diff is PR-vs-base
+          # and unaffected by other PRs merged to master meanwhile. Present locally
+          # thanks to fetch-depth: 0 above.
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set +e
+          cargo run -q -p cost-report -- --cost-diff --base "$BASE_SHA" \
+            --html "$RUNNER_TEMP/cost_diff.html" --md "$RUNNER_TEMP/cost_diff.md"
+          rc=$?
+          set -e
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          echo "cost-diff exit code: $rc"
+
+      # Upsert the regression widget under its OWN sentinel, independent of the
+      # coverage comment. `always()` so a regression (which fails a later step) still
+      # shows the table. Same-repo only — fork PRs get a read-only token; the gate
+      # itself (fail step below) still runs on forks.
+      - name: Cost-regression gate — upsert comment
+        if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = process.env.RUNNER_TEMP + '/cost_diff.md';
+            if (!fs.existsSync(path)) { core.info('no cost_diff.md (gate did not render); skipping'); return; }
+            const body = fs.readFileSync(path, 'utf8');
+            const sentinel = '<!-- peacockdb-cost-regression -->';
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number, per_page: 100,
+            });
+            const existing = comments.find(c => c.body && c.body.includes(sentinel));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }
+
+      # Red ❌ on the PR iff the gate found a regression (cost-report exited nonzero),
+      # AFTER the widget has been posted above.
+      - name: Cost-regression gate — fail on regression
+        if: github.event_name == 'pull_request' && steps.cost_gate.outputs.rc != '0'
+        run: |
+          echo "::error::PeacockDB CPU cost regression detected (see the cost-regression PR comment)."
+          exit 1
 
       # On master, hand report/ to the deploy-pages job as the Pages artifact.
       - name: Upload Pages artifact
