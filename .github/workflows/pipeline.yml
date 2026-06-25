@@ -30,6 +30,8 @@ jobs:
           submodules: recursive
 
       - uses: ./.github/actions/cpp-build
+        with:
+          cudf: ${{ matrix.cudf }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -128,6 +130,8 @@ jobs:
           submodules: recursive
 
       - uses: ./.github/actions/cpp-build
+        with:
+          cudf: "25.02"
 
       - name: Bundle Arrow/Parquet runtime libraries
         run: |

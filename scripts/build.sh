@@ -12,6 +12,7 @@ CUDF_ROOT=""
 CUDF_BUILD_FROM_SOURCE=0
 TARGET="cpp"
 GCC_VERSION=""  # empty = use default below
+COMPILER_LAUNCHER=""  # empty = call the compiler directly (e.g. set to "ccache")
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -23,6 +24,7 @@ while [ $# -gt 0 ]; do
     --cudf-build-from-source) CUDF_BUILD_FROM_SOURCE=1 ;;
     --target)                 TARGET="$2"; shift ;;
     --gcc-version)            GCC_VERSION="$2"; shift ;;
+    --compiler-launcher)      COMPILER_LAUNCHER="$2"; shift ;;
     *) echo "Unknown flag: $1"; exit 1 ;;
   esac
   shift
@@ -60,11 +62,19 @@ if [ $DO_CONFIGURE -eq 1 ]; then
     exit 1
   fi
 
+  LAUNCHER_CMAKE_FLAGS=""
+  if [ -n "$COMPILER_LAUNCHER" ]; then
+    # Wrap the host C/C++ compilers (e.g. with ccache). Left off CUDA/nvcc on
+    # purpose: ccache + nvcc is unreliable, and the device compile isn't the bottleneck.
+    LAUNCHER_CMAKE_FLAGS="-DCMAKE_C_COMPILER_LAUNCHER=${COMPILER_LAUNCHER} -DCMAKE_CXX_COMPILER_LAUNCHER=${COMPILER_LAUNCHER}"
+  fi
+
   cmake -S cpp -B "${BUILD_DIR}" -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_CUDA_ARCHITECTURES="${CUDA_ARCHITECTURES}" \
     -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
     -DCMAKE_INSTALL_PREFIX="${INSTALL_DIR}" \
+    ${LAUNCHER_CMAKE_FLAGS} \
     ${CUDF_CMAKE_FLAGS}
 fi
 
