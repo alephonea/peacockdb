@@ -51,7 +51,9 @@ cpu_result_test!(tpch, 1, q22, tp8_mem2gib);
 // concat 8→1) — the SAME the real 8-way GPU produces. Cross-checks #13-CPU vs
 // DataFusion on the CPU tier; the GPU verifies against this device's .cpu.txt.
 // q6 = scan→filter→partial-agg→CoalescePartitions→final-agg (no hash; Inc1 proof).
-cpu_result_test!(tpch, 1, q6, tp8_mem120gib);
+// EXPLICIT #13 opt-in: the SAME plan at tp8-mem2gib stays on #11 (above); only this
+// H200/tp8 device runs the real N-partition #13 executor (Σ-over-8 golden).
+cpu_node13_result_test!(tpch, 1, q6, tp8_mem120gib);
 
 // ── TPC-DS ────────────────────────────────────────────────────────────────
 cpu_result_test!(tpcds, 1, q1, tp8_mem2gib);

@@ -3,13 +3,43 @@
 #[macro_use]
 mod common;
 
-use datafusion::arrow::array::Int64Array;
+use std::sync::Arc;
 
+use datafusion::arrow::array::Int64Array;
+use datafusion::physical_plan::ExecutionPlan;
+
+use peacockdb_core::create_context_with_tables;
 use peacockdb_core::cpu_executor::{execute_node_by_node_instrumented, NodeMemoryStats};
 
 use common::{
-    all_node_names, fmt_plan, has_gpu_node, make_ctx, scan_batch_sizes, FULL_BUDGET, TIGHT_BUDGET,
+    all_node_names, data_dir_for, device_config, fmt_plan, has_gpu_node, make_ctx,
+    plan_is_inc1_executable, queries_dir_for, scan_batch_sizes, FULL_BUDGET, TIGHT_BUDGET,
 };
+
+/// Lock the Inc1 routing predicate (reviewer regression guard): q6 (global agg,
+/// CoalescePartitions only) is #13-executable; q1 (grouped → GpuRepartitionExec
+/// Hash) is NOT and must stay on the #11 path, whose tp8-mem2gib goldens + 4-group
+/// result are correct. Fails LOUDLY if `plan_is_inc1_executable` is ever broadened
+/// to reroute a grouped query into a #13 that can't yet hash-repartition.
+#[tokio::test]
+async fn inc1_routing_predicate_locks_q1_to_cpu11_q6_to_node13() {
+    async fn plan_for(query: &str, device: &str) -> Arc<dyn ExecutionPlan> {
+        let (parts, budget) = device_config(device);
+        let ctx = create_context_with_tables(&data_dir_for("tpch", "1"), parts, budget)
+            .await
+            .unwrap();
+        let sql =
+            std::fs::read_to_string(queries_dir_for("tpch").join(format!("{query}.sql"))).unwrap();
+        ctx.sql(&sql).await.unwrap().create_physical_plan().await.unwrap()
+    }
+    let q6 = plan_for("q6", "tp8-mem120gib").await;
+    assert!(plan_is_inc1_executable(&q6), "q6 tp8 (no repartition) must route to #13");
+    let q1 = plan_for("q1", "tp8-mem2gib").await;
+    assert!(
+        !plan_is_inc1_executable(&q1),
+        "q1 (GpuRepartitionExec) must stay on #11 until Inc2 lands hash-repartition in #13"
+    );
+}
 
 /// Every Gpu* node must be stripped before CPU execution; no stat may name one.
 #[tokio::test]

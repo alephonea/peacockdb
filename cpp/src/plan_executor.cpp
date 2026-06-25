@@ -2742,6 +2742,8 @@ void NodeSession::execute_node(uint64_t seq, const uint64_t* input_handles,
   // output (BUFFERING: the full concatenated table is resident), in partition-index
   // order to match the Rust CpuNodeExecutor's concat. NOT a per-partition passthrough.
   if (node->node_type() == fb::PlanNodeKind_GpuCoalescePartitions) {
+    if (out_cap < 1)
+      throw std::runtime_error("NodeSession::execute_node: out_handles buffer too small");
     std::vector<TableResult> owned;
     std::vector<cudf::table_view> views;
     owned.reserve(child[0].size());
@@ -2776,6 +2778,15 @@ void NodeSession::execute_node(uint64_t seq, const uint64_t* input_handles,
   if (n_out == 0) n_out = 1;
   if (n_out > out_cap)
     throw std::runtime_error("NodeSession::execute_node: out_handles buffer too small");
+  // The per-partition MAP arm requires every child to carry the same partition
+  // count (child[c][p] is read for all c). Joins with mismatched per-child counts
+  // arrive at Inc2 (partitioned joins); until then fail LOUDLY rather than read OOB.
+  for (size_t c = 1; c < n_children; ++c) {
+    if (child[c].size() != n_out)
+      throw std::runtime_error(
+          "NodeSession::execute_node: children have mismatched partition counts "
+          "(multi-partition joins are not implemented yet)");
+  }
 
   for (size_t p = 0; p < n_out; ++p) {
     std::vector<TableResult> inputs;

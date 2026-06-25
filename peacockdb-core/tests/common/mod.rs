@@ -18,7 +18,7 @@ use datafusion::physical_plan::display::DisplayableExecutionPlan;
 use datafusion::physical_plan::{DisplayFormatType, ExecutionPlan};
 
 use peacockdb_core::cpu_executor::{execute_node_by_node_instrumented_enforced, NodeMemoryStats};
-use peacockdb_core::gpu_rule::{analyze_memory, row_width, GpuScanExec};
+use peacockdb_core::gpu_rule::{analyze_memory, row_width, GpuRepartitionExec, GpuScanExec};
 use peacockdb_core::node_executor::{execute_node_by_node, CpuNodeExecutor};
 use peacockdb_core::plan_serializer;
 use peacockdb_core::{
@@ -618,15 +618,32 @@ pub fn assert_result_golden(
 /// for the handful of queries (q39, q14) whose only divergence from the oracle is
 /// float summation reassociation (~1 ULP) — see [`assert_results_match`].
 /// True if the plan's scan carries a non-empty RG→partition map (tp>1 multi-
-/// partition) — the signal to drive it through the #13 CpuNodeExecutor so per-node
-/// stats are Σ-over-partitions (matching the real 8-way GPU). Empty map = tp1.
-fn plan_has_scan_map(plan: &Arc<dyn ExecutionPlan>) -> bool {
+/// partition). The map is attached by `GpuMemoryBudgetRule` for EVERY
+/// target_partitions>1, so this alone is NOT enough to route to #13.
+fn has_scan_map(plan: &Arc<dyn ExecutionPlan>) -> bool {
     if let Some(s) = plan.as_any().downcast_ref::<GpuScanExec>() {
         if !s.batches_map().is_empty() {
             return true;
         }
     }
-    plan.children().iter().any(|c| plan_has_scan_map(c))
+    plan.children().iter().any(|c| has_scan_map(c))
+}
+
+/// True if the plan contains a `GpuRepartitionExec` (Hash/RoundRobin shuffle).
+fn has_repartition(plan: &Arc<dyn ExecutionPlan>) -> bool {
+    plan.as_any().is::<GpuRepartitionExec>()
+        || plan.children().iter().any(|c| has_repartition(c))
+}
+
+/// True iff the plan can be driven by the #13 CpuNodeExecutor TODAY (Inc1): it has
+/// a multi-partition scan map AND contains NO `GpuRepartitionExec`. #13 implements
+/// the scan→filter→project→partial-agg→CoalescePartitions→final-agg shape (q6) but
+/// NOT Hash-repartition yet (Inc2) — a grouped query like q1/q3 routed to #13 would
+/// emit per-partition partials that never get re-grouped (WRONG result). Those stay
+/// on the #11 instrumented-enforced path (correct single-partition goldens). Widen
+/// this to allow GpuRepartitionExec once Inc2 lands hash-repartition in #13.
+pub(crate) fn plan_is_inc1_executable(plan: &Arc<dyn ExecutionPlan>) -> bool {
+    has_scan_map(plan) && !has_repartition(plan)
 }
 
 pub async fn assert_cpu_results_match_datafusion(
@@ -635,6 +652,7 @@ pub async fn assert_cpu_results_match_datafusion(
     query: &str,
     device: &str,
     rel_tol: Option<f64>,
+    use_node13: bool,
 ) {
     let data_dir = data_dir_for(dataset, sf);
     let sql_path = queries_dir_for(dataset).join(format!("{query}.sql"));
@@ -653,15 +671,23 @@ pub async fn assert_cpu_results_match_datafusion(
     let cpu_ctx = create_context_with_tables(&data_dir, partitions, budget).await.unwrap();
     let plan = cpu_ctx.sql(&sql).await.unwrap().create_physical_plan().await.unwrap();
 
-    // Multi-partition (tp>1) plans whose scan carries an explicit RG→partition MAP are
-    // driven by the #13 CpuNodeExecutor: it maintains N partitions across nodes
-    // (partial-agg = Σ-over-partitions, CoalescePartitions concat N→1), producing the
-    // SAME Σ-over-8 per-node stats + result the real 8-way GPU does — the natural home
-    // for the tp8-mem120gib golden. Plans with no map (tp1, single-partition) keep the
-    // #11 instrumented-enforced path (strict resident control at the device budget;
-    // also backs the resident-OOM tests). Both yield post-order stats + a coalesced
-    // result, so the cost-golden + result assertions below are identical downstream.
-    let (actual, stats): (Vec<RecordBatch>, Vec<NodeMemoryStats>) = if plan_has_scan_map(&plan) {
+    // Executor choice is EXPLICIT per-test (`use_node13`), NOT inferred from the plan:
+    // the SAME plan (e.g. q6 at 8 partitions) backs BOTH the tp8-mem2gib golden — the
+    // #11 instrumented-enforced executor, which streams each node single-partition-
+    // coalesced regardless of target_partitions — AND the tp8-mem120gib golden — the
+    // #13 CpuNodeExecutor, which maintains N partitions across nodes (partial-agg =
+    // Σ-over-partitions, CoalescePartitions concat N→1), matching the real 8-way GPU.
+    // So a plan-only predicate can't tell them apart; only the device/test does.
+    // `plan_is_inc1_executable` is asserted here purely as a SAFETY guard: a query
+    // opted into #13 MUST have a scan map and NO GpuRepartitionExec (Hash-repartition
+    // is Inc2). #11 also backs the resident-OOM tests. Both yield post-order stats +
+    // a coalesced result, so the assertions below are identical downstream.
+    let (actual, stats): (Vec<RecordBatch>, Vec<NodeMemoryStats>) = if use_node13 {
+        assert!(
+            plan_is_inc1_executable(&plan),
+            "{dataset}/{query} @ {device}: #13 requested but plan is not Inc1-executable \
+             (missing scan map or contains a GpuRepartitionExec — Hash-repartition is Inc2)"
+        );
         let mut backend = CpuNodeExecutor::new(cpu_ctx.task_ctx());
         execute_node_by_node(&plan, &mut backend).await.unwrap()
     } else {
@@ -954,7 +980,8 @@ macro_rules! query_plan_test {
     };
 }
 
-/// `cpu_result_test!(dataset, sf, query, device)` — EXACT result compare.
+/// `cpu_result_test!(dataset, sf, query, device)` — EXACT result compare, #11
+/// (instrumented-enforced, single-partition-coalesced) executor.
 #[macro_export]
 macro_rules! cpu_result_test {
     ($dataset:ident, $sf:literal, $query:ident, $device:ident) => {
@@ -967,6 +994,33 @@ macro_rules! cpu_result_test {
                     &stringify!($query).replace('_', "-"),
                     &stringify!($device).replace('_', "-"),
                     None,
+                    false, // #11 executor
+                )
+                .await;
+            }
+        }
+    };
+}
+
+/// `cpu_node13_result_test!(dataset, sf, query, device)` — EXACT result compare,
+/// driven by the #13 multi-handle CpuNodeExecutor (real N-partition, Σ-over-
+/// partitions cost). EXPLICIT opt-in (not plan-inferred): a query routed here MUST
+/// be Inc1-executable (scan map + NO GpuRepartitionExec; asserted at runtime).
+/// Used for the H200/tp8 device (tp8-mem120gib); Hash-repartition queries wait for
+/// Inc2. The SAME plan at tp8-mem2gib stays on #11 via `cpu_result_test!`.
+#[macro_export]
+macro_rules! cpu_node13_result_test {
+    ($dataset:ident, $sf:literal, $query:ident, $device:ident) => {
+        paste::paste! {
+            #[tokio::test]
+            async fn [<cpu_ $dataset _sf $sf _ $query _ $device>]() {
+                $crate::common::assert_cpu_results_match_datafusion(
+                    stringify!($dataset),
+                    stringify!($sf),
+                    &stringify!($query).replace('_', "-"),
+                    &stringify!($device).replace('_', "-"),
+                    None,
+                    true, // #13 CpuNodeExecutor
                 )
                 .await;
             }
@@ -991,6 +1045,7 @@ macro_rules! cpu_result_approx_test {
                     &stringify!($query).replace('_', "-"),
                     &stringify!($device).replace('_', "-"),
                     Some(1e-12),
+                    false, // #11 executor
                 )
                 .await;
             }

@@ -185,6 +185,12 @@ async fn cpu_scan_partitions(
 
         let mut config = parquet.base_config().clone();
         config.file_groups = vec![vec![file]];
+        // Preserve the scan predicate per-partition. It only ROW-GROUP-prunes here
+        // (pushdown_filters is off → no per-row filtering at the scan), and the map's
+        // RGs are already the predicate survivors, so it removes nothing — the
+        // partition reads exactly its mapped RGs, matching the GPU's set_row_groups.
+        // CPU and GPU agree as long as no SUB-row-group (page) pruning diverges; today
+        // it can't (our DuckDB parquet carries no page index / bloom filters).
         let mut builder = ParquetExec::builder(config)
             .with_table_parquet_options(parquet.table_parquet_options().clone());
         if let Some(pred) = parquet.predicate() {
