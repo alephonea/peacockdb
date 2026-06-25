@@ -934,6 +934,16 @@ pub fn analyze_memory_nodes(plan: &Arc<dyn ExecutionPlan>) -> Vec<(String, usize
 // GpuMemoryBudgetRule — compute batch size from memory budget, wrap scans
 // ---------------------------------------------------------------------------
 
+/// Minimum GPU memory budget at which a multi-partition scan emits a real
+/// RG→batch→partition map (Phase 2 Inc1). BELOW this, the device is treated as
+/// memory-constrained: the scan stays single-partition (the tp8-mem2gib #11
+/// determinism path), so the plan serializes byte-identically to the legacy
+/// scan and the flatbuffer roundtrip is stable (deserialize does not reconstruct
+/// N partitions, so GpuRepartitionExec.input_partitions does not flip 1→8).
+/// The real-partitioning device (H200, tp8-mem120gib) sits well above this and
+/// gets the map; tp1 never attaches one regardless (target_partitions == 1).
+const REAL_PARTITION_MIN_BUDGET: usize = 16 * 1024 * 1024 * 1024; // 16 GiB
+
 #[derive(Debug)]
 pub struct GpuMemoryBudgetRule {
     gpu_memory_budget: usize,
@@ -961,12 +971,15 @@ impl PhysicalOptimizerRule for GpuMemoryBudgetRule {
 
         let result = plan.transform_up(|node: Arc<dyn ExecutionPlan>| {
             if node.as_any().is::<ParquetExec>() {
-                // tp8 (target_partitions>1): attach the explicit RG→batch→partition
-                // map so the scan emits N partitions (dissolving RoundRobin into the
-                // scan). The RGs to read = #12 survivors if a static predicate prunes,
-                // else all groups. tp1 (=1) gets an empty map = legacy single-partition.
+                // Real-partitioning device only (target_partitions>1 AND a generous
+                // budget — see REAL_PARTITION_MIN_BUDGET): attach the explicit
+                // RG→batch→partition map so the scan emits N partitions (dissolving
+                // RoundRobin into the scan). The RGs to read = #12 survivors if a
+                // static predicate prunes, else all groups. tp1 OR a tight budget
+                // (tp8-mem2gib) gets an empty map = legacy single-partition scan,
+                // keeping the serialized plan / flatbuffer roundtrip byte-stable.
                 let n_parts = config.execution.target_partitions;
-                let batches = if n_parts > 1 {
+                let batches = if n_parts > 1 && self.gpu_memory_budget >= REAL_PARTITION_MIN_BUDGET {
                     let parquet = node.as_any().downcast_ref::<ParquetExec>().unwrap();
                     crate::gpu_rowgroup_prune::surviving_row_groups(parquet)
                         .or_else(|| crate::gpu_rowgroup_prune::all_row_groups(parquet))

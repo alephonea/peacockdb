@@ -123,18 +123,30 @@ fn serialize_gpu_scan<'a>(
     // normalization, so we re-add it here. ListingTableUrl canonicalizes to
     // absolute at registration time, so the original input was always absolute
     // by the time we get here.
-    // DISTINCT physical files only. At target_partitions>1 DataFusion splits ONE
-    // file into several byte-RANGE PartitionedFile entries (all the same path); the
-    // peacock model reads WHOLE row groups (the RG→partition map drives partitioning,
-    // not byte ranges), and cuDF's source_info would otherwise see N identical
-    // sources but receive a single row-group vector ("Must specify row groups for
-    // each source"). Dedup preserves first-seen order; genuine multi-file scans keep
-    // all distinct paths; tp1 (one group) is unchanged.
+    // File-path emission is gated on whether this scan carries the explicit
+    // RG→batch→partition map — `batches_map()` is the single source of truth (the
+    // budget gate in GpuMemoryBudgetRule decides map presence; map presence alone
+    // decides dedup here — no second, divergent notion of "partitioned").
+    //
+    // MAP PRESENT (real-partitioning device, e.g. tp8-mem120gib): the peacock model
+    // reads WHOLE row groups from each DISTINCT physical file per the map, not byte
+    // ranges. DataFusion splits ONE file into several byte-RANGE PartitionedFile
+    // entries (all the same path) at target_partitions>1; collapse them to distinct
+    // paths, else cuDF's source_info sees N identical sources but receives a single
+    // row-group vector ("Must specify row groups for each source"). Dedup preserves
+    // first-seen order; genuine multi-file scans keep all distinct paths.
+    //
+    // NO MAP (tp1, or the tight tp8-mem2gib determinism device): emit EVERY
+    // PartitionedFile verbatim — byte-identical to the legacy (pre-Inc1)
+    // serialization — so the deserialized scan reconstructs the SAME file_group
+    // count and the flatbuffer roundtrip's GpuRepartitionExec.input_partitions
+    // stays stable (no 8↔1 flip).
+    let dedup = !scan.batches_map().is_empty();
     let mut path_strings: Vec<String> = Vec::new();
     for group in &config.file_groups {
         for pf in group {
             let p = format!("/{}", pf.object_meta.location);
-            if !path_strings.contains(&p) {
+            if !dedup || !path_strings.contains(&p) {
                 path_strings.push(p);
             }
         }

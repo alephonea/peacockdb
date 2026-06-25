@@ -14,8 +14,10 @@ fn key(stats: &[NodeMemoryStats]) -> Vec<(usize, usize)> {
 #[tokio::test]
 async fn cpu_node_executor_matches_recursive() {
     let data = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../testdata/tpch.minimal");
-    let budget = 2 * 1024 * 1024 * 1024;
-    // tp8 so the plan has the repartition + two-phase aggregate + SPM shape.
+    // Generous budget (>= REAL_PARTITION_MIN_BUDGET) so the scan emits the real
+    // N-partition map — this test's purpose is to exercise the #13 N-partition
+    // walk. tp8 so the plan has the repartition + two-phase aggregate + SPM shape.
+    let budget = 120 * 1024 * 1024 * 1024;
     let ctx = peacockdb_core::create_context_with_tables(&data, 8, budget).await.unwrap();
     let sql = "SELECT n.n_name, count(*) AS c \
                FROM nation n JOIN region r ON n.n_regionkey = r.r_regionkey \
