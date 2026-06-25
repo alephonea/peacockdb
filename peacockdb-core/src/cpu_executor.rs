@@ -155,20 +155,41 @@ fn with_batch_size(ctx: Arc<TaskContext>, batch_size: usize) -> Arc<TaskContext>
 // Node-by-node CPU execution
 // ---------------------------------------------------------------------------
 
+/// Per-OUTPUT-partition breakdown of a node's stats (Phase 2 Inc1 / Task A). Empty
+/// on a node's [`NodeMemoryStats`] means a single output partition (N=1): the
+/// `.cpu.txt` golden renders `partitions=1` with NO per-partition sub-lines. When
+/// the node emits N>1 output partitions (the real-partitioning device), there is
+/// one entry per output partition, in partition order, and the golden renders a
+/// `p{k}: …` sub-line per entry. `row_groups` is populated for the SCAN only (the
+/// groups that output partition reads, matching the GPU's `set_row_groups`); for
+/// every other node it is empty and the golden's `in_rows` is derived from the
+/// child's per-partition `out_rows`.
+#[derive(Clone, Default)]
+pub struct PartitionStat {
+    /// This output partition's row count.
+    pub out_rows: usize,
+    /// This output partition's logical byte size (its own per-partition `ColAccum`).
+    pub out_bytes: usize,
+    /// Scan only: the row groups this partition reads (empty for non-scan nodes).
+    pub row_groups: Vec<u32>,
+}
+
 /// Per-node memory stats collected via the `on_node` callback.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct NodeMemoryStats {
     /// Name of the CPU node that was executed (GPU wrapper already stripped).
     pub node_name: String,
     /// Sum of `get_array_memory_size()` across all output batches (allocated upper bound).
     pub allocated_bytes: usize,
-    /// Logical byte size of all batches produced by this node.
+    /// Logical byte size of all batches produced by this node (Σ over partitions).
     pub output_bytes: usize,
-    /// Total number of output rows across all batches.
+    /// Total number of output rows across all batches (Σ over partitions).
     pub row_count: usize,
     /// Largest single batch (in rows) produced by this node.
     /// Compare against `GpuScanExec.gpu_batch_size` to verify the memory contract.
     pub max_batch_rows: usize,
+    /// Per-output-partition breakdown (empty ⇒ N=1, no sub-lines). See [`PartitionStat`].
+    pub part_stats: Vec<PartitionStat>,
 }
 
 /// Recursively strip all GPU wrapper nodes from a plan tree, returning a
@@ -591,6 +612,9 @@ impl InstrumentedStream {
                     output_bytes,
                     row_count: self.row_count,
                     max_batch_rows: self.max_batch_rows,
+                    // #11 single-node execution = one output partition (coalesced):
+                    // empty ⇒ the golden renders partitions=1, no sub-lines.
+                    part_stats: Vec::new(),
                 },
             ));
         }

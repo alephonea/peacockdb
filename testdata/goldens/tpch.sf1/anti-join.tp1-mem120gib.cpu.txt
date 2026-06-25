@@ -1,6 +1,6 @@
-GpuCoalesceBatchesExec: target_batch_size=374561101, output_bytes=155524935, output_rows=1196041
-  GpuHashJoinExec: join_type=RightAnti, on=[(c_custkey@0, o_custkey@1)], output_bytes=155524935, output_rows=1196041
-    GpuCoalesceBatchesExec: target_batch_size=374561101, output_bytes=244904, output_rows=30142
-      GpuFilterExec: predicate=c_mktsegment@1 = BUILDING, projection=[0], output_bytes=244904, output_rows=30142
-        GpuScanExec: table=customer, projections=[c_custkey, c_mktsegment], batch_size=374561101, output_bytes=3187114, output_rows=150000
-    GpuScanExec: table=orders, projections=[o_orderkey, o_custkey, o_orderstatus, o_totalprice, o_orderdate, o_orderpriority, o_clerk, o_shippriority, o_comment], batch_size=374561101, output_bytes=195058153, output_rows=1500000
+GpuCoalesceBatchesExec: target_batch_size=374561101, partitions=1, output_rows=1196041, output_bytes=155524935
+  GpuHashJoinExec: join_type=RightAnti, on=[(c_custkey@0, o_custkey@1)], partitions=1, output_rows=1196041, output_bytes=155524935
+    GpuCoalesceBatchesExec: target_batch_size=374561101, partitions=1, output_rows=30142, output_bytes=244904
+      GpuFilterExec: predicate=c_mktsegment@1 = BUILDING, projection=[0], partitions=1, output_rows=30142, output_bytes=244904
+        GpuScanExec: table=customer, projections=[c_custkey, c_mktsegment], batch_size=374561101, partitions=1, output_rows=150000, output_bytes=3187114
+    GpuScanExec: table=orders, projections=[o_orderkey, o_custkey, o_orderstatus, o_totalprice, o_orderdate, o_orderpriority, o_clerk, o_shippriority, o_comment], batch_size=374561101, partitions=1, output_rows=1500000, output_bytes=195058153

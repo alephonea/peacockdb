@@ -22,7 +22,7 @@ use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::error::Result as DfResult;
 use datafusion::physical_plan::ExecutionPlan;
 
-use crate::cpu_executor::NodeMemoryStats;
+use crate::cpu_executor::{NodeMemoryStats, PartitionStat};
 
 /// A backend that executes individual plan nodes, holding intermediate outputs by
 /// opaque handle. Used generically (static dispatch) by [`execute_node_by_node`],
@@ -171,6 +171,7 @@ async fn cpu_scan_partitions(
 
     let mut out_parts: Vec<Vec<RecordBatch>> = Vec::with_capacity(scan.batches_map().len());
     let mut acc: Option<NodeMemoryStats> = None;
+    let mut part_stats: Vec<PartitionStat> = Vec::with_capacity(scan.batches_map().len());
     for entry in scan.batches_map() {
         // Scan ONLY this partition's row groups; skip every other group.
         let mut access = ParquetAccessPlan::new(vec![RowGroupAccess::Skip; total_rgs]);
@@ -202,16 +203,24 @@ async fn cpu_scan_partitions(
         let part_scan: Arc<dyn ExecutionPlan> =
             Arc::new(GpuScanExec::new(part_parquet, scan.gpu_batch_size));
         let (batches, stat) = execute_single_node(&part_scan, vec![], task_ctx.clone()).await?;
+        // Per-partition sub-line: this partition's row groups + its own out rows/bytes
+        // (the SAME map the GPU replays via set_row_groups → identical by construction).
+        part_stats.push(PartitionStat {
+            out_rows: stat.row_count,
+            out_bytes: stat.output_bytes,
+            row_groups: entry.row_groups.clone(),
+        });
         out_parts.push(batches);
         merge_stats(&mut acc, stat);
     }
-    let stat = acc.unwrap_or_else(|| NodeMemoryStats {
+    let mut stat = acc.unwrap_or_else(|| NodeMemoryStats {
         node_name: "ParquetExec".to_string(),
-        allocated_bytes: 0,
-        output_bytes: 0,
-        row_count: 0,
-        max_batch_rows: 0,
+        ..Default::default()
     });
+    // Only N>1 carries sub-lines; a 1-entry map renders as partitions=1.
+    if part_stats.len() > 1 {
+        stat.part_stats = part_stats;
+    }
     Ok((out_parts, stat))
 }
 
@@ -268,13 +277,27 @@ impl NodeExecutor for CpuNodeExecutor {
         if !collapses_partitions(node) && child_parts.len() == 1 && !child_parts[0].is_empty() {
             let mut handles = Vec::with_capacity(child_parts[0].len());
             let mut acc: Option<NodeMemoryStats> = None;
+            let mut part_stats: Vec<PartitionStat> = Vec::with_capacity(child_parts[0].len());
             for part in &child_parts[0] {
                 let (batches, stat) =
                     execute_single_node(node, vec![part.clone()], self.task_ctx.clone()).await?;
+                // Per-partition sub-line: this node's own out rows/bytes for output
+                // partition k (no row_groups — non-scan node; in_rows is derived from
+                // the child's out_rows by the golden formatter).
+                part_stats.push(PartitionStat {
+                    out_rows: stat.row_count,
+                    out_bytes: stat.output_bytes,
+                    row_groups: Vec::new(),
+                });
                 handles.push(self.store(batches));
                 merge_stats(&mut acc, stat);
             }
-            return Ok((handles, acc.expect("non-empty child has at least one partition")));
+            let mut acc = acc.expect("non-empty child has at least one partition");
+            // Only N>1 carries sub-lines (count-preserving map: N == child N).
+            if part_stats.len() > 1 {
+                acc.part_stats = part_stats;
+            }
+            return Ok((handles, acc));
         }
 
         // Concat-into-one: each child's partitions concatenated into a single input,
@@ -400,15 +423,30 @@ mod gpu {
             // partition golden, NOT ColAccum(Σ rows). Rust owns the byte formula
             // (logical_size_from_schema), single-sourced → no CPU/GPU drift.
             let schema = node.schema();
+            // Scan's per-partition row groups come from the SAME RG→batch→partition
+            // map the C++ side replays via set_row_groups — so the GPU's per-partition
+            // sub-lines match the #13 CPU golden by construction (Task A: the golden is
+            // GPU-VERIFIED, not just CPU-printed).
+            let scan_map = node
+                .as_any()
+                .downcast_ref::<crate::gpu_rule::GpuScanExec>()
+                .map(|s| s.batches_map())
+                .unwrap_or(&[]);
             let mut rows = 0usize;
             let mut output_bytes = 0usize;
             let mut max_batch_rows = 0usize;
-            for st in &out_stats[..n] {
+            let mut part_stats: Vec<PartitionStat> = Vec::with_capacity(n);
+            for (k, st) in out_stats[..n].iter().enumerate() {
                 let rp = st.rows as usize;
+                let bp = logical_size_from_schema(&schema, rp, st.varlen_content_bytes as usize);
                 rows += rp;
-                output_bytes +=
-                    logical_size_from_schema(&schema, rp, st.varlen_content_bytes as usize);
+                output_bytes += bp;
                 max_batch_rows = max_batch_rows.max(rp);
+                part_stats.push(PartitionStat {
+                    out_rows: rp,
+                    out_bytes: bp,
+                    row_groups: scan_map.get(k).map(|e| e.row_groups.clone()).unwrap_or_default(),
+                });
             }
             let stat = NodeMemoryStats {
                 node_name: node.name().to_string(),
@@ -416,6 +454,8 @@ mod gpu {
                 output_bytes,
                 row_count: rows,
                 max_batch_rows,
+                // Only N>1 carries sub-lines (matches the CPU golden's N==1 ⇒ none).
+                part_stats: if n > 1 { part_stats } else { Vec::new() },
             };
             Ok((out_handles, stat))
         }

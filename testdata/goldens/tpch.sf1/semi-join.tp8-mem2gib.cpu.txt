@@ -1,10 +1,10 @@
-GpuCoalesceBatchesExec: target_batch_size=6242685, output_bytes=39533243, output_rows=303959
-  GpuHashJoinExec: join_type=RightSemi, on=[(c_custkey@0, o_custkey@1)], output_bytes=39533243, output_rows=303959
-    GpuCoalesceBatchesExec: target_batch_size=6242685, output_bytes=244904, output_rows=30142
-      GpuRepartitionExec: partitioning=Hash([c_custkey@0], 8), input_partitions=8, output_bytes=244904, output_rows=30142
-        GpuCoalesceBatchesExec: target_batch_size=6242685, output_bytes=244904, output_rows=30142
-          GpuFilterExec: predicate=c_mktsegment@1 = BUILDING, projection=[0], output_bytes=244904, output_rows=30142
-            GpuScanExec: table=customer, projections=[c_custkey, c_mktsegment], batch_size=6242685, output_bytes=3187114, output_rows=150000
-    GpuCoalesceBatchesExec: target_batch_size=6242685, output_bytes=195058153, output_rows=1500000
-      GpuRepartitionExec: partitioning=Hash([o_custkey@1], 8), input_partitions=8, output_bytes=195058153, output_rows=1500000
-        GpuScanExec: table=orders, projections=[o_orderkey, o_custkey, o_orderstatus, o_totalprice, o_orderdate, o_orderpriority, o_clerk, o_shippriority, o_comment], batch_size=6242685, output_bytes=195058153, output_rows=1500000
+GpuCoalesceBatchesExec: target_batch_size=6242685, partitions=1, output_rows=303959, output_bytes=39533243
+  GpuHashJoinExec: join_type=RightSemi, on=[(c_custkey@0, o_custkey@1)], partitions=1, output_rows=303959, output_bytes=39533243
+    GpuCoalesceBatchesExec: target_batch_size=6242685, partitions=1, output_rows=30142, output_bytes=244904
+      GpuRepartitionExec: partitioning=Hash([c_custkey@0], 8), input_partitions=8, partitions=1, output_rows=30142, output_bytes=244904
+        GpuCoalesceBatchesExec: target_batch_size=6242685, partitions=1, output_rows=30142, output_bytes=244904
+          GpuFilterExec: predicate=c_mktsegment@1 = BUILDING, projection=[0], partitions=1, output_rows=30142, output_bytes=244904
+            GpuScanExec: table=customer, projections=[c_custkey, c_mktsegment], batch_size=6242685, partitions=1, output_rows=150000, output_bytes=3187114
+    GpuCoalesceBatchesExec: target_batch_size=6242685, partitions=1, output_rows=1500000, output_bytes=195058153
+      GpuRepartitionExec: partitioning=Hash([o_custkey@1], 8), input_partitions=8, partitions=1, output_rows=1500000, output_bytes=195058153
+        GpuScanExec: table=orders, projections=[o_orderkey, o_custkey, o_orderstatus, o_totalprice, o_orderdate, o_orderpriority, o_clerk, o_shippriority, o_comment], batch_size=6242685, partitions=1, output_rows=1500000, output_bytes=195058153

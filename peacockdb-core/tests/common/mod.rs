@@ -294,13 +294,45 @@ pub fn cpu_stats_str(plan: &Arc<dyn ExecutionPlan>, stats: &[NodeMemoryStats]) -
         Node { stat, plan, children }
     }
     fn walk(node: &Node, indent: usize, lines: &mut Vec<String>) {
+        // partitions=N on every node line (N = OUTPUT partition count; empty
+        // part_stats ⇒ N=1). Field order: partitions, output_rows, output_bytes.
+        let n = node.stat.part_stats.len().max(1);
         lines.push(format!(
-            "{}{}, output_bytes={}, output_rows={}",
+            "{}{}, partitions={}, output_rows={}, output_bytes={}",
             " ".repeat(indent),
             OneLine(node.plan.as_ref()),
-            node.stat.output_bytes,
+            n,
             node.stat.row_count,
+            node.stat.output_bytes,
         ));
+        // Per-partition sub-lines only when N>1 (tp1 + tp8-mem2gib stay compact).
+        if node.stat.part_stats.len() > 1 {
+            let sub = " ".repeat(indent + 2);
+            for (k, ps) in node.stat.part_stats.iter().enumerate() {
+                if !ps.row_groups.is_empty() {
+                    // Scan partition: the row groups it reads.
+                    let rgs =
+                        ps.row_groups.iter().map(|r| r.to_string()).collect::<Vec<_>>().join(", ");
+                    lines.push(format!(
+                        "{sub}p{k}: row_groups=[{rgs}] out_rows={} out_bytes={}",
+                        ps.out_rows, ps.out_bytes,
+                    ));
+                } else {
+                    // Non-scan partition: in_rows = the (single) child's out_rows[k]
+                    // (count-preserving map op; the child has the same N).
+                    let in_rows = node
+                        .children
+                        .first()
+                        .and_then(|c| c.stat.part_stats.get(k))
+                        .map(|cp| cp.out_rows)
+                        .unwrap_or(0);
+                    lines.push(format!(
+                        "{sub}p{k}: in_rows={in_rows} out_rows={} out_bytes={}",
+                        ps.out_rows, ps.out_bytes,
+                    ));
+                }
+            }
+        }
         for child in &node.children {
             walk(child, indent + 2, lines);
         }
