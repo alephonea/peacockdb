@@ -16,6 +16,11 @@ flatbuffers = "25"
 futures = "0.3"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 peacockdb-ffi = { path = "../peacockdb-ffi" }
+# Inc2 hash-repartition CPU twin: Spark-compatible murmur3 (create_murmur3_hashes)
+# so the #13 CPU partition assignment matches cuDF's spark_murmurhash3 on the GPU
+# by construction. 0.6.0 is the DataFusion-45-compatible release (df ^45 / arrow
+# ^54.1); 0.10 would force a df49 bump. default-features off to keep it lean.
+datafusion-comet-spark-expr = { version = "0.6.0", default-features = false }
 
 [dev-dependencies]
 datafusion = "45"
