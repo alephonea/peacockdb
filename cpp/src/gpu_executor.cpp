@@ -1,4 +1,5 @@
 #include "peacock_gpu.h"
+#include "peacock/partitioning.hpp"
 #include "plan_executor.h"
 
 #include <cudf/interop.hpp>
@@ -10,11 +11,14 @@
 #include <arrow/io/memory.h>
 #include <arrow/ipc/writer.h>
 
+#include <cuda_runtime.h>
+
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <new>
 #include <string>
+#include <vector>
 
 // ---------------------------------------------------------------------------
 // Internal types
@@ -220,4 +224,36 @@ void peacock_handle_release(peacock_executor_t* executor, uint64_t handle) {
 
 void peacock_executor_end_plan(peacock_executor_t* executor) {
   if (executor) executor->session.reset();
+}
+
+int peacock_spark_partition_ids(const void* schema, const void* array,
+                                const uint32_t* key_cols, uint64_t num_keys,
+                                uint32_t num_partitions, uint32_t seed,
+                                int32_t* out_pids, uint64_t out_cap, uint64_t* out_n) {
+  if (!schema || !array || !key_cols || !out_pids || !out_n) return 1;
+  try {
+    // Import the Arrow C-Data struct array (= the key table) into cuDF. The C
+    // Data Interface ABI is stable, so arrow-rs's FFI_ArrowSchema/FFI_ArrowArray
+    // reinterpret directly to cuDF's ArrowSchema/ArrowArray.
+    auto table = cudf::from_arrow(reinterpret_cast<const ArrowSchema*>(schema),
+                                  reinterpret_cast<const ArrowArray*>(array));
+    std::vector<cudf::size_type> keys;
+    keys.reserve(num_keys);
+    for (uint64_t i = 0; i < num_keys; ++i) {
+      keys.push_back(static_cast<cudf::size_type>(key_cols[i]));
+    }
+    auto pid       = peacock::partitioning::spark_partition_ids(
+        table->view(), keys, static_cast<cudf::size_type>(num_partitions), seed);
+    auto const view = pid->view();
+    auto const n    = static_cast<uint64_t>(view.size());
+    if (n > out_cap) return 1;
+    cudaMemcpy(out_pids, view.data<int32_t>(), n * sizeof(int32_t), cudaMemcpyDeviceToHost);
+    *out_n = n;
+    return 0;
+  } catch (const std::exception& e) {
+    std::fprintf(stderr, "peacock_spark_partition_ids: %s\n", e.what());
+    return 1;
+  } catch (...) {
+    return 1;
+  }
 }

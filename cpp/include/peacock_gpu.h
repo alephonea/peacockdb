@@ -126,6 +126,19 @@ void peacock_handle_release(peacock_executor_t* executor, uint64_t handle);
 /// Drop the loaded plan and all remaining resident handles.
 void peacock_executor_end_plan(peacock_executor_t* executor);
 
+// ---------------------------------------------------------------------------
+// Inc2 conformance hook (stateless; no executor needed). Computes the GPU
+// Spark-murmur3 partition ids for `key_cols` of the Arrow table described by the
+// C-Data Interface (`schema`, `array` are `ArrowSchema*`/`ArrowArray*`, a struct
+// array = the table). Lets the live conformance test assert the REAL GPU path
+// (peacock::partitioning::spark_partition_ids) == the REAL comet CPU helper over
+// the SAME bytes. Writes up to `out_cap` ids into `out_pids`, sets `*out_n`.
+/// @return 0 on success; non-zero on failure (message via peacock_last_error(NULL)).
+int peacock_spark_partition_ids(const void* schema, const void* array,
+                                const uint32_t* key_cols, uint64_t num_keys,
+                                uint32_t num_partitions, uint32_t seed,
+                                int32_t* out_pids, uint64_t out_cap, uint64_t* out_n);
+
 #ifdef __cplusplus
 } // extern "C"
 #endif

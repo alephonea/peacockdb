@@ -50,6 +50,87 @@ fn step_i_comet_murmur3_public_api_compiles_and_runs() {
     assert!(ids.iter().all(|&p| (0..8).contains(&p)), "all ids in [0,8)");
 }
 
+/// CPU reference partition-ids for the FULL proof-query key shape: 2 columns
+/// (l_returnflag, l_linestatus) incl a NULL in each column. These are the values
+/// the GPU cuDF standard murmur3 probe must reproduce to clear the conformance
+/// gate. Printed for the probe comparison (coordinator reads GPU-vs-these).
+#[test]
+fn cpu_reference_2col_partition_ids_for_probe() {
+    // q1-style groups + NULLs (the null-handling is a classic divergence source).
+    let returnflag: ArrayRef = Arc::new(StringArray::from(vec![
+        Some("A"), Some("N"), Some("N"), Some("R"), None, Some("A"),
+    ]));
+    let linestatus: ArrayRef = Arc::new(StringArray::from(vec![
+        Some("F"), Some("F"), Some("O"), Some("F"), Some("F"), None,
+    ]));
+    let n = 8;
+    let rows = returnflag.len();
+    let mut buf = vec![42u32; rows];
+    create_murmur3_hashes(&[returnflag, linestatus], &mut buf).unwrap();
+    let ids: Vec<i32> = buf.iter().map(|&h| pmod(h as i32, n)).collect();
+    eprintln!("PROBE CPU(comet) 2-col hashes(seed42) = {buf:?}");
+    eprintln!("PROBE CPU(comet) 2-col partition_ids(pmod {n}) = {ids:?}");
+    eprintln!("  rows: (A,F)(N,F)(N,O)(R,F)(NULL,F)(A,NULL)");
+}
+
+/// PERMANENT I-1 conformance gate (runs in the GPU-remote job): the REAL GPU path
+/// (peacock::partitioning::spark_partition_ids via the FFI hook) and the REAL comet
+/// CPU helper, in ONE process, over the SAME bytes — asserted bit-exact. NOT
+/// hardcoded reference values. Requires a GPU + the cudf-linked build.
+#[cfg(not(feature = "rust-only"))]
+#[test]
+fn gpu_spark_partition_ids_match_comet_live() {
+    use datafusion::arrow::array::{Array, StructArray};
+    use datafusion::arrow::datatypes::{DataType, Field};
+    use datafusion::arrow::ffi::{to_ffi, FFI_ArrowArray, FFI_ArrowSchema};
+    use std::ffi::c_void;
+
+    // Full proof-query key shape: 2 columns (l_returnflag, l_linestatus) + a NULL
+    // in each — exercises multi-key left-to-right seeding + Spark null-skip.
+    let rf: ArrayRef = Arc::new(StringArray::from(vec![
+        Some("A"), Some("N"), Some("N"), Some("R"), None, Some("A"),
+    ]));
+    let ls: ArrayRef = Arc::new(StringArray::from(vec![
+        Some("F"), Some("F"), Some("O"), Some("F"), Some("F"), None,
+    ]));
+    let n_parts: i32 = 8;
+    let rows = rf.len();
+    let comet = cpu_partition_ids(&[rf.clone(), ls.clone()], n_parts);
+
+    // Export the key columns as a struct array (= the table) over the Arrow C-Data
+    // interface; cuDF reads the struct as a table.
+    let struct_arr = StructArray::from(vec![
+        (Arc::new(Field::new("rf", DataType::Utf8, true)), rf),
+        (Arc::new(Field::new("ls", DataType::Utf8, true)), ls),
+    ]);
+    let (ffi_arr, ffi_schema) = to_ffi(&struct_arr.to_data()).unwrap();
+
+    let key_cols: [u32; 2] = [0, 1];
+    let mut out = vec![0i32; rows];
+    let mut got_n: u64 = 0;
+    let rc = unsafe {
+        peacockdb_ffi::raw::peacock_spark_partition_ids(
+            &ffi_schema as *const FFI_ArrowSchema as *const c_void,
+            &ffi_arr as *const FFI_ArrowArray as *const c_void,
+            key_cols.as_ptr(),
+            key_cols.len() as u64,
+            n_parts as u32,
+            42,
+            out.as_mut_ptr(),
+            out.len() as u64,
+            &mut got_n,
+        )
+    };
+    assert_eq!(rc, 0, "peacock_spark_partition_ids FFI returned an error");
+    assert_eq!(got_n as usize, rows, "FFI returned wrong row count");
+    eprintln!("LIVE comet CPU partition_ids = {comet:?}");
+    eprintln!("LIVE GPU  FFI partition_ids = {out:?}");
+    assert_eq!(
+        out, comet,
+        "GPU Spark-murmur3 partition-ids must match the comet CPU twin bit-exact"
+    );
+}
+
 #[test]
 fn pmod_handles_negative_hashes() {
     // pmod must differ from raw % for negative hashes (the classic mismatch source).

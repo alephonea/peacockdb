@@ -17,7 +17,7 @@ export CXX=/usr/bin/g++-${GCC_VERSION}
 # Rust integration tests that link libpeacock_gpu.so and need to run on the GPU host.
 # After build, each binary is staged under cpp/install/rust-tests/<name> so the
 # existing rsync step picks them up alongside the C++ binaries.
-RUST_TESTS=(test_gpu)
+RUST_TESTS=(test_gpu test_inc2_conformance)
 RUST_TESTS_STAGING=cpp/install/rust-tests
 
 BUILD=0

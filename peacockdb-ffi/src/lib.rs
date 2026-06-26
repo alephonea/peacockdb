@@ -72,6 +72,22 @@ pub mod raw {
 
         pub fn peacock_handle_release(executor: *mut PeacockExecutor, handle: u64);
         pub fn peacock_executor_end_plan(executor: *mut PeacockExecutor);
+
+        // Inc2 conformance hook (stateless): GPU Spark-murmur3 partition ids for the
+        // key columns of an Arrow C-Data struct array. `schema`/`array` are pointers
+        // to arrow's FFI_ArrowSchema/FFI_ArrowArray (ABI-compatible with cuDF's
+        // ArrowSchema/ArrowArray). Used by the live GPU↔CPU conformance test.
+        pub fn peacock_spark_partition_ids(
+            schema: *const std::ffi::c_void,
+            array: *const std::ffi::c_void,
+            key_cols: *const u32,
+            num_keys: u64,
+            num_partitions: u32,
+            seed: u32,
+            out_pids: *mut i32,
+            out_cap: u64,
+            out_n: *mut u64,
+        ) -> i32;
     }
 }
 

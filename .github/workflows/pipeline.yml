@@ -162,7 +162,9 @@ jobs:
           # *.tp1-mem120gib.cpu.txt goldens AND the final result. The node-by-node
           # half is what catches intermediate divergences a whole-result check
           # misses (e.g. q14's INTERSECT NULL-semantics regression), so it MUST gate.
-          for t in test_gpu; do
+          # test_inc2_conformance = the live GPU↔CPU Spark-murmur3 partition-id gate
+          # (peacock FFI path vs comet, bit-exact) — the standing Inc2 hash gate.
+          for t in test_gpu test_inc2_conformance; do
             exec_path=$(cargo test --no-run -p peacockdb-core --test "$t" \
                 --message-format=json \
               | python3 -c '
