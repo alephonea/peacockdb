@@ -1,13 +1,18 @@
 name: Build peacockdb C++
 description: Install build dependencies and build the peacockdb C++ library against cuDF at /opt/conda.
 
+inputs:
+  cudf:
+    description: cuDF version, used only to scope the ccache cache key per matrix leg.
+    required: true
+
 runs:
   using: composite
   steps:
     - name: Install compiler
       shell: bash
       run: |
-        conda install -y -c conda-forge gcc gxx binutils
+        conda install -y -c conda-forge gcc gxx binutils ccache
         # scripts/build.sh resolves the host compiler via `which gcc-${VERSION}`,
         # but conda-forge's gcc package only installs unversioned `gcc`/`g++`
         # symlinks. Add the versioned aliases so build.sh can find them, and
@@ -19,6 +24,27 @@ runs:
         ln -sf "$GCC_PATH" "$BIN_DIR/gcc-${GCC_VER}"
         ln -sf "$GXX_PATH" "$BIN_DIR/g++-${GCC_VER}"
         echo "PEACOCK_GCC_VERSION=${GCC_VER}" >> "$GITHUB_ENV"
+
+    - name: Configure ccache
+      shell: bash
+      run: |
+        # Set in GITHUB_ENV so the configure + build steps (and `ccache -s`) all
+        # see it. COMPILERCHECK=content hashes the compiler binary rather than its
+        # mtime, so the conda gcc reinstall each run doesn't invalidate every object.
+        echo "CCACHE_DIR=$HOME/.ccache" >> "$GITHUB_ENV"
+        echo "CCACHE_MAXSIZE=2G" >> "$GITHUB_ENV"
+        echo "CCACHE_COMPILERCHECK=content" >> "$GITHUB_ENV"
+
+    - name: Restore/save ccache
+      uses: actions/cache@v4
+      with:
+        path: ~/.ccache
+        # Prefix restore-keys (not exact match): a non-exact older cache still
+        # restores and ccache re-validates each object by content. Scoped per cudf
+        # leg because the compiler/toolchain differs across the matrix images.
+        key: ccache-${{ inputs.cudf }}-${{ github.sha }}
+        restore-keys: |
+          ccache-${{ inputs.cudf }}-
 
     - name: Install cmake and ninja
       shell: bash
@@ -37,7 +63,7 @@ runs:
 
     - name: Configure (CPP)
       shell: bash
-      run: ./scripts/build.sh --configure --cudf_ROOT /opt/conda --gcc-version "${PEACOCK_GCC_VERSION}"
+      run: ./scripts/build.sh --configure --cudf_ROOT /opt/conda --gcc-version "${PEACOCK_GCC_VERSION}" --compiler-launcher ccache
       env:
         LDFLAGS: -Wl,-rpath-link,/opt/conda/lib
 
@@ -46,6 +72,10 @@ runs:
       run: ./scripts/build.sh --build --gcc-version "${PEACOCK_GCC_VERSION}"
       env:
         LDFLAGS: -Wl,-rpath-link,/opt/conda/lib
+
+    - name: ccache stats
+      shell: bash
+      run: ccache -s
 
     - name: Install (CPP)
       shell: bash
