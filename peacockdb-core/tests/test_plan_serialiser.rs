@@ -599,3 +599,41 @@ fn test_vector_search_ir_roundtrip() {
     assert_eq!(vfield.child_type(), fb::DataType::Float16);
     assert_eq!(vfield.list_size(), 4);
 }
+
+/// Part-B plan-level round-trip: wrap a real (serializable) GPU input plan in a
+/// GpuVectorSearchExec and assert serialize -> deserialize -> serialize is
+/// bytes-equal, exercising the exec-level GpuVectorSearch branch on both sides.
+#[tokio::test]
+async fn test_vector_search_plan_bytes_equal_roundtrip() {
+    use peacockdb_core::vector::GpuVectorSearchExec;
+
+    let data_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../testdata/tpch.minimal");
+    let ctx = peacockdb_core::create_context_with_tables(&data_dir, 1, 2 * 1024 * 1024 * 1024)
+        .await
+        .unwrap();
+    let input = ctx
+        .sql("SELECT c_custkey FROM customer")
+        .await
+        .unwrap()
+        .create_physical_plan()
+        .await
+        .unwrap();
+
+    // 4 fp16 query elements = 8 bytes; opaque here (byte fidelity is the point).
+    let query = vec![0u8, 60, 0, 64, 0, 66, 0, 68];
+    let vs: std::sync::Arc<dyn datafusion::physical_plan::ExecutionPlan> =
+        std::sync::Arc::new(GpuVectorSearchExec::new(input, None, 3, query, 4));
+
+    let bytes = serialize_plan(&vs).expect("serialization failed");
+    assert_valid_flatbuffer(&bytes);
+
+    let root = flatbuffers::root::<fb::GpuPlan>(&bytes).unwrap().root().unwrap();
+    assert_eq!(root.node_type(), fb::PlanNodeKind::GpuVectorSearch);
+    let vsn = root.node_as_gpu_vector_search().unwrap();
+    assert_eq!(vsn.k(), 3);
+    assert_eq!(vsn.dim(), 4);
+    assert_eq!(vsn.metric(), fb::VectorMetric::L2);
+    assert_eq!(vsn.strategy(), fb::VectorSearchStrategy::ExactBrute);
+
+    assert_roundtrip_bytes_equal(&bytes);
+}

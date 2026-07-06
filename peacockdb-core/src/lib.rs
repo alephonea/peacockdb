@@ -42,6 +42,9 @@ pub fn build_session_state_with_gpu_rules_mode(
     config.options_mut().execution.target_partitions = target_partitions;
     let state = SessionStateBuilder::new_from_existing(base.state())
         .with_config(config)
+        .with_analyzer_rule(Arc::new(vector::VectorTopKAnalyzerRule))
+        .with_optimizer_rule(Arc::new(vector::PushFilterIntoVectorTopK))
+        .with_query_planner(Arc::new(vector::VectorQueryPlanner))
         .with_physical_optimizer_rule(Arc::new(GpuExecutionRule))
         .with_physical_optimizer_rule(Arc::new(GpuMemoryBudgetRule::new(
             gpu_memory_budget,
@@ -76,6 +79,9 @@ pub fn build_session_state(
     config.options_mut().execution.target_partitions = target_partitions;
     let state = SessionStateBuilder::new_from_existing(base.state())
         .with_config(config)
+        .with_analyzer_rule(Arc::new(vector::VectorTopKAnalyzerRule))
+        .with_optimizer_rule(Arc::new(vector::PushFilterIntoVectorTopK))
+        .with_query_planner(Arc::new(vector::VectorQueryPlanner))
         .build();
 
     let ctx = SessionContext::new_with_state(state);

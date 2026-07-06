@@ -33,6 +33,7 @@ use crate::gpu_rule::{
     GpuProjectExec, GpuRepartitionExec, GpuScanExec, GpuSortExec, GpuSortPreservingMergeExec,
     GpuUnionExec, GpuWindowExec,
 };
+use crate::vector::GpuVectorSearchExec;
 
 /// Serialize an entire GPU execution plan tree into a FlatBuffer byte vector.
 ///
@@ -89,6 +90,8 @@ fn serialize_plan_node<'a>(
         serialize_gpu_limit(b, plan)?
     } else if plan.as_any().is::<GpuWindowExec>() {
         serialize_gpu_window(b, plan)?
+    } else if plan.as_any().is::<GpuVectorSearchExec>() {
+        serialize_gpu_vector_search(b, plan)?
     } else {
         return Err(format!("unsupported plan node: {}", plan.name()));
     };
@@ -952,6 +955,36 @@ fn serialize_gpu_window<'a>(
     Ok((fb::PlanNodeKind::GpuWindow, node.as_union_value()))
 }
 
+// --- GpuVectorSearchExec ---
+
+fn serialize_gpu_vector_search<'a>(
+    b: &mut FlatBufferBuilder<'a>,
+    plan: &Arc<dyn ExecutionPlan>,
+) -> Result<(fb::PlanNodeKind, WIPOffset<flatbuffers::UnionWIPOffset>), String> {
+    let vs = plan.as_any().downcast_ref::<GpuVectorSearchExec>().unwrap();
+    let input = serialize_plan_node(b, vs.input())?;
+    let query = b.create_vector(vs.query());
+    // MVP: L2 metric, ExactBrute strategy, fp16 elements, no ANN index / filter
+    // bitmap. These are pinned (not stored on the exec) so they re-serialize
+    // identically after a deserialize round-trip.
+    let node = fb::GpuVectorSearch::create(
+        b,
+        &fb::GpuVectorSearchArgs {
+            metric: fb::VectorMetric::L2,
+            query: Some(query),
+            dim: vs.dim(),
+            scalar: fb::VectorScalar::F16,
+            k: vs.k() as u64,
+            strategy: fb::VectorSearchStrategy::ExactBrute,
+            ann_index_id: 0,
+            shortlist_size: 0,
+            filter_bitmap_input: None,
+            input: Some(input),
+        },
+    );
+    Ok((fb::PlanNodeKind::GpuVectorSearch, node.as_union_value()))
+}
+
 // ---------------------------------------------------------------------------
 // Expressions
 // ---------------------------------------------------------------------------
@@ -1456,6 +1489,10 @@ fn deserialize_plan_node(node: &fb::PlanNode) -> Result<Arc<dyn ExecutionPlan>, 
         fb::PlanNodeKind::GpuWindow => {
             let w = node.node_as_gpu_window().ok_or("expected GpuWindow")?;
             deserialize_gpu_window(&w)
+        }
+        fb::PlanNodeKind::GpuVectorSearch => {
+            let vs = node.node_as_gpu_vector_search().ok_or("expected GpuVectorSearch")?;
+            deserialize_gpu_vector_search(&vs)
         }
         other => Err(format!("unknown PlanNodeKind: {:?}", other)),
     }
@@ -2288,6 +2325,25 @@ fn deserialize_gpu_limit(l: &fb::GpuLimit) -> Result<Arc<dyn ExecutionPlan>, Str
     };
     let inner = GlobalLimitExec::new(input, l.skip() as usize, fetch);
     Ok(Arc::new(GpuGlobalLimitExec::new(Arc::new(inner))))
+}
+
+/// Reconstruct a `GpuVectorSearchExec` from the IR. The scoring expr isn't carried
+/// on the wire (the C++ consumer rebuilds it from metric/query/dim), so the node
+/// comes back with `distance = None` — runnable only via the freshly-planned exec,
+/// not this one; it exists to make the plan round-trip byte-for-byte. The pinned
+/// metric/strategy/scalar re-serialize identically.
+fn deserialize_gpu_vector_search(
+    vs: &fb::GpuVectorSearch,
+) -> Result<Arc<dyn ExecutionPlan>, String> {
+    let input = deserialize_plan_node(&vs.input().ok_or("GpuVectorSearch missing input")?)?;
+    let query = vs.query().map(|q| q.bytes().to_vec()).unwrap_or_default();
+    Ok(Arc::new(GpuVectorSearchExec::new(
+        input,
+        None,
+        vs.k() as usize,
+        query,
+        vs.dim(),
+    )))
 }
 
 fn deserialize_gpu_window(win: &fb::GpuWindow) -> Result<Arc<dyn ExecutionPlan>, String> {
