@@ -695,47 +695,48 @@ fn has_repartition(plan: &Arc<dyn ExecutionPlan>) -> bool {
         || plan.children().iter().any(|c| has_repartition(c))
 }
 
-/// Whether an aggregate function is ADDITIVE — mergeable across partitions by a
-/// trivial associative combine (SUM=Σ, COUNT=Σ, MIN/MAX=extremum). AVG, STDDEV and
-/// VAR are NOT: their partial state is compound (sum+count / moments) and the Final
-/// merge needs the decomposition landing in Inc4 (AVG) / Inc5 (STDDEV/VAR). Whitelist
-/// (not blacklist) so any unrecognized aggregate defaults to NON-additive → the
-/// query stays on the #11 single-partition path (correct) rather than silently
-/// mis-merging on #13.
-fn is_additive_agg(fun_name: &str) -> bool {
-    matches!(fun_name.to_ascii_lowercase().as_str(), "sum" | "count" | "min" | "max")
+/// Whether an aggregate's two-phase STATE is mergeable across hash partitions by a
+/// per-bucket Final re-aggregation. SUM/COUNT/MIN/MAX merge trivially (Σ / extremum);
+/// AVG merges because its state (sum, count) IS additive — the per-bucket Final does
+/// Σsum/Σcount = correct mean, no mean-of-means (Inc4, #25). STDDEV/VAR do NOT — their
+/// state is compound moments needing the M2 combine (Inc5). Whitelist (not blacklist)
+/// so any unrecognized aggregate defaults to NON-mergeable → the query stays on the
+/// #11 single-partition path (correct) rather than silently mis-merging on #13.
+fn state_mergeable_agg(fun_name: &str) -> bool {
+    matches!(fun_name.to_ascii_lowercase().as_str(), "sum" | "count" | "min" | "max" | "avg" | "mean")
 }
 
-/// True iff every multi-partition FINAL-stage aggregate in the plan uses only
-/// additive aggregates (see [`is_additive_agg`]). Partial-stage aggregates are
-/// unconstrained (their state is merged downstream); only the Final merge is what
-/// #13 must be able to combine across the 8 hash partitions.
-fn all_final_aggs_additive(plan: &Arc<dyn ExecutionPlan>) -> bool {
+/// True iff every multi-partition FINAL-stage aggregate in the plan is state-mergeable
+/// (see [`state_mergeable_agg`]). Partial-stage aggregates are unconstrained (their
+/// state is merged downstream); only the Final merge is what #13 must be able to
+/// combine across the 8 hash partitions.
+fn all_final_aggs_state_mergeable(plan: &Arc<dyn ExecutionPlan>) -> bool {
     let here = plan
         .as_any()
         .downcast_ref::<GpuAggregateExec>()
         .and_then(|g| g.inner().as_any().downcast_ref::<AggregateExec>())
         .map(|agg| match agg.mode() {
             AggregateMode::Final | AggregateMode::FinalPartitioned => {
-                agg.aggr_expr().iter().all(|a| is_additive_agg(a.fun().name()))
+                agg.aggr_expr().iter().all(|a| state_mergeable_agg(a.fun().name()))
             }
             _ => true,
         })
         .unwrap_or(true);
-    here && plan.children().iter().all(|c| all_final_aggs_additive(c))
+    here && plan.children().iter().all(|c| all_final_aggs_state_mergeable(c))
 }
 
-/// True iff the plan can be driven by the #13 CpuNodeExecutor (Inc2): it has a
-/// multi-partition scan map AND every multi-partition Final-aggregate is additive
-/// (SUM/COUNT/MIN/MAX). Inc2 lowers a Hash `GpuRepartitionExec` into an explicit
-/// GpuCoalescePartitions(M→1) + GpuRepartition(1→N) and hash-partitions via Spark-
-/// murmur3, so a grouped ADDITIVE query (shuffle_additive) now re-groups correctly.
-/// A query with an AVG/STDDEV/VAR Final-agg (e.g. q1) still can't be merged across
-/// partitions until Inc4/Inc5 → it stays on the #11 instrumented-enforced path
-/// (correct single-partition goldens). Gate on AGG-KIND, NOT on the mere presence
-/// of a GpuRepartitionExec (which would flip this and wrongly admit q1's AVG).
+/// True iff the plan can be driven by the #13 CpuNodeExecutor: it has a multi-
+/// partition scan map AND every multi-partition Final-aggregate is state-mergeable
+/// (SUM/COUNT/MIN/MAX/AVG — see [`state_mergeable_agg`]). Inc2 lowers a Hash
+/// `GpuRepartitionExec` into GpuCoalescePartitions(M→1) + GpuRepartition(1→N) and
+/// hash-partitions via Spark-murmur3, so every group lands wholly in one bucket; the
+/// per-bucket Final then merges that group's state — Σ for sum/count, Σsum/Σcount for
+/// AVG (Inc4, #25). A STDDEV/VAR Final-agg still can't be merged (compound moments,
+/// Inc5) → those queries stay on the #11 instrumented-enforced path (correct single-
+/// partition goldens). Gate on AGG-KIND, NOT on the mere presence of a
+/// GpuRepartitionExec (which would wrongly admit a STDDEV/VAR shuffle).
 pub(crate) fn plan_is_node13_executable(plan: &Arc<dyn ExecutionPlan>) -> bool {
-    has_scan_map(plan) && all_final_aggs_additive(plan)
+    has_scan_map(plan) && all_final_aggs_state_mergeable(plan)
 }
 
 pub async fn assert_cpu_results_match_datafusion(

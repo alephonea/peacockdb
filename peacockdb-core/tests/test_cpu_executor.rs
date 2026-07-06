@@ -48,6 +48,9 @@ cpu_result_test!(tpch, 1, q22, tp8_mem2gib, false);
 // query. At tp8-mem2gib it stays on #11 (single-partition-coalesced, partitions=1);
 // the real 8-way #13 golden is the tp8-mem120gib entry below.
 cpu_result_test!(tpch, 1, shuffle_additive, tp8_mem2gib, false);
+// shuffle_additive_avg (GROUP BY rf,ls; count, avg, sum — avg BEFORE sum) — the Inc4
+// AVG proof query. tp8-mem2gib stays on #11; the real 8-way #13 golden is below.
+cpu_result_test!(tpch, 1, shuffle_additive_avg, tp8_mem2gib, false);
 
 // ── H200/tp8 (Phase 2 Inc1): real 8-way partitioning ────────────────────────
 // The scan's RG→partition map drives this through the #13 CpuNodeExecutor, so
@@ -62,6 +65,12 @@ cpu_node13_result_test!(tpch, 1, q6, tp8_mem120gib, true);
 // Hash(1→8, Spark-murmur3)→final-agg(8). The Inc2 hash-shuffle proof — per-partition
 // out_rows on the repartition node are murmur3-fidelity numbers the GPU must match.
 cpu_node13_result_test!(tpch, 1, shuffle_additive, tp8_mem120gib, true);
+// shuffle_additive_avg: real 8-way with an AVG (state = sum,count merged Σsum/Σcount
+// per hash bucket). Inc4 AVG proof. Minimal single-avg carrier (de-risks before q1).
+cpu_node13_result_test!(tpch, 1, shuffle_additive_avg, tp8_mem120gib, true);
+// q1: the canonical AVG carrier (3 avgs + 4 sums + count, GROUP BY rf,ls) — now real
+// 8-way #13 at tp8-mem120gib (was #11-only until Inc4). tp8-mem2gib q1 stays #11.
+cpu_node13_result_test!(tpch, 1, q1, tp8_mem120gib, true);
 
 // ── TPC-DS ────────────────────────────────────────────────────────────────
 cpu_result_test!(tpcds, 1, q1, tp8_mem2gib, false);

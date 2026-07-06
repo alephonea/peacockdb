@@ -1251,6 +1251,34 @@ static bool is_avg_name(const std::string& f) {
 static cudf::size_type stddev_ddof(const std::string& f) {
   return (f == "stddev_pop" || f == "STDDEV_POP") ? 0 : 1;
 }
+static bool is_var_name(const std::string& f) {
+  return f == "var" || f == "VAR" || f == "var_samp" || f == "VAR_SAMP" ||
+         f == "var_pop" || f == "VAR_POP" || f == "variance" || f == "VARIANCE";
+}
+
+// Aggregate execution phase — THREE-WAY (Inc4). The old `is_final` bool
+// (mode==Final||FinalPartitioned) collapses Single AND Partial into one branch,
+// but the two-phase AVG state re-impl needs to tell them apart:
+//   Single  = one pass over raw rows (tp1)           -> AVG = plain MEAN (1 col)
+//   Partial = first pass, emits per-partition STATE  -> AVG = [sum, count] (2 cols)
+//   Final   = merges partial STATE across the shuffle-> AVG = Σsum / Σcount
+// Getting this wrong regresses tp1 (Single would emit 2-col state with no Final to
+// divide it). SUM/COUNT/MIN/MAX are phase-insensitive except count-Final -> sum.
+enum class AggPhase { Single, Partial, Final };
+static AggPhase agg_phase(fb::AggregateMode m) {
+  switch (m) {
+    case fb::AggregateMode_Partial:
+      return AggPhase::Partial;
+    case fb::AggregateMode_Final:
+    case fb::AggregateMode_FinalPartitioned:
+      return AggPhase::Final;
+    case fb::AggregateMode_Single:
+    case fb::AggregateMode_SinglePartitioned:
+      return AggPhase::Single;
+    default:
+      throw std::runtime_error("agg_phase: unsupported AggregateMode");
+  }
+}
 
 static std::unique_ptr<cudf::groupby_aggregation> make_agg(
     const std::string& func_name, bool is_final) {
@@ -1626,65 +1654,165 @@ static TableResult execute_aggregate(const fb::GpuAggregate* agg) {
   // INCLUDE matches the peacock CPU oracle. Non-null keys are unaffected.
   cudf::groupby::groupby gb{keys_view, cudf::null_policy::INCLUDE};
 
-  // Build aggregation requests — one per aggregate function.
+  AggPhase phase = agg_phase(agg->mode());
+
+  // Raw value column for an aggregate's argument (Partial/Single stages), from
+  // func->args() over the ORIGINAL input. NO avg out-scale cast here — see below.
+  auto arg_col = [&](const fb::AggregateFuncNode* func) -> cudf::column_view {
+    if (func->args() && func->args()->size() > 0) {
+      auto* arg = func->args()->Get(0);
+      if (arg->node_type() == fb::ExprNode_ColumnRef)
+        return tv.column(static_cast<cudf::size_type>(arg->node_as_ColumnRef()->index()));
+      computed_args.push_back(build_column(arg, tv));
+      return computed_args.back()->view();
+    }
+    return tv.column(0);  // count(*) / no args: dummy column
+  };
+
+  // Build aggregation requests. AVG is the only multi-column case (Inc4): its
+  // two-phase STATE is (sum, count), which — unlike a pre-divided mean — IS
+  // additive, so the per-bucket Final merges Σsum/Σcount = correct AVG. Threaded
+  // THREE-WAY on `phase` (Single/Partial/Final), never the 2-way is_final:
+  //   Single-avg  -> 1 req [mean] over the out-scale-cast value          (1 out col)
+  //   Partial-avg -> 1 req [sum, count] over the raw value               (2 out cols: STATE)
+  //   Final-avg   -> 2 reqs [sum(partial_sum)], [sum(partial_count)]     (1 out col: Σsum/Σcount)
+  // A running Final-input cursor (`in_off`) is SYMMETRIC with the Partial output
+  // assembly: avg emits 2 state cols, so it shifts every downstream agg's input
+  // index by 2 (not 1) — the subtle bug the reviewer flagged.
+  struct OutBuild {
+    std::string name;
+    int req;          // request index producing the (primary) result
+    int res;          // result index within that request
+    bool count_cast;  // INT32 count -> INT64
+    int req_div;      // Final-avg: request producing Σcount (-1 otherwise)
+    bool avg_div;     // Final-avg: out = Σsum / Σcount
+    int32_t out_scale;      // decimal out scale for the avg divide
+    uint8_t out_precision;  // 0 => float avg
+  };
   std::vector<cudf::groupby::aggregation_request> requests;
-  std::vector<std::string> agg_names;
-  std::vector<bool> agg_is_count;
-  bool has_avg_final = false;
+  std::vector<OutBuild> builds;
+  bool has_stddev_or_var_final = false;
+  size_t in_off = key_indices.size();  // Final positional input cursor
+
   if (agg->aggr_funcs()) {
     for (flatbuffers::uoffset_t i = 0; i < agg->aggr_funcs()->size(); ++i) {
       auto* func = agg->aggr_funcs()->Get(i);
       std::string name = func->name() ? func->name()->str() : "count";
+      std::string alias = func->alias() ? func->alias()->str() : name;
+      bool is_avg = is_avg_name(name);
+      if (phase == AggPhase::Final && (is_stddev_name(name) || is_var_name(name)))
+        has_stddev_or_var_final = true;
 
-      cudf::groupby::aggregation_request req;
-      req.values = get_values_col(func, i);
-      req.aggregations.push_back(make_agg(name, is_final));
-      requests.push_back(std::move(req));
-
-      if (func->alias())
-        agg_names.push_back(func->alias()->str());
-      else
-        agg_names.push_back(name);
-      agg_is_count.push_back(name == "count" || name == "COUNT");
-      // STDDEV uses the same singleton-identity shortcut as AVG in Final mode.
-      if (is_final && (is_avg_name(name) || is_stddev_name(name)))
-        has_avg_final = true;
+      if (is_avg && phase == AggPhase::Partial) {
+        // Emit the (sum, count) STATE. Sum is over the RAW value (input scale) —
+        // the out-scale cast belongs at the Final divide, not the partial sum.
+        cudf::groupby::aggregation_request req;
+        req.values = arg_col(func);
+        req.aggregations.push_back(cudf::make_sum_aggregation<cudf::groupby_aggregation>());
+        req.aggregations.push_back(cudf::make_count_aggregation<cudf::groupby_aggregation>());
+        int r = static_cast<int>(requests.size());
+        builds.push_back({alias, r, 0, false, -1, false, 0, 0});      // partial_sum
+        builds.push_back({alias, r, 1, true, -1, false, 0, 0});       // partial_count -> INT64
+        requests.push_back(std::move(req));
+      } else if (is_avg && phase == AggPhase::Final) {
+        // Merge: Σ(partial_sum) / Σ(partial_count). The two state cols sit at
+        // [in_off, in_off+1] (running offset accounts for prior avgs' 2 cols).
+        cudf::groupby::aggregation_request req_s, req_c;
+        req_s.values = tv.column(static_cast<cudf::size_type>(in_off));
+        req_s.aggregations.push_back(cudf::make_sum_aggregation<cudf::groupby_aggregation>());
+        req_c.values = tv.column(static_cast<cudf::size_type>(in_off + 1));
+        req_c.aggregations.push_back(cudf::make_sum_aggregation<cudf::groupby_aggregation>());
+        int r_s = static_cast<int>(requests.size());
+        requests.push_back(std::move(req_s));
+        int r_c = static_cast<int>(requests.size());
+        requests.push_back(std::move(req_c));
+        builds.push_back({alias, r_s, 0, false, r_c, true,
+                          static_cast<int32_t>(func->out_decimal_scale()),
+                          func->out_decimal_precision()});
+        in_off += 2;
+        continue;  // avg consumed TWO Final input columns
+      } else {
+        // Single-avg (plain mean) OR sum/count/min/max/stddev — one request.
+        cudf::groupby::aggregation_request req;
+        if (phase == AggPhase::Final) {
+          req.values = tv.column(static_cast<cudf::size_type>(in_off));
+        } else if (is_avg) {
+          // Single-avg: mean over the value cast up to the declared out scale
+          // (cuDF mean keeps the input scale otherwise).
+          cudf::column_view base = arg_col(func);
+          if (func->out_decimal_precision() != 0 &&
+              base.type().id() == cudf::type_id::DECIMAL128) {
+            int32_t want_exp = -static_cast<int32_t>(func->out_decimal_scale());
+            if (base.type().scale() != want_exp) {
+              computed_args.push_back(
+                  cudf::cast(base, cudf::data_type{cudf::type_id::DECIMAL128, want_exp}));
+              base = computed_args.back()->view();
+            }
+          }
+          req.values = base;
+        } else {
+          req.values = arg_col(func);
+        }
+        req.aggregations.push_back(make_agg(name, phase == AggPhase::Final));
+        builds.push_back({alias, static_cast<int>(requests.size()), 0,
+                          (name == "count" || name == "COUNT"), -1, false, 0, 0});
+        requests.push_back(std::move(req));
+      }
+      if (phase == AggPhase::Final) in_off += 1;
     }
   }
 
   auto [group_keys, agg_results] = gb.aggregate(requests);
 
-  // Guard the AVG-as-plain-MEAN shortcut (see make_agg). It is correct only
-  // when the Partial stage already produced one row per key, so the Final
-  // regroup is an identity (MEAN-of-singleton). Today that holds because
-  // GpuRepartition runs as passthrough (single partition). If real multi-
-  // partition repartition is ever enabled, the same key arrives from several
-  // Partial outputs and this Final groupby actually merges rows — turning AVG
-  // into a silently-wrong mean-of-means. Detect that here (fewer output groups
-  // than input rows) and fail loudly instead. The fix at that point is to
-  // decompose AVG into SUM+COUNT across the Partial/Final boundary:
-  // https://github.com/asymptote-tech/peacockdb/issues/25
-  if (has_avg_final &&
+  // STDDEV/VAR still can't merge partial moment-state across the shuffle (that's
+  // Inc5's M2 combine) — a Final that actually merges >1 partial row per key would
+  // silently produce std-of-stds. Fail loudly. AVG is NO LONGER guarded here: its
+  // (sum,count) state merges correctly above (Inc4, #25). The GLOBAL/ungrouped avg
+  // guard (execute_aggregate's reduce path) stays throwing separately — out of
+  // Inc4 scope.
+  if (has_stddev_or_var_final &&
       group_keys->num_rows() < static_cast<cudf::size_type>(tv.num_rows())) {
     throw std::runtime_error(
-        "Final-stage AVG merged multiple partial rows per key "
-        "(mean-of-means is wrong); AVG must be decomposed into SUM+COUNT "
-        "before multi-partition GPU repartition is enabled");
+        "Final-stage STDDEV/VAR merged multiple partial rows per key "
+        "(std-of-stds is wrong); STDDEV/VAR partial-moment merge is Inc5");
   }
 
-  // Assemble output: key columns + aggregation result columns.
+  // Assemble output: key columns then aggregate columns (per `builds`).
   for (cudf::size_type i = 0; i < group_keys->num_columns(); ++i) {
     out_cols.push_back(std::make_unique<cudf::column>(group_keys->view().column(i)));
     out_names.push_back(key_names[i]);
   }
-  for (size_t i = 0; i < agg_results.size(); ++i) {
-    // Each aggregation_result has one column per aggregation; we have one each.
-    auto col = std::move(agg_results[i].results[0]);
-    // cuDF count returns INT32; cast to INT64 for SQL BIGINT compatibility.
-    if (agg_is_count[i] && col->type().id() == cudf::type_id::INT32)
-      col = cudf::cast(*col, cudf::data_type{cudf::type_id::INT64});
+  for (auto& b : builds) {
+    std::unique_ptr<cudf::column> col;
+    if (b.avg_div) {
+      // Σsum / Σcount at DataFusion's declared out type.
+      auto sum_v = agg_results[b.req].results[b.res]->view();
+      auto cnt_v = agg_results[b.req_div].results[0]->view();
+      if (b.out_precision != 0) {
+        // Decimal avg: DIV result scale = lhs.scale - rhs.scale, so put Σsum at the
+        // out scale and Σcount at scale 0 -> result carries the out scale.
+        int32_t want_exp = -b.out_scale;
+        auto sum_scaled =
+            cudf::cast(sum_v, cudf::data_type{cudf::type_id::DECIMAL128, want_exp});
+        auto cnt_dec = cudf::cast(cnt_v, cudf::data_type{cudf::type_id::DECIMAL128, 0});
+        col = cudf::binary_operation(sum_scaled->view(), cnt_dec->view(),
+                                     cudf::binary_operator::DIV,
+                                     cudf::data_type{cudf::type_id::DECIMAL128, want_exp});
+      } else {
+        auto sum_f = cudf::cast(sum_v, cudf::data_type{cudf::type_id::FLOAT64});
+        auto cnt_f = cudf::cast(cnt_v, cudf::data_type{cudf::type_id::FLOAT64});
+        col = cudf::binary_operation(sum_f->view(), cnt_f->view(),
+                                     cudf::binary_operator::DIV,
+                                     cudf::data_type{cudf::type_id::FLOAT64});
+      }
+    } else {
+      col = std::move(agg_results[b.req].results[b.res]);
+      // cuDF count returns INT32; cast to INT64 for SQL BIGINT compatibility.
+      if (b.count_cast && col->type().id() == cudf::type_id::INT32)
+        col = cudf::cast(*col, cudf::data_type{cudf::type_id::INT64});
+    }
     out_cols.push_back(std::move(col));
-    out_names.push_back(agg_names[i]);
+    out_names.push_back(b.name);
   }
 
   return {std::make_unique<cudf::table>(std::move(out_cols)), std::move(out_names)};
@@ -2739,10 +2867,18 @@ void NodeSession::execute_node(uint64_t seq, const uint64_t* input_handles,
     }
   }
 
-  // (iii) GpuCoalescePartitions → concatenate ALL M child partitions into ONE
-  // output (BUFFERING: the full concatenated table is resident), in partition-index
-  // order to match the Rust CpuNodeExecutor's concat. NOT a per-partition passthrough.
-  if (node->node_type() == fb::PlanNodeKind_GpuCoalescePartitions) {
+  // Partition-COLLAPSING nodes → concatenate ALL M child partitions into ONE output
+  // (BUFFERING: the full concatenated table is resident), in partition-index order to
+  // match the Rust CpuNodeExecutor's `collapses_partitions` concat. NOT a per-partition
+  // passthrough.
+  //   - GpuCoalescePartitions: the explicit M→1 concat before a Hash repartition.
+  //   - GpuSortPreservingMerge: merges N sorted partitions into one (q1's top ORDER BY
+  //     node). A plain concat suffices HERE: the node-by-node result is compared
+  //     order-independently (batches_to_sorted_str) and the per-node cost is schema-
+  //     driven (rows + schema), so partitions=1 + the right row count match the #13
+  //     golden by construction. (The production fast path keeps its own sort-merge.)
+  if (node->node_type() == fb::PlanNodeKind_GpuCoalescePartitions ||
+      node->node_type() == fb::PlanNodeKind_GpuSortPreservingMerge) {
     if (out_cap < 1)
       throw std::runtime_error("NodeSession::execute_node: out_handles buffer too small");
     std::vector<TableResult> owned;

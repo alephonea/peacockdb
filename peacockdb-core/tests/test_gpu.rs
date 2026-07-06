@@ -51,6 +51,7 @@ gpu_test!(tpch, 1, q21, tp1_mem120gib, golden_exact);
 gpu_test!(tpch, 1, q22, tp1_mem120gib, golden_exact);
 
 gpu_test!(tpch, 1, shuffle_additive, tp1_mem120gib, golden_exact);
+gpu_test!(tpch, 1, shuffle_additive_avg, tp1_mem120gib, golden_exact);
 
 // ── H200/tp8 (Phase 2 Inc1/Inc2): real 8-way partitioning ───────────────────
 // One GPU run asserts per-node Σ-over-8 rows+cost vs the tp8-mem120gib .cpu.txt
@@ -58,6 +59,12 @@ gpu_test!(tpch, 1, shuffle_additive, tp1_mem120gib, golden_exact);
 // q6 = no shuffle (Inc1); shuffle_additive = Hash-repartition via Spark-murmur3 (Inc2).
 gpu_test!(tpch, 1, q6, tp8_mem120gib, golden_exact);
 gpu_test!(tpch, 1, shuffle_additive, tp8_mem120gib, golden_exact);
+// Inc4 AVG proof: real 8-way with an AVG (state = sum,count merged Σsum/Σcount per
+// hash bucket). Minimal single-avg carrier verified on GPU BEFORE q1 (hard gate).
+gpu_test!(tpch, 1, shuffle_additive_avg, tp8_mem120gib, golden_exact);
+// q1: canonical AVG carrier (3 avgs + 4 sums + count, GROUP BY rf,ls) — real 8-way
+// #13 at tp8-mem120gib. Exercises the running column-offset (avgs before count).
+gpu_test!(tpch, 1, q1, tp8_mem120gib, golden_exact);
 
 // ── TPC-DS (GPU-operational set) ────────────────────────────────────────────
 gpu_test!(tpcds, 1, q1, tp1_mem120gib, golden_exact);

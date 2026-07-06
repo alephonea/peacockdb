@@ -44,6 +44,9 @@ cpu_result_test!(tpch, 1, q22, tp1_mem120gib, true);
 // shuffle_additive at tp1: single-partition baseline (no shuffle); the GPU verifies
 // its result against this golden. The real 8-way variant is tp8-mem120gib.
 cpu_result_test!(tpch, 1, shuffle_additive, tp1_mem120gib, true);
+// shuffle_additive_avg at tp1: single-partition baseline (DF mode=Single, plain mean);
+// the GPU verifies its result against this golden. Real 8-way variant is tp8-mem120gib.
+cpu_result_test!(tpch, 1, shuffle_additive_avg, tp1_mem120gib, true);
 
 // ── TPC-DS (GPU-operational set) ───────────────────────────────────────────
 cpu_result_test!(tpcds, 1, q1, tp1_mem120gib, true);

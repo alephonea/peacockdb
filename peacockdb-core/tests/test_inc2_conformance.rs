@@ -4,8 +4,12 @@
 //! shuffle partition, else the hash-repartition golden (per-node rows + result)
 //! diverges. Both sides use a Spark-compatible murmur3:
 //!   - CPU twin: comet `create_murmur3_hashes` (buffer pre-seeded to 42), then pmod.
-//!   - GPU: cuDF `spark_murmurhash3_x86_32(keys, seed=42)`, then pmod (added in a
-//!     later step; this file starts with the CPU side + the dep-confirm).
+//!   - GPU: our OWN Spark-murmur3 CUDA kernel `peacock::partitioning::spark_partition_ids`
+//!     (seed=42, per-column left-to-right running-seed, Spark null-skip, UTF-8 bytes),
+//!     then pmod. cuDF ships only STANDARD murmur3 (proven ≠ Spark by the probe), so we
+//!     own the hash kernel (Route B) and reuse cudf::partition for the scatter.
+//! The `gpu_spark_partition_ids_match_comet_live` gate drives the REAL GPU kernel via
+//! the FFI hook and asserts it is bit-exact against the comet CPU twin in one process.
 //!
 //! BOUNDARY (reviewer I-2): the sample below is STRING-KEY-ONLY (q1's char keys).
 //! Non-string shuffle keys are UNPROVEN until this conformance set is extended.

@@ -17,17 +17,18 @@ use common::{
     TIGHT_BUDGET,
 };
 
-/// Lock the Inc2 routing predicate (reviewer regression guard) — the gate is now
-/// AGG-KIND, not the mere presence of a repartition:
+/// Lock the routing predicate (reviewer regression guard) — the gate is AGG-KIND
+/// (state-mergeability), not the mere presence of a repartition:
 ///   - q6 (global additive agg, no shuffle)                    → node13-executable
 ///   - shuffle_additive (GROUP BY + Hash shuffle, SUM/COUNT)   → node13-executable
-///   - q1 (GROUP BY + Hash shuffle, but AVG)                   → NOT (AVG merge = Inc4)
-/// All three are evaluated at tp8-mem120gib so they all carry a scan map; the ONLY
-/// discriminator is whether a Final-aggregate is non-additive. Fails LOUDLY if the
-/// predicate is broadened to admit AVG/STDDEV/VAR (which #13 can't merge yet) or
-/// narrowed to reject a legitimate additive shuffle.
+///   - q1 (GROUP BY + Hash shuffle, AVG state = sum/count)     → node13-executable (Inc4)
+///   - shuffle_stddev (GROUP BY + Hash shuffle, STDDEV)        → NOT (compound moments = Inc5)
+/// All are evaluated at tp8-mem120gib so they carry a scan map; the ONLY discriminator
+/// is whether every Final-aggregate is state-mergeable. Fails LOUDLY if the predicate
+/// is broadened to admit STDDEV/VAR (which #13 can't merge yet) or narrowed to reject
+/// a legitimate mergeable shuffle (sum/count/min/max/avg).
 #[tokio::test]
-async fn inc2_routing_predicate_gates_on_agg_kind() {
+async fn routing_predicate_gates_on_agg_kind() {
     async fn plan_for(query: &str, device: &str) -> Arc<dyn ExecutionPlan> {
         let (parts, budget) = device_config(device);
         // Real-partitioning mode at tp8-mem120gib so the scan carries its map (the
@@ -53,21 +54,29 @@ async fn inc2_routing_predicate_gates_on_agg_kind() {
     );
     let q1 = plan_for("q1", "tp8-mem120gib").await;
     assert!(
-        !plan_is_node13_executable(&q1),
-        "q1 (AVG Final-agg) must stay on #11 until Inc4 lands the AVG decomposition"
+        plan_is_node13_executable(&q1),
+        "q1 (AVG = additive sum/count state) must route to #13 (Inc4)"
+    );
+    let stddev = plan_for("shuffle-stddev", "tp8-mem120gib").await;
+    assert!(
+        !plan_is_node13_executable(&stddev),
+        "shuffle_stddev (STDDEV compound moments) must stay on #11 until Inc5"
     );
 }
 
-/// I-3 (reviewer): LOCK the Inc4/Inc5 boundary. Forcing an AVG Final-agg query (q1)
-/// through the #13 CpuNodeExecutor at a real-partitioning device (tp8-mem120gib) must
-/// PANIC on the node13-executable safety guard — #13 cannot merge AVG across the 8
-/// hash partitions until the AVG decomposition (Inc4) lands. Guards against a future
-/// relaxation silently admitting a non-additive Final-agg and mis-merging it.
+/// I-3 (reviewer): LOCK the Inc5 boundary. Forcing a STDDEV Final-agg query through
+/// the #13 CpuNodeExecutor at a real-partitioning device (tp8-mem120gib) must PANIC on
+/// the node13-executable safety guard — #13 cannot merge STDDEV/VAR compound-moment
+/// state across the 8 hash partitions until Inc5. Guards against a future relaxation
+/// silently admitting a non-mergeable Final-agg and mis-merging it. (AVG now PASSES —
+/// Inc4 made its sum/count state mergeable; the negative case moved to STDDEV.)
 #[tokio::test]
 #[should_panic(expected = "node13-executable")]
-async fn inc3_avg_final_agg_at_tp8_node13_panics() {
-    common::assert_cpu_results_match_datafusion("tpch", "1", "q1", "tp8-mem120gib", None, true, false)
-        .await;
+async fn inc5_stddev_final_agg_at_tp8_node13_panics() {
+    common::assert_cpu_results_match_datafusion(
+        "tpch", "1", "shuffle-stddev", "tp8-mem120gib", None, true, false,
+    )
+    .await;
 }
 
 /// Every Gpu* node must be stripped before CPU execution; no stat may name one.
