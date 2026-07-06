@@ -12,6 +12,7 @@ pub mod generated {
 pub mod node_executor;
 pub mod plan_serializer;
 pub mod resident;
+pub mod vector;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -48,7 +49,9 @@ pub fn build_session_state_with_gpu_rules_mode(
         )))
         .build();
 
-    SessionContext::new_with_state(state)
+    let ctx = SessionContext::new_with_state(state);
+    ctx.register_udf(vector::l2_distance_udf());
+    ctx
 }
 
 /// Single-partition convenience wrapper (the common case: tp1 and the tp8-mem2gib
@@ -74,8 +77,10 @@ pub fn build_session_state(
     let state = SessionStateBuilder::new_from_existing(base.state())
         .with_config(config)
         .build();
-    
-    SessionContext::new_with_state(state)
+
+    let ctx = SessionContext::new_with_state(state);
+    ctx.register_udf(vector::l2_distance_udf());
+    ctx
 }
 
 async fn read_table(path: PathBuf, ctx: &SessionContext) -> Result<(String, Arc<ListingTable>), ()> {
