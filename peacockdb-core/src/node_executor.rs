@@ -105,9 +105,51 @@ use datafusion::error::DataFusionError;
 use datafusion::physical_plan::coalesce_partitions::CoalescePartitionsExec;
 use datafusion::physical_plan::sorts::sort_preserving_merge::SortPreservingMergeExec;
 
-use crate::cpu_executor::execute_single_node;
+use datafusion::arrow::array::{ArrayRef, UInt32Array};
+use datafusion::arrow::compute::{cast, concat_batches, take};
+use datafusion::arrow::datatypes::DataType;
+use datafusion::physical_plan::repartition::RepartitionExec;
+use datafusion::physical_plan::{Partitioning, PhysicalExpr};
+use datafusion_comet_spark_expr::hash_funcs::murmur3::create_murmur3_hashes;
+
+use crate::cpu_executor::{batch_varlen_content_bytes, execute_single_node, logical_size_from_schema};
 use crate::gpu_rowgroup_prune::all_row_groups;
-use crate::gpu_rule::{GpuCoalescePartitionsExec, GpuScanExec, GpuSortPreservingMergeExec};
+use crate::gpu_rule::{
+    GpuCoalescePartitionsExec, GpuRepartitionExec, GpuScanExec, GpuSortPreservingMergeExec,
+};
+
+/// Spark HashPartitioning seed (comet + the GPU kernel both init the hash to 42).
+const SPARK_HASH_SEED: u32 = 42;
+
+/// Spark `pmod` (positive modulo): map a signed murmur3 hash into `[0, n)`. MUST
+/// match the GPU kernel's `pmod` exactly (negative hashes wrap identically), else
+/// per-partition row counts diverge from the golden.
+fn pmod(h: i32, n: i32) -> i32 {
+    ((h % n) + n) % n
+}
+
+/// If `node` is a *lowered* Hash `GpuRepartitionExec` (the `1→N` form produced by the
+/// GpuMemoryBudgetRule under RealMultiPartition — its input is a single partition, a
+/// GpuCoalescePartitions), return its (hash key exprs, N). The CPU executor then
+/// hash-partitions via Spark-murmur3 (comet) to match the GPU kernel — NOT
+/// DataFusion's ahash-based `RepartitionExec` (whose partition NUMBERS differ).
+///
+/// Requiring a SINGLE-partition input is what keeps this real-N-way split confined to
+/// the lowered shape: an UN-lowered `M→N` Hash repartition (SinglePartition mode, or
+/// any plan where the map/lowering didn't fire) must fall through to the generic path
+/// (execute_single_node → coalesced 1 output), matching the recursive baseline — else
+/// #13's Σ-over-partitions stats diverge from it. RoundRobin is never intercepted.
+fn hash_repartition_of(node: &Arc<dyn ExecutionPlan>) -> Option<(Vec<Arc<dyn PhysicalExpr>>, usize)> {
+    let gpu_rp = node.as_any().downcast_ref::<GpuRepartitionExec>()?;
+    let rp = gpu_rp.inner().as_any().downcast_ref::<RepartitionExec>()?;
+    if rp.input().properties().output_partitioning().partition_count() != 1 {
+        return None; // un-lowered M→N shuffle → generic (coalesced) path
+    }
+    match rp.partitioning() {
+        Partitioning::Hash(exprs, n) => Some((exprs.clone(), *n)),
+        _ => None,
+    }
+}
 
 /// Partition-collapsing nodes: N input partitions → 1 output (the CPU oracle
 /// realizes this by concatenating all child partitions into a single input). Every
@@ -224,6 +266,81 @@ async fn cpu_scan_partitions(
     Ok((out_parts, stat))
 }
 
+/// CPU Spark-murmur3 hash-repartition (Inc2): concat the (already coalesced) input
+/// into one table, assign each row to `pmod(spark_murmur3(keys, seed=42), n)` via the
+/// comet helper — EXACTLY the GPU `peacock::partitioning::spark_hash_partition`
+/// kernel (the live conformance gate proves bit-equality) — and scatter rows into
+/// `n` output partitions in row order. Count-preserving (Σ out_rows == input rows);
+/// the per-partition `out_rows`/`out_bytes` are the load-bearing murmur3-fidelity
+/// numbers the golden records and the GPU must reproduce. Uses NOT DataFusion's
+/// `RepartitionExec` (ahash → different partition NUMBERS).
+fn cpu_hash_repartition(
+    node: &Arc<dyn ExecutionPlan>,
+    hash_exprs: &[Arc<dyn PhysicalExpr>],
+    n_parts: usize,
+    input: Vec<RecordBatch>,
+) -> DfResult<(Vec<Vec<RecordBatch>>, NodeMemoryStats)> {
+    let schema = node.schema();
+    // One table — matches the GPU's single cudf::table hash_partition input.
+    let batch = concat_batches(&schema, input.iter()).map_err(DataFusionError::from)?;
+    let rows = batch.num_rows();
+
+    // Evaluate the hash key columns, then fold them left-to-right with comet's
+    // Spark-murmur3 (buffer pre-seeded to 42 — Spark's HashPartitioning seed).
+    // comet's hasher rejects the Arrow "view" string/binary layouts (Utf8View/
+    // BinaryView) that DataFusion 45's Parquet reader emits; cast those to the
+    // canonical offset layout — same bytes ⇒ same Spark hash as the GPU (which
+    // hashes the cudf STRING offset layout), so partition assignment still matches.
+    let keys: Vec<ArrayRef> = hash_exprs
+        .iter()
+        .map(|e| {
+            let arr = e.evaluate(&batch).and_then(|v| v.into_array(rows))?;
+            match arr.data_type() {
+                DataType::Utf8View => cast(&arr, &DataType::Utf8).map_err(DataFusionError::from),
+                DataType::BinaryView => cast(&arr, &DataType::Binary).map_err(DataFusionError::from),
+                _ => Ok(arr),
+            }
+        })
+        .collect::<DfResult<Vec<_>>>()?;
+    let mut hashes = vec![SPARK_HASH_SEED; rows];
+    if rows > 0 {
+        create_murmur3_hashes(&keys, &mut hashes)
+            .map_err(|e| DataFusionError::External(format!("comet murmur3: {e}").into()))?;
+    }
+    let n = n_parts as i32;
+    let mut idx: Vec<Vec<u32>> = vec![Vec::new(); n_parts];
+    for (r, &h) in hashes.iter().enumerate() {
+        idx[pmod(h as i32, n) as usize].push(r as u32);
+    }
+
+    let mut out_parts: Vec<Vec<RecordBatch>> = Vec::with_capacity(n_parts);
+    let mut part_stats: Vec<PartitionStat> = Vec::with_capacity(n_parts);
+    let mut acc = NodeMemoryStats { node_name: node.name().to_string(), ..Default::default() };
+    for indices in &idx {
+        let take_idx = UInt32Array::from(indices.clone());
+        let cols: Vec<ArrayRef> = batch
+            .columns()
+            .iter()
+            .map(|c| take(c.as_ref(), &take_idx, None).map_err(DataFusionError::from))
+            .collect::<DfResult<Vec<_>>>()?;
+        let part = RecordBatch::try_new(schema.clone(), cols)?;
+        let out_rows = part.num_rows();
+        // output_bytes via the single-source ColAccum overhead formula = the GPU's
+        // per-partition accounting (identical rows ⇒ identical strings ⇒ bytes).
+        let out_bytes =
+            logical_size_from_schema(&schema, out_rows, batch_varlen_content_bytes(&part));
+        acc.row_count += out_rows;
+        acc.output_bytes += out_bytes;
+        acc.max_batch_rows = acc.max_batch_rows.max(out_rows);
+        part_stats.push(PartitionStat { out_rows, out_bytes, row_groups: Vec::new() });
+        // Empty partition ⇒ no batch (the mapped-over child stream is just empty).
+        out_parts.push(if out_rows == 0 { Vec::new() } else { vec![part] });
+    }
+    // A Hash repartition always targets N>1 partitions ⇒ always carries sub-lines.
+    acc.part_stats = part_stats;
+    Ok((out_parts, acc))
+}
+
 /// CPU backend: handles are `Vec<RecordBatch>` held in a local registry; each
 /// node runs through the same DataFusion machinery as the recursive executor, so
 /// its stats are byte-identical to `execute_node_by_node`.
@@ -267,6 +384,19 @@ impl NodeExecutor for CpuNodeExecutor {
             .iter()
             .map(|child| child.iter().map(|h| self.registry.remove(h).unwrap_or_default()).collect())
             .collect();
+
+        // (Inc2) HASH REPARTITION → N partitions via Spark-murmur3 (comet), matching
+        // the GPU kernel. The lowering feeds it ONE input partition (a preceding
+        // GpuCoalescePartitions concats M→1); we concat whatever we get and scatter.
+        // Intercepted BEFORE the generic single-child map, which would otherwise run
+        // DataFusion's ahash `RepartitionExec` and coalesce it back to one stream.
+        if let Some((hash_exprs, n_parts)) = hash_repartition_of(node) {
+            let input: Vec<RecordBatch> =
+                child_parts.into_iter().next().unwrap_or_default().into_iter().flatten().collect();
+            let (parts, stat) = cpu_hash_repartition(node, &hash_exprs, n_parts, input)?;
+            let handles: Vec<u64> = parts.into_iter().map(|b| self.store(b)).collect();
+            return Ok((handles, stat));
+        }
 
         // Ordinary single-child op with the multi-partition map active → MAP the
         // node over each input partition (count preserved); the Σ-over-partitions

@@ -26,10 +26,15 @@ use datafusion::error::Result;
 
 use cpu_executor::{execute_node_by_node, NodeMemoryStats};
 use gpu_rule::{GpuExecutionRule, GpuMemoryBudgetRule};
+pub use gpu_rule::PartitionMode;
 
-pub fn build_session_state_with_gpu_rules(
+/// Build a GPU-rule session at an explicit [`PartitionMode`]. The mode — NOT the
+/// budget — decides whether target-partitioned plans get the scan map + Hash-
+/// repartition lowering (see [`PartitionMode`]).
+pub fn build_session_state_with_gpu_rules_mode(
     target_partitions: usize,
-    gpu_memory_budget: usize
+    gpu_memory_budget: usize,
+    partition_mode: PartitionMode,
 ) -> SessionContext {
     let base = SessionContext::new();
     let mut config = base.state().config().clone();
@@ -37,10 +42,27 @@ pub fn build_session_state_with_gpu_rules(
     let state = SessionStateBuilder::new_from_existing(base.state())
         .with_config(config)
         .with_physical_optimizer_rule(Arc::new(GpuExecutionRule))
-        .with_physical_optimizer_rule(Arc::new(GpuMemoryBudgetRule::new(gpu_memory_budget)))
+        .with_physical_optimizer_rule(Arc::new(GpuMemoryBudgetRule::new(
+            gpu_memory_budget,
+            partition_mode,
+        )))
         .build();
-    
+
     SessionContext::new_with_state(state)
+}
+
+/// Single-partition convenience wrapper (the common case: tp1 and the tp8-mem2gib
+/// determinism device). Real N-way partitioning callers use
+/// [`build_session_state_with_gpu_rules_mode`] with [`PartitionMode::RealMultiPartition`].
+pub fn build_session_state_with_gpu_rules(
+    target_partitions: usize,
+    gpu_memory_budget: usize,
+) -> SessionContext {
+    build_session_state_with_gpu_rules_mode(
+        target_partitions,
+        gpu_memory_budget,
+        PartitionMode::SinglePartition,
+    )
 }
 
 pub fn build_session_state(
@@ -97,13 +119,32 @@ pub async fn register_tables_for(
     Ok(ctx)
 }
 
+pub async fn create_context_with_tables_mode(
+    data_dir: &Path,
+    target_partitions: usize,
+    gpu_memory_budget: usize,
+    partition_mode: PartitionMode,
+) -> Result<SessionContext> {
+    let ctx = build_session_state_with_gpu_rules_mode(
+        target_partitions,
+        gpu_memory_budget,
+        partition_mode,
+    );
+    register_tables_for(ctx, data_dir).await
+}
+
 pub async fn create_context_with_tables(
     data_dir: &Path,
     target_partitions: usize,
     gpu_memory_budget: usize,
 ) -> Result<SessionContext> {
-    let ctx = build_session_state_with_gpu_rules(target_partitions, gpu_memory_budget);
-    register_tables_for(ctx, data_dir).await
+    create_context_with_tables_mode(
+        data_dir,
+        target_partitions,
+        gpu_memory_budget,
+        PartitionMode::SinglePartition,
+    )
+    .await
 }
 
 // ---------------------------------------------------------------------------
@@ -141,7 +182,25 @@ impl CpuExecutor {
         target_partitions: usize,
         gpu_memory_budget: usize,
     ) -> Result<Self> {
-        let ctx = create_context_with_tables(data_dir, target_partitions, gpu_memory_budget).await?;
+        Self::new_mode(data_dir, target_partitions, gpu_memory_budget, PartitionMode::SinglePartition)
+            .await
+    }
+
+    /// Like [`CpuExecutor::new`] but at an explicit [`PartitionMode`] (real N-way
+    /// partitioning callers pass [`PartitionMode::RealMultiPartition`]).
+    pub async fn new_mode(
+        data_dir: &Path,
+        target_partitions: usize,
+        gpu_memory_budget: usize,
+        partition_mode: PartitionMode,
+    ) -> Result<Self> {
+        let ctx = create_context_with_tables_mode(
+            data_dir,
+            target_partitions,
+            gpu_memory_budget,
+            partition_mode,
+        )
+        .await?;
         Ok(Self { ctx })
     }
 

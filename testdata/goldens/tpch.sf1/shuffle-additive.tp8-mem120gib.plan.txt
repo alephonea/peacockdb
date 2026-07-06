@@ -1,0 +1,16 @@
+GpuProjectExec: expr=[l_returnflag@0 as l_returnflag, l_linestatus@1 as l_linestatus, count(*)@2 as cnt, sum(lineitem.l_quantity)@3 as sum_qty, sum(lineitem.l_extendedprice)@4 as sum_base_price]
+  GpuAggregateExec: group_by=[l_returnflag, l_linestatus], aggr=[count(*), sum(lineitem.l_quantity), sum(lineitem.l_extendedprice)]
+    GpuCoalesceBatchesExec: target_batch_size=619466436
+      GpuRepartitionExec: partitioning=Hash([l_returnflag@0, l_linestatus@1], 8), input_partitions=1
+        GpuCoalescePartitionsExec
+          GpuAggregateExec: group_by=[l_returnflag, l_linestatus], aggr=[count(*), sum(lineitem.l_quantity), sum(lineitem.l_extendedprice)]
+            GpuScanExec: table=lineitem, projections=[l_quantity, l_extendedprice, l_returnflag, l_linestatus], batch_size=619466436
+--- memory ---
+total_estimate_cost=1336
+GpuProjectExec: row_width=104, subtree_max_row_bytes=208, estimate_input_bytes=104, estimate_output_bytes=104, estimate_cost=208
+  GpuAggregateExec: row_width=104, subtree_max_row_bytes=208, estimate_input_bytes=104, estimate_output_bytes=104, estimate_cost=208
+    GpuCoalesceBatchesExec: row_width=104, subtree_max_row_bytes=200, estimate_input_bytes=104, estimate_output_bytes=104, estimate_cost=208
+      GpuRepartitionExec: row_width=104, subtree_max_row_bytes=200, estimate_input_bytes=104, estimate_output_bytes=104, estimate_cost=208
+        GpuCoalescePartitionsExec: row_width=104, subtree_max_row_bytes=200, estimate_input_bytes=104, estimate_output_bytes=104, estimate_cost=208
+          GpuAggregateExec: row_width=104, subtree_max_row_bytes=200, estimate_input_bytes=96, estimate_output_bytes=104, estimate_cost=200
+            GpuScanExec: row_width=96, subtree_max_row_bytes=96, estimate_input_bytes=0, estimate_output_bytes=96, estimate_cost=96

@@ -1,6 +1,7 @@
 #include "plan_executor.h"
 #include "plan_executor_internal.h"
 #include "generated/gpu_plan_generated.h"
+#include "peacock/partitioning.hpp"
 
 #include <cudf/ast/expressions.hpp>
 #include <cudf/binaryop.hpp>
@@ -2766,6 +2767,73 @@ void NodeSession::execute_node(uint64_t seq, const uint64_t* input_handles,
     impl_->registry.emplace(handle, std::move(result));
     out_handles[0] = handle;
     *out_count = 1;
+    return;
+  }
+
+  // (Inc2) GpuRepartition Hash → scatter the ONE input table into N partitions by
+  // Spark-murmur3 (comet-identical) hash of the key columns, so the per-partition
+  // row counts match the #13 CPU twin (and the golden) by construction — the live
+  // conformance gate proves the kernel is bit-equal to comet. Post-lowering the child
+  // is a GpuCoalescePartitions (single handle); we defensively concat whatever input
+  // partitions arrive into one table, then spark_hash_partition + slice into N.
+  if (node->node_type() == fb::PlanNodeKind_GpuRepartition &&
+      node->node_as_GpuRepartition()->kind() == fb::PartitioningKind_Hash) {
+    const fb::GpuRepartition* rp = node->node_as_GpuRepartition();
+    size_t n = static_cast<size_t>(rp->num_partitions());
+    if (n == 0 || n > out_cap)
+      throw std::runtime_error("NodeSession::execute_node: bad Hash repartition out count");
+
+    // Gather + concat the child partitions into one table (matches the CPU concat).
+    std::vector<TableResult> owned;
+    std::vector<cudf::table_view> views;
+    owned.reserve(child[0].size());
+    views.reserve(child[0].size());
+    for (uint64_t h : child[0]) {
+      auto it = impl_->registry.find(h);
+      if (it == impl_->registry.end())
+        throw std::runtime_error("NodeSession::execute_node: unknown input handle");
+      owned.push_back(std::move(it->second));
+      impl_->registry.erase(it);
+      views.push_back(owned.back().table->view());
+    }
+    std::vector<std::string> column_names =
+        owned.empty() ? std::vector<std::string>{} : owned[0].column_names;
+    std::unique_ptr<cudf::table> combined =
+        (owned.size() == 1) ? std::move(owned[0].table) : cudf::concatenate(views);
+
+    // Hash keys: ColumnRef indices into the (partial-agg output) table. Inc2 scope =
+    // ColumnRef keys only (the group-by columns); other exprs arrive at Inc6/7.
+    std::vector<cudf::size_type> key_cols;
+    if (auto* exprs = rp->hash_exprs()) {
+      for (flatbuffers::uoffset_t i = 0; i < exprs->size(); ++i) {
+        const fb::Expr* e = exprs->Get(i);
+        if (e->node_type() != fb::ExprNode_ColumnRef)
+          throw std::runtime_error("GpuRepartition: only ColumnRef hash keys supported (Inc2)");
+        key_cols.push_back(static_cast<cudf::size_type>(e->node_as_ColumnRef()->index()));
+      }
+    }
+
+    auto tv = combined->view();
+    auto [parted, offsets] = peacock::partitioning::spark_hash_partition(
+        tv, key_cols, static_cast<cudf::size_type>(n));
+    const cudf::size_type total = parted->num_rows();
+    const cudf::table_view pv = parted->view();
+    for (size_t p = 0; p < n; ++p) {
+      cudf::size_type start = offsets[p];
+      cudf::size_type end = (p + 1 < n) ? offsets[p + 1] : total;
+      // One owning table per partition (slice → deep copy so each handle owns memory).
+      cudf::table_view slice = cudf::slice(pv, {start, end}).front();
+      TableResult part;
+      part.column_names = column_names;
+      part.table = std::make_unique<cudf::table>(slice);
+      auto ptv = part.table->view();
+      if (out_stats)
+        out_stats[p] = NodeStats{static_cast<uint64_t>(ptv.num_rows()), varlen_content_bytes(ptv)};
+      uint64_t handle = impl_->next_handle++;
+      impl_->registry.emplace(handle, std::move(part));
+      out_handles[p] = handle;
+    }
+    *out_count = n;
     return;
   }
 

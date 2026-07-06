@@ -17,14 +17,31 @@ use datafusion::execution::context::SessionContext;
 use datafusion::physical_plan::display::DisplayableExecutionPlan;
 use datafusion::physical_plan::{DisplayFormatType, ExecutionPlan};
 
+use datafusion::physical_plan::aggregates::{AggregateExec, AggregateMode};
+
 use peacockdb_core::cpu_executor::{execute_node_by_node_instrumented_enforced, NodeMemoryStats};
-use peacockdb_core::gpu_rule::{analyze_memory, row_width, GpuRepartitionExec, GpuScanExec};
+use peacockdb_core::gpu_rule::{
+    analyze_memory, row_width, GpuAggregateExec, GpuRepartitionExec, GpuScanExec,
+};
 use peacockdb_core::node_executor::{execute_node_by_node, CpuNodeExecutor};
 use peacockdb_core::plan_serializer;
 use peacockdb_core::{
-    build_session_state, build_session_state_with_gpu_rules, create_context_with_tables,
-    register_tables_for,
+    build_session_state, build_session_state_with_gpu_rules_mode, create_context_with_tables,
+    create_context_with_tables_mode, register_tables_for, PartitionMode,
 };
+
+/// Per-device default [`PartitionMode`] — the map + Hash-repartition-lowering
+/// discriminator (dmitry, replacing the old 16 GiB budget threshold). tp8-mem120gib
+/// is the real-8-way device; every other label (tp1-*, tp8-mem2gib) is single-
+/// partition. The enum — NOT the budget — is now the sole discriminator, so a
+/// memory-constrained genuine-8-way device (GitHub #91) would just add its label
+/// here → `RealMultiPartition`, no budget change needed.
+pub fn partition_mode(device: &str) -> PartitionMode {
+    match device {
+        "tp8-mem120gib" => PartitionMode::RealMultiPartition,
+        _ => PartitionMode::SinglePartition,
+    }
+}
 
 // --- run configs encoded in the device label -------------------------------
 pub const TARGET_PARTITIONS: usize = 8; // plan tests
@@ -268,7 +285,7 @@ pub async fn run_query_test_at(dataset: &str, sf: &str, query: &str, device: &st
         .unwrap_or_else(|_| panic!("query file not found: {}", sql_path.display()));
     let (partitions, budget) = device_config(device);
     let gpu_ctx = register_tables_for(
-        build_session_state_with_gpu_rules(partitions, budget),
+        build_session_state_with_gpu_rules_mode(partitions, budget, partition_mode(device)),
         &data_dir,
     )
     .await
@@ -316,6 +333,17 @@ pub fn cpu_stats_str(plan: &Arc<dyn ExecutionPlan>, stats: &[NodeMemoryStats]) -
                     lines.push(format!(
                         "{sub}p{k}: row_groups=[{rgs}] out_rows={} out_bytes={}",
                         ps.out_rows, ps.out_bytes,
+                    ));
+                } else if node.plan.as_any().is::<GpuRepartitionExec>() {
+                    // Hash repartition (Inc2): the child (a lowered GpuCoalescePartitions)
+                    // is a SINGLE partition, so there is no child.out_rows[k] to source
+                    // an input count from — the shuffle redistributes one table into N.
+                    // Per dmitry, render in_rows = out_rows[k] (this output partition's
+                    // rows are exactly what flows on); out_rows[k] is the load-bearing
+                    // murmur3-fidelity number the GPU must reproduce.
+                    lines.push(format!(
+                        "{sub}p{k}: in_rows={} out_rows={} out_bytes={}",
+                        ps.out_rows, ps.out_rows, ps.out_bytes,
                     ));
                 } else {
                     // Non-scan partition: in_rows = the (single) child's out_rows[k]
@@ -667,15 +695,47 @@ fn has_repartition(plan: &Arc<dyn ExecutionPlan>) -> bool {
         || plan.children().iter().any(|c| has_repartition(c))
 }
 
-/// True iff the plan can be driven by the #13 CpuNodeExecutor TODAY (Inc1): it has
-/// a multi-partition scan map AND contains NO `GpuRepartitionExec`. #13 implements
-/// the scan→filter→project→partial-agg→CoalescePartitions→final-agg shape (q6) but
-/// NOT Hash-repartition yet (Inc2) — a grouped query like q1/q3 routed to #13 would
-/// emit per-partition partials that never get re-grouped (WRONG result). Those stay
-/// on the #11 instrumented-enforced path (correct single-partition goldens). Widen
-/// this to allow GpuRepartitionExec once Inc2 lands hash-repartition in #13.
-pub(crate) fn plan_is_inc1_executable(plan: &Arc<dyn ExecutionPlan>) -> bool {
-    has_scan_map(plan) && !has_repartition(plan)
+/// Whether an aggregate function is ADDITIVE — mergeable across partitions by a
+/// trivial associative combine (SUM=Σ, COUNT=Σ, MIN/MAX=extremum). AVG, STDDEV and
+/// VAR are NOT: their partial state is compound (sum+count / moments) and the Final
+/// merge needs the decomposition landing in Inc4 (AVG) / Inc5 (STDDEV/VAR). Whitelist
+/// (not blacklist) so any unrecognized aggregate defaults to NON-additive → the
+/// query stays on the #11 single-partition path (correct) rather than silently
+/// mis-merging on #13.
+fn is_additive_agg(fun_name: &str) -> bool {
+    matches!(fun_name.to_ascii_lowercase().as_str(), "sum" | "count" | "min" | "max")
+}
+
+/// True iff every multi-partition FINAL-stage aggregate in the plan uses only
+/// additive aggregates (see [`is_additive_agg`]). Partial-stage aggregates are
+/// unconstrained (their state is merged downstream); only the Final merge is what
+/// #13 must be able to combine across the 8 hash partitions.
+fn all_final_aggs_additive(plan: &Arc<dyn ExecutionPlan>) -> bool {
+    let here = plan
+        .as_any()
+        .downcast_ref::<GpuAggregateExec>()
+        .and_then(|g| g.inner().as_any().downcast_ref::<AggregateExec>())
+        .map(|agg| match agg.mode() {
+            AggregateMode::Final | AggregateMode::FinalPartitioned => {
+                agg.aggr_expr().iter().all(|a| is_additive_agg(a.fun().name()))
+            }
+            _ => true,
+        })
+        .unwrap_or(true);
+    here && plan.children().iter().all(|c| all_final_aggs_additive(c))
+}
+
+/// True iff the plan can be driven by the #13 CpuNodeExecutor (Inc2): it has a
+/// multi-partition scan map AND every multi-partition Final-aggregate is additive
+/// (SUM/COUNT/MIN/MAX). Inc2 lowers a Hash `GpuRepartitionExec` into an explicit
+/// GpuCoalescePartitions(M→1) + GpuRepartition(1→N) and hash-partitions via Spark-
+/// murmur3, so a grouped ADDITIVE query (shuffle_additive) now re-groups correctly.
+/// A query with an AVG/STDDEV/VAR Final-agg (e.g. q1) still can't be merged across
+/// partitions until Inc4/Inc5 → it stays on the #11 instrumented-enforced path
+/// (correct single-partition goldens). Gate on AGG-KIND, NOT on the mere presence
+/// of a GpuRepartitionExec (which would flip this and wrongly admit q1's AVG).
+pub(crate) fn plan_is_node13_executable(plan: &Arc<dyn ExecutionPlan>) -> bool {
+    has_scan_map(plan) && all_final_aggs_additive(plan)
 }
 
 pub async fn assert_cpu_results_match_datafusion(
@@ -685,6 +745,7 @@ pub async fn assert_cpu_results_match_datafusion(
     device: &str,
     rel_tol: Option<f64>,
     use_node13: bool,
+    gen_result_golden: bool,
 ) {
     let data_dir = data_dir_for(dataset, sf);
     let sql_path = queries_dir_for(dataset).join(format!("{query}.sql"));
@@ -700,7 +761,10 @@ pub async fn assert_cpu_results_match_datafusion(
     // plan device), but LIMIT-without-total-order queries are canonized at tp1
     // (their result row set isn't partition-invariant — see test_cpu_executor.rs).
     let (partitions, budget) = device_config(device);
-    let cpu_ctx = create_context_with_tables(&data_dir, partitions, budget).await.unwrap();
+    let cpu_ctx =
+        create_context_with_tables_mode(&data_dir, partitions, budget, partition_mode(device))
+            .await
+            .unwrap();
     let plan = cpu_ctx.sql(&sql).await.unwrap().create_physical_plan().await.unwrap();
 
     // Executor choice is EXPLICIT per-test (`use_node13`), NOT inferred from the plan:
@@ -710,15 +774,16 @@ pub async fn assert_cpu_results_match_datafusion(
     // #13 CpuNodeExecutor, which maintains N partitions across nodes (partial-agg =
     // Σ-over-partitions, CoalescePartitions concat N→1), matching the real 8-way GPU.
     // So a plan-only predicate can't tell them apart; only the device/test does.
-    // `plan_is_inc1_executable` is asserted here purely as a SAFETY guard: a query
-    // opted into #13 MUST have a scan map and NO GpuRepartitionExec (Hash-repartition
-    // is Inc2). #11 also backs the resident-OOM tests. Both yield post-order stats +
-    // a coalesced result, so the assertions below are identical downstream.
+    // `plan_is_node13_executable` is asserted here purely as a SAFETY guard: a query
+    // opted into #13 MUST have a scan map and only additive Final-aggregates (a Hash
+    // repartition is lowered + Spark-murmur3 partitioned in Inc2; AVG/STDDEV/VAR merge
+    // waits for Inc4/Inc5). #11 also backs the resident-OOM tests. Both yield
+    // post-order stats + a coalesced result, so the assertions below are identical.
     let (actual, stats): (Vec<RecordBatch>, Vec<NodeMemoryStats>) = if use_node13 {
         assert!(
-            plan_is_inc1_executable(&plan),
-            "{dataset}/{query} @ {device}: #13 requested but plan is not Inc1-executable \
-             (missing scan map or contains a GpuRepartitionExec — Hash-repartition is Inc2)"
+            plan_is_node13_executable(&plan),
+            "{dataset}/{query} @ {device}: #13 requested but plan is not node13-executable \
+             (missing scan map, or a Final-agg uses AVG/STDDEV/VAR — non-additive merge is Inc4/Inc5)"
         );
         let mut backend = CpuNodeExecutor::new(cpu_ctx.task_ctx());
         execute_node_by_node(&plan, &mut backend).await.unwrap()
@@ -739,7 +804,20 @@ pub async fn assert_cpu_results_match_datafusion(
     assert_cpu_cost_canonical(&plan, &stats, &cpu_golden(dataset, sf, query, device));
     // Snapshot the (DataFusion-validated) result for the merged GPU test to verify
     // against, so the GPU run needs no live CPU oracle (Inc0.5). UPDATE_CANONICAL only.
-    maybe_write_result_golden(&actual, &result_golden(dataset, sf, query, device));
+    //
+    // GATED on `gen_result_golden`: write the `.result.txt` ONLY when a golden-
+    // asserting `gpu_test!` (GoldenExact/GoldenApprox) actually consumes this
+    // (query, device). INVARIANT: `gen_result_golden` must be TRUE exactly for the
+    // (query, device) pairs that have such a consumer — TRUE for tp1-mem120gib
+    // golden_exact/approx + the tp8-mem120gib real-partitioning goldens (q6,
+    // shuffle_additive); FALSE for tp8-mem2gib (no gpu_test! consumer) and for
+    // oracle-mode queries (>256KB result → GPU uses the live oracle, no golden).
+    // false-when-should-be-true = missing golden = the GPU test fails loud (safe);
+    // true-when-should-be-false = an orphan golden written but never read (the
+    // silent case this gate exists to prevent).
+    if gen_result_golden {
+        maybe_write_result_golden(&actual, &result_golden(dataset, sf, query, device));
+    }
 }
 
 // --- resident-memory OOM (Part 2) ------------------------------------------
@@ -889,7 +967,9 @@ pub async fn assert_gpu_nodes_match_golden(dataset: &str, sf: &str, query: &str,
     let sql = std::fs::read_to_string(&sql_path)
         .unwrap_or_else(|_| panic!("query file not found: {}", sql_path.display()));
     let (partitions, budget) = device_config(device);
-    let gpu = GpuExecutor::new(&data_dir, partitions, budget).await.unwrap();
+    let gpu = GpuExecutor::new_mode(&data_dir, partitions, budget, partition_mode(device))
+        .await
+        .unwrap();
     let (_batches, plan, stats) = gpu.execute_instrumented(&sql).await.unwrap();
     assert_cost_golden_verify(&plan, &stats, &cpu_golden(dataset, sf, query, device));
 }
@@ -949,7 +1029,9 @@ pub async fn assert_gpu_query(
     let qlabel = format!("{dataset}/{query}");
 
     // ONE GPU execution → final batches + plan + per-node stats.
-    let gpu = GpuExecutor::new(&data_dir, partitions, budget).await.unwrap();
+    let gpu = GpuExecutor::new_mode(&data_dir, partitions, budget, partition_mode(device))
+        .await
+        .unwrap();
     let (actual, plan, stats) = gpu.execute_instrumented(&sql).await.unwrap();
 
     // (a) per-node rows + rows/schema cost vs the golden — ALWAYS (fail-closed,
@@ -974,7 +1056,9 @@ pub async fn assert_gpu_query(
         GpuResultMode::Oracle => {
             // Result too large to commit as a golden → validate against a LIVE CPU
             // oracle run (exact). Still result-validated (R4), just not frozen.
-            let cpu = CpuExecutor::new(&data_dir, partitions, budget).await.unwrap();
+            let cpu = CpuExecutor::new_mode(&data_dir, partitions, budget, partition_mode(device))
+                .await
+                .unwrap();
             let expected = cpu.execute(&sql).await.unwrap();
             if total_rows(&expected) == 0 && total_rows(&actual) == 0 {
                 if let (Some(e), Some(a)) = (expected.first(), actual.first()) {
@@ -1012,11 +1096,14 @@ macro_rules! query_plan_test {
     };
 }
 
-/// `cpu_result_test!(dataset, sf, query, device)` — EXACT result compare, #11
-/// (instrumented-enforced, single-partition-coalesced) executor.
+/// `cpu_result_test!(dataset, sf, query, device, gen_result_golden)` — EXACT result
+/// compare, #11 (instrumented-enforced, single-partition-coalesced) executor.
+/// `gen_result_golden` (bool literal): write the `.result.txt` golden under
+/// UPDATE_CANONICAL only when a golden-asserting `gpu_test!` consumes it (TRUE for
+/// tp1-mem120gib golden_exact; FALSE for tp8-mem2gib and oracle-mode).
 #[macro_export]
 macro_rules! cpu_result_test {
-    ($dataset:ident, $sf:literal, $query:ident, $device:ident) => {
+    ($dataset:ident, $sf:literal, $query:ident, $device:ident, $gen:literal) => {
         paste::paste! {
             #[tokio::test]
             async fn [<cpu_ $dataset _sf $sf _ $query _ $device>]() {
@@ -1027,6 +1114,7 @@ macro_rules! cpu_result_test {
                     &stringify!($device).replace('_', "-"),
                     None,
                     false, // #11 executor
+                    $gen,
                 )
                 .await;
             }
@@ -1034,15 +1122,15 @@ macro_rules! cpu_result_test {
     };
 }
 
-/// `cpu_node13_result_test!(dataset, sf, query, device)` — EXACT result compare,
-/// driven by the #13 multi-handle CpuNodeExecutor (real N-partition, Σ-over-
-/// partitions cost). EXPLICIT opt-in (not plan-inferred): a query routed here MUST
-/// be Inc1-executable (scan map + NO GpuRepartitionExec; asserted at runtime).
-/// Used for the H200/tp8 device (tp8-mem120gib); Hash-repartition queries wait for
-/// Inc2. The SAME plan at tp8-mem2gib stays on #11 via `cpu_result_test!`.
+/// `cpu_node13_result_test!(dataset, sf, query, device, gen_result_golden)` — EXACT
+/// result compare, driven by the #13 multi-handle CpuNodeExecutor (real N-partition,
+/// Σ-over-partitions cost). EXPLICIT opt-in (not plan-inferred): a query routed here
+/// MUST be node13-executable (scan map + only additive Final-aggregates; asserted at
+/// runtime). Used for the H200/tp8 device (tp8-mem120gib); AVG/STDDEV/VAR queries
+/// wait for Inc4/Inc5. The SAME plan at tp8-mem2gib stays on #11 via `cpu_result_test!`.
 #[macro_export]
 macro_rules! cpu_node13_result_test {
-    ($dataset:ident, $sf:literal, $query:ident, $device:ident) => {
+    ($dataset:ident, $sf:literal, $query:ident, $device:ident, $gen:literal) => {
         paste::paste! {
             #[tokio::test]
             async fn [<cpu_ $dataset _sf $sf _ $query _ $device>]() {
@@ -1053,6 +1141,7 @@ macro_rules! cpu_node13_result_test {
                     &stringify!($device).replace('_', "-"),
                     None,
                     true, // #13 CpuNodeExecutor
+                    $gen,
                 )
                 .await;
             }
@@ -1067,7 +1156,7 @@ macro_rules! cpu_node13_result_test {
 /// change byte width).
 #[macro_export]
 macro_rules! cpu_result_approx_test {
-    ($dataset:ident, $sf:literal, $query:ident, $device:ident) => {
+    ($dataset:ident, $sf:literal, $query:ident, $device:ident, $gen:literal) => {
         paste::paste! {
             #[tokio::test]
             async fn [<cpu_ $dataset _sf $sf _ $query _ $device>]() {
@@ -1078,6 +1167,7 @@ macro_rules! cpu_result_approx_test {
                     &stringify!($device).replace('_', "-"),
                     Some(1e-12),
                     false, // #11 executor
+                    $gen,
                 )
                 .await;
             }

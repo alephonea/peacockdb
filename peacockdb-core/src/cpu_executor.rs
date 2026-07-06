@@ -752,6 +752,20 @@ pub fn logical_size_from_schema(schema: &Schema, rows: usize, varlen_content_byt
         + varlen_content_bytes
 }
 
+/// Σ var-length CONTENT bytes across all columns of one batch — the data-dependent
+/// term of [`logical_size_from_schema`]. Used by the Inc2 CPU hash-repartition to
+/// compute each output partition's `output_bytes` identically to the map-op
+/// `ColAccum` path (and to the GPU's per-partition `varlen_content_bytes`). Flat
+/// columns only (the repartition input is post-partial-agg group keys + additive
+/// scalar state — no nested `List`).
+pub fn batch_varlen_content_bytes(batch: &RecordBatch) -> usize {
+    let schema = batch.schema();
+    let rows = batch.num_rows();
+    (0..schema.fields().len())
+        .map(|i| array_content_size(schema.field(i).data_type(), batch.column(i).as_ref(), rows))
+        .sum()
+}
+
 /// Per-column var-length CONTENT bytes for one batch: `offsets[rows]-offsets[0]`
 /// for offset layouts, or Σ value byte lengths for View layouts. Fixed-width
 /// types contribute 0. This term telescopes across batches (the sum over batches

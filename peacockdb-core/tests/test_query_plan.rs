@@ -38,6 +38,12 @@ query_plan_test!(tpch, 1, q19, tp8_mem2gib);
 query_plan_test!(tpch, 1, q20, tp8_mem2gib);
 query_plan_test!(tpch, 1, q21, tp8_mem2gib);
 query_plan_test!(tpch, 1, q22, tp8_mem2gib);
+// R3 (Inc2): the ONLY tp8-mem120gib plan test — the real-partitioning device where
+// the scan carries an RG→batch→partition map AND the Hash repartition is lowered into
+// GpuCoalescePartitions(8→1) + GpuRepartition(1→8). Exercises the full lowered plan's
+// flatbuffer roundtrip (plan_str + bytes) so the map + lowering survive serialize/
+// deserialize. tp8-mem2gib entries stay dormant (no map, no lowering).
+query_plan_test!(tpch, 1, shuffle_additive, tp8_mem120gib);
 
 // ── TPC-DS ────────────────────────────────────────────────────────────────
 query_plan_test!(tpcds, 1, q1, tp8_mem2gib);

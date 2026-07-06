@@ -7,7 +7,7 @@ use datafusion::execution::context::SessionContext;
 
 use crate::cpu_executor::NodeMemoryStats;
 use crate::node_executor::{execute_node_by_node, GpuNodeExecutor};
-use crate::{create_context_with_tables, plan_serializer::serialize_plan};
+use crate::{create_context_with_tables_mode, plan_serializer::serialize_plan, PartitionMode};
 
 use peacockdb_ffi::raw::{
     peacock_execute, peacock_executor_create, peacock_executor_destroy, peacock_last_error,
@@ -33,8 +33,27 @@ impl GpuExecutor {
         target_partitions: usize,
         gpu_memory_budget: usize,
     ) -> DfResult<Self> {
-        let ctx =
-            create_context_with_tables(data_dir, target_partitions, gpu_memory_budget).await?;
+        Self::new_mode(data_dir, target_partitions, gpu_memory_budget, PartitionMode::SinglePartition)
+            .await
+    }
+
+    /// Like [`GpuExecutor::new`] but at an explicit [`PartitionMode`]. The
+    /// real-partitioning GPU verify (tp8-mem120gib) passes
+    /// [`PartitionMode::RealMultiPartition`] so the scan map + Hash-repartition
+    /// lowering match the CPU-emulated golden it verifies against.
+    pub async fn new_mode(
+        data_dir: &Path,
+        target_partitions: usize,
+        gpu_memory_budget: usize,
+        partition_mode: PartitionMode,
+    ) -> DfResult<Self> {
+        let ctx = create_context_with_tables_mode(
+            data_dir,
+            target_partitions,
+            gpu_memory_budget,
+            partition_mode,
+        )
+        .await?;
 
         let mut executor: *mut PeacockExecutor = std::ptr::null_mut();
         let rc =

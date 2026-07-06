@@ -8,37 +8,66 @@ use std::sync::Arc;
 use datafusion::arrow::array::Int64Array;
 use datafusion::physical_plan::ExecutionPlan;
 
-use peacockdb_core::create_context_with_tables;
+use peacockdb_core::create_context_with_tables_mode;
 use peacockdb_core::cpu_executor::{execute_node_by_node_instrumented, NodeMemoryStats};
 
 use common::{
     all_node_names, data_dir_for, device_config, fmt_plan, has_gpu_node, make_ctx,
-    plan_is_inc1_executable, queries_dir_for, scan_batch_sizes, FULL_BUDGET, TIGHT_BUDGET,
+    partition_mode, plan_is_node13_executable, queries_dir_for, scan_batch_sizes, FULL_BUDGET,
+    TIGHT_BUDGET,
 };
 
-/// Lock the Inc1 routing predicate (reviewer regression guard): q6 (global agg,
-/// CoalescePartitions only) is #13-executable; q1 (grouped → GpuRepartitionExec
-/// Hash) is NOT and must stay on the #11 path, whose tp8-mem2gib goldens + 4-group
-/// result are correct. Fails LOUDLY if `plan_is_inc1_executable` is ever broadened
-/// to reroute a grouped query into a #13 that can't yet hash-repartition.
+/// Lock the Inc2 routing predicate (reviewer regression guard) — the gate is now
+/// AGG-KIND, not the mere presence of a repartition:
+///   - q6 (global additive agg, no shuffle)                    → node13-executable
+///   - shuffle_additive (GROUP BY + Hash shuffle, SUM/COUNT)   → node13-executable
+///   - q1 (GROUP BY + Hash shuffle, but AVG)                   → NOT (AVG merge = Inc4)
+/// All three are evaluated at tp8-mem120gib so they all carry a scan map; the ONLY
+/// discriminator is whether a Final-aggregate is non-additive. Fails LOUDLY if the
+/// predicate is broadened to admit AVG/STDDEV/VAR (which #13 can't merge yet) or
+/// narrowed to reject a legitimate additive shuffle.
 #[tokio::test]
-async fn inc1_routing_predicate_locks_q1_to_cpu11_q6_to_node13() {
+async fn inc2_routing_predicate_gates_on_agg_kind() {
     async fn plan_for(query: &str, device: &str) -> Arc<dyn ExecutionPlan> {
         let (parts, budget) = device_config(device);
-        let ctx = create_context_with_tables(&data_dir_for("tpch", "1"), parts, budget)
-            .await
-            .unwrap();
+        // Real-partitioning mode at tp8-mem120gib so the scan carries its map (the
+        // predicate keys on has_scan_map); the enum — not the budget — is the gate.
+        let ctx = create_context_with_tables_mode(
+            &data_dir_for("tpch", "1"),
+            parts,
+            budget,
+            partition_mode(device),
+        )
+        .await
+        .unwrap();
         let sql =
             std::fs::read_to_string(queries_dir_for("tpch").join(format!("{query}.sql"))).unwrap();
         ctx.sql(&sql).await.unwrap().create_physical_plan().await.unwrap()
     }
     let q6 = plan_for("q6", "tp8-mem120gib").await;
-    assert!(plan_is_inc1_executable(&q6), "q6 tp8 (no repartition) must route to #13");
-    let q1 = plan_for("q1", "tp8-mem2gib").await;
+    assert!(plan_is_node13_executable(&q6), "q6 (additive global agg) must route to #13");
+    let shuffle = plan_for("shuffle-additive", "tp8-mem120gib").await;
     assert!(
-        !plan_is_inc1_executable(&q1),
-        "q1 (GpuRepartitionExec) must stay on #11 until Inc2 lands hash-repartition in #13"
+        plan_is_node13_executable(&shuffle),
+        "shuffle_additive (SUM/COUNT over a Hash shuffle) must route to #13"
     );
+    let q1 = plan_for("q1", "tp8-mem120gib").await;
+    assert!(
+        !plan_is_node13_executable(&q1),
+        "q1 (AVG Final-agg) must stay on #11 until Inc4 lands the AVG decomposition"
+    );
+}
+
+/// I-3 (reviewer): LOCK the Inc4/Inc5 boundary. Forcing an AVG Final-agg query (q1)
+/// through the #13 CpuNodeExecutor at a real-partitioning device (tp8-mem120gib) must
+/// PANIC on the node13-executable safety guard — #13 cannot merge AVG across the 8
+/// hash partitions until the AVG decomposition (Inc4) lands. Guards against a future
+/// relaxation silently admitting a non-additive Final-agg and mis-merging it.
+#[tokio::test]
+#[should_panic(expected = "node13-executable")]
+async fn inc3_avg_final_agg_at_tp8_node13_panics() {
+    common::assert_cpu_results_match_datafusion("tpch", "1", "q1", "tp8-mem120gib", None, true, false)
+        .await;
 }
 
 /// Every Gpu* node must be stripped before CPU execution; no stat may name one.
