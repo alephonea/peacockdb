@@ -78,6 +78,9 @@ struct Dataset {
     total: usize,
     /// Repo-relative golden dir, e.g. "testdata/goldens/tpch.sf1" — used for cell links.
     canon_rel: &'static str,
+    /// Repo-relative query-SQL dir, e.g. "testdata/tpch-queries" — used to link the
+    /// Query column to each query's `q<n>.sql` source.
+    query_rel: &'static str,
     rows: Vec<Row>,
 }
 
@@ -97,6 +100,13 @@ impl Links {
     fn golden_url(&self, canon_rel: &str, n: u32, ext: &str) -> Option<String> {
         let sha = self.sha.as_ref()?;
         Some(format!("https://github.com/{}/blob/{sha}/{canon_rel}/q{n}.{ext}", self.repo))
+    }
+
+    /// Link to a query's SQL source (`<query_rel>/q<n>.sql`) at the report's
+    /// commit; `None` on dry runs (no sha), mirroring [`golden_url`].
+    fn query_url(&self, query_rel: &str, n: u32) -> Option<String> {
+        let sha = self.sha.as_ref()?;
+        Some(format!("https://github.com/{}/blob/{sha}/{query_rel}/q{n}.sql", self.repo))
     }
 }
 
@@ -121,6 +131,17 @@ fn main() {
     let pages_url = opt("--pages-url", PAGES_URL_DEFAULT);
     let published = args.iter().any(|a| a == "--published");
 
+    // Code version the report was generated from, for golden + query cell links.
+    // Degrades to plain (unlinked) cells when unavailable (e.g. a local dry run).
+    // Resolved before the cost-diff branch so its Query column can link too.
+    let sha = if let Some(s) = args.iter().position(|a| a == "--sha").and_then(|i| args.get(i + 1)) {
+        Some(s.clone())
+    } else {
+        env("GITHUB_SHA")
+    };
+    let repo = opt("--repo", &env("GITHUB_REPOSITORY").unwrap_or_else(|| DEFAULT_REPO.to_string()));
+    let links = Links { repo, sha };
+
     // Cost-regression gate (separate mode): diff this tree's .cost.txt totals
     // against a base, render a per-query change widget, and exit non-zero on any
     // regression. Self-contained — does not build the coverage report below.
@@ -130,18 +151,11 @@ fn main() {
             &opt("--base", ""),
             &opt("--html", "cost_diff.html"),
             &md_out,
+            &links,
         );
         return;
     }
 
-    // Code version the report was generated from, for golden cell links. Degrades
-    // to plain (unlinked) cells when unavailable (e.g. a local dry run).
-    let sha = if let Some(s) = args.iter().position(|a| a == "--sha").and_then(|i| args.get(i + 1)) {
-        Some(s.clone())
-    } else {
-        env("GITHUB_SHA")
-    };
-    let repo = opt("--repo", &env("GITHUB_REPOSITORY").unwrap_or_else(|| DEFAULT_REPO.to_string()));
     // Render-time UTC, supplied by CI (`date -u '+%Y-%m-%d %H:%M UTC'`) so the bin
     // stays std-only (no date crate). Omitted on local dry runs → no freshness line.
     let generated_at = args
@@ -150,15 +164,14 @@ fn main() {
         .and_then(|i| args.get(i + 1))
         .cloned()
         .or_else(|| env("COST_REPORT_GENERATED_AT"));
-    let links = Links { repo, sha };
 
     let test_src = std::fs::read_to_string(&tests)
         .unwrap_or_else(|e| panic!("cannot read {}: {e}", tests.display()));
     let op_tpch = operational_set(&test_src, "tpch");
     let op_tpcds = operational_set(&test_src, "tpcds");
 
-    let tpch = build_dataset("TPC-H", 22, "testdata/goldens/tpch.sf1", &testdata.join("goldens/tpch.sf1"), &op_tpch);
-    let tpcds = build_dataset("TPC-DS", 99, "testdata/goldens/tpcds.sf1", &testdata.join("goldens/tpcds.sf1"), &op_tpcds);
+    let tpch = build_dataset("TPC-H", 22, "testdata/goldens/tpch.sf1", "testdata/tpch-queries", &testdata.join("goldens/tpch.sf1"), &op_tpch);
+    let tpcds = build_dataset("TPC-DS", 99, "testdata/goldens/tpcds.sf1", "testdata/tpcds-queries", &testdata.join("goldens/tpcds.sf1"), &op_tpcds);
     let datasets = [tpch, tpcds];
 
     // CI gate: every OPERATIONAL (enabled gpu_result_test!) query must have a
@@ -233,6 +246,7 @@ fn build_dataset(
     label: &'static str,
     total: usize,
     canon_rel: &'static str,
+    query_rel: &'static str,
     canon: &Path,
     operational: &BTreeSet<u32>,
 ) -> Dataset {
@@ -251,7 +265,7 @@ fn build_dataset(
             duckdb: read_total(&canon.join(format!("q{n}.duckdb_cost.txt")), "duckdb_cost="),
         })
         .collect();
-    Dataset { label, total, canon_rel, rows }
+    Dataset { label, total, canon_rel, query_rel, rows }
 }
 
 /// The explicit total carried by a golden's footer line (`<key><n>`), e.g.
@@ -353,6 +367,22 @@ fn peacock_cell_md(value: Option<u64>, plan_url: Option<String>, cost_url: Optio
     }
 }
 
+/// Query-column cell: the `q<n>` label linked to its SQL source when a URL exists
+/// (sha present), plain `q<n>` otherwise (dry run) — mirrors the golden-link cells.
+fn query_cell_html(n: u32, url: Option<String>) -> String {
+    match url {
+        Some(u) => format!("<a href=\"{u}\">q{n}</a>"),
+        None => format!("q{n}"),
+    }
+}
+
+fn query_cell_md(n: u32, url: Option<String>) -> String {
+    match url {
+        Some(u) => format!("[q{n}]({u})"),
+        None => format!("q{n}"),
+    }
+}
+
 /// Visible "regenerated each run" marker for the upserted PR comment (and HTML
 /// header). Needs both the commit and a render timestamp; omitted otherwise.
 fn freshness_line(sha: Option<&str>, generated_at: Option<&str>) -> Option<String> {
@@ -435,10 +465,10 @@ fn render_html(
             let dk_url = r.duckdb.and_then(|_| links.golden_url(d.canon_rel, r.n, "duckdb_cost.txt"));
             let _ = write!(
                 s,
-                "<tr class=\"{}\"><td>q{}</td><td>{}</td><td class=\"num\">{}</td>\
+                "<tr class=\"{}\"><td>{}</td><td>{}</td><td class=\"num\">{}</td>\
                  <td class=\"num\">{}</td><td class=\"num\">{}</td></tr>",
                 r.bucket(),
-                r.n,
+                query_cell_html(r.n, links.query_url(d.query_rel, r.n)),
                 r.status(),
                 peacock_cell_html(r.peacockdb, plan_url, cost_url),
                 cost_cell_html(r.duckdb, dk_url),
@@ -512,8 +542,8 @@ fn render_markdown(datasets: &[Dataset], pages_url: &str, published: bool, links
             };
             let _ = write!(
                 s,
-                "| q{} | {} | {} | {} | {} |\n",
-                r.n,
+                "| {} | {} | {} | {} | {} |\n",
+                query_cell_md(r.n, links.query_url(d.query_rel, r.n)),
                 r.status(),
                 peacock_cell_md(r.peacockdb, plan_url, cost_url),
                 cost_cell_md(r.duckdb, dk_url),
@@ -667,6 +697,30 @@ fn diff_label(rel: &Path) -> String {
     format!("{dataset}/{query}")
 }
 
+/// Link a diff-widget label (`<dataset>.sfN/q<n>`, e.g. `tpch.sf1/q1`) to its query
+/// SQL at the report's commit. `None` when there's no sha, the label doesn't parse,
+/// or the query isn't a numbered `q<n>` (synthetic goldens degrade to plain text).
+fn diff_query_url(links: &Links, label: &str) -> Option<String> {
+    let (dataset, query) = label.split_once('/')?;
+    let bench = dataset.split('.').next()?; // "tpch.sf1" -> "tpch"
+    let n: u32 = query.strip_prefix('q')?.parse().ok()?;
+    links.query_url(&format!("testdata/{bench}-queries"), n)
+}
+
+fn diff_query_cell_html(links: &Links, label: &str) -> String {
+    match diff_query_url(links, label) {
+        Some(u) => format!("<a href=\"{u}\">{label}</a>"),
+        None => label.to_string(),
+    }
+}
+
+fn diff_query_cell_md(links: &Links, label: &str) -> String {
+    match diff_query_url(links, label) {
+        Some(u) => format!("[{label}]({u})"),
+        None => label.to_string(),
+    }
+}
+
 /// Walk the working tree's `.cost.txt` goldens. Returns `(label, working path, repo
 /// path)` where the repo path (`<testdata_arg>/goldens/…`) is what `git show
 /// <ref>:<repo path>` reads for the base side.
@@ -710,7 +764,7 @@ fn base_total(base: &str, repo_path: &str, testdata: &Path) -> Option<u64> {
 
 /// Self-contained HTML artifact: only CHANGED queries, green row = improvement,
 /// red row = regression (same row classes as the coverage report).
-fn render_diff_html(rows: &[DiffRow]) -> String {
+fn render_diff_html(rows: &[DiffRow], links: &Links) -> String {
     let changed: Vec<&DiffRow> = rows.iter().filter(|r| r.changed()).collect();
     let regr = changed.iter().filter(|r| r.is_regression()).count();
     let impr = changed.iter().filter(|r| r.is_improvement()).count();
@@ -740,7 +794,7 @@ fn render_diff_html(rows: &[DiffRow]) -> String {
         let _ = write!(
             s,
             "<tr class=\"{cls}\"><td>{}</td><td class=\"num\">{}</td><td class=\"num\">{}</td><td class=\"num\">{}</td></tr>",
-            r.label,
+            diff_query_cell_html(links, &r.label),
             fmt_bytes(r.old),
             fmt_bytes(r.new),
             fmt_delta(r.delta_pct()),
@@ -754,7 +808,7 @@ fn render_diff_html(rows: &[DiffRow]) -> String {
 
 /// PR-comment markdown: only CHANGED queries, 🔴 regression / 🟢 improvement (GitHub
 /// comments can't set a row background — same marker convention as the ratio report).
-fn render_diff_markdown(rows: &[DiffRow]) -> String {
+fn render_diff_markdown(rows: &[DiffRow], links: &Links) -> String {
     let changed: Vec<&DiffRow> = rows.iter().filter(|r| r.changed()).collect();
     let regr = changed.iter().filter(|r| r.is_regression()).count();
     let impr = changed.iter().filter(|r| r.is_improvement()).count();
@@ -773,7 +827,7 @@ fn render_diff_markdown(rows: &[DiffRow]) -> String {
         let _ = write!(
             s,
             "| {} | {} | {} | {mark} {} |\n",
-            r.label,
+            diff_query_cell_md(links, &r.label),
             fmt_bytes(r.old),
             fmt_bytes(r.new),
             fmt_delta(r.delta_pct()),
@@ -791,7 +845,7 @@ fn render_diff_markdown(rows: &[DiffRow]) -> String {
 /// widget (always), write the artifacts, and exit non-zero iff ≥1 regression.
 /// With no resolvable base (e.g. a master run), every query is omitted → 0
 /// regressions → clean exit 0.
-fn run_cost_diff(testdata: &Path, base: &str, html_out: &str, md_out: &str) {
+fn run_cost_diff(testdata: &Path, base: &str, html_out: &str, md_out: &str, links: &Links) {
     let goldens = collect_cost_goldens(testdata);
     let mut new_map = BTreeMap::new();
     let mut old_map = BTreeMap::new();
@@ -810,9 +864,9 @@ fn run_cost_diff(testdata: &Path, base: &str, html_out: &str, md_out: &str) {
     let regressions = rows.iter().filter(|r| r.is_regression()).count();
 
     // Render ALWAYS; the exit-code decision is separate from rendering.
-    std::fs::write(html_out, render_diff_html(&rows)).unwrap_or_else(|e| panic!("write {html_out}: {e}"));
+    std::fs::write(html_out, render_diff_html(&rows, links)).unwrap_or_else(|e| panic!("write {html_out}: {e}"));
     eprintln!("wrote {html_out}");
-    let md = render_diff_markdown(&rows);
+    let md = render_diff_markdown(&rows, links);
     if md_out.is_empty() {
         print!("{md}");
     } else {
@@ -973,17 +1027,23 @@ gpu_result_test!(tpcds, 1, q5, H200);
         assert!(rows.is_empty());
     }
 
+    /// A sha-less `Links` (dry run): every URL helper returns `None`, so labels /
+    /// cells render plain — keeps the label-substring assertions below unambiguous.
+    fn no_links() -> Links {
+        Links { repo: "o/r".into(), sha: None }
+    }
+
     #[test]
     fn diff_markdown_marks_regressions_and_omits_unchanged() {
         let rows = cost_diff(&map(&[("a", 100), ("b", 100), ("c", 100)]), &map(&[("a", 80), ("b", 120), ("c", 100)]));
-        let md = render_diff_markdown(&rows);
+        let md = render_diff_markdown(&rows, &no_links());
         assert!(md.starts_with(DIFF_SENTINEL));
         assert!(md.contains("1 improvement(s), 1 regression(s)") && md.contains("build failing"));
         assert!(md.contains("| a |") && md.contains("🟢") && md.contains("-20.00%"));
         assert!(md.contains("| b |") && md.contains("🔴") && md.contains("+20.00%"));
         assert!(!md.contains("| c |")); // unchanged omitted from the widget
         // No-change case still upserts a benign comment (clears a prior regression).
-        let clean = render_diff_markdown(&cost_diff(&map(&[("a", 100)]), &map(&[("a", 100)])));
+        let clean = render_diff_markdown(&cost_diff(&map(&[("a", 100)]), &map(&[("a", 100)])), &no_links());
         assert!(clean.starts_with(DIFF_SENTINEL) && clean.contains("no cost change"));
     }
 
@@ -993,6 +1053,81 @@ gpu_result_test!(tpcds, 1, q5, H200);
         assert_eq!(rows[0].delta_pct(), None); // undefined, shown as "—"
         assert!(rows[0].is_regression()); // classification still works (0 → 5)
         assert_eq!(fmt_delta(None), "—");
+    }
+
+    #[test]
+    fn query_url_links_only_with_sha() {
+        let links = Links { repo: "o/r".into(), sha: Some("abc123".into()) };
+        assert_eq!(
+            links.query_url("testdata/tpch-queries", 6),
+            Some("https://github.com/o/r/blob/abc123/testdata/tpch-queries/q6.sql".to_string())
+        );
+        assert_eq!(
+            links.query_url("testdata/tpcds-queries", 14),
+            Some("https://github.com/o/r/blob/abc123/testdata/tpcds-queries/q14.sql".to_string())
+        );
+        // no sha (dry run) → no link.
+        assert_eq!(no_links().query_url("testdata/tpch-queries", 1), None);
+    }
+
+    fn one_row_dataset() -> Dataset {
+        Dataset {
+            label: "TPC-H",
+            total: 1,
+            canon_rel: "testdata/goldens/tpch.sf1",
+            query_rel: "testdata/tpch-queries",
+            rows: vec![Row { n: 1, operational: true, peacockdb: Some(100), duckdb: Some(100) }],
+        }
+    }
+
+    #[test]
+    fn query_cell_linked_with_sha_plain_without() {
+        let linked = Links { repo: "o/r".into(), sha: Some("deadbeef".into()) };
+        let url = "https://github.com/o/r/blob/deadbeef/testdata/tpch-queries/q1.sql";
+
+        let html = render_html(&[one_row_dataset()], "https://p/", &linked, None, None);
+        assert!(html.contains(&format!("<a href=\"{url}\">q1</a>")));
+        let md = render_markdown(&[one_row_dataset()], "https://p/", false, &linked, None);
+        assert!(md.contains(&format!("[q1]({url})")));
+
+        // No sha → plain q1 cell, no query link.
+        let html_plain = render_html(&[one_row_dataset()], "https://p/", &no_links(), None, None);
+        assert!(html_plain.contains("<td>q1</td>") && !html_plain.contains("q1.sql"));
+        let md_plain = render_markdown(&[one_row_dataset()], "https://p/", false, &no_links(), None);
+        assert!(md_plain.contains("| q1 |") && !md_plain.contains("q1.sql"));
+    }
+
+    #[test]
+    fn diff_query_url_parses_dataset_and_qn() {
+        let links = Links { repo: "o/r".into(), sha: Some("cafe".into()) };
+        assert_eq!(
+            diff_query_url(&links, "tpch.sf1/q1"),
+            Some("https://github.com/o/r/blob/cafe/testdata/tpch-queries/q1.sql".to_string())
+        );
+        assert_eq!(
+            diff_query_url(&links, "tpcds.sf1/q14"),
+            Some("https://github.com/o/r/blob/cafe/testdata/tpcds-queries/q14.sql".to_string())
+        );
+        // Synthetic (non-qN) golden → no link.
+        assert_eq!(diff_query_url(&links, "tpch.sf1/scan_limit"), None);
+        // No sha → no link even for a well-formed label.
+        assert_eq!(diff_query_url(&no_links(), "tpch.sf1/q1"), None);
+    }
+
+    #[test]
+    fn diff_widget_links_labels_when_sha_present() {
+        let links = Links { repo: "o/r".into(), sha: Some("cafe".into()) };
+        let rows = cost_diff(&map(&[("tpch.sf1/q1", 100)]), &map(&[("tpch.sf1/q1", 120)]));
+        let url = "https://github.com/o/r/blob/cafe/testdata/tpch-queries/q1.sql";
+
+        let md = render_diff_markdown(&rows, &links);
+        assert!(md.contains(&format!("[tpch.sf1/q1]({url})")));
+        let html = render_diff_html(&rows, &links);
+        assert!(html.contains(&format!("<a href=\"{url}\">tpch.sf1/q1</a>")));
+
+        // No sha → plain label, no link.
+        let md_plain = render_diff_markdown(&rows, &no_links());
+        assert!(md_plain.contains("| tpch.sf1/q1 |") && !md_plain.contains("q1.sql"));
     }
 
     #[test]
