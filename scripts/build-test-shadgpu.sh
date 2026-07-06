@@ -14,6 +14,13 @@ GCC_VERSION=12
 export CC=/usr/bin/gcc-${GCC_VERSION}
 export CXX=/usr/bin/g++-${GCC_VERSION}
 
+# Isolate the cudf (default-feature, C++/FFI-linked) build in its OWN target dir so
+# it never competes with `--features rust-only` builds sharing ./target. Toggling
+# rust-only re-enables arrow's `ffi` feature → a different arrow/DataFusion
+# fingerprint, so a shared target dir recompiles that subgraph on every flip. Two
+# dirs = each feature set stays permanently warm. Override with CARGO_TARGET_DIR.
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$PWD/target-cudf}"
+
 # Rust integration tests that link libpeacock_gpu.so and need to run on the GPU host.
 # After build, each binary is staged under cpp/install/rust-tests/<name> so the
 # existing rsync step picks them up alongside the C++ binaries.

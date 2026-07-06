@@ -154,10 +154,16 @@ if [ "$BUILD" -eq 1 ]; then
   if [ "$RUST_ONLY" -eq 1 ]; then
     # No C++/FFI — build the test binaries with --features rust-only (the part that
     # compiles locally without the cuDF toolchain). Goldens are rust-only artifacts.
+    # Uses the default ./target so it stays warm alongside plain `cargo test`.
     echo "==> build rust-only test binaries (no C++/FFI)"
     CARGO_FEATURES="--features rust-only"
     mkdir -p "$RUST_TESTS_STAGING"
   else
+    # cudf (default-feature) build: isolate it in its OWN target dir so it doesn't
+    # recompile the arrow/DataFusion subgraph every time it alternates with a
+    # rust-only build sharing ./target (rust-only toggles arrow's `ffi` feature →
+    # different fingerprint). See build-test-shadgpu.sh for the same rationale.
+    export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$PWD/target-cudf}"
     echo "==> build C++ in $BUILD_DIR against cuDF at $LOCAL_CUDF_ROOT (gcc-$GCC_VERSION)"
     # cuDF env first on PATH so nvcc/cmake/ninja resolve from the rapids env.
     export PATH="$LOCAL_CUDF_ROOT/bin:$PATH"

@@ -1,5 +1,6 @@
 # Rust
 target/
+target-cudf/   # isolated target dir for cudf (default-feature) builds — see scripts/build-test*.sh
 
 # CMake / C++ build artifacts
 cpp/build/
