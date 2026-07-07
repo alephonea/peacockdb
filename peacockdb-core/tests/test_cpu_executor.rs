@@ -115,6 +115,11 @@ cpu_node13_result_test!(tpch, 1, q8, tp8_mem120gib, true);
 cpu_node13_result_test!(tpch, 1, q9, tp8_mem120gib, true);
 cpu_node13_result_test!(tpch, 1, q12, tp8_mem120gib, true);
 cpu_node13_result_test!(tpch, 1, q19, tp8_mem120gib, true);
+// q13 (bucket-2 addendum): grouped count over a Partitioned LEFT-outer join, ORDER BY
+// without LIMIT. Un-gated once #100 clarified the LEFT-outer is correct (only global
+// count(*) mis-merged; q13's counts are GROUPED). No LIMIT (no #99), no global count
+// (no #100). Legacy tp8-mem2gib #11 line kept.
+cpu_node13_result_test!(tpch, 1, q13, tp8_mem120gib, true);
 
 // ── TPC-DS ────────────────────────────────────────────────────────────────
 cpu_result_test!(tpcds, 1, q1, tp8_mem2gib, false);

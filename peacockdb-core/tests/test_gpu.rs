@@ -122,6 +122,9 @@ gpu_test!(tpch, 1, q8, tp8_mem120gib, golden_exact);
 gpu_test!(tpch, 1, q9, tp8_mem120gib, golden_exact);
 gpu_test!(tpch, 1, q12, tp8_mem120gib, golden_exact);
 gpu_test!(tpch, 1, q19, tp8_mem120gib, golden_exact);
+// q13: grouped count over a Partitioned LEFT-outer (nested group-bys, single-count
+// each level → local-reliable). golden_exact (small custdist result).
+gpu_test!(tpch, 1, q13, tp8_mem120gib, golden_exact);
 gpu_test!(tpcds, 1, q18, tp1_mem120gib, golden_exact);
 gpu_test!(tpcds, 1, q19, tp1_mem120gib, golden_exact);
 gpu_test!(tpcds, 1, q20, tp1_mem120gib, golden_exact);
