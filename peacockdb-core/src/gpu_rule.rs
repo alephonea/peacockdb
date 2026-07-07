@@ -26,7 +26,8 @@ use datafusion::physical_plan::PhysicalExpr;
 use datafusion::physical_expr::expressions::{BinaryExpr, InListExpr, NotExpr};
 use datafusion::logical_expr::Operator;
 use datafusion::physical_plan::{
-    DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties, SendableRecordBatchStream,
+    DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, PlanProperties,
+    SendableRecordBatchStream,
 };
 
 // ---------------------------------------------------------------------------
@@ -265,6 +266,41 @@ impl GpuExtraDisplay for GpuWindowExec {
 // GpuScanExec — wraps ParquetExec to override batch_size at execution time
 // ---------------------------------------------------------------------------
 
+/// One entry of the scan's explicit row-group→batch→partition MAP (Phase 2 Inc1):
+/// a group of WHOLE row groups read as one batch, landing in output `partition`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ScanBatchMap {
+    pub row_groups: Vec<u32>,
+    pub partition: u32,
+}
+
+/// Build the RG→batch→partition map (Phase 2 Inc1): split the row groups to read
+/// (`rgs`) into `n_parts` CONTIGUOUS chunks, one batch each, chunk p → partition p.
+/// Deterministic + reader-independent (explicit RG indices). At a large budget each
+/// partition is one batch (>per-partition-budget multi-batch splitting is deferred).
+/// Returns EMPTY (= legacy single-partition) when there's nothing to split N-way
+/// (n_parts<=1, no RGs, or fewer RGs than would yield >1 partition) — so tp1 and
+/// tiny single-RG scans stay byte-identical.
+pub fn build_scan_map(rgs: &[u32], n_parts: usize) -> Vec<ScanBatchMap> {
+    if rgs.is_empty() || n_parts <= 1 {
+        return Vec::new();
+    }
+    let n = n_parts.min(rgs.len());
+    if n <= 1 {
+        return Vec::new();
+    }
+    let per = rgs.len() / n;
+    let rem = rgs.len() % n;
+    let mut map = Vec::with_capacity(n);
+    let mut idx = 0usize;
+    for p in 0..n {
+        let cnt = per + if p < rem { 1 } else { 0 };
+        map.push(ScanBatchMap { row_groups: rgs[idx..idx + cnt].to_vec(), partition: p as u32 });
+        idx += cnt;
+    }
+    map
+}
+
 #[derive(Debug)]
 pub struct GpuScanExec {
     inner: Arc<dyn ExecutionPlan>,
@@ -275,6 +311,12 @@ pub struct GpuScanExec {
     /// ParquetExec has no predicate to recompute from). None for a fresh plan, where
     /// the serializer computes survivors from the ParquetExec pushdown predicate.
     row_groups: Option<Vec<u32>>,
+    /// Explicit RG→batch→partition MAP (Phase 2 Inc1). EMPTY = legacy
+    /// single-partition read (tp1, byte-unchanged). When set, the scan emits one
+    /// batch per entry into its `partition` — both the CPU golden generator and
+    /// the GPU replay this identical map. Set on a deserialized plan (carried
+    /// verbatim) or by the tp8 partitioning optimizer step.
+    batches: Vec<ScanBatchMap>,
 }
 
 impl GpuScanExec {
@@ -283,6 +325,7 @@ impl GpuScanExec {
             inner,
             gpu_batch_size,
             row_groups: None,
+            batches: Vec::new(),
         }
     }
     /// Reconstruction constructor (deserialize): carries the stored row-group override.
@@ -295,7 +338,13 @@ impl GpuScanExec {
             inner,
             gpu_batch_size,
             row_groups,
+            batches: Vec::new(),
         }
+    }
+    /// Builder: attach the explicit RG→batch→partition map (deserialize / optimizer).
+    pub fn with_batches(mut self, batches: Vec<ScanBatchMap>) -> Self {
+        self.batches = batches;
+        self
     }
     pub fn inner(&self) -> &Arc<dyn ExecutionPlan> {
         &self.inner
@@ -304,6 +353,10 @@ impl GpuScanExec {
     /// serializer computes survivors from the predicate.
     pub fn row_groups_override(&self) -> Option<&Vec<u32>> {
         self.row_groups.as_ref()
+    }
+    /// The explicit RG→batch→partition map (empty = legacy single-partition).
+    pub fn batches_map(&self) -> &[ScanBatchMap] {
+        &self.batches
     }
 }
 
@@ -882,14 +935,51 @@ pub fn analyze_memory_nodes(plan: &Arc<dyn ExecutionPlan>) -> Vec<(String, usize
 // GpuMemoryBudgetRule — compute batch size from memory budget, wrap scans
 // ---------------------------------------------------------------------------
 
+/// Minimum GPU memory budget at which a multi-partition scan emits a real
+/// RG→batch→partition map (Phase 2 Inc1). BELOW this, the device is treated as
+/// memory-constrained: the scan stays single-partition (the tp8-mem2gib #11
+/// determinism path), so the plan serializes byte-identically to the legacy
+/// scan and the flatbuffer roundtrip is stable (deserialize does not reconstruct
+/// N partitions, so GpuRepartitionExec.input_partitions does not flip 1→8).
+/// The real-partitioning device (H200, tp8-mem120gib) sits well above this and
+/// gets the map; tp1 never attaches one regardless (target_partitions == 1).
+/// How a target-partitioned plan is realized on the multi-handle node-executor
+/// path. This — NOT the memory budget — is the sole discriminator for whether the
+/// scan gets an RG→batch→partition map and the Hash repartition is lowered into an
+/// explicit GpuCoalescePartitions(M→1) + GpuRepartition(1→N).
+///
+/// Decoupling real-partitioning from budget (dmitry, replacing the old 16 GiB
+/// `REAL_PARTITION_MIN_BUDGET` threshold) keeps a memory-constrained real-8-way
+/// device (e.g. a genuine 8-way at 2 GiB) EXPRESSIBLE — that execution/enforcer
+/// work is GitHub #91 (post-Phase-2; do not conflate with this policy flag).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PartitionMode {
+    /// Legacy single-partition-coalesced path — tp1 and the tp8-mem2gib #11
+    /// determinism device. No scan map, no repartition lowering (byte-identical
+    /// serialized plan, stable flatbuffer roundtrip).
+    SinglePartition,
+    /// Real N-way partitioning (H200 / tp8-mem120gib): the scan emits N partitions
+    /// per its map and a Hash repartition is lowered + Spark-murmur3 partitioned.
+    RealMultiPartition,
+}
+
+/// True when a plan should be realized with real N-way partitioning: multi-partition
+/// (`n_parts > 1`) AND the explicit `RealMultiPartition` policy. Gates BOTH the scan
+/// map AND the Hash-repartition lowering, so a device either gets the whole real-8-way
+/// treatment or none of it.
+fn real_partitioning(mode: PartitionMode, n_parts: usize) -> bool {
+    n_parts > 1 && mode == PartitionMode::RealMultiPartition
+}
+
 #[derive(Debug)]
 pub struct GpuMemoryBudgetRule {
     gpu_memory_budget: usize,
+    partition_mode: PartitionMode,
 }
 
 impl GpuMemoryBudgetRule {
-    pub fn new(gpu_memory_budget: usize) -> Self {
-        Self { gpu_memory_budget }
+    pub fn new(gpu_memory_budget: usize, partition_mode: PartitionMode) -> Self {
+        Self { gpu_memory_budget, partition_mode }
     }
 }
 
@@ -909,8 +999,26 @@ impl PhysicalOptimizerRule for GpuMemoryBudgetRule {
 
         let result = plan.transform_up(|node: Arc<dyn ExecutionPlan>| {
             if node.as_any().is::<ParquetExec>() {
+                // Real-partitioning device only (target_partitions>1 AND
+                // PartitionMode::RealMultiPartition — see `real_partitioning`): attach
+                // the explicit RG→batch→partition map so the scan emits N partitions
+                // (dissolving RoundRobin into the scan). The RGs to read = #12 survivors
+                // if a static predicate prunes, else all groups. tp1 OR the single-
+                // partition mode (tp8-mem2gib) gets an empty map = legacy single-
+                // partition scan, keeping the serialized plan / roundtrip byte-stable.
+                let n_parts = config.execution.target_partitions;
+                let batches = if real_partitioning(self.partition_mode, n_parts) {
+                    let parquet = node.as_any().downcast_ref::<ParquetExec>().unwrap();
+                    crate::gpu_rowgroup_prune::surviving_row_groups(parquet)
+                        .or_else(|| crate::gpu_rowgroup_prune::all_row_groups(parquet))
+                        .map(|rgs| build_scan_map(&rgs, n_parts))
+                        .unwrap_or_default()
+                } else {
+                    Vec::new()
+                };
                 Ok(Transformed::yes(
-                    Arc::new(GpuScanExec::new(node, batch_size)) as Arc<dyn ExecutionPlan>,
+                    Arc::new(GpuScanExec::new(node, batch_size).with_batches(batches))
+                        as Arc<dyn ExecutionPlan>,
                 ))
             } else if node.as_any().is::<GpuCoalesceBatchesExec>() {
                 let gpu_cb = node.as_any().downcast_ref::<GpuCoalesceBatchesExec>().unwrap();
@@ -920,6 +1028,33 @@ impl PhysicalOptimizerRule for GpuMemoryBudgetRule {
                 Ok(Transformed::yes(
                     Arc::new(GpuCoalesceBatchesExec::new(new_inner)) as Arc<dyn ExecutionPlan>,
                 ))
+            } else if node.as_any().is::<GpuRepartitionExec>()
+                && real_partitioning(self.partition_mode, config.execution.target_partitions)
+            {
+                // Real-partitioning device only: lower a multi-input Hash repartition
+                // GpuRepartition(Hash, M→N) into the EXPLICIT 2-node form (dmitry's
+                // amendment) — GpuCoalescePartitions(M→1, BUFFERING concat) feeding
+                // GpuRepartition(Hash, 1→N). This makes the shuffle's concat a visible,
+                // cost-/memory-accounted plan node (Task-A renders it below the Hash),
+                // and gives the CPU/GPU node executors a single 1-partition input to
+                // hash-partition into N via Spark-murmur3 (Inc2). RoundRobin and
+                // already-1→N repartitions are left untouched. Off the real device
+                // (tp8-mem2gib/tp1) the plan is unchanged → roundtrip byte-stable.
+                let gpu_rp = node.as_any().downcast_ref::<GpuRepartitionExec>().unwrap();
+                let rp = gpu_rp.inner().as_any().downcast_ref::<RepartitionExec>().unwrap();
+                let input_parts = rp.input().properties().output_partitioning().partition_count();
+                if matches!(rp.partitioning(), Partitioning::Hash(_, _)) && input_parts > 1 {
+                    let coalesced: Arc<dyn ExecutionPlan> = Arc::new(GpuCoalescePartitionsExec::new(
+                        Arc::new(CoalescePartitionsExec::new(rp.input().clone())),
+                    ));
+                    let new_rp = RepartitionExec::try_new(coalesced, rp.partitioning().clone())?;
+                    Ok(Transformed::yes(
+                        Arc::new(GpuRepartitionExec::new(Arc::new(new_rp) as Arc<dyn ExecutionPlan>))
+                            as Arc<dyn ExecutionPlan>,
+                    ))
+                } else {
+                    Ok(Transformed::no(node))
+                }
             } else {
                 Ok(Transformed::no(node))
             }

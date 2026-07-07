@@ -347,6 +347,67 @@ async fn test_gpu_scan_no_pruning_without_predicate() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// R3 (Phase 2 Inc1): the explicit RG→batch→partition MAP on GpuScan survives
+/// serialize→deserialize→serialize with POPULATED (non-default) values — the
+/// tp1/empty fixtures can't exercise the map field, so pin the populated path here
+/// (in the same increment that adds the field), mirroring the null_equals_null R3.
+#[tokio::test]
+async fn test_gpu_scan_batch_map_roundtrip() {
+    use datafusion::physical_plan::ExecutionPlan;
+    use peacockdb_core::gpu_rule::{GpuScanExec, ScanBatchMap};
+
+    fn find_scan(p: &Arc<dyn ExecutionPlan>) -> Option<&GpuScanExec> {
+        if let Some(s) = p.as_any().downcast_ref::<GpuScanExec>() {
+            return Some(s);
+        }
+        p.children().into_iter().find_map(find_scan)
+    }
+
+    let dir = write_clustered_fixture("batchmap", 12, 4);
+    let ctx = peacockdb_core::create_context_with_tables(&dir, 1, 2 * 1024 * 1024 * 1024)
+        .await
+        .unwrap();
+    let plan = ctx.sql("SELECT k FROM t").await.unwrap().create_physical_plan().await.unwrap();
+    let scan = find_scan(&plan).expect("plan must contain a GpuScanExec");
+
+    // A populated map: 3 row groups split across 2 partitions (non-default).
+    let map = vec![
+        ScanBatchMap { row_groups: vec![0, 2], partition: 0 },
+        ScanBatchMap { row_groups: vec![1], partition: 1 },
+    ];
+    let mapped: Arc<dyn ExecutionPlan> = Arc::new(
+        GpuScanExec::new(scan.inner().clone(), scan.gpu_batch_size).with_batches(map.clone()),
+    );
+    let bytes = serialize_plan(&mapped).expect("serialization failed");
+
+    // Wire format carries the populated map.
+    let nodes = nodes_of(&bytes);
+    let fbscan = nodes
+        .iter()
+        .find(|n| n.node_type() == fb::PlanNodeKind::GpuScan)
+        .expect("GpuScan node")
+        .node_as_gpu_scan()
+        .unwrap();
+    let fbatches = fbscan.batches().expect("batches map present on the wire");
+    assert_eq!(fbatches.len(), 2, "two scan batches serialized");
+    assert_eq!(fbatches.get(0).partition(), 0);
+    assert_eq!(
+        fbatches.get(0).row_groups().unwrap().iter().collect::<Vec<u32>>(),
+        vec![0u32, 2]
+    );
+    assert_eq!(fbatches.get(1).partition(), 1);
+    assert_eq!(fbatches.get(1).row_groups().unwrap().iter().collect::<Vec<u32>>(), vec![1u32]);
+
+    // Survives serialize→deserialize→serialize byte-for-byte (proves the read path).
+    assert_roundtrip_bytes_equal(&bytes);
+    // And the deserialized GpuScanExec carries the same map.
+    let recon = deserialize_plan(&bytes).expect("deserialize failed");
+    let rscan = find_scan(&recon).expect("reconstructed plan must contain a GpuScanExec");
+    assert_eq!(rscan.batches_map(), map.as_slice(), "map survives round-trip");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// MIDDLE-group survivor: hardens the file-order absolute-index mapping (the one
 /// place a mis-map silently drops data). 3 groups [0-3],[4-7],[8-11]; `WHERE k>=4
 /// AND k<8` matches only the middle group, so survivors must be [1] (not [0] or [2]).

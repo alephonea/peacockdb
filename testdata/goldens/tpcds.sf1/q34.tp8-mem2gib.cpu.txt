@@ -1,49 +1,49 @@
-GpuSortPreservingMergeExec: [c_last_name@0 ASC, c_first_name@1 ASC, c_salutation@2 ASC, c_preferred_cust_flag@3 DESC, ss_ticket_number@4 ASC], output_bytes=21974, output_rows=455
-  GpuSortExec: expr=[c_last_name@0 ASC, c_first_name@1 ASC, c_salutation@2 ASC, c_preferred_cust_flag@3 DESC, ss_ticket_number@4 ASC], output_bytes=21974, output_rows=455
-    GpuProjectExec: expr=[c_last_name@2 as c_last_name, c_first_name@1 as c_first_name, c_salutation@0 as c_salutation, c_preferred_cust_flag@3 as c_preferred_cust_flag, ss_ticket_number@4 as ss_ticket_number, cnt@5 as cnt], output_bytes=21974, output_rows=455
-      GpuCoalesceBatchesExec: target_batch_size=7064090, output_bytes=21974, output_rows=455
-        GpuHashJoinExec: join_type=Inner, on=[(c_customer_sk@0, ss_customer_sk@1)], projection=[1, 2, 3, 4, 5, 7], output_bytes=21974, output_rows=455
-          GpuCoalesceBatchesExec: target_batch_size=7064090, output_bytes=4026797, output_rows=100000
-            GpuRepartitionExec: partitioning=Hash([c_customer_sk@0], 8), input_partitions=8, output_bytes=4026797, output_rows=100000
-              GpuRepartitionExec: partitioning=RoundRobinBatch(8), input_partitions=1, output_bytes=4026797, output_rows=100000
-                GpuScanExec: table=customer, projections=[c_customer_sk, c_salutation, c_first_name, c_last_name, c_preferred_cust_flag], batch_size=7064090, output_bytes=4026797, output_rows=100000
-          GpuCoalesceBatchesExec: target_batch_size=7064090, output_bytes=11091, output_rows=455
-            GpuRepartitionExec: partitioning=Hash([ss_customer_sk@1], 8), input_partitions=8, output_bytes=11091, output_rows=455
-              GpuProjectExec: expr=[ss_ticket_number@0 as ss_ticket_number, ss_customer_sk@1 as ss_customer_sk, count(*)@2 as cnt], output_bytes=11091, output_rows=455
-                GpuCoalesceBatchesExec: target_batch_size=7064090, output_bytes=11091, output_rows=455
-                  GpuFilterExec: predicate=count(*)@2 >= 15 AND count(*)@2 <= 20, output_bytes=11091, output_rows=455
-                    GpuAggregateExec: group_by=[ss_ticket_number, ss_customer_sk], aggr=[count(*)], output_bytes=123948, output_rows=5085
-                      GpuCoalesceBatchesExec: target_batch_size=7064090, output_bytes=123948, output_rows=5085
-                        GpuRepartitionExec: partitioning=Hash([ss_ticket_number@0, ss_customer_sk@1], 8), input_partitions=8, output_bytes=123948, output_rows=5085
-                          GpuAggregateExec: group_by=[ss_ticket_number, ss_customer_sk], aggr=[count(*)], output_bytes=123948, output_rows=5085
-                            GpuCoalesceBatchesExec: target_batch_size=7064090, output_bytes=865298, output_rows=53249
-                              GpuHashJoinExec: join_type=Inner, on=[(hd_demo_sk@0, ss_hdemo_sk@1)], projection=[1, 3], output_bytes=865298, output_rows=53249
-                                GpuCoalesceBatchesExec: target_batch_size=7064090, output_bytes=8450, output_rows=1040
-                                  GpuRepartitionExec: partitioning=Hash([hd_demo_sk@0], 8), input_partitions=8, output_bytes=8450, output_rows=1040
-                                    GpuCoalesceBatchesExec: target_batch_size=7064090, output_bytes=8450, output_rows=1040
-                                      GpuFilterExec: predicate=(hd_buy_potential@1 = >10000 OR hd_buy_potential@1 = Unknown) AND hd_vehicle_count@3 > 0 AND CASE WHEN hd_vehicle_count@3 > 0 THEN CAST(hd_dep_count@2 AS Float64) / CAST(hd_vehicle_count@3 AS Float64) END > 1.2, projection=[0], output_bytes=8450, output_rows=1040
-                                        GpuRepartitionExec: partitioning=RoundRobinBatch(8), input_partitions=1, output_bytes=230404, output_rows=7200
-                                          GpuScanExec: table=household_demographics, projections=[hd_demo_sk, hd_buy_potential, hd_dep_count, hd_vehicle_count], batch_size=7064090, output_bytes=230404, output_rows=7200
-                                GpuCoalesceBatchesExec: target_batch_size=7064090, output_bytes=8951550, output_rows=367243
-                                  GpuRepartitionExec: partitioning=Hash([ss_hdemo_sk@1], 8), input_partitions=8, output_bytes=8951550, output_rows=367243
-                                    GpuCoalesceBatchesExec: target_batch_size=7064090, output_bytes=8951550, output_rows=367243
-                                      GpuHashJoinExec: join_type=Inner, on=[(s_store_sk@0, ss_store_sk@2)], projection=[1, 2, 4], output_bytes=8951550, output_rows=367243
-                                        GpuCoalesceBatchesExec: target_batch_size=7064090, output_bytes=98, output_rows=12
-                                          GpuRepartitionExec: partitioning=Hash([s_store_sk@0], 8), input_partitions=8, output_bytes=98, output_rows=12
-                                            GpuCoalesceBatchesExec: target_batch_size=7064090, output_bytes=98, output_rows=12
-                                              GpuFilterExec: predicate=s_county@1 = Williamson County, projection=[0], output_bytes=98, output_rows=12
-                                                GpuRepartitionExec: partitioning=RoundRobinBatch(8), input_partitions=1, output_bytes=356, output_rows=12
-                                                  GpuScanExec: table=store, projections=[s_store_sk, s_county], batch_size=7064090, output_bytes=356, output_rows=12
-                                        GpuCoalesceBatchesExec: target_batch_size=7064090, output_bytes=12222340, output_rows=376072
-                                          GpuRepartitionExec: partitioning=Hash([ss_store_sk@2], 8), input_partitions=8, output_bytes=12222340, output_rows=376072
-                                            GpuCoalesceBatchesExec: target_batch_size=7064090, output_bytes=12222340, output_rows=376072
-                                              GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ss_sold_date_sk@0)], projection=[2, 3, 4, 5], output_bytes=12222340, output_rows=376072
-                                                GpuCoalesceBatchesExec: target_batch_size=7064090, output_bytes=2048, output_rows=252
-                                                  GpuRepartitionExec: partitioning=Hash([d_date_sk@0], 8), input_partitions=8, output_bytes=2048, output_rows=252
-                                                    GpuCoalesceBatchesExec: target_batch_size=7064090, output_bytes=2048, output_rows=252
-                                                      GpuFilterExec: predicate=(d_dom@2 >= 1 AND d_dom@2 <= 3 OR d_dom@2 >= 25 AND d_dom@2 <= 28) AND (d_year@1 = 1999 OR d_year@1 = 2000 OR d_year@1 = 2001), projection=[0], output_bytes=2048, output_rows=252
-                                                        GpuRepartitionExec: partitioning=RoundRobinBatch(8), input_partitions=1, output_bytes=1780572, output_rows=73049
-                                                          GpuScanExec: table=date_dim, projections=[d_date_sk, d_year, d_dom], batch_size=7064090, output_bytes=1780572, output_rows=73049
-                                                GpuCoalesceBatchesExec: target_batch_size=7064090, output_bytes=117016415, output_rows=2880404
-                                                  GpuRepartitionExec: partitioning=Hash([ss_sold_date_sk@0], 8), input_partitions=8, output_bytes=117016415, output_rows=2880404
-                                                    GpuScanExec: table=store_sales, projections=[ss_sold_date_sk, ss_customer_sk, ss_hdemo_sk, ss_store_sk, ss_ticket_number], batch_size=7064090, output_bytes=117016415, output_rows=2880404
+GpuSortPreservingMergeExec: [c_last_name@0 ASC, c_first_name@1 ASC, c_salutation@2 ASC, c_preferred_cust_flag@3 DESC, ss_ticket_number@4 ASC], partitions=1, output_rows=455, output_bytes=21974
+  GpuSortExec: expr=[c_last_name@0 ASC, c_first_name@1 ASC, c_salutation@2 ASC, c_preferred_cust_flag@3 DESC, ss_ticket_number@4 ASC], partitions=1, output_rows=455, output_bytes=21974
+    GpuProjectExec: expr=[c_last_name@2 as c_last_name, c_first_name@1 as c_first_name, c_salutation@0 as c_salutation, c_preferred_cust_flag@3 as c_preferred_cust_flag, ss_ticket_number@4 as ss_ticket_number, cnt@5 as cnt], partitions=1, output_rows=455, output_bytes=21974
+      GpuCoalesceBatchesExec: target_batch_size=7064090, partitions=1, output_rows=455, output_bytes=21974
+        GpuHashJoinExec: join_type=Inner, on=[(c_customer_sk@0, ss_customer_sk@1)], projection=[1, 2, 3, 4, 5, 7], partitions=1, output_rows=455, output_bytes=21974
+          GpuCoalesceBatchesExec: target_batch_size=7064090, partitions=1, output_rows=100000, output_bytes=4026797
+            GpuRepartitionExec: partitioning=Hash([c_customer_sk@0], 8), input_partitions=8, partitions=1, output_rows=100000, output_bytes=4026797
+              GpuRepartitionExec: partitioning=RoundRobinBatch(8), input_partitions=1, partitions=1, output_rows=100000, output_bytes=4026797
+                GpuScanExec: table=customer, projections=[c_customer_sk, c_salutation, c_first_name, c_last_name, c_preferred_cust_flag], batch_size=7064090, partitions=1, output_rows=100000, output_bytes=4026797
+          GpuCoalesceBatchesExec: target_batch_size=7064090, partitions=1, output_rows=455, output_bytes=11091
+            GpuRepartitionExec: partitioning=Hash([ss_customer_sk@1], 8), input_partitions=8, partitions=1, output_rows=455, output_bytes=11091
+              GpuProjectExec: expr=[ss_ticket_number@0 as ss_ticket_number, ss_customer_sk@1 as ss_customer_sk, count(*)@2 as cnt], partitions=1, output_rows=455, output_bytes=11091
+                GpuCoalesceBatchesExec: target_batch_size=7064090, partitions=1, output_rows=455, output_bytes=11091
+                  GpuFilterExec: predicate=count(*)@2 >= 15 AND count(*)@2 <= 20, partitions=1, output_rows=455, output_bytes=11091
+                    GpuAggregateExec: group_by=[ss_ticket_number, ss_customer_sk], aggr=[count(*)], partitions=1, output_rows=5085, output_bytes=123948
+                      GpuCoalesceBatchesExec: target_batch_size=7064090, partitions=1, output_rows=5085, output_bytes=123948
+                        GpuRepartitionExec: partitioning=Hash([ss_ticket_number@0, ss_customer_sk@1], 8), input_partitions=8, partitions=1, output_rows=5085, output_bytes=123948
+                          GpuAggregateExec: group_by=[ss_ticket_number, ss_customer_sk], aggr=[count(*)], partitions=1, output_rows=5085, output_bytes=123948
+                            GpuCoalesceBatchesExec: target_batch_size=7064090, partitions=1, output_rows=53249, output_bytes=865298
+                              GpuHashJoinExec: join_type=Inner, on=[(hd_demo_sk@0, ss_hdemo_sk@1)], projection=[1, 3], partitions=1, output_rows=53249, output_bytes=865298
+                                GpuCoalesceBatchesExec: target_batch_size=7064090, partitions=1, output_rows=1040, output_bytes=8450
+                                  GpuRepartitionExec: partitioning=Hash([hd_demo_sk@0], 8), input_partitions=8, partitions=1, output_rows=1040, output_bytes=8450
+                                    GpuCoalesceBatchesExec: target_batch_size=7064090, partitions=1, output_rows=1040, output_bytes=8450
+                                      GpuFilterExec: predicate=(hd_buy_potential@1 = >10000 OR hd_buy_potential@1 = Unknown) AND hd_vehicle_count@3 > 0 AND CASE WHEN hd_vehicle_count@3 > 0 THEN CAST(hd_dep_count@2 AS Float64) / CAST(hd_vehicle_count@3 AS Float64) END > 1.2, projection=[0], partitions=1, output_rows=1040, output_bytes=8450
+                                        GpuRepartitionExec: partitioning=RoundRobinBatch(8), input_partitions=1, partitions=1, output_rows=7200, output_bytes=230404
+                                          GpuScanExec: table=household_demographics, projections=[hd_demo_sk, hd_buy_potential, hd_dep_count, hd_vehicle_count], batch_size=7064090, partitions=1, output_rows=7200, output_bytes=230404
+                                GpuCoalesceBatchesExec: target_batch_size=7064090, partitions=1, output_rows=367243, output_bytes=8951550
+                                  GpuRepartitionExec: partitioning=Hash([ss_hdemo_sk@1], 8), input_partitions=8, partitions=1, output_rows=367243, output_bytes=8951550
+                                    GpuCoalesceBatchesExec: target_batch_size=7064090, partitions=1, output_rows=367243, output_bytes=8951550
+                                      GpuHashJoinExec: join_type=Inner, on=[(s_store_sk@0, ss_store_sk@2)], projection=[1, 2, 4], partitions=1, output_rows=367243, output_bytes=8951550
+                                        GpuCoalesceBatchesExec: target_batch_size=7064090, partitions=1, output_rows=12, output_bytes=98
+                                          GpuRepartitionExec: partitioning=Hash([s_store_sk@0], 8), input_partitions=8, partitions=1, output_rows=12, output_bytes=98
+                                            GpuCoalesceBatchesExec: target_batch_size=7064090, partitions=1, output_rows=12, output_bytes=98
+                                              GpuFilterExec: predicate=s_county@1 = Williamson County, projection=[0], partitions=1, output_rows=12, output_bytes=98
+                                                GpuRepartitionExec: partitioning=RoundRobinBatch(8), input_partitions=1, partitions=1, output_rows=12, output_bytes=356
+                                                  GpuScanExec: table=store, projections=[s_store_sk, s_county], batch_size=7064090, partitions=1, output_rows=12, output_bytes=356
+                                        GpuCoalesceBatchesExec: target_batch_size=7064090, partitions=1, output_rows=376072, output_bytes=12222340
+                                          GpuRepartitionExec: partitioning=Hash([ss_store_sk@2], 8), input_partitions=8, partitions=1, output_rows=376072, output_bytes=12222340
+                                            GpuCoalesceBatchesExec: target_batch_size=7064090, partitions=1, output_rows=376072, output_bytes=12222340
+                                              GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ss_sold_date_sk@0)], projection=[2, 3, 4, 5], partitions=1, output_rows=376072, output_bytes=12222340
+                                                GpuCoalesceBatchesExec: target_batch_size=7064090, partitions=1, output_rows=252, output_bytes=2048
+                                                  GpuRepartitionExec: partitioning=Hash([d_date_sk@0], 8), input_partitions=8, partitions=1, output_rows=252, output_bytes=2048
+                                                    GpuCoalesceBatchesExec: target_batch_size=7064090, partitions=1, output_rows=252, output_bytes=2048
+                                                      GpuFilterExec: predicate=(d_dom@2 >= 1 AND d_dom@2 <= 3 OR d_dom@2 >= 25 AND d_dom@2 <= 28) AND (d_year@1 = 1999 OR d_year@1 = 2000 OR d_year@1 = 2001), projection=[0], partitions=1, output_rows=252, output_bytes=2048
+                                                        GpuRepartitionExec: partitioning=RoundRobinBatch(8), input_partitions=1, partitions=1, output_rows=73049, output_bytes=1780572
+                                                          GpuScanExec: table=date_dim, projections=[d_date_sk, d_year, d_dom], batch_size=7064090, partitions=1, output_rows=73049, output_bytes=1780572
+                                                GpuCoalesceBatchesExec: target_batch_size=7064090, partitions=1, output_rows=2880404, output_bytes=117016415
+                                                  GpuRepartitionExec: partitioning=Hash([ss_sold_date_sk@0], 8), input_partitions=8, partitions=1, output_rows=2880404, output_bytes=117016415
+                                                    GpuScanExec: table=store_sales, projections=[ss_sold_date_sk, ss_customer_sk, ss_hdemo_sk, ss_store_sk, ss_ticket_number], batch_size=7064090, partitions=1, output_rows=2880404, output_bytes=117016415

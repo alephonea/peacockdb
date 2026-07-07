@@ -1,0 +1,104 @@
++-------------+--------------+----------------+----------------+------------------+----------+-----------+
+| c_last_name | c_first_name | ca_city        | bought_city    | ss_ticket_number | amt      | profit    |
++-------------+--------------+----------------+----------------+------------------+----------+-----------+
+|             |              | Antioch        | Belmont        | 149232           | 2866.05  | -12526.96 |
+|             |              | Ashland        | Philadelphia   | 155902           | 3488.72  | -10012.54 |
+|             |              | Bayview        | Springdale     | 162862           | 3484.09  | -18573.24 |
+|             |              | Belleview      | Nichols        | 59976            | 11312.97 | -15948.66 |
+|             |              | Blair          | Hamilton       | 206536           | 0.00     | -5402.20  |
+|             |              | Brownsville    | Bunker Hill    | 159429           | 580.70   | -7276.98  |
+|             |              | Brownsville    | Mechanicsburg  | 60829            | 0.00     | -15113.17 |
+|             |              | Brunswick      | Mountain View  | 123733           | 1221.12  | -12504.30 |
+|             |              | Buckingham     | Siloam         | 93903            | 391.95   | -1524.54  |
+|             |              | Bunker Hill    | Antioch        | 199878           | 420.25   | -6547.77  |
+|             |              | Bunker Hill    | Greenfield     | 127182           | 157.73   | 2349.56   |
+|             |              | Bunker Hill    | Hopewell       | 53497            | 5228.38  | -1206.03  |
+|             |              | Cedar Grove    | Jackson        | 81259            | 82.34    | -7526.45  |
+|             |              | Centerville    | Bethel         | 210801           | 0.00     | -13358.77 |
+|             |              | Centerville    | Mount Olive    | 66053            | 977.46   | -5915.50  |
+|             |              | Centerville    | Mount Zion     | 83650            | 4983.66  | -6892.67  |
+|             |              | Centerville    | Providence     | 62604            | 3314.18  | -7542.60  |
+|             |              | Clifton        | Mount Vernon   | 95501            | 2510.20  | -12723.39 |
+|             |              | Concord        | Stringtown     | 97052            | 1531.39  | -5782.82  |
+|             |              | Cordova        | Crossroads     | 85385            | 1071.51  | -12566.80 |
+|             |              | Crossroads     | Buena Vista    | 221999           | 1100.11  | -11773.77 |
+|             |              | Crossroads     | Unionville     | 58203            | 1676.00  | -4346.63  |
+|             |              | Deerfield      | Riverside      | 226924           | 4999.94  | -16878.70 |
+|             |              | Derby          | Riverdale      | 140237           | 1791.57  | -4612.27  |
+|             |              | Edgewood       | Hopewell       | 167421           | 3236.58  | -15584.00 |
+|             |              | Empire         | Five Forks     | 43396            | 602.35   | -16499.02 |
+|             |              | Empire         | Midway         | 165554           | 3328.93  | -14501.15 |
+|             |              | Enterprise     | Highland Park  | 147688           | 2717.01  | -13093.44 |
+|             |              | Enterprise     | Red Hill       | 115200           | 2273.67  | -15393.78 |
+|             |              | Fairfield      | Bridgeport     | 13112            | 4998.26  | -12810.23 |
+|             |              | Fairfield      | Midway         | 671              | 1995.34  | -1564.30  |
+|             |              | Fairfield      | Shiloh         | 149867           | 5899.47  | -7315.44  |
+|             |              | Fairfield      | Springdale     | 66752            | 698.19   | -7684.93  |
+|             |              | Fairview       | Florence       | 90439            | 0.00     | -9254.65  |
+|             |              | Five Forks     | Lakewood       | 186991           | 2.24     | -1167.30  |
+|             |              | Five Forks     | Shady Grove    | 239479           | 2982.12  | -12055.22 |
+|             |              | Five Points    | Union Hill     | 57715            | 4118.88  | -4937.15  |
+|             |              | Florence       | Edgewood       | 110370           | 1155.72  | -5928.71  |
+|             |              | Florence       | Oak Ridge      | 45989            | 1343.95  | -10988.74 |
+|             |              | Florence       | Spring Hill    | 104935           | 5.84     | -7083.45  |
+|             |              | Forest Hills   | Argyle         | 139387           | 10462.95 | -13111.65 |
+|             |              | Forest Hills   | Ashland        | 214771           | 2327.02  | -8929.21  |
+|             |              | Forest Hills   | Riverside      | 184229           | 1869.18  | -14374.57 |
+|             |              | Franklin       | Floyd          | 230648           | 923.59   | -3724.40  |
+|             |              | Friendship     | Ashland        | 11043            | 930.40   | -10220.99 |
+|             |              | Georgetown     | Clifton        | 123750           | 3212.86  | -4868.76  |
+|             |              | Georgetown     | Glendale       | 27617            | 2497.96  | -15755.51 |
+|             |              | Georgetown     | Red Hill       | 234956           | 1017.99  | -579.54   |
+|             |              | Georgetown     | Summit         | 120620           | 14294.92 | -21696.89 |
+|             |              | Gladstone      | Hopewell       | 229820           | 480.35   | -14794.62 |
+|             |              | Glendale       | Four Points    | 167992           | 249.48   | -6209.49  |
+|             |              | Glendale       | Indian Village | 203729           | 9227.39  | -14765.78 |
+|             |              | Glendale       | Marion         | 51036            | 1384.90  | -14384.59 |
+|             |              | Glendale       | Mount Pleasant | 159389           | 941.56   | -895.78   |
+|             |              | Glendale       | West Liberty   | 5509             | 713.38   | -12266.91 |
+|             |              | Glenwood       | Antioch        | 86386            | 7755.02  | -18376.87 |
+|             |              | Glenwood       | Clinton        | 4460             | 90.56    | -9695.86  |
+|             |              | Glenwood       | Clinton        | 90728            | 0.00     | -8126.90  |
+|             |              | Granite        | Clinton        | 211465           | 2712.83  | -8507.32  |
+|             |              | Green Acres    | Avery          | 191571           | 2250.07  | -18506.07 |
+|             |              | Greenfield     | Edgewood       | 69782            | 5731.69  | -7222.87  |
+|             |              | Greenfield     | Red Oak        | 214549           | 2517.22  | -1154.40  |
+|             |              | Greenfield     | Riverdale      | 133538           | 0.00     | -11056.38 |
+|             |              | Greenville     | Mountain View  | 103238           | 66.67    | -8751.41  |
+|             |              | Greenville     | Shiloh         | 155915           | 257.70   | -7353.95  |
+|             |              | Greenwood      | Bridgeport     | 228626           | 12.58    | -6138.04  |
+|             |              | Greenwood      | Lakeside       | 37922            | 3293.24  | -6506.20  |
+|             |              | Greenwood      | Macedonia      | 133102           | 0.00     | -13055.32 |
+|             |              | Hamilton       | Cedar          | 112720           | 4413.50  | -9380.63  |
+|             |              | Hamilton       | Liberty        | 121398           | 4443.17  | -7515.51  |
+|             |              | Hamilton       | Valley View    | 161021           | 6448.31  | -13448.86 |
+|             |              | Hardy          | Unionville     | 193341           | 7717.72  | -5748.40  |
+|             |              | Harmony        | Bethel         | 77060            | 334.07   | -8116.59  |
+|             |              | Highland Park  | Salem          | 69302            | 333.86   | -5029.77  |
+|             |              | Hillcrest      | Valley View    | 218569           | 1581.56  | -10918.77 |
+|             |              | Hopewell       | Centerville    | 17403            | 0.00     | -8019.41  |
+|             |              | Jackson        | Springdale     | 72874            | 1337.98  | -2963.84  |
+|             |              | Jackson        | Union Hill     | 114590           | 120.76   | -12855.18 |
+|             |              | Jackson        | Union Hill     | 181398           | 196.44   | -8417.89  |
+|             |              | Kingston       | Clinton        | 169584           | 4616.77  | -5452.90  |
+|             |              | Lakeview       | Richville      | 165849           | 779.84   | -13062.92 |
+|             |              | Lakewood       | Arlington      | 113298           | 1470.87  | -14611.78 |
+|             |              | Lakewood       | Bridgeport     | 169124           | 1888.55  | -15265.19 |
+|             |              | Lakewood       | Spring Hill    | 144979           | 9.58     | -7588.74  |
+|             |              | Lawrenceville  | Bunker Hill    | 237291           | 2165.83  | -18894.49 |
+|             |              | Lebanon        | Pomona         | 55371            | 3830.30  | -7000.29  |
+|             |              | Lewis          | Red Hill       | 43196            | 6623.30  | -10024.40 |
+|             |              | Liberty        | Spring Hill    | 95200            | 2575.19  | -11737.36 |
+|             |              | Lincoln        | Mount Olive    | 148878           | 137.63   | -9346.50  |
+|             |              | Lincoln        | Shiloh         | 152927           | 2595.36  | -1860.02  |
+|             |              | Ludlow         | Shiloh         | 150308           | 9175.65  | -13917.97 |
+|             |              | Macedonia      | Summerville    | 96898            | 749.57   | -8519.39  |
+|             |              | Maple Grove    | Hardy          | 94091            | 1913.92  | -14141.45 |
+|             |              | Maple Grove    | Waterloo       | 225826           | 2811.47  | -12601.26 |
+|             |              | Marion         | White Oak      | 8347             | 35.04    | -4761.45  |
+|             |              | Midway         | Jackson        | 99981            | 242.07   | -11290.96 |
+|             |              | Midway         | Oakwood        | 11488            | 248.69   | -2720.57  |
+|             |              | Milan          | Woodland       | 226048           | 2893.22  | -4794.42  |
+|             |              | Mount Pleasant | Clifton        | 33934            | 657.73   | -3334.14  |
+|             |              | Mount Pleasant | Union          | 157956           | 2823.90  | -7285.54  |
++-------------+--------------+----------------+----------------+------------------+----------+-----------+

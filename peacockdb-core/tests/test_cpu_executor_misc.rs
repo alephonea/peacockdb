@@ -3,13 +3,81 @@
 #[macro_use]
 mod common;
 
-use datafusion::arrow::array::Int64Array;
+use std::sync::Arc;
 
+use datafusion::arrow::array::Int64Array;
+use datafusion::physical_plan::ExecutionPlan;
+
+use peacockdb_core::create_context_with_tables_mode;
 use peacockdb_core::cpu_executor::{execute_node_by_node_instrumented, NodeMemoryStats};
 
 use common::{
-    all_node_names, fmt_plan, has_gpu_node, make_ctx, scan_batch_sizes, FULL_BUDGET, TIGHT_BUDGET,
+    all_node_names, data_dir_for, device_config, fmt_plan, has_gpu_node, make_ctx,
+    partition_mode, plan_is_node13_executable, queries_dir_for, scan_batch_sizes, FULL_BUDGET,
+    TIGHT_BUDGET,
 };
+
+/// Lock the routing predicate (reviewer regression guard) — the gate is AGG-KIND
+/// (state-mergeability), not the mere presence of a repartition:
+///   - q6 (global additive agg, no shuffle)                    → node13-executable
+///   - shuffle_additive (GROUP BY + Hash shuffle, SUM/COUNT)   → node13-executable
+///   - q1 (GROUP BY + Hash shuffle, AVG state = sum/count)     → node13-executable (Inc4)
+///   - shuffle_stddev (GROUP BY + Hash shuffle, STDDEV)        → NOT (compound moments = Inc5)
+/// All are evaluated at tp8-mem120gib so they carry a scan map; the ONLY discriminator
+/// is whether every Final-aggregate is state-mergeable. Fails LOUDLY if the predicate
+/// is broadened to admit STDDEV/VAR (which #13 can't merge yet) or narrowed to reject
+/// a legitimate mergeable shuffle (sum/count/min/max/avg).
+#[tokio::test]
+async fn routing_predicate_gates_on_agg_kind() {
+    async fn plan_for(query: &str, device: &str) -> Arc<dyn ExecutionPlan> {
+        let (parts, budget) = device_config(device);
+        // Real-partitioning mode at tp8-mem120gib so the scan carries its map (the
+        // predicate keys on has_scan_map); the enum — not the budget — is the gate.
+        let ctx = create_context_with_tables_mode(
+            &data_dir_for("tpch", "1"),
+            parts,
+            budget,
+            partition_mode(device),
+        )
+        .await
+        .unwrap();
+        let sql =
+            std::fs::read_to_string(queries_dir_for("tpch").join(format!("{query}.sql"))).unwrap();
+        ctx.sql(&sql).await.unwrap().create_physical_plan().await.unwrap()
+    }
+    let q6 = plan_for("q6", "tp8-mem120gib").await;
+    assert!(plan_is_node13_executable(&q6), "q6 (additive global agg) must route to #13");
+    let shuffle = plan_for("shuffle-additive", "tp8-mem120gib").await;
+    assert!(
+        plan_is_node13_executable(&shuffle),
+        "shuffle_additive (SUM/COUNT over a Hash shuffle) must route to #13"
+    );
+    let q1 = plan_for("q1", "tp8-mem120gib").await;
+    assert!(
+        plan_is_node13_executable(&q1),
+        "q1 (AVG = additive sum/count state) must route to #13 (Inc4)"
+    );
+    let stddev = plan_for("shuffle-stddev", "tp8-mem120gib").await;
+    assert!(
+        !plan_is_node13_executable(&stddev),
+        "shuffle_stddev (STDDEV compound moments) must stay on #11 until Inc5"
+    );
+}
+
+/// I-3 (reviewer): LOCK the Inc5 boundary. Forcing a STDDEV Final-agg query through
+/// the #13 CpuNodeExecutor at a real-partitioning device (tp8-mem120gib) must PANIC on
+/// the node13-executable safety guard — #13 cannot merge STDDEV/VAR compound-moment
+/// state across the 8 hash partitions until Inc5. Guards against a future relaxation
+/// silently admitting a non-mergeable Final-agg and mis-merging it. (AVG now PASSES —
+/// Inc4 made its sum/count state mergeable; the negative case moved to STDDEV.)
+#[tokio::test]
+#[should_panic(expected = "node13-executable")]
+async fn inc5_stddev_final_agg_at_tp8_node13_panics() {
+    common::assert_cpu_results_match_datafusion(
+        "tpch", "1", "shuffle-stddev", "tp8-mem120gib", None, true, false,
+    )
+    .await;
+}
 
 /// Every Gpu* node must be stripped before CPU execution; no stat may name one.
 #[tokio::test]

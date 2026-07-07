@@ -1,15 +1,15 @@
-GpuSortExec: expr=[cntrycode@0 ASC NULLS LAST], output_bytes=217, output_rows=7
-  GpuProjectExec: expr=[cntrycode@0 as cntrycode, count(*)@1 as numcust, sum(custsale.c_acctbal)@2 as totacctbal], output_bytes=217, output_rows=7
-    GpuAggregateExec: group_by=[cntrycode], aggr=[count(*), sum(custsale.c_acctbal)], output_bytes=217, output_rows=7
-      GpuProjectExec: expr=[substr(c_phone@0, 1, 2) as cntrycode, c_acctbal@1 as c_acctbal], output_bytes=142048, output_rows=6384
-        GpuNestedLoopJoinExec: join_type=Inner, filter=CAST(c_acctbal@0 AS Decimal128(19, 6)) > avg(customer.c_acctbal)@1, projection=[1, 2], output_bytes=225040, output_rows=6384
-          GpuAggregateExec: group_by=[], aggr=[avg(customer.c_acctbal)], output_bytes=17, output_rows=1
-            GpuCoalesceBatchesExec: target_batch_size=1150437668, output_bytes=614685, output_rows=38120
-              GpuFilterExec: predicate=c_acctbal@1 > Some(0),15,2 AND (substr(c_phone@0, 1, 2) = 13 OR substr(c_phone@0, 1, 2) = 31 OR substr(c_phone@0, 1, 2) = 23 OR substr(c_phone@0, 1, 2) = 29 OR substr(c_phone@0, 1, 2) = 30 OR substr(c_phone@0, 1, 2) = 18 OR substr(c_phone@0, 1, 2) = 17), projection=[1], output_bytes=614685, output_rows=38120
-                GpuScanExec: table=customer, projections=[c_phone, c_acctbal], batch_size=1150437668, output_bytes=5287504, output_rows=150000
-          GpuCoalesceBatchesExec: target_batch_size=1150437668, output_bytes=496536, output_rows=14086
-            GpuHashJoinExec: join_type=LeftAnti, on=[(c_custkey@0, o_custkey@0)], projection=[1, 2], output_bytes=496536, output_rows=14086
-              GpuCoalesceBatchesExec: target_batch_size=1150437668, output_bytes=1822405, output_rows=42015
-                GpuFilterExec: predicate=substr(c_phone@1, 1, 2) = 13 OR substr(c_phone@1, 1, 2) = 31 OR substr(c_phone@1, 1, 2) = 23 OR substr(c_phone@1, 1, 2) = 29 OR substr(c_phone@1, 1, 2) = 30 OR substr(c_phone@1, 1, 2) = 18 OR substr(c_phone@1, 1, 2) = 17, output_bytes=1822405, output_rows=42015
-                  GpuScanExec: table=customer, projections=[c_custkey, c_phone, c_acctbal], batch_size=1150437668, output_bytes=6506254, output_rows=150000
-              GpuScanExec: table=orders, projections=[o_custkey], batch_size=1150437668, output_bytes=12187500, output_rows=1500000
+GpuSortExec: expr=[cntrycode@0 ASC NULLS LAST], partitions=1, output_rows=7, output_bytes=217
+  GpuProjectExec: expr=[cntrycode@0 as cntrycode, count(*)@1 as numcust, sum(custsale.c_acctbal)@2 as totacctbal], partitions=1, output_rows=7, output_bytes=217
+    GpuAggregateExec: group_by=[cntrycode], aggr=[count(*), sum(custsale.c_acctbal)], partitions=1, output_rows=7, output_bytes=217
+      GpuProjectExec: expr=[substr(c_phone@0, 1, 2) as cntrycode, c_acctbal@1 as c_acctbal], partitions=1, output_rows=6384, output_bytes=142048
+        GpuNestedLoopJoinExec: join_type=Inner, filter=CAST(c_acctbal@0 AS Decimal128(19, 6)) > avg(customer.c_acctbal)@1, projection=[1, 2], partitions=1, output_rows=6384, output_bytes=225040
+          GpuAggregateExec: group_by=[], aggr=[avg(customer.c_acctbal)], partitions=1, output_rows=1, output_bytes=17
+            GpuCoalesceBatchesExec: target_batch_size=1150437668, partitions=1, output_rows=38120, output_bytes=614685
+              GpuFilterExec: predicate=c_acctbal@1 > Some(0),15,2 AND (substr(c_phone@0, 1, 2) = 13 OR substr(c_phone@0, 1, 2) = 31 OR substr(c_phone@0, 1, 2) = 23 OR substr(c_phone@0, 1, 2) = 29 OR substr(c_phone@0, 1, 2) = 30 OR substr(c_phone@0, 1, 2) = 18 OR substr(c_phone@0, 1, 2) = 17), projection=[1], partitions=1, output_rows=38120, output_bytes=614685
+                GpuScanExec: table=customer, projections=[c_phone, c_acctbal], batch_size=1150437668, partitions=1, output_rows=150000, output_bytes=5287504
+          GpuCoalesceBatchesExec: target_batch_size=1150437668, partitions=1, output_rows=14086, output_bytes=496536
+            GpuHashJoinExec: join_type=LeftAnti, on=[(c_custkey@0, o_custkey@0)], projection=[1, 2], partitions=1, output_rows=14086, output_bytes=496536
+              GpuCoalesceBatchesExec: target_batch_size=1150437668, partitions=1, output_rows=42015, output_bytes=1822405
+                GpuFilterExec: predicate=substr(c_phone@1, 1, 2) = 13 OR substr(c_phone@1, 1, 2) = 31 OR substr(c_phone@1, 1, 2) = 23 OR substr(c_phone@1, 1, 2) = 29 OR substr(c_phone@1, 1, 2) = 30 OR substr(c_phone@1, 1, 2) = 18 OR substr(c_phone@1, 1, 2) = 17, partitions=1, output_rows=42015, output_bytes=1822405
+                  GpuScanExec: table=customer, projections=[c_custkey, c_phone, c_acctbal], batch_size=1150437668, partitions=1, output_rows=150000, output_bytes=6506254
+              GpuScanExec: table=orders, projections=[o_custkey], batch_size=1150437668, partitions=1, output_rows=1500000, output_bytes=12187500

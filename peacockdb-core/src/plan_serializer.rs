@@ -123,15 +123,34 @@ fn serialize_gpu_scan<'a>(
     // normalization, so we re-add it here. ListingTableUrl canonicalizes to
     // absolute at registration time, so the original input was always absolute
     // by the time we get here.
-    let path_strings: Vec<String> = config
-        .file_groups
-        .iter()
-        .flat_map(|group| {
-            group
-                .iter()
-                .map(|pf| format!("/{}", pf.object_meta.location))
-        })
-        .collect();
+    // File-path emission is gated on whether this scan carries the explicit
+    // RG→batch→partition map — `batches_map()` is the single source of truth (the
+    // budget gate in GpuMemoryBudgetRule decides map presence; map presence alone
+    // decides dedup here — no second, divergent notion of "partitioned").
+    //
+    // MAP PRESENT (real-partitioning device, e.g. tp8-mem120gib): the peacock model
+    // reads WHOLE row groups from each DISTINCT physical file per the map, not byte
+    // ranges. DataFusion splits ONE file into several byte-RANGE PartitionedFile
+    // entries (all the same path) at target_partitions>1; collapse them to distinct
+    // paths, else cuDF's source_info sees N identical sources but receives a single
+    // row-group vector ("Must specify row groups for each source"). Dedup preserves
+    // first-seen order; genuine multi-file scans keep all distinct paths.
+    //
+    // NO MAP (tp1, or the tight tp8-mem2gib determinism device): emit EVERY
+    // PartitionedFile verbatim — byte-identical to the legacy (pre-Inc1)
+    // serialization — so the deserialized scan reconstructs the SAME file_group
+    // count and the flatbuffer roundtrip's GpuRepartitionExec.input_partitions
+    // stays stable (no 8↔1 flip).
+    let dedup = !scan.batches_map().is_empty();
+    let mut path_strings: Vec<String> = Vec::new();
+    for group in &config.file_groups {
+        for pf in group {
+            let p = format!("/{}", pf.object_meta.location);
+            if !dedup || !path_strings.contains(&p) {
+                path_strings.push(p);
+            }
+        }
+    }
     let paths: Vec<_> = path_strings.iter().map(|s| b.create_string(s)).collect();
     let file_paths = b.create_vector(&paths);
 
@@ -158,6 +177,25 @@ fn serialize_gpu_scan<'a>(
         .filter(|v| !v.is_empty())
         .map(|v| b.create_vector(&v));
 
+    // Explicit RG→batch→partition map (Phase 2 Inc1). Empty = legacy
+    // single-partition read (tp1, byte-unchanged: None adds no bytes).
+    let batches = if scan.batches_map().is_empty() {
+        None
+    } else {
+        let offsets: Vec<_> = scan
+            .batches_map()
+            .iter()
+            .map(|sb| {
+                let rgs = b.create_vector(&sb.row_groups);
+                fb::ScanBatch::create(
+                    b,
+                    &fb::ScanBatchArgs { row_groups: Some(rgs), partition: sb.partition },
+                )
+            })
+            .collect();
+        Some(b.create_vector(&offsets))
+    };
+
     let gpu_scan = fb::GpuScan::create(
         b,
         &fb::GpuScanArgs {
@@ -167,6 +205,7 @@ fn serialize_gpu_scan<'a>(
             batch_size: scan.gpu_batch_size as u32,
             limit,
             row_groups,
+            batches,
         },
     );
 
@@ -1726,11 +1765,27 @@ fn deserialize_gpu_scan(
         .map(|v| (0..v.len()).map(|i| v.get(i)).collect::<Vec<u32>>())
         .filter(|v| !v.is_empty());
 
-    Ok(Arc::new(GpuScanExec::with_row_groups(
-        parquet,
-        scan.batch_size() as usize,
-        row_groups,
-    )))
+    // Carry the explicit RG→batch→partition map verbatim (Phase 2 Inc1).
+    let batches: Vec<crate::gpu_rule::ScanBatchMap> = scan
+        .batches()
+        .map(|v| {
+            (0..v.len())
+                .map(|i| {
+                    let sb = v.get(i);
+                    let rgs = sb
+                        .row_groups()
+                        .map(|r| (0..r.len()).map(|j| r.get(j)).collect())
+                        .unwrap_or_default();
+                    crate::gpu_rule::ScanBatchMap { row_groups: rgs, partition: sb.partition() }
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    Ok(Arc::new(
+        GpuScanExec::with_row_groups(parquet, scan.batch_size() as usize, row_groups)
+            .with_batches(batches),
+    ))
 }
 
 fn deserialize_gpu_filter(

@@ -114,7 +114,7 @@ add_custom_target(gpu_plan_fbs DEPENDS ${FBS_GENERATED_HEADER})
 # ---------------------------------------------------------------------------
 # libpeacock_gpu
 # ---------------------------------------------------------------------------
-add_library(peacock_gpu SHARED src/gpu_executor.cpp src/plan_executor.cpp)
+add_library(peacock_gpu SHARED src/gpu_executor.cpp src/plan_executor.cpp src/spark_hash_partition.cu)
 add_dependencies(peacock_gpu gpu_plan_fbs)
 target_include_directories(peacock_gpu PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>

@@ -1,11 +1,11 @@
-GpuAggregateExec: group_by=[], aggr=[count(*), sum(l.l_quantity), sum(o.o_totalprice)], output_bytes=43, output_rows=1
-  GpuCoalescePartitionsExec, output_bytes=43, output_rows=1
-    GpuAggregateExec: group_by=[], aggr=[count(*), sum(l.l_quantity), sum(o.o_totalprice)], output_bytes=43, output_rows=1
-      GpuCoalesceBatchesExec: target_batch_size=26843545, output_bytes=193539184, output_rows=6001215
-        GpuHashJoinExec: join_type=Left, on=[(o_orderkey@0, l_orderkey@0)], projection=[1, 3], output_bytes=193539184, output_rows=6001215
-          GpuCoalesceBatchesExec: target_batch_size=26843545, output_bytes=36375000, output_rows=1500000
-            GpuRepartitionExec: partitioning=Hash([o_orderkey@0], 8), input_partitions=8, output_bytes=36375000, output_rows=1500000
-              GpuScanExec: table=orders, projections=[o_orderkey, o_totalprice], batch_size=26843545, output_bytes=36375000, output_rows=1500000
-          GpuCoalesceBatchesExec: target_batch_size=26843545, output_bytes=145529464, output_rows=6001215
-            GpuRepartitionExec: partitioning=Hash([l_orderkey@0], 8), input_partitions=8, output_bytes=145529464, output_rows=6001215
-              GpuScanExec: table=lineitem, projections=[l_orderkey, l_quantity], batch_size=26843545, output_bytes=145529464, output_rows=6001215
+GpuAggregateExec: group_by=[], aggr=[count(*), sum(l.l_quantity), sum(o.o_totalprice)], partitions=1, output_rows=1, output_bytes=43
+  GpuCoalescePartitionsExec, partitions=1, output_rows=1, output_bytes=43
+    GpuAggregateExec: group_by=[], aggr=[count(*), sum(l.l_quantity), sum(o.o_totalprice)], partitions=1, output_rows=1, output_bytes=43
+      GpuCoalesceBatchesExec: target_batch_size=26843545, partitions=1, output_rows=6001215, output_bytes=193539184
+        GpuHashJoinExec: join_type=Left, on=[(o_orderkey@0, l_orderkey@0)], projection=[1, 3], partitions=1, output_rows=6001215, output_bytes=193539184
+          GpuCoalesceBatchesExec: target_batch_size=26843545, partitions=1, output_rows=1500000, output_bytes=36375000
+            GpuRepartitionExec: partitioning=Hash([o_orderkey@0], 8), input_partitions=8, partitions=1, output_rows=1500000, output_bytes=36375000
+              GpuScanExec: table=orders, projections=[o_orderkey, o_totalprice], batch_size=26843545, partitions=1, output_rows=1500000, output_bytes=36375000
+          GpuCoalesceBatchesExec: target_batch_size=26843545, partitions=1, output_rows=6001215, output_bytes=145529464
+            GpuRepartitionExec: partitioning=Hash([l_orderkey@0], 8), input_partitions=8, partitions=1, output_rows=6001215, output_bytes=145529464
+              GpuScanExec: table=lineitem, projections=[l_orderkey, l_quantity], batch_size=26843545, partitions=1, output_rows=6001215, output_bytes=145529464

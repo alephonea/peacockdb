@@ -1,17 +1,17 @@
-GpuSortExec: expr=[i_category@2 ASC, i_class@3 ASC, i_item_id@0 ASC, i_item_desc@1 ASC, revenueratio@6 ASC], fetch=100, output_bytes=18439, output_rows=100
-  GpuProjectExec: expr=[i_item_id@0 as i_item_id, i_item_desc@1 as i_item_desc, i_category@2 as i_category, i_class@3 as i_class, i_current_price@4 as i_current_price, sum(catalog_sales.cs_ext_sales_price)@5 as itemrevenue, CAST(sum(catalog_sales.cs_ext_sales_price)@5 AS Float64) * 100 / CAST(sum(sum(catalog_sales.cs_ext_sales_price)) PARTITION BY [item.i_class] ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING@6 AS Float64) as revenueratio], output_bytes=387875, output_rows=2101
-    GpuWindowExec: wdw=[sum(sum(catalog_sales.cs_ext_sales_price)) PARTITION BY [item.i_class] ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING], output_bytes=404683, output_rows=2101
-      GpuSortExec: expr=[i_class@3 ASC NULLS LAST], output_bytes=370804, output_rows=2101
-        GpuAggregateExec: group_by=[i_item_id, i_item_desc, i_category, i_class, i_current_price], aggr=[sum(catalog_sales.cs_ext_sales_price)], output_bytes=370804, output_rows=2101
-          GpuCoalesceBatchesExec: target_batch_size=366048349, output_bytes=723650, output_rows=4080
-            GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, cs_sold_date_sk@0)], projection=[2, 3, 4, 5, 6, 7], output_bytes=723650, output_rows=4080
-              GpuCoalesceBatchesExec: target_batch_size=366048349, output_bytes=252, output_rows=31
-                GpuFilterExec: predicate=d_date@1 >= 1999-02-22 AND d_date@1 <= 1999-03-24, projection=[0], output_bytes=252, output_rows=31
-                  GpuScanExec: table=date_dim, projections=[d_date_sk, d_date], batch_size=366048349, output_bytes=894852, output_rows=73049
-              GpuProjectExec: expr=[cs_sold_date_sk@5 as cs_sold_date_sk, cs_ext_sales_price@6 as cs_ext_sales_price, i_item_id@0 as i_item_id, i_item_desc@1 as i_item_desc, i_current_price@2 as i_current_price, i_class@3 as i_class, i_category@4 as i_category], output_bytes=79078361, output_rows=426311
-                GpuCoalesceBatchesExec: target_batch_size=366048349, output_bytes=79078361, output_rows=426311
-                  GpuHashJoinExec: join_type=Inner, on=[(i_item_sk@0, cs_item_sk@1)], projection=[1, 2, 3, 4, 5, 6, 8], output_bytes=79078361, output_rows=426311
-                    GpuCoalesceBatchesExec: target_batch_size=366048349, output_bytes=903246, output_rows=5323
-                      GpuFilterExec: predicate=i_category@5 = Sports OR i_category@5 = Books OR i_category@5 = Home, output_bytes=903246, output_rows=5323
-                        GpuScanExec: table=item, projections=[i_item_sk, i_item_id, i_item_desc, i_current_price, i_class, i_category], batch_size=366048349, output_bytes=3075665, output_rows=18000
-                    GpuScanExec: table=catalog_sales, projections=[cs_sold_date_sk, cs_item_sk, cs_ext_sales_price], batch_size=366048349, output_bytes=46670118, output_rows=1441548
+GpuSortExec: expr=[i_category@2 ASC, i_class@3 ASC, i_item_id@0 ASC, i_item_desc@1 ASC, revenueratio@6 ASC], fetch=100, partitions=1, output_rows=100, output_bytes=18439
+  GpuProjectExec: expr=[i_item_id@0 as i_item_id, i_item_desc@1 as i_item_desc, i_category@2 as i_category, i_class@3 as i_class, i_current_price@4 as i_current_price, sum(catalog_sales.cs_ext_sales_price)@5 as itemrevenue, CAST(sum(catalog_sales.cs_ext_sales_price)@5 AS Float64) * 100 / CAST(sum(sum(catalog_sales.cs_ext_sales_price)) PARTITION BY [item.i_class] ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING@6 AS Float64) as revenueratio], partitions=1, output_rows=2101, output_bytes=387875
+    GpuWindowExec: wdw=[sum(sum(catalog_sales.cs_ext_sales_price)) PARTITION BY [item.i_class] ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING], partitions=1, output_rows=2101, output_bytes=404683
+      GpuSortExec: expr=[i_class@3 ASC NULLS LAST], partitions=1, output_rows=2101, output_bytes=370804
+        GpuAggregateExec: group_by=[i_item_id, i_item_desc, i_category, i_class, i_current_price], aggr=[sum(catalog_sales.cs_ext_sales_price)], partitions=1, output_rows=2101, output_bytes=370804
+          GpuCoalesceBatchesExec: target_batch_size=366048349, partitions=1, output_rows=4080, output_bytes=723650
+            GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, cs_sold_date_sk@0)], projection=[2, 3, 4, 5, 6, 7], partitions=1, output_rows=4080, output_bytes=723650
+              GpuCoalesceBatchesExec: target_batch_size=366048349, partitions=1, output_rows=31, output_bytes=252
+                GpuFilterExec: predicate=d_date@1 >= 1999-02-22 AND d_date@1 <= 1999-03-24, projection=[0], partitions=1, output_rows=31, output_bytes=252
+                  GpuScanExec: table=date_dim, projections=[d_date_sk, d_date], batch_size=366048349, partitions=1, output_rows=73049, output_bytes=894852
+              GpuProjectExec: expr=[cs_sold_date_sk@5 as cs_sold_date_sk, cs_ext_sales_price@6 as cs_ext_sales_price, i_item_id@0 as i_item_id, i_item_desc@1 as i_item_desc, i_current_price@2 as i_current_price, i_class@3 as i_class, i_category@4 as i_category], partitions=1, output_rows=426311, output_bytes=79078361
+                GpuCoalesceBatchesExec: target_batch_size=366048349, partitions=1, output_rows=426311, output_bytes=79078361
+                  GpuHashJoinExec: join_type=Inner, on=[(i_item_sk@0, cs_item_sk@1)], projection=[1, 2, 3, 4, 5, 6, 8], partitions=1, output_rows=426311, output_bytes=79078361
+                    GpuCoalesceBatchesExec: target_batch_size=366048349, partitions=1, output_rows=5323, output_bytes=903246
+                      GpuFilterExec: predicate=i_category@5 = Sports OR i_category@5 = Books OR i_category@5 = Home, partitions=1, output_rows=5323, output_bytes=903246
+                        GpuScanExec: table=item, projections=[i_item_sk, i_item_id, i_item_desc, i_current_price, i_class, i_category], batch_size=366048349, partitions=1, output_rows=18000, output_bytes=3075665
+                    GpuScanExec: table=catalog_sales, projections=[cs_sold_date_sk, cs_item_sk, cs_ext_sales_price], batch_size=366048349, partitions=1, output_rows=1441548, output_bytes=46670118

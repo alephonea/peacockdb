@@ -1,0 +1,39 @@
+GpuProjectExec: expr=[sum(lineitem.l_extendedprice * lineitem.l_discount)@0 as revenue], partitions=1, output_rows=1, output_bytes=17
+  GpuAggregateExec: group_by=[], aggr=[sum(lineitem.l_extendedprice * lineitem.l_discount)], partitions=1, output_rows=1, output_bytes=17
+    GpuCoalescePartitionsExec, partitions=1, output_rows=8, output_bytes=129
+      GpuAggregateExec: group_by=[], aggr=[sum(lineitem.l_extendedprice * lineitem.l_discount)], partitions=8, output_rows=8, output_bytes=136
+        p0: in_rows=6900 out_rows=1 out_bytes=17
+        p1: in_rows=15202 out_rows=1 out_bytes=17
+        p2: in_rows=15505 out_rows=1 out_bytes=17
+        p3: in_rows=15323 out_rows=1 out_bytes=17
+        p4: in_rows=15575 out_rows=1 out_bytes=17
+        p5: in_rows=15379 out_rows=1 out_bytes=17
+        p6: in_rows=15629 out_rows=1 out_bytes=17
+        p7: in_rows=14647 out_rows=1 out_bytes=17
+        GpuCoalesceBatchesExec: target_batch_size=1533916891, partitions=8, output_rows=114160, output_bytes=3681668
+          p0: in_rows=6900 out_rows=6900 out_bytes=222526
+          p1: in_rows=15202 out_rows=15202 out_bytes=490266
+          p2: in_rows=15505 out_rows=15505 out_bytes=500038
+          p3: in_rows=15323 out_rows=15323 out_bytes=494168
+          p4: in_rows=15575 out_rows=15575 out_bytes=502294
+          p5: in_rows=15379 out_rows=15379 out_bytes=495974
+          p6: in_rows=15629 out_rows=15629 out_bytes=504036
+          p7: in_rows=14647 out_rows=14647 out_bytes=472366
+          GpuFilterExec: predicate=l_shipdate@3 >= 1994-01-01 AND l_shipdate@3 < 1995-01-01 AND l_discount@2 >= Some(5),15,2 AND l_discount@2 <= Some(7),15,2 AND l_quantity@0 < Some(2400),15,2, projection=[1, 2], partitions=8, output_rows=114160, output_bytes=3681668
+            p0: in_rows=122880 out_rows=6900 out_bytes=222526
+            p1: in_rows=122880 out_rows=15202 out_bytes=490266
+            p2: in_rows=122880 out_rows=15505 out_bytes=500038
+            p3: in_rows=122880 out_rows=15323 out_bytes=494168
+            p4: in_rows=122880 out_rows=15575 out_bytes=502294
+            p5: in_rows=122880 out_rows=15379 out_bytes=495974
+            p6: in_rows=122880 out_rows=15629 out_bytes=504036
+            p7: in_rows=122880 out_rows=14647 out_bytes=472366
+            GpuScanExec: table=lineitem, projections=[l_quantity, l_extendedprice, l_discount, l_shipdate], batch_size=1533916891, partitions=8, output_rows=983040, output_bytes=51609600
+              p0: row_groups=[13] out_rows=122880 out_bytes=6451200
+              p1: row_groups=[14] out_rows=122880 out_bytes=6451200
+              p2: row_groups=[15] out_rows=122880 out_bytes=6451200
+              p3: row_groups=[16] out_rows=122880 out_bytes=6451200
+              p4: row_groups=[17] out_rows=122880 out_bytes=6451200
+              p5: row_groups=[18] out_rows=122880 out_bytes=6451200
+              p6: row_groups=[19] out_rows=122880 out_bytes=6451200
+              p7: row_groups=[20] out_rows=122880 out_bytes=6451200

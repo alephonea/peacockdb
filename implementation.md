@@ -2159,7 +2159,7 @@ run as many GPU tests in parallel as the host has cores.
   `"$t" --nocapture --test-threads=1`.
 - Local helper (`scripts/build-test-shadgpu.sh`, `--run`) does the same
   over SSH on the GPU host.
-- Ad-hoc invocations (`cargo test -p peacockdb-core --test test_gpu_executor`)
+- Ad-hoc invocations (`cargo test -p peacockdb-core --test test_gpu`)
   must also be run with `--test-threads=1` or `RUST_TEST_THREADS=1`.
 
 **Why not a per-test `serial_test` mutex?** A Rust-level mutex serializes

@@ -1,6 +1,7 @@
 #include "plan_executor.h"
 #include "plan_executor_internal.h"
 #include "generated/gpu_plan_generated.h"
+#include "peacock/partitioning.hpp"
 
 #include <cudf/ast/expressions.hpp>
 #include <cudf/binaryop.hpp>
@@ -1034,7 +1035,9 @@ static std::unique_ptr<cudf::column> build_column(
 // GpuScan — read Parquet files
 // ============================================================================
 
-static TableResult execute_scan(const fb::GpuScan* scan) {
+static TableResult execute_scan(
+    const fb::GpuScan* scan,
+    const flatbuffers::Vector<uint32_t>* row_groups_override = nullptr) {
   if (!scan->file_paths() || scan->file_paths()->size() == 0)
     throw std::runtime_error("GpuScan: no file paths");
 
@@ -1083,10 +1086,15 @@ static TableResult execute_scan(const fb::GpuScan* scan) {
   // Row-group pruning: decode ONLY the surviving groups the serializer computed
   // (same DataFusion PruningPredicate as the CPU path). One inner vector = single
   // source. Empty/absent => read all groups (no predicate / multi-file / #16).
-  if (scan->row_groups() && scan->row_groups()->size() > 0) {
+  // A per-partition override (Inc1 RG→partition map) takes precedence over the
+  // scan's single-partition `row_groups`; both name the SAME global RG indices, so
+  // the GPU decodes exactly the groups the CPU oracle / golden generator read.
+  const flatbuffers::Vector<uint32_t>* rg_src =
+      row_groups_override ? row_groups_override : scan->row_groups();
+  if (rg_src && rg_src->size() > 0) {
     std::vector<cudf::size_type> rgs;
-    rgs.reserve(scan->row_groups()->size());
-    for (auto rg : *scan->row_groups()) {
+    rgs.reserve(rg_src->size());
+    for (auto rg : *rg_src) {
       rgs.push_back(static_cast<cudf::size_type>(rg));
     }
     opts.set_row_groups({std::move(rgs)});
@@ -1099,12 +1107,12 @@ static TableResult execute_scan(const fb::GpuScan* scan) {
   // clustered-predicate scan reads only the surviving groups (e.g. q6 lineitem ->
   // 983040, not 6001215). Off by default; no effect on results.
   if (std::getenv("PEACOCK_LOG_SCAN_ROWS")) {
-    bool pruned = scan->row_groups() && scan->row_groups()->size() > 0;
+    bool pruned = rg_src && rg_src->size() > 0;
     std::fprintf(stderr, "[PEACOCK_SCAN] %s rows=%ld row_groups=%s(%u)\n",
                  paths.empty() ? "?" : paths[0].c_str(),
                  static_cast<long>(result.tbl->num_rows()),
                  pruned ? "pruned" : "all",
-                 pruned ? scan->row_groups()->size() : 0u);
+                 pruned ? rg_src->size() : 0u);
   }
 
   // Use column names from the reader metadata.
@@ -1242,6 +1250,34 @@ static bool is_avg_name(const std::string& f) {
 }
 static cudf::size_type stddev_ddof(const std::string& f) {
   return (f == "stddev_pop" || f == "STDDEV_POP") ? 0 : 1;
+}
+static bool is_var_name(const std::string& f) {
+  return f == "var" || f == "VAR" || f == "var_samp" || f == "VAR_SAMP" ||
+         f == "var_pop" || f == "VAR_POP" || f == "variance" || f == "VARIANCE";
+}
+
+// Aggregate execution phase — THREE-WAY (Inc4). The old `is_final` bool
+// (mode==Final||FinalPartitioned) collapses Single AND Partial into one branch,
+// but the two-phase AVG state re-impl needs to tell them apart:
+//   Single  = one pass over raw rows (tp1)           -> AVG = plain MEAN (1 col)
+//   Partial = first pass, emits per-partition STATE  -> AVG = [sum, count] (2 cols)
+//   Final   = merges partial STATE across the shuffle-> AVG = Σsum / Σcount
+// Getting this wrong regresses tp1 (Single would emit 2-col state with no Final to
+// divide it). SUM/COUNT/MIN/MAX are phase-insensitive except count-Final -> sum.
+enum class AggPhase { Single, Partial, Final };
+static AggPhase agg_phase(fb::AggregateMode m) {
+  switch (m) {
+    case fb::AggregateMode_Partial:
+      return AggPhase::Partial;
+    case fb::AggregateMode_Final:
+    case fb::AggregateMode_FinalPartitioned:
+      return AggPhase::Final;
+    case fb::AggregateMode_Single:
+    case fb::AggregateMode_SinglePartitioned:
+      return AggPhase::Single;
+    default:
+      throw std::runtime_error("agg_phase: unsupported AggregateMode");
+  }
 }
 
 static std::unique_ptr<cudf::groupby_aggregation> make_agg(
@@ -1618,65 +1654,207 @@ static TableResult execute_aggregate(const fb::GpuAggregate* agg) {
   // INCLUDE matches the peacock CPU oracle. Non-null keys are unaffected.
   cudf::groupby::groupby gb{keys_view, cudf::null_policy::INCLUDE};
 
-  // Build aggregation requests — one per aggregate function.
+  AggPhase phase = agg_phase(agg->mode());
+
+  // Raw value column for an aggregate's argument (Partial/Single stages), from
+  // func->args() over the ORIGINAL input. NO avg out-scale cast here — see below.
+  auto arg_col = [&](const fb::AggregateFuncNode* func) -> cudf::column_view {
+    if (func->args() && func->args()->size() > 0) {
+      auto* arg = func->args()->Get(0);
+      if (arg->node_type() == fb::ExprNode_ColumnRef)
+        return tv.column(static_cast<cudf::size_type>(arg->node_as_ColumnRef()->index()));
+      computed_args.push_back(build_column(arg, tv));
+      return computed_args.back()->view();
+    }
+    return tv.column(0);  // count(*) / no args: dummy column
+  };
+
+  // Build aggregation requests. AVG is the only multi-column case (Inc4): its
+  // two-phase STATE is (sum, count), which — unlike a pre-divided mean — IS
+  // additive, so the per-bucket Final merges Σsum/Σcount = correct AVG. Threaded
+  // THREE-WAY on `phase` (Single/Partial/Final), never the 2-way is_final:
+  //   Single-avg  -> 1 req [mean] over the out-scale-cast value          (1 out col)
+  //   Partial-avg -> 1 req [sum, count] over the raw value               (2 out cols: STATE)
+  //   Final-avg   -> 2 reqs [sum(partial_sum)], [sum(partial_count)]     (1 out col: Σsum/Σcount)
+  // A running Final-input cursor (`in_off`) is SYMMETRIC with the Partial output
+  // assembly: avg emits 2 state cols, so it shifts every downstream agg's input
+  // index by 2 (not 1) — the subtle bug the reviewer flagged.
+  struct OutBuild {
+    std::string name;
+    int req;          // request index producing the (primary) result
+    int res;          // result index within that request
+    bool count_cast;  // INT32 count -> INT64
+    int req_div;      // Final-avg: request producing Σcount (-1 otherwise)
+    bool avg_div;     // Final-avg: out = Σsum / Σcount
+    int32_t out_scale;      // decimal out scale for the avg divide
+    uint8_t out_precision;  // 0 => float avg
+  };
   std::vector<cudf::groupby::aggregation_request> requests;
-  std::vector<std::string> agg_names;
-  std::vector<bool> agg_is_count;
-  bool has_avg_final = false;
+  std::vector<OutBuild> builds;
+  bool has_stddev_or_var_final = false;
+  size_t in_off = key_indices.size();  // Final positional input cursor
+
+  // Does a Final-stage avg read a 2-col [sum,count] STATE, or a 1-col MEAN?
+  // The plain Partial path (Inc4) emits 2 cols per avg; the GROUPING-SET Partial
+  // path (ROLLUP/CUBE) still emits 1 MEAN col per avg — and ITS Final re-groups
+  // [keys, __grouping_id] as a plain GROUP BY, so it lands HERE. Reading 2 cols
+  // for such a 1-col avg over-runs the input (the q18/q22 tp1 OOB regression).
+  // Discriminate by the Final input WIDTH: a plain-Partial input is
+  // keys + Σ(2·avg + 1·other) wide, a grouping-set-Partial input is keys + Σ1.
+  // At tp1 the Partial is one-row-per-key, so a 1-col avg-Final is the exact
+  // mean-of-singleton identity (pre-Inc4 behaviour). Multi-partition ROLLUP-avg
+  // merge — making the grouping-set Partial emit real [sum,count] state — is #18.
+  bool avg_state_2col = true;
+  if (phase == AggPhase::Final && agg->aggr_funcs()) {
+    size_t n_funcs = agg->aggr_funcs()->size();
+    size_t n_avg = 0;
+    for (flatbuffers::uoffset_t i = 0; i < n_funcs; ++i) {
+      auto* f = agg->aggr_funcs()->Get(i);
+      if (is_avg_name(f->name() ? f->name()->str() : "")) ++n_avg;
+    }
+    size_t width_1col = key_indices.size() + n_funcs;               // grouping-set Partial
+    size_t width_2col = key_indices.size() + n_funcs + n_avg;       // plain Partial
+    size_t got = static_cast<size_t>(tv.num_columns());
+    if (n_avg > 0 && got == width_1col && width_1col != width_2col)
+      avg_state_2col = false;
+    else if (got != width_2col)
+      throw std::runtime_error(
+          "Final-stage aggregate input width does not match either the 2-col "
+          "[sum,count] avg-state layout or the 1-col grouping-set-avg layout");
+  }
+
   if (agg->aggr_funcs()) {
     for (flatbuffers::uoffset_t i = 0; i < agg->aggr_funcs()->size(); ++i) {
       auto* func = agg->aggr_funcs()->Get(i);
       std::string name = func->name() ? func->name()->str() : "count";
+      std::string alias = func->alias() ? func->alias()->str() : name;
+      bool is_avg = is_avg_name(name);
+      if (phase == AggPhase::Final && (is_stddev_name(name) || is_var_name(name)))
+        has_stddev_or_var_final = true;
 
-      cudf::groupby::aggregation_request req;
-      req.values = get_values_col(func, i);
-      req.aggregations.push_back(make_agg(name, is_final));
-      requests.push_back(std::move(req));
-
-      if (func->alias())
-        agg_names.push_back(func->alias()->str());
-      else
-        agg_names.push_back(name);
-      agg_is_count.push_back(name == "count" || name == "COUNT");
-      // STDDEV uses the same singleton-identity shortcut as AVG in Final mode.
-      if (is_final && (is_avg_name(name) || is_stddev_name(name)))
-        has_avg_final = true;
+      if (is_avg && phase == AggPhase::Partial) {
+        // Emit the (sum, count) STATE. Sum is over the RAW value (input scale) —
+        // the out-scale cast belongs at the Final divide, not the partial sum.
+        cudf::groupby::aggregation_request req;
+        req.values = arg_col(func);
+        req.aggregations.push_back(cudf::make_sum_aggregation<cudf::groupby_aggregation>());
+        req.aggregations.push_back(cudf::make_count_aggregation<cudf::groupby_aggregation>());
+        int r = static_cast<int>(requests.size());
+        builds.push_back({alias, r, 0, false, -1, false, 0, 0});      // partial_sum
+        builds.push_back({alias, r, 1, true, -1, false, 0, 0});       // partial_count -> INT64
+        requests.push_back(std::move(req));
+      } else if (is_avg && phase == AggPhase::Final && !avg_state_2col) {
+        // Grouping-set (ROLLUP/CUBE) Partial emitted a 1-col MEAN, not [sum,count]
+        // state. Its Final lands here (re-groups [keys,__grouping_id] as a plain
+        // GROUP BY); with one partial row per key, mean-of-singleton is the exact
+        // identity. Consume ONE input column (in_off += 1, below), NOT two — the
+        // fix for the q18/q22 tp1 over-read. Real ROLLUP-avg state merge is #18.
+        cudf::groupby::aggregation_request req;
+        req.values = tv.column(static_cast<cudf::size_type>(in_off));
+        req.aggregations.push_back(cudf::make_mean_aggregation<cudf::groupby_aggregation>());
+        builds.push_back({alias, static_cast<int>(requests.size()), 0, false,
+                          -1, false, 0, 0});
+        requests.push_back(std::move(req));
+        // fall through to the shared `in_off += 1` (single Final input column)
+      } else if (is_avg && phase == AggPhase::Final) {
+        // Merge: Σ(partial_sum) / Σ(partial_count). The two state cols sit at
+        // [in_off, in_off+1] (running offset accounts for prior avgs' 2 cols).
+        cudf::groupby::aggregation_request req_s, req_c;
+        req_s.values = tv.column(static_cast<cudf::size_type>(in_off));
+        req_s.aggregations.push_back(cudf::make_sum_aggregation<cudf::groupby_aggregation>());
+        req_c.values = tv.column(static_cast<cudf::size_type>(in_off + 1));
+        req_c.aggregations.push_back(cudf::make_sum_aggregation<cudf::groupby_aggregation>());
+        int r_s = static_cast<int>(requests.size());
+        requests.push_back(std::move(req_s));
+        int r_c = static_cast<int>(requests.size());
+        requests.push_back(std::move(req_c));
+        builds.push_back({alias, r_s, 0, false, r_c, true,
+                          static_cast<int32_t>(func->out_decimal_scale()),
+                          func->out_decimal_precision()});
+        in_off += 2;
+        continue;  // avg consumed TWO Final input columns
+      } else {
+        // Single-avg (plain mean) OR sum/count/min/max/stddev — one request.
+        cudf::groupby::aggregation_request req;
+        if (phase == AggPhase::Final) {
+          req.values = tv.column(static_cast<cudf::size_type>(in_off));
+        } else if (is_avg) {
+          // Single-avg: mean over the value cast up to the declared out scale
+          // (cuDF mean keeps the input scale otherwise).
+          cudf::column_view base = arg_col(func);
+          if (func->out_decimal_precision() != 0 &&
+              base.type().id() == cudf::type_id::DECIMAL128) {
+            int32_t want_exp = -static_cast<int32_t>(func->out_decimal_scale());
+            if (base.type().scale() != want_exp) {
+              computed_args.push_back(
+                  cudf::cast(base, cudf::data_type{cudf::type_id::DECIMAL128, want_exp}));
+              base = computed_args.back()->view();
+            }
+          }
+          req.values = base;
+        } else {
+          req.values = arg_col(func);
+        }
+        req.aggregations.push_back(make_agg(name, phase == AggPhase::Final));
+        builds.push_back({alias, static_cast<int>(requests.size()), 0,
+                          (name == "count" || name == "COUNT"), -1, false, 0, 0});
+        requests.push_back(std::move(req));
+      }
+      if (phase == AggPhase::Final) in_off += 1;
     }
   }
 
   auto [group_keys, agg_results] = gb.aggregate(requests);
 
-  // Guard the AVG-as-plain-MEAN shortcut (see make_agg). It is correct only
-  // when the Partial stage already produced one row per key, so the Final
-  // regroup is an identity (MEAN-of-singleton). Today that holds because
-  // GpuRepartition runs as passthrough (single partition). If real multi-
-  // partition repartition is ever enabled, the same key arrives from several
-  // Partial outputs and this Final groupby actually merges rows — turning AVG
-  // into a silently-wrong mean-of-means. Detect that here (fewer output groups
-  // than input rows) and fail loudly instead. The fix at that point is to
-  // decompose AVG into SUM+COUNT across the Partial/Final boundary:
-  // https://github.com/asymptote-tech/peacockdb/issues/25
-  if (has_avg_final &&
+  // STDDEV/VAR still can't merge partial moment-state across the shuffle (that's
+  // Inc5's M2 combine) — a Final that actually merges >1 partial row per key would
+  // silently produce std-of-stds. Fail loudly. AVG is NO LONGER guarded here: its
+  // (sum,count) state merges correctly above (Inc4, #25). The GLOBAL/ungrouped avg
+  // guard (execute_aggregate's reduce path) stays throwing separately — out of
+  // Inc4 scope.
+  if (has_stddev_or_var_final &&
       group_keys->num_rows() < static_cast<cudf::size_type>(tv.num_rows())) {
     throw std::runtime_error(
-        "Final-stage AVG merged multiple partial rows per key "
-        "(mean-of-means is wrong); AVG must be decomposed into SUM+COUNT "
-        "before multi-partition GPU repartition is enabled");
+        "Final-stage STDDEV/VAR merged multiple partial rows per key "
+        "(std-of-stds is wrong); STDDEV/VAR partial-moment merge is Inc5");
   }
 
-  // Assemble output: key columns + aggregation result columns.
+  // Assemble output: key columns then aggregate columns (per `builds`).
   for (cudf::size_type i = 0; i < group_keys->num_columns(); ++i) {
     out_cols.push_back(std::make_unique<cudf::column>(group_keys->view().column(i)));
     out_names.push_back(key_names[i]);
   }
-  for (size_t i = 0; i < agg_results.size(); ++i) {
-    // Each aggregation_result has one column per aggregation; we have one each.
-    auto col = std::move(agg_results[i].results[0]);
-    // cuDF count returns INT32; cast to INT64 for SQL BIGINT compatibility.
-    if (agg_is_count[i] && col->type().id() == cudf::type_id::INT32)
-      col = cudf::cast(*col, cudf::data_type{cudf::type_id::INT64});
+  for (auto& b : builds) {
+    std::unique_ptr<cudf::column> col;
+    if (b.avg_div) {
+      // Σsum / Σcount at DataFusion's declared out type.
+      auto sum_v = agg_results[b.req].results[b.res]->view();
+      auto cnt_v = agg_results[b.req_div].results[0]->view();
+      if (b.out_precision != 0) {
+        // Decimal avg: DIV result scale = lhs.scale - rhs.scale, so put Σsum at the
+        // out scale and Σcount at scale 0 -> result carries the out scale.
+        int32_t want_exp = -b.out_scale;
+        auto sum_scaled =
+            cudf::cast(sum_v, cudf::data_type{cudf::type_id::DECIMAL128, want_exp});
+        auto cnt_dec = cudf::cast(cnt_v, cudf::data_type{cudf::type_id::DECIMAL128, 0});
+        col = cudf::binary_operation(sum_scaled->view(), cnt_dec->view(),
+                                     cudf::binary_operator::DIV,
+                                     cudf::data_type{cudf::type_id::DECIMAL128, want_exp});
+      } else {
+        auto sum_f = cudf::cast(sum_v, cudf::data_type{cudf::type_id::FLOAT64});
+        auto cnt_f = cudf::cast(cnt_v, cudf::data_type{cudf::type_id::FLOAT64});
+        col = cudf::binary_operation(sum_f->view(), cnt_f->view(),
+                                     cudf::binary_operator::DIV,
+                                     cudf::data_type{cudf::type_id::FLOAT64});
+      }
+    } else {
+      col = std::move(agg_results[b.req].results[b.res]);
+      // cuDF count returns INT32; cast to INT64 for SQL BIGINT compatibility.
+      if (b.count_cast && col->type().id() == cudf::type_id::INT32)
+        col = cudf::cast(*col, cudf::data_type{cudf::type_id::INT64});
+    }
     out_cols.push_back(std::move(col));
-    out_names.push_back(agg_names[i]);
+    out_names.push_back(b.name);
   }
 
   return {std::make_unique<cudf::table>(std::move(out_cols)), std::move(out_names)};
@@ -2687,32 +2865,195 @@ NodeSession::~NodeSession() = default;
 
 size_t NodeSession::node_count() const { return impl_->post_order.size(); }
 
-uint64_t NodeSession::execute_node(uint64_t seq, const uint64_t* input_handles,
-                                   size_t n_inputs, NodeStats* out) {
+void NodeSession::execute_node(uint64_t seq, const uint64_t* input_handles,
+                               const uint64_t* input_child_counts, size_t n_children,
+                               uint64_t* out_handles, size_t out_cap, size_t* out_count,
+                               NodeStats* out_stats) {
   if (seq >= impl_->post_order.size())
     throw std::runtime_error("NodeSession::execute_node: seq out of range");
   const fb::PlanNode* node = impl_->post_order[seq];
 
-  // Consume the child handles (in child order) out of the registry.
-  std::vector<TableResult> inputs;
-  inputs.reserve(n_inputs);
-  for (size_t i = 0; i < n_inputs; ++i) {
-    auto it = impl_->registry.find(input_handles[i]);
-    if (it == impl_->registry.end())
-      throw std::runtime_error("NodeSession::execute_node: unknown input handle");
-    inputs.push_back(std::move(it->second));
-    impl_->registry.erase(it);
+  // Each child contributes a VECTOR of partition handles (multi-handle model,
+  // Phase 2). The flat `input_handles` is grouped by child via `input_child_counts`.
+  std::vector<std::vector<uint64_t>> child(n_children);
+  size_t off = 0;
+  for (size_t c = 0; c < n_children; ++c) {
+    size_t cnt = input_child_counts ? static_cast<size_t>(input_child_counts[c]) : 0;
+    child[c].assign(input_handles + off, input_handles + off + cnt);
+    off += cnt;
   }
 
-  TableResult result = execute_one(node, std::move(inputs));
-  if (out) {
-    auto tv = result.table->view();
-    out->rows = static_cast<uint64_t>(tv.num_rows());
-    out->varlen_content_bytes = varlen_content_bytes(tv);
+  // (iii) GpuScan with an explicit RG→batch→partition MAP → emit N partitions, one
+  // per ScanBatch, each a set_row_groups read of that entry's row groups. This is
+  // the SAME map the Rust CpuNodeExecutor / golden generator replay, so per-partition
+  // row counts match by construction. EMPTY map => fall through to the generic path
+  // (single-partition read of `row_groups`, tp1 byte-identical).
+  if (node->node_type() == fb::PlanNodeKind_GpuScan) {
+    const fb::GpuScan* scan = node->node_as_GpuScan();
+    if (scan->batches() && scan->batches()->size() > 0) {
+      size_t n = scan->batches()->size();
+      if (n > out_cap)
+        throw std::runtime_error("NodeSession::execute_node: out_handles buffer too small");
+      for (size_t p = 0; p < n; ++p) {
+        const fb::ScanBatch* b = scan->batches()->Get(static_cast<flatbuffers::uoffset_t>(p));
+        TableResult result = execute_scan(scan, b->row_groups());
+        auto tv = result.table->view();
+        if (out_stats)
+          out_stats[p] = NodeStats{static_cast<uint64_t>(tv.num_rows()), varlen_content_bytes(tv)};
+        uint64_t handle = impl_->next_handle++;
+        impl_->registry.emplace(handle, std::move(result));
+        out_handles[p] = handle;  // map entries are stored in partition order 0..n-1
+      }
+      *out_count = n;
+      return;
+    }
   }
-  uint64_t handle = impl_->next_handle++;
-  impl_->registry.emplace(handle, std::move(result));
-  return handle;
+
+  // Partition-COLLAPSING nodes → concatenate ALL M child partitions into ONE output
+  // (BUFFERING: the full concatenated table is resident), in partition-index order to
+  // match the Rust CpuNodeExecutor's `collapses_partitions` concat. NOT a per-partition
+  // passthrough.
+  //   - GpuCoalescePartitions: the explicit M→1 concat before a Hash repartition.
+  //   - GpuSortPreservingMerge: merges N sorted partitions into one (q1's top ORDER BY
+  //     node). A plain concat suffices HERE: the node-by-node result is compared
+  //     order-independently (batches_to_sorted_str) and the per-node cost is schema-
+  //     driven (rows + schema), so partitions=1 + the right row count match the #13
+  //     golden by construction. (The production fast path keeps its own sort-merge.)
+  if (node->node_type() == fb::PlanNodeKind_GpuCoalescePartitions ||
+      node->node_type() == fb::PlanNodeKind_GpuSortPreservingMerge) {
+    if (out_cap < 1)
+      throw std::runtime_error("NodeSession::execute_node: out_handles buffer too small");
+    std::vector<TableResult> owned;
+    std::vector<cudf::table_view> views;
+    owned.reserve(child[0].size());
+    views.reserve(child[0].size());
+    for (uint64_t h : child[0]) {
+      auto it = impl_->registry.find(h);
+      if (it == impl_->registry.end())
+        throw std::runtime_error("NodeSession::execute_node: unknown input handle");
+      owned.push_back(std::move(it->second));
+      impl_->registry.erase(it);
+      views.push_back(owned.back().table->view());
+    }
+    TableResult result;
+    result.column_names = owned.empty() ? std::vector<std::string>{} : owned[0].column_names;
+    result.table = cudf::concatenate(views);
+    auto tv = result.table->view();
+    if (out_stats)
+      out_stats[0] = NodeStats{static_cast<uint64_t>(tv.num_rows()), varlen_content_bytes(tv)};
+    uint64_t handle = impl_->next_handle++;
+    impl_->registry.emplace(handle, std::move(result));
+    out_handles[0] = handle;
+    *out_count = 1;
+    return;
+  }
+
+  // (Inc2) GpuRepartition Hash → scatter the ONE input table into N partitions by
+  // Spark-murmur3 (comet-identical) hash of the key columns, so the per-partition
+  // row counts match the #13 CPU twin (and the golden) by construction — the live
+  // conformance gate proves the kernel is bit-equal to comet. Post-lowering the child
+  // is a GpuCoalescePartitions (single handle); we defensively concat whatever input
+  // partitions arrive into one table, then spark_hash_partition + slice into N.
+  if (node->node_type() == fb::PlanNodeKind_GpuRepartition &&
+      node->node_as_GpuRepartition()->kind() == fb::PartitioningKind_Hash) {
+    const fb::GpuRepartition* rp = node->node_as_GpuRepartition();
+    size_t n = static_cast<size_t>(rp->num_partitions());
+    if (n == 0 || n > out_cap)
+      throw std::runtime_error("NodeSession::execute_node: bad Hash repartition out count");
+
+    // Gather + concat the child partitions into one table (matches the CPU concat).
+    std::vector<TableResult> owned;
+    std::vector<cudf::table_view> views;
+    owned.reserve(child[0].size());
+    views.reserve(child[0].size());
+    for (uint64_t h : child[0]) {
+      auto it = impl_->registry.find(h);
+      if (it == impl_->registry.end())
+        throw std::runtime_error("NodeSession::execute_node: unknown input handle");
+      owned.push_back(std::move(it->second));
+      impl_->registry.erase(it);
+      views.push_back(owned.back().table->view());
+    }
+    std::vector<std::string> column_names =
+        owned.empty() ? std::vector<std::string>{} : owned[0].column_names;
+    std::unique_ptr<cudf::table> combined =
+        (owned.size() == 1) ? std::move(owned[0].table) : cudf::concatenate(views);
+
+    // Hash keys: ColumnRef indices into the (partial-agg output) table. Inc2 scope =
+    // ColumnRef keys only (the group-by columns); other exprs arrive at Inc6/7.
+    std::vector<cudf::size_type> key_cols;
+    if (auto* exprs = rp->hash_exprs()) {
+      for (flatbuffers::uoffset_t i = 0; i < exprs->size(); ++i) {
+        const fb::Expr* e = exprs->Get(i);
+        if (e->node_type() != fb::ExprNode_ColumnRef)
+          throw std::runtime_error("GpuRepartition: only ColumnRef hash keys supported (Inc2)");
+        key_cols.push_back(static_cast<cudf::size_type>(e->node_as_ColumnRef()->index()));
+      }
+    }
+
+    auto tv = combined->view();
+    auto [parted, offsets] = peacock::partitioning::spark_hash_partition(
+        tv, key_cols, static_cast<cudf::size_type>(n));
+    const cudf::size_type total = parted->num_rows();
+    const cudf::table_view pv = parted->view();
+    for (size_t p = 0; p < n; ++p) {
+      cudf::size_type start = offsets[p];
+      cudf::size_type end = (p + 1 < n) ? offsets[p + 1] : total;
+      // One owning table per partition (slice → deep copy so each handle owns memory).
+      cudf::table_view slice = cudf::slice(pv, {start, end}).front();
+      TableResult part;
+      part.column_names = column_names;
+      part.table = std::make_unique<cudf::table>(slice);
+      auto ptv = part.table->view();
+      if (out_stats)
+        out_stats[p] = NodeStats{static_cast<uint64_t>(ptv.num_rows()), varlen_content_bytes(ptv)};
+      uint64_t handle = impl_->next_handle++;
+      impl_->registry.emplace(handle, std::move(part));
+      out_handles[p] = handle;
+    }
+    *out_count = n;
+    return;
+  }
+
+  // Output partition count. Ordinary ops MAP over their children's partitions
+  // (all children carry the same count), so n_out = child[0]'s count. Partition-
+  // collapsing ops (GpuScan map, GpuCoalescePartitions) are handled above; every
+  // remaining node maps 1:1 (tp1 empty-map scans give n_out == 1 = byte-identical
+  // to the pre-multi-handle path).
+  size_t n_out = (n_children > 0) ? child[0].size() : 1;
+  if (n_out == 0) n_out = 1;
+  if (n_out > out_cap)
+    throw std::runtime_error("NodeSession::execute_node: out_handles buffer too small");
+  // The per-partition MAP arm requires every child to carry the same partition
+  // count (child[c][p] is read for all c). Joins with mismatched per-child counts
+  // arrive at Inc2 (partitioned joins); until then fail LOUDLY rather than read OOB.
+  for (size_t c = 1; c < n_children; ++c) {
+    if (child[c].size() != n_out)
+      throw std::runtime_error(
+          "NodeSession::execute_node: children have mismatched partition counts "
+          "(multi-partition joins are not implemented yet)");
+  }
+
+  for (size_t p = 0; p < n_out; ++p) {
+    std::vector<TableResult> inputs;
+    inputs.reserve(n_children);
+    for (size_t c = 0; c < n_children; ++c) {
+      uint64_t h = child[c][p];  // partition p of child c (ordinary op maps per partition)
+      auto it = impl_->registry.find(h);
+      if (it == impl_->registry.end())
+        throw std::runtime_error("NodeSession::execute_node: unknown input handle");
+      inputs.push_back(std::move(it->second));
+      impl_->registry.erase(it);
+    }
+    TableResult result = execute_one(node, std::move(inputs));
+    auto tv = result.table->view();
+    if (out_stats)
+      out_stats[p] = NodeStats{static_cast<uint64_t>(tv.num_rows()), varlen_content_bytes(tv)};
+    uint64_t handle = impl_->next_handle++;
+    impl_->registry.emplace(handle, std::move(result));
+    out_handles[p] = handle;
+  }
+  *out_count = n_out;
 }
 
 const TableResult& NodeSession::table_for(uint64_t handle) const {

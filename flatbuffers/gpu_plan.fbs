@@ -300,6 +300,20 @@ struct JoinFilterColumn {
 // --- Concrete plan node tables ---
 
 /// Read Parquet files from disk.
+/// One scan batch in the explicit row-group→batch→partition MAP (Phase 2 Inc1):
+/// a group of WHOLE row groups (`row_groups`, indices into the file) read as one
+/// cuDF table / RecordBatch, landing in output `partition`. The map makes the
+/// multi-partition scan deterministic + reader-independent + identical across the
+/// CPU golden generator and the GPU (both replay it). Assignment rule: surviving
+/// RGs are split into budget-sized contiguous batches; batch i → partition
+/// `i mod target_partitions` (so a partition needing >1 budget-batch gets several).
+table ScanBatch {
+  /// Whole row-group indices (into the file) forming this batch.
+  row_groups: [uint32];
+  /// Output partition this batch lands in.
+  partition: uint32;
+}
+
 table GpuScan {
   /// Absolute filesystem paths to the Parquet files to read. Each path must
   /// be non-empty and begin with `/`; the consumer rejects relative paths
@@ -321,6 +335,11 @@ table GpuScan {
   /// join/dynamic filters — those are #16, out of scope here). Internal:
   /// deliberately NOT shown in the plan-text display.
   row_groups: [uint32];
+  /// Explicit row-group→batch→partition MAP for tp8 multi-partition scans
+  /// (Phase 2 Inc1). EMPTY = legacy single-partition read of `row_groups` (tp1
+  /// path, byte-unchanged). When set, the scan emits one cuDF table / RecordBatch
+  /// per ScanBatch into its `partition`, dissolving RoundRobin into the scan.
+  batches: [ScanBatch];
 }
 
 /// Apply a boolean predicate, discarding non-matching rows.

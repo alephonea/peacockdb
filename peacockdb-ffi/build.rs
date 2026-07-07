@@ -48,8 +48,16 @@ fn main() {
     );
     println!("cargo:rustc-link-lib=dylib=peacock_gpu");
 
-    // Re-run if C++ sources or the cuDF submodule HEAD changes.
-    println!("cargo:rerun-if-changed={}", cpp_dir.display());
+    // Re-run only when actual C++ SOURCES (or the fb schema / cuDF submodule) change —
+    // NOT on every `cpp/` mtime bump. `cpp/` also holds build OUTPUTS (cpp/build*,
+    // cpp/install, compile_commands.json) that the out-of-crate C++ builds
+    // (scripts/build-test*.sh) write into; watching all of `cpp/` made every such
+    // build spuriously mark this FFI build script stale → re-run its cmake build and
+    // cascade a rebuild through peacockdb-core into the test binaries, even though no
+    // source changed. Watch the inputs the cmake build actually compiles instead.
+    for rel in ["cpp/CMakeLists.txt", "cpp/src", "cpp/include", "cpp/tests", "flatbuffers"] {
+        println!("cargo:rerun-if-changed={}", workspace_root.join(rel).display());
+    }
     println!(
         "cargo:rerun-if-changed={}",
         workspace_root.join("third_party/cudf").display()

@@ -14,10 +14,30 @@ GCC_VERSION=12
 export CC=/usr/bin/gcc-${GCC_VERSION}
 export CXX=/usr/bin/g++-${GCC_VERSION}
 
+# Isolate the cudf (default-feature, C++/FFI-linked) build in its OWN target dir so
+# it never competes with `--features rust-only` builds sharing ./target. Toggling
+# rust-only re-enables arrow's `ffi` feature → a different arrow/DataFusion
+# fingerprint, so a shared target dir recompiles that subgraph on every flip. Two
+# dirs = each feature set stays permanently warm. Override with CARGO_TARGET_DIR.
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$PWD/target-cudf}"
+
+# The cudf build recompiles the whole DataFusion stack at opt-3 (#85); the FIRST
+# build in a fresh target-cudf is a full cold rebuild. On a memory-constrained host
+# a full-parallelism cold build exhausts RAM+swap and gets OOM-killed (seen on a
+# 15GiB box: two kills before throttling). Cap parallel cargo jobs on low-memory
+# hosts; override with CARGO_BUILD_JOBS.
+if [ -z "${CARGO_BUILD_JOBS:-}" ]; then
+  _mem_gib=$(awk '/MemTotal/{printf "%d", $2/1024/1024}' /proc/meminfo 2>/dev/null || echo 32)
+  if [ "${_mem_gib:-32}" -lt 20 ]; then
+    export CARGO_BUILD_JOBS=3
+    echo "==> low-memory host (${_mem_gib}GiB RAM): throttling CARGO_BUILD_JOBS=3 to avoid OOM"
+  fi
+fi
+
 # Rust integration tests that link libpeacock_gpu.so and need to run on the GPU host.
 # After build, each binary is staged under cpp/install/rust-tests/<name> so the
 # existing rsync step picks them up alongside the C++ binaries.
-RUST_TESTS=(test_gpu_executor test_gpu_node)
+RUST_TESTS=(test_gpu test_inc2_conformance)
 RUST_TESTS_STAGING=cpp/install/rust-tests
 
 BUILD=0

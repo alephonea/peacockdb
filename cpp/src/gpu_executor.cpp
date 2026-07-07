@@ -1,4 +1,5 @@
 #include "peacock_gpu.h"
+#include "peacock/partitioning.hpp"
 #include "plan_executor.h"
 
 #include <cudf/interop.hpp>
@@ -10,11 +11,14 @@
 #include <arrow/io/memory.h>
 #include <arrow/ipc/writer.h>
 
+#include <cuda_runtime.h>
+
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <new>
 #include <string>
+#include <vector>
 
 // ---------------------------------------------------------------------------
 // Internal types
@@ -162,21 +166,25 @@ int peacock_executor_begin_plan(peacock_executor_t* executor,
 }
 
 int peacock_executor_execute_node(peacock_executor_t* executor, uint64_t seq,
-                                  const uint64_t* input_handles, uint64_t n_inputs,
-                                  uint64_t* out_handle, PeacockNodeStats* out_stats) {
-  if (!executor || !out_handle || (n_inputs > 0 && !input_handles)) return 1;
+                                  const uint64_t* input_handles,
+                                  const uint64_t* input_child_counts, uint64_t n_children,
+                                  uint64_t* out_handles, uint64_t out_cap,
+                                  uint64_t* out_count, PeacockNodeStats* out_stats) {
+  if (!executor || !out_handles || !out_count) return 1;
   if (!executor->session) {
     executor->last_error = "no plan loaded (call peacock_executor_begin_plan first)";
     return 1;
   }
   try {
-    peacock::NodeStats stats;
-    *out_handle = executor->session->execute_node(seq, input_handles,
-                                                  static_cast<size_t>(n_inputs), &stats);
-    if (out_stats) {
-      out_stats->rows = stats.rows;
-      out_stats->varlen_content_bytes = stats.varlen_content_bytes;
-    }
+    // out_stats is a caller array of out_cap, filled PER PARTITION (parallel to
+    // out_handles); PeacockNodeStats and peacock::NodeStats are layout-identical
+    // ({uint64 rows; uint64 varlen_content_bytes}).
+    size_t n_out = 0;
+    executor->session->execute_node(
+        seq, input_handles, input_child_counts, static_cast<size_t>(n_children),
+        out_handles, static_cast<size_t>(out_cap), &n_out,
+        reinterpret_cast<peacock::NodeStats*>(out_stats));
+    *out_count = static_cast<uint64_t>(n_out);
     return 0;
   } catch (const std::exception& e) {
     executor->last_error = e.what();
@@ -216,4 +224,36 @@ void peacock_handle_release(peacock_executor_t* executor, uint64_t handle) {
 
 void peacock_executor_end_plan(peacock_executor_t* executor) {
   if (executor) executor->session.reset();
+}
+
+int peacock_spark_partition_ids(const void* schema, const void* array,
+                                const uint32_t* key_cols, uint64_t num_keys,
+                                uint32_t num_partitions, uint32_t seed,
+                                int32_t* out_pids, uint64_t out_cap, uint64_t* out_n) {
+  if (!schema || !array || !key_cols || !out_pids || !out_n) return 1;
+  try {
+    // Import the Arrow C-Data struct array (= the key table) into cuDF. The C
+    // Data Interface ABI is stable, so arrow-rs's FFI_ArrowSchema/FFI_ArrowArray
+    // reinterpret directly to cuDF's ArrowSchema/ArrowArray.
+    auto table = cudf::from_arrow(reinterpret_cast<const ArrowSchema*>(schema),
+                                  reinterpret_cast<const ArrowArray*>(array));
+    std::vector<cudf::size_type> keys;
+    keys.reserve(num_keys);
+    for (uint64_t i = 0; i < num_keys; ++i) {
+      keys.push_back(static_cast<cudf::size_type>(key_cols[i]));
+    }
+    auto pid       = peacock::partitioning::spark_partition_ids(
+        table->view(), keys, static_cast<cudf::size_type>(num_partitions), seed);
+    auto const view = pid->view();
+    auto const n    = static_cast<uint64_t>(view.size());
+    if (n > out_cap) return 1;
+    cudaMemcpy(out_pids, view.data<int32_t>(), n * sizeof(int32_t), cudaMemcpyDeviceToHost);
+    *out_n = n;
+    return 0;
+  } catch (const std::exception& e) {
+    std::fprintf(stderr, "peacock_spark_partition_ids: %s\n", e.what());
+    return 1;
+  } catch (...) {
+    return 1;
+  }
 }

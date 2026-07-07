@@ -1,5 +1,5 @@
 //! Bespoke (non-macro) GPU smoke tests (scan/filter/aggregate/join/sort/lifecycle).
-//! The parameterized result suite lives in test_gpu_executor.rs; shared helpers
+//! The parameterized per-query suite lives in test_gpu.rs; shared helpers
 //! live in common/mod.rs. Gated off under rust-only (no GPU executor there).
 #![cfg(not(feature = "rust-only"))]
 #![allow(non_snake_case)] // consistent with the H200-device fn names in the macro suite

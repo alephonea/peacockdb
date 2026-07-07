@@ -73,7 +73,15 @@ impl ResidentNode {
                 let build_bytes = self.children.first().map_or(0, |c| c.output_bytes);
                 child_peak(0).max(build_bytes + child_peak(1))
             }
-            "SortExec" | "AggregateExec" => child_peak(0).max(self.output_bytes),
+            // CoalescePartitionsExec at tp>1 CONCATENATES all input partitions into
+            // one resident table (Inc1 C1a) — a buffering breaker, not streaming. Like
+            // Sort/Aggregate it's sequential with its descendants (the inputs are done
+            // and released as the concat completes), so `max(child.peak(),
+            // output_bytes)`. At single-partition (tp1) its output flows through ≤ the
+            // child peak, so this is a no-op there.
+            "SortExec" | "AggregateExec" | "CoalescePartitionsExec" => {
+                child_peak(0).max(self.output_bytes)
+            }
             _ => self.children.iter().map(|c| c.peak()).max().unwrap_or(0),
         }
     }
