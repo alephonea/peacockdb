@@ -7,7 +7,7 @@ use datafusion::execution::context::SessionContext;
 
 use crate::cpu_executor::NodeMemoryStats;
 use crate::node_executor::{execute_node_by_node, GpuNodeExecutor};
-use crate::{create_context_with_tables_mode, plan_serializer::serialize_plan, PartitionMode};
+use crate::{create_context_with_tables_mode, plan_serializer::serialize_plan_mode, PartitionMode};
 
 use peacockdb_ffi::raw::{
     peacock_execute, peacock_executor_create, peacock_executor_destroy, peacock_last_error,
@@ -81,7 +81,7 @@ impl GpuExecutor {
     /// buffer that decodes to an empty `Vec<RecordBatch>`.
     pub async fn execute(&self, sql: &str) -> DfResult<Vec<RecordBatch>> {
         let plan = self.ctx.sql(sql).await?.create_physical_plan().await?;
-        let plan_bytes = serialize_plan(&plan)
+        let plan_bytes = serialize_plan_mode(&plan, self.partition_mode)
             .map_err(|e| DataFusionError::External(e.into()))?;
 
         let mut out_ptr: *mut u8 = std::ptr::null_mut();
@@ -133,7 +133,8 @@ impl GpuExecutor {
         Vec<NodeMemoryStats>,
     )> {
         let plan = self.ctx.sql(sql).await?.create_physical_plan().await?;
-        let plan_bytes = serialize_plan(&plan).map_err(|e| DataFusionError::External(e.into()))?;
+        let plan_bytes = serialize_plan_mode(&plan, self.partition_mode)
+            .map_err(|e| DataFusionError::External(e.into()))?;
         let mut backend = GpuNodeExecutor::new(self.executor, &plan_bytes)?;
         let (batches, stats) = execute_node_by_node(&plan, &mut backend).await?;
         Ok((batches, plan, stats))

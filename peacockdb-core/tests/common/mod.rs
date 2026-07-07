@@ -270,8 +270,10 @@ pub fn assert_plan_matches_canonical(plan: &Arc<dyn ExecutionPlan>, name: &str) 
     assert_plan_matches_canonical_at(plan, &plan_golden("tpch", "1", name, "tp8-mem2gib"));
 }
 
-/// Plan `<dataset>-queries/<query>.sql` and compare to the plan golden.
-pub async fn run_query_test_at(dataset: &str, sf: &str, query: &str, device: &str) {
+/// Build the GPU physical plan for `<dataset>-queries/<query>.sql` at `device`'s
+/// partition config + [`PartitionMode`] (via [`partition_mode`]). Shared by the
+/// plan-canonical test and bespoke serializer tests that need the lowered plan.
+pub async fn plan_for(dataset: &str, sf: &str, query: &str, device: &str) -> Arc<dyn ExecutionPlan> {
     let data_dir = data_dir_for(dataset, sf);
     if !data_dir.exists() {
         panic!(
@@ -290,7 +292,12 @@ pub async fn run_query_test_at(dataset: &str, sf: &str, query: &str, device: &st
     )
     .await
     .unwrap();
-    let plan = gpu_ctx.sql(&sql).await.unwrap().create_physical_plan().await.unwrap();
+    gpu_ctx.sql(&sql).await.unwrap().create_physical_plan().await.unwrap()
+}
+
+/// Plan `<dataset>-queries/<query>.sql` and compare to the plan golden.
+pub async fn run_query_test_at(dataset: &str, sf: &str, query: &str, device: &str) {
+    let plan = plan_for(dataset, sf, query, device).await;
     assert_plan_matches_canonical_at(&plan, &plan_golden(dataset, sf, query, device));
 }
 

@@ -7,12 +7,39 @@ use datafusion::arrow::array::Int64Array;
 
 use peacockdb_core::create_context_with_tables;
 use peacockdb_core::gpu_rule::{analyze_memory, row_width};
-use peacockdb_core::CpuExecutor;
+use peacockdb_core::plan_serializer::{deserialize_plan, serialize_plan, serialize_plan_mode};
+use peacockdb_core::{CpuExecutor, PartitionMode};
 
 use common::{
     assert_plan_matches_canonical, count, find_node, scan_batch_sizes, test_ctx,
     testdata_minimal_dir, TEST_TARGET_PARTITIONS,
 };
+
+// ── Inc5: mergeable_agg_state flag serialization ─────────────────────────
+/// The `mergeable_agg_state` flag on `GpuAggregate` must be driven by the
+/// serializer's [`PartitionMode`] (set iff RealMultiPartition). shuffle-stddev is
+/// a grouped aggregate, so serializing the SAME lowered plan at RealMultiPartition
+/// vs SinglePartition must differ in bytes (the flag is honored); SinglePartition
+/// equals the default `serialize_plan`; and the RealMultiPartition bytes survive a
+/// serialize→deserialize→reserialize roundtrip unchanged. Rust-only; no GPU.
+#[tokio::test]
+async fn inc5_mergeable_agg_state_serializes_per_partition_mode() {
+    let plan = common::plan_for("tpch", "1", "shuffle-stddev", "tp8-mem120gib").await;
+
+    let real = serialize_plan_mode(&plan, PartitionMode::RealMultiPartition).expect("ser real");
+    let single = serialize_plan_mode(&plan, PartitionMode::SinglePartition).expect("ser single");
+    let default = serialize_plan(&plan).expect("ser default");
+
+    assert_ne!(
+        real, single,
+        "mergeable_agg_state must change the serialized bytes at RealMultiPartition"
+    );
+    assert_eq!(single, default, "serialize_plan must default to SinglePartition");
+
+    let recon = deserialize_plan(&real).expect("deserialize real");
+    let re = serialize_plan_mode(&recon, PartitionMode::RealMultiPartition).expect("re-ser real");
+    assert_eq!(re, real, "RealMultiPartition flag must survive the flatbuffer roundtrip");
+}
 
 // ── CpuExecutor integration tests ────────────────────────────────────────
 #[tokio::test]
