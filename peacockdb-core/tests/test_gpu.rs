@@ -99,6 +99,16 @@ gpu_test!(tpcds, 1, q17, tp1_mem120gib, golden_exact);
 // live CPU compare).
 gpu_test!(tpcds, 1, q17, tp8_mem120gib, golden_approx_std);
 gpu_test!(tpch, 1, join_int, tp8_mem120gib, oracle);
+// (#97-a) Real-8-way per-partition NON-inner Partitioned joins. DataFusion runs each
+// Partitioned 8→8 (semi-join=RightSemi, anti-join=RightAnti, left-join=Left); the #96
+// MAP arm + C++ execute_hash_join already handle every join type, so these verify the
+// GPU 8-way join == the regen'd CPU-#13 golden. oracle mode (>256KB results): the GPU
+// output is checked against a LIVE CPU-oracle run (which itself conforms to vanilla
+// DataFusion via the cpu_node13 carriers), so anti's NOT-IN null handling is gated at
+// both levels.
+gpu_test!(tpch, 1, semi_join, tp8_mem120gib, oracle);
+gpu_test!(tpch, 1, anti_join, tp8_mem120gib, oracle);
+gpu_test!(tpch, 1, left_join, tp8_mem120gib, oracle);
 gpu_test!(tpcds, 1, q18, tp1_mem120gib, golden_exact);
 gpu_test!(tpcds, 1, q19, tp1_mem120gib, golden_exact);
 gpu_test!(tpcds, 1, q20, tp1_mem120gib, golden_exact);

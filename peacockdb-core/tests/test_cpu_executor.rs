@@ -87,6 +87,16 @@ cpu_node13_result_test!(tpch, 1, join_int, tp8_mem120gib, false);
 // (#96): the CPU oracle now runs q17's 7 Partitioned joins per-partition (8-way),
 // and the tp8 gpu_test! (golden_approx_std) consumes this owned .result.txt.
 cpu_node13_result_approx_test!(tpcds, 1, q17, tp8_mem120gib, true);
+// semi/anti/left joins (#97-a): per-partition NON-inner Partitioned joins at real 8-way.
+// DataFusion runs all three Partitioned 8→8 (semi-join=RightSemi, anti-join=RightAnti,
+// left-join=Left); the #96 MAP arm admits every join type, so this is the conformance
+// proof — each asserts the #13 per-partition result against VANILLA DataFusion, so a
+// wrong per-partition anti (NOT-IN global-null edge) fails LOUD here. gen=false: the
+// GPU tp8 tests use oracle mode (>256KB result), so no .result.txt is consumed. The
+// legacy tp8-mem2gib cpu_result_test carriers above stay (exercise the #11 executor).
+cpu_node13_result_test!(tpch, 1, semi_join, tp8_mem120gib, false);
+cpu_node13_result_test!(tpch, 1, anti_join, tp8_mem120gib, false);
+cpu_node13_result_test!(tpch, 1, left_join, tp8_mem120gib, false);
 
 // ── TPC-DS ────────────────────────────────────────────────────────────────
 cpu_result_test!(tpcds, 1, q1, tp8_mem2gib, false);
