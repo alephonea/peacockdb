@@ -97,6 +97,18 @@ cpu_node13_result_approx_test!(tpcds, 1, q17, tp8_mem120gib, true);
 cpu_node13_result_test!(tpch, 1, semi_join, tp8_mem120gib, false);
 cpu_node13_result_test!(tpch, 1, anti_join, tp8_mem120gib, false);
 cpu_node13_result_test!(tpch, 1, left_join, tp8_mem120gib, false);
+// Real TPC-H join-query flip batch 1 (post-#96/#97-a): all Partitioned Inner joins,
+// Int32/Int64 keys (q5 composite), all-sum mergeable aggs, scan-map present, zero
+// CollectLeft/decimal/distinct — node13-executable at real 8-way. gen=true: each owns
+// the small .result.txt the tp8 gpu_test!(golden_exact) consumes (result is
+// partition-independent). Legacy tp8-mem2gib #11 carriers above stay.
+// q3 GATED: it's the only one with ORDER BY revenue ... LIMIT 10; the #13
+// per-partition TopK selects the wrong global top-10 at real 8-way (aggregation is
+// right, but the top-k/limit merge is broken) → its result diverges from DataFusion.
+// Deferred pending a #13 per-partition TopK fix; its legacy tp8-mem2gib line stays.
+cpu_node13_result_test!(tpch, 1, q5, tp8_mem120gib, true);
+cpu_node13_result_test!(tpch, 1, q7, tp8_mem120gib, true);
+cpu_node13_result_test!(tpch, 1, q8, tp8_mem120gib, true);
 
 // ── TPC-DS ────────────────────────────────────────────────────────────────
 cpu_result_test!(tpcds, 1, q1, tp8_mem2gib, false);

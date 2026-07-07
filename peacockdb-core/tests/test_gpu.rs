@@ -109,6 +109,14 @@ gpu_test!(tpch, 1, join_int, tp8_mem120gib, oracle);
 gpu_test!(tpch, 1, semi_join, tp8_mem120gib, oracle);
 gpu_test!(tpch, 1, anti_join, tp8_mem120gib, oracle);
 gpu_test!(tpch, 1, left_join, tp8_mem120gib, oracle);
+// Real TPC-H join-query flip batch 1: q5/q7/q8 at real 8-way (all Partitioned Inner,
+// int keys, mergeable sum aggs). Small results → golden_exact (consumes the
+// cpu_node13-owned .result.txt). q8 has 2 sum aggs (multi-func) → its GPU result is
+// gated by CI (the local flatc aggr_funcs-vector bug truncates multi-func aggs); q5/q7
+// are single-agg and verify locally too. q3 GATED (ORDER BY...LIMIT → #13 TopK bug).
+gpu_test!(tpch, 1, q5, tp8_mem120gib, golden_exact);
+gpu_test!(tpch, 1, q7, tp8_mem120gib, golden_exact);
+gpu_test!(tpch, 1, q8, tp8_mem120gib, golden_exact);
 gpu_test!(tpcds, 1, q18, tp1_mem120gib, golden_exact);
 gpu_test!(tpcds, 1, q19, tp1_mem120gib, golden_exact);
 gpu_test!(tpcds, 1, q20, tp1_mem120gib, golden_exact);
