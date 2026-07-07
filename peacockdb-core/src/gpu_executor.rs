@@ -22,6 +22,10 @@ use peacockdb_ffi::raw::{
 pub struct GpuExecutor {
     ctx: SessionContext,
     executor: *mut PeacockExecutor,
+    /// Threaded into the plan serializer so aggregate nodes carry the
+    /// `mergeable_agg_state` flag (RealMultiPartition ⇒ 3-col Welford stddev/var
+    /// state; see [`serialize_plan_mode`]).
+    partition_mode: PartitionMode,
 }
 
 // SAFETY: GpuExecutor has exclusive ownership of the PeacockExecutor pointer.
@@ -64,7 +68,7 @@ impl GpuExecutor {
             ));
         }
 
-        Ok(Self { ctx, executor })
+        Ok(Self { ctx, executor, partition_mode })
     }
 
     /// Execute `sql` on the GPU.
