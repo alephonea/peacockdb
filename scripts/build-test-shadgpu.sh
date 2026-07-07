@@ -96,8 +96,25 @@ if [ "$BUILD" -eq 1 ]; then
   # cargo's OUT_DIR, and cmake caches the resolved cudf_DIR/Arrow there. If the
   # previous build used a different cuDF root (e.g. the CPU build-test.sh path's
   # rapids-26.02), that stale cache makes the link pick the wrong Arrow and fail
-  # (`ld returned 1`). Clean it so it reconfigures against this build's CUDF_ROOT.
-  cargo clean -p peacockdb-ffi
+  # (`ld returned 1`). So clean the FFI crate to force a cmake reconfigure — but
+  # ONLY when the cuDF root actually changed since the last build. Cleaning
+  # unconditionally rebuilds the whole cmake sub-tree (flatbuffers + gtest +
+  # libpeacock_gpu.so) from scratch on every --build, which dominates wall-clock
+  # when the root is unchanged across iterations. A stamp under CARGO_TARGET_DIR
+  # records the root the FFI was last configured against; it survives
+  # `cargo clean -p peacockdb-ffi` (which removes only that crate's artifacts).
+  # Set PEACOCK_FFI_CLEAN=1 to force the clean regardless.
+  ffi_root_stamp="$CARGO_TARGET_DIR/.peacock-ffi-cudf-root"
+  if [ "${PEACOCK_FFI_CLEAN:-0}" = "1" ] \
+     || [ ! -f "$ffi_root_stamp" ] \
+     || [ "$(cat "$ffi_root_stamp" 2>/dev/null)" != "$CUDF_ROOT" ]; then
+    echo "--- peacockdb-ffi: cuDF root changed or clean forced; cleaning to reconfigure cmake"
+    cargo clean -p peacockdb-ffi
+    mkdir -p "$CARGO_TARGET_DIR"
+    printf '%s\n' "$CUDF_ROOT" > "$ffi_root_stamp"
+  else
+    echo "--- peacockdb-ffi: cuDF root unchanged ($CUDF_ROOT); skipping clean (reuse cmake _deps)"
+  fi
 
   mkdir -p "$RUST_TESTS_STAGING"
   for t in "${RUST_TESTS[@]}"; do
