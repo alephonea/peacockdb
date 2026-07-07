@@ -78,9 +78,10 @@ cpu_node13_result_test!(tpch, 1, shuffle_additive_avg, tp8_mem120gib, true);
 cpu_node13_result_test!(tpch, 1, q1, tp8_mem120gib, true);
 // q17 (tpcds): the CPU-side real-query STDDEV proof — per measure count(1)+avg(2)+
 // stddev(3) state, ×3 measures — exercising the #13 mixed count/avg/stddev Final
-// width-detect at real 8-way (comet hashes the int join keys). gen=false: the GPU
-// tp8 proof is deferred to #18 (STRING-only murmur3 kernel rejects int item_sk keys),
-// so no gpu_test! consumes a tp8 .result.txt; the .cpu/.cost cost goldens stay.
+// width-detect at real 8-way (comet hashes the composite int join keys). gen=false:
+// the GPU tp8 proof is deferred to the GPU real-8-way JOIN-execution increment (Inc6's
+// kernel now handles the int keys, but the GPU node-executor collapses q17's join
+// subtree to partitions=1); no gpu_test! consumes a tp8 .result.txt; .cpu/.cost stay.
 cpu_node13_result_approx_test!(tpcds, 1, q17, tp8_mem120gib, false);
 
 // ── TPC-DS ────────────────────────────────────────────────────────────────

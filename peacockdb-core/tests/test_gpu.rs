@@ -90,11 +90,13 @@ gpu_test!(tpcds, 1, q14, tp1_mem120gib, golden_approx);
 gpu_test!(tpcds, 1, q15, tp1_mem120gib, golden_exact);
 gpu_test!(tpcds, 1, q16, tp1_mem120gib, golden_exact);
 gpu_test!(tpcds, 1, q17, tp1_mem120gib, golden_exact);
-// NOTE: q17's real-8-way GPU proof is DEFERRED to #18. q17 is the first #13 query with
-// a JOIN, whose join-key repartition uses INTEGER keys (item_sk) — the current
-// Spark-murmur3 partition kernel is STRING-only (I-2 boundary). The CPU-side #13 mixed
-// count/avg/stddev proof (cpu_tpcds_sf1_q17_tp8_mem120gib) stays; comet's hash handles
-// int keys. Re-add gpu_test!(tpcds, 1, q17, tp8_mem120gib, golden_approx) under #18.
+// NOTE: q17's real-8-way GPU proof is DEFERRED to the GPU real-8-way JOIN-execution
+// increment. Inc6's multi-type murmur3 kernel now hashes q17's composite INT join keys
+// (was the STRING-only wall), but q17 is the first #13 query with JOINS and the GPU
+// node-executor doesn't yet run per-key-repartitioned per-partition joins — it collapses
+// the join subtree to partitions=1 → 0 rows. The CPU-#13 mixed count/avg/stddev proof
+// (cpu_tpcds_sf1_q17_tp8_mem120gib) stays. Re-add gpu_test!(tpcds q17 tp8 golden_approx_std)
+// once per-partition JOIN execution lands (q17 is that increment's driver).
 gpu_test!(tpcds, 1, q18, tp1_mem120gib, golden_exact);
 gpu_test!(tpcds, 1, q19, tp1_mem120gib, golden_exact);
 gpu_test!(tpcds, 1, q20, tp1_mem120gib, golden_exact);
