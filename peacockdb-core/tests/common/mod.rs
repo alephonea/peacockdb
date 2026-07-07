@@ -990,7 +990,15 @@ pub async fn assert_gpu_nodes_match_golden(dataset: &str, sf: &str, query: &str,
 /// Per-query result-assertion mode for the merged GPU test (`gpu_test!`) — chosen
 /// EXPLICITLY at each call site so a reader sees, per query, golden vs live oracle.
 /// `GoldenExact`  = static result-golden, exact compare (fail-closed: missing panics).
-/// `GoldenApprox` = static result-golden, 1e-12 float-tolerant (q14/q39).
+/// `GoldenApprox` = static result-golden, 1e-12 float-tolerant (q14/q39 — avg/sum
+///                  summation reassociation across partitions, ~1 ULP).
+/// `GoldenApproxStddev` = static result-golden, 1e-11 float-tolerant. STDDEV/VAR ONLY:
+///                  cuDF's variance algorithm (Σ(x-x̄)² then sqrt) accumulates more
+///                  float error than sum/avg, and cuDF make_std/MERGE_M2 vs DataFusion's
+///                  Welford diverge ~2e-12 (observed 1.996e-12) — beyond the 1e-12
+///                  convention. 1e-11 = ~5× headroom, still 11 significant digits. The
+///                  CPU-side #13 approx tests stay at 1e-12 (CPU#13 == DataFusion at
+///                  ~3e-14); this looser tol is GPU-cuDF-specific. See #94-adjacent.
 /// `Oracle`       = live CPU-oracle compare, NO golden — for results too large to
 ///                  commit as text (>= RESULT_GOLDEN_MAX_BYTES, e.g. anti-join's
 ///                  ~240MB/1.2M rows). R4 preserved: still result-validated, live.
@@ -1000,6 +1008,7 @@ pub async fn assert_gpu_nodes_match_golden(dataset: &str, sf: &str, query: &str,
 pub enum GpuResultMode {
     GoldenExact,
     GoldenApprox,
+    GoldenApproxStddev,
     Oracle,
     Skip,
 }
@@ -1010,10 +1019,11 @@ pub fn gpu_result_mode(s: &str) -> GpuResultMode {
     match s {
         "golden_exact" => GpuResultMode::GoldenExact,
         "golden_approx" => GpuResultMode::GoldenApprox,
+        "golden_approx_std" => GpuResultMode::GoldenApproxStddev,
         "oracle" => GpuResultMode::Oracle,
         "skip" => GpuResultMode::Skip,
         other => panic!(
-            "gpu_test!: unknown result mode '{other}' (expected golden_exact|golden_approx|oracle|skip)"
+            "gpu_test!: unknown result mode '{other}' (expected golden_exact|golden_approx|golden_approx_std|oracle|skip)"
         ),
     }
 }
@@ -1064,6 +1074,15 @@ pub async fn assert_gpu_query(
             &actual,
             &result_golden(dataset, sf, query, device),
             Some(1e-12),
+            &qlabel,
+        ),
+        // STDDEV/VAR: 1e-11 (vs the 1e-12 convention) — cuDF's variance algorithm
+        // diverges from DataFusion's Welford by ~2e-12, more than sum/avg. See the
+        // GpuResultMode::GoldenApproxStddev doc.
+        GpuResultMode::GoldenApproxStddev => assert_result_golden(
+            &actual,
+            &result_golden(dataset, sf, query, device),
+            Some(1e-11),
             &qlabel,
         ),
         GpuResultMode::Oracle => {

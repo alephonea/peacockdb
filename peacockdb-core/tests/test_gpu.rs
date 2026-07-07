@@ -53,8 +53,9 @@ gpu_test!(tpch, 1, q22, tp1_mem120gib, golden_exact);
 gpu_test!(tpch, 1, shuffle_additive, tp1_mem120gib, golden_exact);
 gpu_test!(tpch, 1, shuffle_additive_avg, tp1_mem120gib, golden_exact);
 // Inc5 STDDEV/VAR proof at tp1 (single-partition make_std/make_variance singleton).
-// golden_APPROX: stddev/var are float; GPU vs DataFusion differs by float rounding.
-gpu_test!(tpch, 1, shuffle_stddev, tp1_mem120gib, golden_approx);
+// golden_approx_std (1e-11): cuDF's variance algo diverges from DataFusion's Welford
+// by ~2e-12 — more than the 1e-12 sum/avg convention. See GpuResultMode doc.
+gpu_test!(tpch, 1, shuffle_stddev, tp1_mem120gib, golden_approx_std);
 
 // ── H200/tp8 (Phase 2 Inc1/Inc2): real 8-way partitioning ───────────────────
 // One GPU run asserts per-node Σ-over-8 rows+cost vs the tp8-mem120gib .cpu.txt
@@ -70,8 +71,8 @@ gpu_test!(tpch, 1, shuffle_additive_avg, tp8_mem120gib, golden_exact);
 gpu_test!(tpch, 1, q1, tp8_mem120gib, golden_exact);
 // Inc5 STDDEV/VAR proof: real 8-way Welford [count,mean,m2] state merged via cuDF
 // MERGE_M2 per hash bucket (stddev_samp/pop + var_samp/pop, all 4 finalize branches).
-// golden_APPROX — M2 float summation reassociates across partitions (~1 ULP).
-gpu_test!(tpch, 1, shuffle_stddev, tp8_mem120gib, golden_approx);
+// golden_approx_std (1e-11): same tol as tp1 for consistency (tp8 passes at 1e-12 too).
+gpu_test!(tpch, 1, shuffle_stddev, tp8_mem120gib, golden_approx_std);
 
 // ── TPC-DS (GPU-operational set) ────────────────────────────────────────────
 gpu_test!(tpcds, 1, q1, tp1_mem120gib, golden_exact);
