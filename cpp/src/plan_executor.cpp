@@ -1694,6 +1694,35 @@ static TableResult execute_aggregate(const fb::GpuAggregate* agg) {
   bool has_stddev_or_var_final = false;
   size_t in_off = key_indices.size();  // Final positional input cursor
 
+  // Does a Final-stage avg read a 2-col [sum,count] STATE, or a 1-col MEAN?
+  // The plain Partial path (Inc4) emits 2 cols per avg; the GROUPING-SET Partial
+  // path (ROLLUP/CUBE) still emits 1 MEAN col per avg — and ITS Final re-groups
+  // [keys, __grouping_id] as a plain GROUP BY, so it lands HERE. Reading 2 cols
+  // for such a 1-col avg over-runs the input (the q18/q22 tp1 OOB regression).
+  // Discriminate by the Final input WIDTH: a plain-Partial input is
+  // keys + Σ(2·avg + 1·other) wide, a grouping-set-Partial input is keys + Σ1.
+  // At tp1 the Partial is one-row-per-key, so a 1-col avg-Final is the exact
+  // mean-of-singleton identity (pre-Inc4 behaviour). Multi-partition ROLLUP-avg
+  // merge — making the grouping-set Partial emit real [sum,count] state — is #18.
+  bool avg_state_2col = true;
+  if (phase == AggPhase::Final && agg->aggr_funcs()) {
+    size_t n_funcs = agg->aggr_funcs()->size();
+    size_t n_avg = 0;
+    for (flatbuffers::uoffset_t i = 0; i < n_funcs; ++i) {
+      auto* f = agg->aggr_funcs()->Get(i);
+      if (is_avg_name(f->name() ? f->name()->str() : "")) ++n_avg;
+    }
+    size_t width_1col = key_indices.size() + n_funcs;               // grouping-set Partial
+    size_t width_2col = key_indices.size() + n_funcs + n_avg;       // plain Partial
+    size_t got = static_cast<size_t>(tv.num_columns());
+    if (n_avg > 0 && got == width_1col && width_1col != width_2col)
+      avg_state_2col = false;
+    else if (got != width_2col)
+      throw std::runtime_error(
+          "Final-stage aggregate input width does not match either the 2-col "
+          "[sum,count] avg-state layout or the 1-col grouping-set-avg layout");
+  }
+
   if (agg->aggr_funcs()) {
     for (flatbuffers::uoffset_t i = 0; i < agg->aggr_funcs()->size(); ++i) {
       auto* func = agg->aggr_funcs()->Get(i);
@@ -1714,6 +1743,19 @@ static TableResult execute_aggregate(const fb::GpuAggregate* agg) {
         builds.push_back({alias, r, 0, false, -1, false, 0, 0});      // partial_sum
         builds.push_back({alias, r, 1, true, -1, false, 0, 0});       // partial_count -> INT64
         requests.push_back(std::move(req));
+      } else if (is_avg && phase == AggPhase::Final && !avg_state_2col) {
+        // Grouping-set (ROLLUP/CUBE) Partial emitted a 1-col MEAN, not [sum,count]
+        // state. Its Final lands here (re-groups [keys,__grouping_id] as a plain
+        // GROUP BY); with one partial row per key, mean-of-singleton is the exact
+        // identity. Consume ONE input column (in_off += 1, below), NOT two — the
+        // fix for the q18/q22 tp1 over-read. Real ROLLUP-avg state merge is #18.
+        cudf::groupby::aggregation_request req;
+        req.values = tv.column(static_cast<cudf::size_type>(in_off));
+        req.aggregations.push_back(cudf::make_mean_aggregation<cudf::groupby_aggregation>());
+        builds.push_back({alias, static_cast<int>(requests.size()), 0, false,
+                          -1, false, 0, 0});
+        requests.push_back(std::move(req));
+        // fall through to the shared `in_off += 1` (single Final input column)
       } else if (is_avg && phase == AggPhase::Final) {
         // Merge: Σ(partial_sum) / Σ(partial_count). The two state cols sit at
         // [in_off, in_off+1] (running offset accounts for prior avgs' 2 cols).
