@@ -117,6 +117,11 @@ gpu_test!(tpch, 1, left_join, tp8_mem120gib, oracle);
 gpu_test!(tpch, 1, q5, tp8_mem120gib, golden_exact);
 gpu_test!(tpch, 1, q7, tp8_mem120gib, golden_exact);
 gpu_test!(tpch, 1, q8, tp8_mem120gib, golden_exact);
+// Flip batch 2: q9/q12/q19 real-8-way (Partitioned Inner, int keys, sum aggs, no
+// LIMIT). q9/q19 single-agg (local+CI); q12 = 2 sums (multi-func → CI-gated GPU).
+gpu_test!(tpch, 1, q9, tp8_mem120gib, golden_exact);
+gpu_test!(tpch, 1, q12, tp8_mem120gib, golden_exact);
+gpu_test!(tpch, 1, q19, tp8_mem120gib, golden_exact);
 gpu_test!(tpcds, 1, q18, tp1_mem120gib, golden_exact);
 gpu_test!(tpcds, 1, q19, tp1_mem120gib, golden_exact);
 gpu_test!(tpcds, 1, q20, tp1_mem120gib, golden_exact);

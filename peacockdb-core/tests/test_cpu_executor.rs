@@ -109,6 +109,12 @@ cpu_node13_result_test!(tpch, 1, left_join, tp8_mem120gib, false);
 cpu_node13_result_test!(tpch, 1, q5, tp8_mem120gib, true);
 cpu_node13_result_test!(tpch, 1, q7, tp8_mem120gib, true);
 cpu_node13_result_test!(tpch, 1, q8, tp8_mem120gib, true);
+// Flip batch 2: q9/q12/q19 (all Partitioned Inner, int keys, mergeable sum, no
+// LIMIT/decimal/distinct → no #99/#95/#11 gate). q13 HELD (Partitioned LEFT → #100
+// outer-join gate). Legacy tp8-mem2gib #11 lines kept.
+cpu_node13_result_test!(tpch, 1, q9, tp8_mem120gib, true);
+cpu_node13_result_test!(tpch, 1, q12, tp8_mem120gib, true);
+cpu_node13_result_test!(tpch, 1, q19, tp8_mem120gib, true);
 
 // ── TPC-DS ────────────────────────────────────────────────────────────────
 cpu_result_test!(tpcds, 1, q1, tp8_mem2gib, false);
