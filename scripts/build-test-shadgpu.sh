@@ -154,6 +154,13 @@ if [ "$RSYNC" -eq 1 ]; then
     [ -f "$RUST_TESTS_STAGING/$t" ] && strip --strip-debug "$RUST_TESTS_STAGING/$t"
   done
   resilient_rsync -r cpp/install/* shad-gpu:/home/info/peacockdb/cpp/install/
+  # Ship the result/cost/cpu GOLDENS the rust GPU tests assert against. Without this
+  # the remote keeps whatever goldens a PREVIOUS run left, so a locally-regenerated
+  # golden (e.g. a join subtree flipping 1→8 partitions) silently compares the fresh
+  # GPU output against a STALE golden → false-RED. --delete keeps the remote tree an
+  # exact mirror so removed/renamed goldens don't linger. (Cheap: goldens are small.)
+  ssh shad-gpu "mkdir -p /home/info/peacockdb/testdata/goldens"
+  resilient_rsync -r --delete testdata/goldens/ shad-gpu:/home/info/peacockdb/testdata/goldens/
   # Ship our setup-glibc.sh (with patch_rust_dir) so --patch uses the
   # version that knows about cpp/install/rust-tests/.
   ssh shad-gpu "mkdir -p /home/info/peacockdb/scripts"
