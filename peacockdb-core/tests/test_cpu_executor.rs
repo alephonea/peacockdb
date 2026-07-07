@@ -51,6 +51,11 @@ cpu_result_test!(tpch, 1, shuffle_additive, tp8_mem2gib, false);
 // shuffle_additive_avg (GROUP BY rf,ls; count, avg, sum — avg BEFORE sum) — the Inc4
 // AVG proof query. tp8-mem2gib stays on #11; the real 8-way #13 golden is below.
 cpu_result_test!(tpch, 1, shuffle_additive_avg, tp8_mem2gib, false);
+// shuffle_stddev (GROUP BY rf,ls; stddev_samp/pop + var_samp/pop) — the Inc5 STDDEV/VAR
+// proof. tp8-mem2gib stays on #11 (SinglePartition make_std/make_variance singleton);
+// the real 8-way #13 Welford-M2-merge golden is at tp8-mem120gib. Approx: the M2
+// summation reassociates across partitions (~1 ULP), so float compare is tolerant.
+cpu_result_approx_test!(tpch, 1, shuffle_stddev, tp8_mem2gib, false);
 
 // ── H200/tp8 (Phase 2 Inc1): real 8-way partitioning ────────────────────────
 // The scan's RG→partition map drives this through the #13 CpuNodeExecutor, so
@@ -71,6 +76,10 @@ cpu_node13_result_test!(tpch, 1, shuffle_additive_avg, tp8_mem120gib, true);
 // q1: the canonical AVG carrier (3 avgs + 4 sums + count, GROUP BY rf,ls) — now real
 // 8-way #13 at tp8-mem120gib (was #11-only until Inc4). tp8-mem2gib q1 stays #11.
 cpu_node13_result_test!(tpch, 1, q1, tp8_mem120gib, true);
+// q17 (tpcds): the real-query STDDEV proof — per measure count(1)+avg(2)+stddev(3) state,
+// ×3 measures, GROUP BY i_item_id/i_item_desc/s_state (all Utf8 → murmur3 STRING kernel).
+// Exercises the mixed count/avg/stddev Final width-detect at real 8-way. Approx (M2 float).
+cpu_node13_result_approx_test!(tpcds, 1, q17, tp8_mem120gib, true);
 
 // ── TPC-DS ────────────────────────────────────────────────────────────────
 cpu_result_test!(tpcds, 1, q1, tp8_mem2gib, false);

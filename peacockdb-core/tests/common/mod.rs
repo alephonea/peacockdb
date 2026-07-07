@@ -1188,6 +1188,34 @@ macro_rules! cpu_result_approx_test {
     };
 }
 
+/// `cpu_node13_result_approx_test!(dataset, sf, query, device, gen)` — like
+/// [`cpu_node13_result_test!`] (the #13 real-N-partition CpuNodeExecutor) but with a
+/// 1e-12 relative tolerance on Float64 columns. Required for STDDEV/VAR queries (Inc5):
+/// the Welford M2 state, merged across the 8 hash partitions, reassociates float
+/// summation (~1 ULP; ~3e-14 rel) vs the DataFusion single-pass oracle, so exact-string
+/// compare can't be used. The output_bytes cost golden stays exact (float byte width
+/// is unchanged). `gen` writes the `.result.txt` iff a golden `gpu_test!` consumes it.
+#[macro_export]
+macro_rules! cpu_node13_result_approx_test {
+    ($dataset:ident, $sf:literal, $query:ident, $device:ident, $gen:literal) => {
+        paste::paste! {
+            #[tokio::test]
+            async fn [<cpu_ $dataset _sf $sf _ $query _ $device>]() {
+                $crate::common::assert_cpu_results_match_datafusion(
+                    stringify!($dataset),
+                    stringify!($sf),
+                    &stringify!($query).replace('_', "-"),
+                    &stringify!($device).replace('_', "-"),
+                    Some(1e-12),
+                    true, // #13 CpuNodeExecutor
+                    $gen,
+                )
+                .await;
+            }
+        }
+    };
+}
+
 /// `cpu_result_error_test!(dataset, sf, query, budget)` — strict resident control
 /// (Part 2): asserts the query OOMs (`ResourcesExhausted`) at the raw `budget`.
 /// Used ONLY by the tight-budget OOM set; a query that flips pass→OOM moves here,

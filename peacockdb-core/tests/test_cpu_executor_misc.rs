@@ -77,8 +77,10 @@ async fn inc5_stddev_final_agg_at_tp8_node13_matches_datafusion() {
     // DataFusion oracle is float summation reassociation of the Welford M2 across the 8
     // partitions (~1 ULP; observed rel diff ~3e-14). Exact-string compare can't tolerate
     // it — stddev/var results are inherently approx (unlike Inc4's exact sum/count avg).
+    // gen=true: this IS the tp8-mem120gib .result.txt generator, consumed by the
+    // golden_approx gpu_test! for shuffle_stddev at tp8-mem120gib (Inc5-iii).
     common::assert_cpu_results_match_datafusion(
-        "tpch", "1", "shuffle-stddev", "tp8-mem120gib", Some(1e-12), true, false,
+        "tpch", "1", "shuffle-stddev", "tp8-mem120gib", Some(1e-12), true, true,
     )
     .await;
 }
