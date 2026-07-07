@@ -3,14 +3,16 @@ name = "peacockdb"
 version = "0.1.0"
 edition = "2024"
 
+# Forward through peacockdb-core (which forwards to peacockdb-ffi/rust-only) so
+# `peacockdb --features rust-only` actually enables peacockdb-core's rust-only
+# cfg. peacockdb-ffi is reached transitively via peacockdb-core — not a direct dep.
 [features]
-rust-only = ["peacockdb-ffi/rust-only"]
+rust-only = ["peacockdb-core/rust-only"]
 
 [dependencies]
 peacockdb-core = { path = "../peacockdb-core" }
-peacockdb-ffi = { path = "../peacockdb-ffi" }
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 anyhow = "1"
 num_cpus = "1"
-datafusion = "44"
+datafusion = "45"
