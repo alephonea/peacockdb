@@ -22,11 +22,11 @@ use common::{
 ///   - q6 (global additive agg, no shuffle)                    → node13-executable
 ///   - shuffle_additive (GROUP BY + Hash shuffle, SUM/COUNT)   → node13-executable
 ///   - q1 (GROUP BY + Hash shuffle, AVG state = sum/count)     → node13-executable (Inc4)
-///   - shuffle_stddev (GROUP BY + Hash shuffle, STDDEV)        → NOT (compound moments = Inc5)
+///   - shuffle_stddev (GROUP BY + Hash shuffle, STDDEV)        → node13-executable (Inc5, M2)
 /// All are evaluated at tp8-mem120gib so they carry a scan map; the ONLY discriminator
 /// is whether every Final-aggregate is state-mergeable. Fails LOUDLY if the predicate
-/// is broadened to admit STDDEV/VAR (which #13 can't merge yet) or narrowed to reject
-/// a legitimate mergeable shuffle (sum/count/min/max/avg).
+/// is narrowed to reject a legitimate mergeable shuffle (sum/count/min/max/avg/stddev/var)
+/// — an UNKNOWN aggregate still defaults to NON-mergeable (whitelist fail-safe).
 #[tokio::test]
 async fn routing_predicate_gates_on_agg_kind() {
     async fn plan_for(query: &str, device: &str) -> Arc<dyn ExecutionPlan> {
@@ -59,22 +59,26 @@ async fn routing_predicate_gates_on_agg_kind() {
     );
     let stddev = plan_for("shuffle-stddev", "tp8-mem120gib").await;
     assert!(
-        !plan_is_node13_executable(&stddev),
-        "shuffle_stddev (STDDEV compound moments) must stay on #11 until Inc5"
+        plan_is_node13_executable(&stddev),
+        "shuffle_stddev (STDDEV = Welford count/mean/m2 state) must route to #13 (Inc5)"
     );
 }
 
-/// I-3 (reviewer): LOCK the Inc5 boundary. Forcing a STDDEV Final-agg query through
-/// the #13 CpuNodeExecutor at a real-partitioning device (tp8-mem120gib) must PANIC on
-/// the node13-executable safety guard — #13 cannot merge STDDEV/VAR compound-moment
-/// state across the 8 hash partitions until Inc5. Guards against a future relaxation
-/// silently admitting a non-mergeable Final-agg and mis-merging it. (AVG now PASSES —
-/// Inc4 made its sum/count state mergeable; the negative case moved to STDDEV.)
+/// I-3 (reviewer), INVERTED for Inc5: a STDDEV Final-agg query driven through the #13
+/// CpuNodeExecutor at a real-partitioning device (tp8-mem120gib) now MERGES CORRECTLY —
+/// its Welford [count, mean, m2] state combines across the 8 hash partitions (each group
+/// lands wholly in one bucket, so the per-bucket Final is exact). This asserts the #13
+/// result matches DataFusion (the oracle); it panicked pre-Inc5 (non-mergeable guard),
+/// so passing here proves the boundary moved. STDDEV/VAR is the last additive family;
+/// an UNKNOWN aggregate still stays on #11 (whitelist fail-safe).
 #[tokio::test]
-#[should_panic(expected = "node13-executable")]
-async fn inc5_stddev_final_agg_at_tp8_node13_panics() {
+async fn inc5_stddev_final_agg_at_tp8_node13_matches_datafusion() {
+    // Relative tolerance 1e-12 (the q14/q39 convention): the SOLE divergence from the
+    // DataFusion oracle is float summation reassociation of the Welford M2 across the 8
+    // partitions (~1 ULP; observed rel diff ~3e-14). Exact-string compare can't tolerate
+    // it — stddev/var results are inherently approx (unlike Inc4's exact sum/count avg).
     common::assert_cpu_results_match_datafusion(
-        "tpch", "1", "shuffle-stddev", "tp8-mem120gib", None, true, false,
+        "tpch", "1", "shuffle-stddev", "tp8-mem120gib", Some(1e-12), true, false,
     )
     .await;
 }

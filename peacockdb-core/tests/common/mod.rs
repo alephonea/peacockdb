@@ -705,12 +705,17 @@ fn has_repartition(plan: &Arc<dyn ExecutionPlan>) -> bool {
 /// Whether an aggregate's two-phase STATE is mergeable across hash partitions by a
 /// per-bucket Final re-aggregation. SUM/COUNT/MIN/MAX merge trivially (Σ / extremum);
 /// AVG merges because its state (sum, count) IS additive — the per-bucket Final does
-/// Σsum/Σcount = correct mean, no mean-of-means (Inc4, #25). STDDEV/VAR do NOT — their
-/// state is compound moments needing the M2 combine (Inc5). Whitelist (not blacklist)
-/// so any unrecognized aggregate defaults to NON-mergeable → the query stays on the
-/// #11 single-partition path (correct) rather than silently mis-merging on #13.
+/// Σsum/Σcount = correct mean, no mean-of-means (Inc4, #25). STDDEV/VAR merge via the
+/// Welford [count, mean, m2] state + cuDF MERGE_M2 across buckets (Inc5, #25). Whitelist
+/// (not blacklist) so any unrecognized aggregate defaults to NON-mergeable → the query
+/// stays on the #11 single-partition path (correct) rather than silently mis-merging on #13.
 fn state_mergeable_agg(fun_name: &str) -> bool {
-    matches!(fun_name.to_ascii_lowercase().as_str(), "sum" | "count" | "min" | "max" | "avg" | "mean")
+    matches!(
+        fun_name.to_ascii_lowercase().as_str(),
+        "sum" | "count" | "min" | "max" | "avg" | "mean"
+            | "stddev" | "stddev_samp" | "stddev_pop"
+            | "var" | "var_samp" | "var_pop" | "variance"
+    )
 }
 
 /// True iff every multi-partition FINAL-stage aggregate in the plan is state-mergeable
