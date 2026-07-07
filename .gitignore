@@ -1,7 +1,9 @@
 # Rust
 target/
-# isolated target dir for cudf (default-feature) builds — see scripts/build-test*.sh
-target-cudf/
+# isolated per-cudf-root target dirs for cudf (default-feature) builds — see
+# scripts/build-test*.sh (target-cudf-<cudf_root_basename>, e.g. target-cudf-rapids,
+# target-cudf-rapids-cuda-12.2). Glob covers the plain legacy target-cudf too.
+target-cudf*/
 
 # CMake / C++ build artifacts
 cpp/build/

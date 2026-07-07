@@ -17,9 +17,15 @@ export CXX=/usr/bin/g++-${GCC_VERSION}
 # Isolate the cudf (default-feature, C++/FFI-linked) build in its OWN target dir so
 # it never competes with `--features rust-only` builds sharing ./target. Toggling
 # rust-only re-enables arrow's `ffi` feature → a different arrow/DataFusion
-# fingerprint, so a shared target dir recompiles that subgraph on every flip. Two
-# dirs = each feature set stays permanently warm. Override with CARGO_TARGET_DIR.
-export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$PWD/target-cudf}"
+# fingerprint, so a shared target dir recompiles that subgraph on every flip.
+#
+# FURTHER: key the dir off the cuDF ROOT. A DIFFERENT cudf_ROOT (e.g. the local
+# rapids-26.02 used by build-test.sh vs this script's rapids-cuda-12.2/25.02) changes
+# the FFI build's resolved Arrow/cudf and busts the C-build-script fingerprints, so
+# sharing ONE target-cudf across cudf versions recompiles the whole DataFusion stack
+# on every switch (build-test.sh ⇄ build-test-shadgpu.sh / local pre-flight checks).
+# One dir per cudf root = each version stays permanently warm. Override w/ CARGO_TARGET_DIR.
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$PWD/target-cudf-$(basename "$CUDF_ROOT")}"
 
 # The cudf build recompiles the whole DataFusion stack at opt-3 (#85); the FIRST
 # build in a fresh target-cudf is a full cold rebuild. On a memory-constrained host

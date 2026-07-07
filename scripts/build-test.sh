@@ -162,8 +162,11 @@ if [ "$BUILD" -eq 1 ]; then
     # cudf (default-feature) build: isolate it in its OWN target dir so it doesn't
     # recompile the arrow/DataFusion subgraph every time it alternates with a
     # rust-only build sharing ./target (rust-only toggles arrow's `ffi` feature →
-    # different fingerprint). See build-test-shadgpu.sh for the same rationale.
-    export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$PWD/target-cudf}"
+    # different fingerprint). PLUS key the dir off the cuDF root: a different cudf_ROOT
+    # (this script's local rapids-26.02 vs build-test-shadgpu.sh's rapids-cuda-12.2)
+    # busts the FFI/arrow fingerprints, so sharing one target-cudf across versions
+    # recompiles the whole DataFusion stack on every switch. See build-test-shadgpu.sh.
+    export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$PWD/target-cudf-$(basename "$LOCAL_CUDF_ROOT")}"
     echo "==> build C++ in $BUILD_DIR against cuDF at $LOCAL_CUDF_ROOT (gcc-$GCC_VERSION)"
     # cuDF env first on PATH so nvcc/cmake/ninja resolve from the rapids env.
     export PATH="$LOCAL_CUDF_ROOT/bin:$PATH"
