@@ -90,13 +90,15 @@ gpu_test!(tpcds, 1, q14, tp1_mem120gib, golden_approx);
 gpu_test!(tpcds, 1, q15, tp1_mem120gib, golden_exact);
 gpu_test!(tpcds, 1, q16, tp1_mem120gib, golden_exact);
 gpu_test!(tpcds, 1, q17, tp1_mem120gib, golden_exact);
-// NOTE: q17's real-8-way GPU proof is DEFERRED to the GPU real-8-way JOIN-execution
-// increment. Inc6's multi-type murmur3 kernel now hashes q17's composite INT join keys
-// (was the STRING-only wall), but q17 is the first #13 query with JOINS and the GPU
-// node-executor doesn't yet run per-key-repartitioned per-partition joins — it collapses
-// the join subtree to partitions=1 → 0 rows. The CPU-#13 mixed count/avg/stddev proof
-// (cpu_tpcds_sf1_q17_tp8_mem120gib) stays. Re-add gpu_test!(tpcds q17 tp8 golden_approx_std)
-// once per-partition JOIN execution lands (q17 is that increment's driver).
+// (#96) Real-8-way per-partition JOIN capstone. The CPU-#13 oracle now runs
+// PartitionMode::Partitioned joins per-partition (child0[p] ⋈ child1[p]), matching
+// vanilla DataFusion (all q17 joins are Partitioned 8→8) and the GPU C++ MAP arm —
+// so the GPU's 8-way join subtree now matches the (regenerated) 8-way cost golden.
+// q17: mixed count/avg/stddev over 7 real-8-way joins (golden_approx_std for the
+// GPU-cuDF-M2 stddev). join_int: minimal 1-key fact-dim join (oracle: small result,
+// live CPU compare).
+gpu_test!(tpcds, 1, q17, tp8_mem120gib, golden_approx_std);
+gpu_test!(tpch, 1, join_int, tp8_mem120gib, oracle);
 gpu_test!(tpcds, 1, q18, tp1_mem120gib, golden_exact);
 gpu_test!(tpcds, 1, q19, tp1_mem120gib, golden_exact);
 gpu_test!(tpcds, 1, q20, tp1_mem120gib, golden_exact);

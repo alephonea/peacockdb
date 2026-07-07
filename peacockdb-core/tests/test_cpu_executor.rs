@@ -76,13 +76,17 @@ cpu_node13_result_test!(tpch, 1, shuffle_additive_avg, tp8_mem120gib, true);
 // q1: the canonical AVG carrier (3 avgs + 4 sums + count, GROUP BY rf,ls) — now real
 // 8-way #13 at tp8-mem120gib (was #11-only until Inc4). tp8-mem2gib q1 stays #11.
 cpu_node13_result_test!(tpch, 1, q1, tp8_mem120gib, true);
+// join-int (#96): minimal 2-table single-INT-key inner join (orders⋈customer on custkey)
+// + GROUP BY count — the smallest real-8-way carrier for per-partition INNER JOIN
+// execution, isolating it from q17's 15-join complexity. gen=false until the GPU join
+// fix lands (then a gpu_test! consumes its .result.txt).
+cpu_node13_result_test!(tpch, 1, join_int, tp8_mem120gib, false);
 // q17 (tpcds): the CPU-side real-query STDDEV proof — per measure count(1)+avg(2)+
 // stddev(3) state, ×3 measures — exercising the #13 mixed count/avg/stddev Final
-// width-detect at real 8-way (comet hashes the composite int join keys). gen=false:
-// the GPU tp8 proof is deferred to the GPU real-8-way JOIN-execution increment (Inc6's
-// kernel now handles the int keys, but the GPU node-executor collapses q17's join
-// subtree to partitions=1); no gpu_test! consumes a tp8 .result.txt; .cpu/.cost stay.
-cpu_node13_result_approx_test!(tpcds, 1, q17, tp8_mem120gib, false);
+// width-detect at real 8-way (comet hashes the composite int join keys). gen=true
+// (#96): the CPU oracle now runs q17's 7 Partitioned joins per-partition (8-way),
+// and the tp8 gpu_test! (golden_approx_std) consumes this owned .result.txt.
+cpu_node13_result_approx_test!(tpcds, 1, q17, tp8_mem120gib, true);
 
 // ── TPC-DS ────────────────────────────────────────────────────────────────
 cpu_result_test!(tpcds, 1, q1, tp8_mem2gib, false);

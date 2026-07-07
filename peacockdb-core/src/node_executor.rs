@@ -115,8 +115,10 @@ use datafusion_comet_spark_expr::hash_funcs::murmur3::create_murmur3_hashes;
 use crate::cpu_executor::{batch_varlen_content_bytes, execute_single_node, logical_size_from_schema};
 use crate::gpu_rowgroup_prune::all_row_groups;
 use crate::gpu_rule::{
-    GpuCoalescePartitionsExec, GpuRepartitionExec, GpuScanExec, GpuSortPreservingMergeExec,
+    GpuCoalescePartitionsExec, GpuHashJoinExec, GpuRepartitionExec, GpuScanExec,
+    GpuSortPreservingMergeExec,
 };
+use datafusion::physical_plan::joins::HashJoinExec;
 
 /// Spark HashPartitioning seed (comet + the GPU kernel both init the hash to 42).
 const SPARK_HASH_SEED: u32 = 42;
@@ -160,6 +162,38 @@ fn collapses_partitions(node: &Arc<dyn ExecutionPlan>) -> bool {
         || any.is::<GpuSortPreservingMergeExec>()
         || any.is::<CoalescePartitionsExec>()
         || any.is::<SortPreservingMergeExec>()
+}
+
+/// (#96) If `node` is a `PartitionMode::Partitioned` `HashJoinExec` (possibly
+/// GPU-wrapped) whose two children carry the SAME partition count N>1, return N so
+/// the join runs PER-PARTITION (`child0[p] ⋈ child1[p]` for p in 0..N) — matching
+/// DataFusion's Partitioned `output_partitioning` (verified: all q17 joins at tp8 are
+/// Partitioned 8→8) and the GPU C++ MAP arm. DataFusion's Partitioned join REQUIRES
+/// both inputs Hash-partitioned on the join keys, realized here by the lowered
+/// `GpuRepartition` feeding each side with the SAME comet-murmur3 hash (the Inc2
+/// kernel) — so matching keys (incl. nulls, per the join's own `null_equals_null`)
+/// co-locate in bucket p ⇒ the per-partition inner join is complete and ∪ₚ = the full
+/// join. Returns None for `CollectLeft` (a tracked latent gap — none in the current
+/// flip set), non-joins, unequal-N, or N≤1: all fall through to the collapsed
+/// single-partition path (which keeps tp1 byte-identical).
+fn partitioned_join_arity(
+    node: &Arc<dyn ExecutionPlan>,
+    child_parts: &[Vec<Vec<RecordBatch>>],
+) -> Option<usize> {
+    let inner =
+        node.as_any().downcast_ref::<GpuHashJoinExec>().map(|g| g.inner()).unwrap_or(node);
+    let join = inner.as_any().downcast_ref::<HashJoinExec>()?;
+    if *join.partition_mode() != datafusion::physical_plan::joins::PartitionMode::Partitioned {
+        return None;
+    }
+    if child_parts.len() != 2 {
+        return None;
+    }
+    let n = child_parts[0].len();
+    if n <= 1 || child_parts[1].len() != n {
+        return None;
+    }
+    Some(n)
 }
 
 /// Σ-over-partitions accumulation of per-partition [`NodeMemoryStats`]: row counts
@@ -427,6 +461,37 @@ impl NodeExecutor for CpuNodeExecutor {
             if part_stats.len() > 1 {
                 acc.part_stats = part_stats;
             }
+            return Ok((handles, acc));
+        }
+
+        // (#96) PARTITIONED multi-child JOIN with the multi-partition map active → run
+        // the join PER-PARTITION, producing N output partitions (one per co-partitioned
+        // bucket), matching DataFusion's Partitioned join + the GPU. Both inputs are
+        // Hash-repartitioned on the join key with the same comet-murmur3, so bucket p of
+        // each side holds all rows whose join keys hash to p ⇒ child0[p] ⋈ child1[p] is
+        // complete. Gated (partitioned_join_arity) on Partitioned mode + equal-N>1;
+        // CollectLeft / unequal-N fall through to the collapsed path below.
+        if let Some(n) = partitioned_join_arity(node, &child_parts) {
+            let mut handles = Vec::with_capacity(n);
+            let mut acc: Option<NodeMemoryStats> = None;
+            let mut part_stats: Vec<PartitionStat> = Vec::with_capacity(n);
+            for p in 0..n {
+                let (batches, stat) = execute_single_node(
+                    node,
+                    vec![child_parts[0][p].clone(), child_parts[1][p].clone()],
+                    self.task_ctx.clone(),
+                )
+                .await?;
+                part_stats.push(PartitionStat {
+                    out_rows: stat.row_count,
+                    out_bytes: stat.output_bytes,
+                    row_groups: Vec::new(),
+                });
+                handles.push(self.store(batches));
+                merge_stats(&mut acc, stat);
+            }
+            let mut acc = acc.expect("partitioned join has N>1 partitions");
+            acc.part_stats = part_stats; // N>1 by the gate → always carries sub-lines
             return Ok((handles, acc));
         }
 

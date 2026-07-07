@@ -45,10 +45,42 @@ GpuSortPreservingMergeExec: [i_item_id@0 ASC, i_item_desc@1 ASC, s_state@2 ASC],
             p6: in_rows=0 out_rows=0 out_bytes=12
             p7: in_rows=0 out_rows=0 out_bytes=12
             GpuCoalescePartitionsExec, partitions=1, output_rows=0, output_bytes=12
-              GpuAggregateExec: group_by=[i_item_id, i_item_desc, s_state], aggr=[count(store_sales.ss_quantity), avg(store_sales.ss_quantity), stddev(store_sales.ss_quantity), count(store_returns.sr_return_quantity), avg(store_returns.sr_return_quantity), stddev(store_returns.sr_return_quantity), count(catalog_sales.cs_quantity), avg(catalog_sales.cs_quantity), stddev(catalog_sales.cs_quantity)], partitions=1, output_rows=0, output_bytes=12
-                GpuProjectExec: expr=[ss_quantity@2 as ss_quantity, sr_return_quantity@3 as sr_return_quantity, cs_quantity@4 as cs_quantity, s_state@5 as s_state, i_item_id@0 as i_item_id, i_item_desc@1 as i_item_desc], partitions=1, output_rows=0, output_bytes=12
-                  GpuCoalesceBatchesExec: target_batch_size=315806418, partitions=1, output_rows=0, output_bytes=12
-                    GpuHashJoinExec: join_type=Inner, on=[(i_item_sk@0, ss_item_sk@0)], projection=[1, 2, 4, 5, 6, 7], partitions=1, output_rows=0, output_bytes=12
+              GpuAggregateExec: group_by=[i_item_id, i_item_desc, s_state], aggr=[count(store_sales.ss_quantity), avg(store_sales.ss_quantity), stddev(store_sales.ss_quantity), count(store_returns.sr_return_quantity), avg(store_returns.sr_return_quantity), stddev(store_returns.sr_return_quantity), count(catalog_sales.cs_quantity), avg(catalog_sales.cs_quantity), stddev(catalog_sales.cs_quantity)], partitions=8, output_rows=0, output_bytes=96
+                p0: in_rows=0 out_rows=0 out_bytes=12
+                p1: in_rows=0 out_rows=0 out_bytes=12
+                p2: in_rows=0 out_rows=0 out_bytes=12
+                p3: in_rows=0 out_rows=0 out_bytes=12
+                p4: in_rows=0 out_rows=0 out_bytes=12
+                p5: in_rows=0 out_rows=0 out_bytes=12
+                p6: in_rows=0 out_rows=0 out_bytes=12
+                p7: in_rows=0 out_rows=0 out_bytes=12
+                GpuProjectExec: expr=[ss_quantity@2 as ss_quantity, sr_return_quantity@3 as sr_return_quantity, cs_quantity@4 as cs_quantity, s_state@5 as s_state, i_item_id@0 as i_item_id, i_item_desc@1 as i_item_desc], partitions=8, output_rows=0, output_bytes=96
+                  p0: in_rows=0 out_rows=0 out_bytes=12
+                  p1: in_rows=0 out_rows=0 out_bytes=12
+                  p2: in_rows=0 out_rows=0 out_bytes=12
+                  p3: in_rows=0 out_rows=0 out_bytes=12
+                  p4: in_rows=0 out_rows=0 out_bytes=12
+                  p5: in_rows=0 out_rows=0 out_bytes=12
+                  p6: in_rows=0 out_rows=0 out_bytes=12
+                  p7: in_rows=0 out_rows=0 out_bytes=12
+                  GpuCoalesceBatchesExec: target_batch_size=315806418, partitions=8, output_rows=0, output_bytes=96
+                    p0: in_rows=0 out_rows=0 out_bytes=12
+                    p1: in_rows=0 out_rows=0 out_bytes=12
+                    p2: in_rows=0 out_rows=0 out_bytes=12
+                    p3: in_rows=0 out_rows=0 out_bytes=12
+                    p4: in_rows=0 out_rows=0 out_bytes=12
+                    p5: in_rows=0 out_rows=0 out_bytes=12
+                    p6: in_rows=0 out_rows=0 out_bytes=12
+                    p7: in_rows=0 out_rows=0 out_bytes=12
+                    GpuHashJoinExec: join_type=Inner, on=[(i_item_sk@0, ss_item_sk@0)], projection=[1, 2, 4, 5, 6, 7], partitions=8, output_rows=0, output_bytes=96
+                      p0: in_rows=2234 out_rows=0 out_bytes=12
+                      p1: in_rows=2265 out_rows=0 out_bytes=12
+                      p2: in_rows=2194 out_rows=0 out_bytes=12
+                      p3: in_rows=2294 out_rows=0 out_bytes=12
+                      p4: in_rows=2270 out_rows=0 out_bytes=12
+                      p5: in_rows=2258 out_rows=0 out_bytes=12
+                      p6: in_rows=2213 out_rows=0 out_bytes=12
+                      p7: in_rows=2272 out_rows=0 out_bytes=12
                       GpuCoalesceBatchesExec: target_batch_size=315806418, partitions=8, output_rows=18000, output_bytes=2391468
                         p0: in_rows=2234 out_rows=2234 out_bytes=298896
                         p1: in_rows=2265 out_rows=2265 out_bytes=303281
@@ -89,9 +121,33 @@ GpuSortPreservingMergeExec: [i_item_id@0 ASC, i_item_desc@1 ASC, s_state@2 ASC],
                           p6: in_rows=0 out_rows=0 out_bytes=4
                           p7: in_rows=0 out_rows=0 out_bytes=4
                           GpuCoalescePartitionsExec, partitions=1, output_rows=0, output_bytes=4
-                            GpuProjectExec: expr=[ss_item_sk@1 as ss_item_sk, ss_quantity@2 as ss_quantity, sr_return_quantity@3 as sr_return_quantity, cs_quantity@4 as cs_quantity, s_state@0 as s_state], partitions=1, output_rows=0, output_bytes=4
-                              GpuCoalesceBatchesExec: target_batch_size=315806418, partitions=1, output_rows=0, output_bytes=4
-                                GpuHashJoinExec: join_type=Inner, on=[(s_store_sk@0, ss_store_sk@1)], projection=[1, 2, 4, 5, 6], partitions=1, output_rows=0, output_bytes=4
+                            GpuProjectExec: expr=[ss_item_sk@1 as ss_item_sk, ss_quantity@2 as ss_quantity, sr_return_quantity@3 as sr_return_quantity, cs_quantity@4 as cs_quantity, s_state@0 as s_state], partitions=8, output_rows=0, output_bytes=32
+                              p0: in_rows=0 out_rows=0 out_bytes=4
+                              p1: in_rows=0 out_rows=0 out_bytes=4
+                              p2: in_rows=0 out_rows=0 out_bytes=4
+                              p3: in_rows=0 out_rows=0 out_bytes=4
+                              p4: in_rows=0 out_rows=0 out_bytes=4
+                              p5: in_rows=0 out_rows=0 out_bytes=4
+                              p6: in_rows=0 out_rows=0 out_bytes=4
+                              p7: in_rows=0 out_rows=0 out_bytes=4
+                              GpuCoalesceBatchesExec: target_batch_size=315806418, partitions=8, output_rows=0, output_bytes=32
+                                p0: in_rows=0 out_rows=0 out_bytes=4
+                                p1: in_rows=0 out_rows=0 out_bytes=4
+                                p2: in_rows=0 out_rows=0 out_bytes=4
+                                p3: in_rows=0 out_rows=0 out_bytes=4
+                                p4: in_rows=0 out_rows=0 out_bytes=4
+                                p5: in_rows=0 out_rows=0 out_bytes=4
+                                p6: in_rows=0 out_rows=0 out_bytes=4
+                                p7: in_rows=0 out_rows=0 out_bytes=4
+                                GpuHashJoinExec: join_type=Inner, on=[(s_store_sk@0, ss_store_sk@1)], projection=[1, 2, 4, 5, 6], partitions=8, output_rows=0, output_bytes=32
+                                  p0: in_rows=2 out_rows=0 out_bytes=4
+                                  p1: in_rows=2 out_rows=0 out_bytes=4
+                                  p2: in_rows=0 out_rows=0 out_bytes=4
+                                  p3: in_rows=2 out_rows=0 out_bytes=4
+                                  p4: in_rows=3 out_rows=0 out_bytes=4
+                                  p5: in_rows=3 out_rows=0 out_bytes=4
+                                  p6: in_rows=0 out_rows=0 out_bytes=4
+                                  p7: in_rows=0 out_rows=0 out_bytes=4
                                   GpuCoalesceBatchesExec: target_batch_size=315806418, partitions=8, output_rows=12, output_bytes=210
                                     p0: in_rows=2 out_rows=2 out_bytes=34
                                     p1: in_rows=2 out_rows=2 out_bytes=34
@@ -130,8 +186,24 @@ GpuSortPreservingMergeExec: [i_item_id@0 ASC, i_item_desc@1 ASC, s_state@2 ASC],
                                       p6: in_rows=0 out_rows=0 out_bytes=0
                                       p7: in_rows=0 out_rows=0 out_bytes=0
                                       GpuCoalescePartitionsExec, partitions=1, output_rows=0, output_bytes=0
-                                        GpuCoalesceBatchesExec: target_batch_size=315806418, partitions=1, output_rows=0, output_bytes=0
-                                          GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, cs_sold_date_sk@4)], projection=[1, 2, 3, 4, 6], partitions=1, output_rows=0, output_bytes=0
+                                        GpuCoalesceBatchesExec: target_batch_size=315806418, partitions=8, output_rows=0, output_bytes=0
+                                          p0: in_rows=0 out_rows=0 out_bytes=0
+                                          p1: in_rows=0 out_rows=0 out_bytes=0
+                                          p2: in_rows=0 out_rows=0 out_bytes=0
+                                          p3: in_rows=0 out_rows=0 out_bytes=0
+                                          p4: in_rows=0 out_rows=0 out_bytes=0
+                                          p5: in_rows=0 out_rows=0 out_bytes=0
+                                          p6: in_rows=0 out_rows=0 out_bytes=0
+                                          p7: in_rows=0 out_rows=0 out_bytes=0
+                                          GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, cs_sold_date_sk@4)], projection=[1, 2, 3, 4, 6], partitions=8, output_rows=0, output_bytes=0
+                                            p0: in_rows=41 out_rows=0 out_bytes=0
+                                            p1: in_rows=29 out_rows=0 out_bytes=0
+                                            p2: in_rows=32 out_rows=0 out_bytes=0
+                                            p3: in_rows=42 out_rows=0 out_bytes=0
+                                            p4: in_rows=31 out_rows=0 out_bytes=0
+                                            p5: in_rows=28 out_rows=0 out_bytes=0
+                                            p6: in_rows=38 out_rows=0 out_bytes=0
+                                            p7: in_rows=33 out_rows=0 out_bytes=0
                                             GpuCoalesceBatchesExec: target_batch_size=315806418, partitions=8, output_rows=274, output_bytes=2230
                                               p0: in_rows=41 out_rows=41 out_bytes=334
                                               p1: in_rows=29 out_rows=29 out_bytes=236
@@ -174,8 +246,24 @@ GpuSortPreservingMergeExec: [i_item_id@0 ASC, i_item_desc@1 ASC, s_state@2 ASC],
                                                 p6: in_rows=0 out_rows=0 out_bytes=0
                                                 p7: in_rows=2 out_rows=2 out_bytes=102
                                                 GpuCoalescePartitionsExec, partitions=1, output_rows=8, output_bytes=390
-                                                  GpuCoalesceBatchesExec: target_batch_size=315806418, partitions=1, output_rows=8, output_bytes=390
-                                                    GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, sr_returned_date_sk@3)], projection=[1, 2, 3, 5, 6, 7], partitions=1, output_rows=8, output_bytes=390
+                                                  GpuCoalesceBatchesExec: target_batch_size=315806418, partitions=8, output_rows=8, output_bytes=420
+                                                    p0: in_rows=1 out_rows=1 out_bytes=54
+                                                    p1: in_rows=3 out_rows=3 out_bytes=150
+                                                    p2: in_rows=0 out_rows=0 out_bytes=0
+                                                    p3: in_rows=1 out_rows=1 out_bytes=54
+                                                    p4: in_rows=0 out_rows=0 out_bytes=0
+                                                    p5: in_rows=1 out_rows=1 out_bytes=54
+                                                    p6: in_rows=1 out_rows=1 out_bytes=54
+                                                    p7: in_rows=1 out_rows=1 out_bytes=54
+                                                    GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, sr_returned_date_sk@3)], projection=[1, 2, 3, 5, 6, 7], partitions=8, output_rows=8, output_bytes=420
+                                                      p0: in_rows=41 out_rows=1 out_bytes=54
+                                                      p1: in_rows=29 out_rows=3 out_bytes=150
+                                                      p2: in_rows=32 out_rows=0 out_bytes=0
+                                                      p3: in_rows=42 out_rows=1 out_bytes=54
+                                                      p4: in_rows=31 out_rows=0 out_bytes=0
+                                                      p5: in_rows=28 out_rows=1 out_bytes=54
+                                                      p6: in_rows=38 out_rows=1 out_bytes=54
+                                                      p7: in_rows=33 out_rows=1 out_bytes=54
                                                       GpuCoalesceBatchesExec: target_batch_size=315806418, partitions=8, output_rows=274, output_bytes=2230
                                                         p0: in_rows=41 out_rows=41 out_bytes=334
                                                         p1: in_rows=29 out_rows=29 out_bytes=236
@@ -218,8 +306,24 @@ GpuSortPreservingMergeExec: [i_item_id@0 ASC, i_item_desc@1 ASC, s_state@2 ASC],
                                                           p6: in_rows=1 out_rows=1 out_bytes=63
                                                           p7: in_rows=1 out_rows=1 out_bytes=63
                                                           GpuCoalescePartitionsExec, partitions=1, output_rows=9, output_bytes=518
-                                                            GpuCoalesceBatchesExec: target_batch_size=315806418, partitions=1, output_rows=9, output_bytes=518
-                                                              GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ss_sold_date_sk@0)], projection=[2, 3, 4, 5, 6, 7, 8], partitions=1, output_rows=9, output_bytes=518
+                                                            GpuCoalesceBatchesExec: target_batch_size=315806418, partitions=8, output_rows=9, output_bytes=546
+                                                              p0: in_rows=2 out_rows=2 out_bytes=119
+                                                              p1: in_rows=1 out_rows=1 out_bytes=63
+                                                              p2: in_rows=2 out_rows=2 out_bytes=119
+                                                              p3: in_rows=1 out_rows=1 out_bytes=63
+                                                              p4: in_rows=0 out_rows=0 out_bytes=0
+                                                              p5: in_rows=2 out_rows=2 out_bytes=119
+                                                              p6: in_rows=0 out_rows=0 out_bytes=0
+                                                              p7: in_rows=1 out_rows=1 out_bytes=63
+                                                              GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ss_sold_date_sk@0)], projection=[2, 3, 4, 5, 6, 7, 8], partitions=8, output_rows=9, output_bytes=546
+                                                                p0: in_rows=9 out_rows=2 out_bytes=119
+                                                                p1: in_rows=12 out_rows=1 out_bytes=63
+                                                                p2: in_rows=8 out_rows=2 out_bytes=119
+                                                                p3: in_rows=10 out_rows=1 out_bytes=63
+                                                                p4: in_rows=16 out_rows=0 out_bytes=0
+                                                                p5: in_rows=12 out_rows=2 out_bytes=119
+                                                                p6: in_rows=13 out_rows=0 out_bytes=0
+                                                                p7: in_rows=11 out_rows=1 out_bytes=63
                                                                 GpuCoalesceBatchesExec: target_batch_size=315806418, partitions=8, output_rows=91, output_bytes=743
                                                                   p0: in_rows=9 out_rows=9 out_bytes=74
                                                                   p1: in_rows=12 out_rows=12 out_bytes=98
@@ -262,9 +366,33 @@ GpuSortPreservingMergeExec: [i_item_id@0 ASC, i_item_desc@1 ASC, s_state@2 ASC],
                                                                     p6: in_rows=24 out_rows=24 out_bytes=1560
                                                                     p7: in_rows=23 out_rows=23 out_bytes=1496
                                                                     GpuCoalescePartitionsExec, partitions=1, output_rows=210, output_bytes=13656
-                                                                      GpuProjectExec: expr=[ss_sold_date_sk@2 as ss_sold_date_sk, ss_item_sk@3 as ss_item_sk, ss_store_sk@4 as ss_store_sk, ss_quantity@5 as ss_quantity, sr_returned_date_sk@6 as sr_returned_date_sk, sr_return_quantity@7 as sr_return_quantity, cs_sold_date_sk@0 as cs_sold_date_sk, cs_quantity@1 as cs_quantity], partitions=1, output_rows=210, output_bytes=13656
-                                                                        GpuCoalesceBatchesExec: target_batch_size=315806418, partitions=1, output_rows=210, output_bytes=13656
-                                                                          GpuHashJoinExec: join_type=Inner, on=[(cs_bill_customer_sk@1, sr_customer_sk@6), (cs_item_sk@2, sr_item_sk@5)], projection=[0, 3, 4, 5, 6, 7, 8, 11], partitions=1, output_rows=210, output_bytes=13656
+                                                                      GpuProjectExec: expr=[ss_sold_date_sk@2 as ss_sold_date_sk, ss_item_sk@3 as ss_item_sk, ss_store_sk@4 as ss_store_sk, ss_quantity@5 as ss_quantity, sr_returned_date_sk@6 as sr_returned_date_sk, sr_return_quantity@7 as sr_return_quantity, cs_sold_date_sk@0 as cs_sold_date_sk, cs_quantity@1 as cs_quantity], partitions=8, output_rows=210, output_bytes=13680
+                                                                        p0: in_rows=30 out_rows=30 out_bytes=1952
+                                                                        p1: in_rows=33 out_rows=33 out_bytes=2152
+                                                                        p2: in_rows=24 out_rows=24 out_bytes=1560
+                                                                        p3: in_rows=28 out_rows=28 out_bytes=1824
+                                                                        p4: in_rows=16 out_rows=16 out_bytes=1040
+                                                                        p5: in_rows=26 out_rows=26 out_bytes=1696
+                                                                        p6: in_rows=26 out_rows=26 out_bytes=1696
+                                                                        p7: in_rows=27 out_rows=27 out_bytes=1760
+                                                                        GpuCoalesceBatchesExec: target_batch_size=315806418, partitions=8, output_rows=210, output_bytes=13680
+                                                                          p0: in_rows=30 out_rows=30 out_bytes=1952
+                                                                          p1: in_rows=33 out_rows=33 out_bytes=2152
+                                                                          p2: in_rows=24 out_rows=24 out_bytes=1560
+                                                                          p3: in_rows=28 out_rows=28 out_bytes=1824
+                                                                          p4: in_rows=16 out_rows=16 out_bytes=1040
+                                                                          p5: in_rows=26 out_rows=26 out_bytes=1696
+                                                                          p6: in_rows=26 out_rows=26 out_bytes=1696
+                                                                          p7: in_rows=27 out_rows=27 out_bytes=1760
+                                                                          GpuHashJoinExec: join_type=Inner, on=[(cs_bill_customer_sk@1, sr_customer_sk@6), (cs_item_sk@2, sr_item_sk@5)], projection=[0, 3, 4, 5, 6, 7, 8, 11], partitions=8, output_rows=210, output_bytes=13680
+                                                                            p0: in_rows=180776 out_rows=30 out_bytes=1952
+                                                                            p1: in_rows=180031 out_rows=33 out_bytes=2152
+                                                                            p2: in_rows=180676 out_rows=24 out_bytes=1560
+                                                                            p3: in_rows=179916 out_rows=28 out_bytes=1824
+                                                                            p4: in_rows=179944 out_rows=16 out_bytes=1040
+                                                                            p5: in_rows=180701 out_rows=26 out_bytes=1696
+                                                                            p6: in_rows=179723 out_rows=26 out_bytes=1696
+                                                                            p7: in_rows=179781 out_rows=27 out_bytes=1760
                                                                             GpuCoalesceBatchesExec: target_batch_size=315806418, partitions=8, output_rows=1441548, output_bytes=46850320
                                                                               p0: in_rows=180776 out_rows=180776 out_bytes=5875220
                                                                               p1: in_rows=180031 out_rows=180031 out_bytes=5851008
@@ -312,9 +440,33 @@ GpuSortPreservingMergeExec: [i_item_id@0 ASC, i_item_desc@1 ASC, s_state@2 ASC],
                                                                                 p6: in_rows=26168 out_rows=26168 out_bytes=1700920
                                                                                 p7: in_rows=26078 out_rows=26078 out_bytes=1695072
                                                                                 GpuCoalescePartitionsExec, partitions=1, output_rows=209417, output_bytes=13612112
-                                                                                  GpuProjectExec: expr=[ss_sold_date_sk@4 as ss_sold_date_sk, ss_item_sk@5 as ss_item_sk, ss_store_sk@6 as ss_store_sk, ss_quantity@7 as ss_quantity, sr_returned_date_sk@0 as sr_returned_date_sk, sr_item_sk@1 as sr_item_sk, sr_customer_sk@2 as sr_customer_sk, sr_return_quantity@3 as sr_return_quantity], partitions=1, output_rows=209417, output_bytes=13612112
-                                                                                    GpuCoalesceBatchesExec: target_batch_size=315806418, partitions=1, output_rows=209417, output_bytes=13612112
-                                                                                      GpuHashJoinExec: join_type=Inner, on=[(sr_customer_sk@2, ss_customer_sk@2), (sr_item_sk@1, ss_item_sk@1), (sr_ticket_number@3, ss_ticket_number@4)], projection=[0, 1, 2, 4, 5, 6, 8, 10], partitions=1, output_rows=209417, output_bytes=13612112
+                                                                                  GpuProjectExec: expr=[ss_sold_date_sk@4 as ss_sold_date_sk, ss_item_sk@5 as ss_item_sk, ss_store_sk@6 as ss_store_sk, ss_quantity@7 as ss_quantity, sr_returned_date_sk@0 as sr_returned_date_sk, sr_item_sk@1 as sr_item_sk, sr_customer_sk@2 as sr_customer_sk, sr_return_quantity@3 as sr_return_quantity], partitions=8, output_rows=209417, output_bytes=13612128
+                                                                                    p0: in_rows=25940 out_rows=25940 out_bytes=1686104
+                                                                                    p1: in_rows=26270 out_rows=26270 out_bytes=1707552
+                                                                                    p2: in_rows=26084 out_rows=26084 out_bytes=1695464
+                                                                                    p3: in_rows=26295 out_rows=26295 out_bytes=1709176
+                                                                                    p4: in_rows=26379 out_rows=26379 out_bytes=1714640
+                                                                                    p5: in_rows=26262 out_rows=26262 out_bytes=1707032
+                                                                                    p6: in_rows=26088 out_rows=26088 out_bytes=1695720
+                                                                                    p7: in_rows=26099 out_rows=26099 out_bytes=1696440
+                                                                                    GpuCoalesceBatchesExec: target_batch_size=315806418, partitions=8, output_rows=209417, output_bytes=13612128
+                                                                                      p0: in_rows=25940 out_rows=25940 out_bytes=1686104
+                                                                                      p1: in_rows=26270 out_rows=26270 out_bytes=1707552
+                                                                                      p2: in_rows=26084 out_rows=26084 out_bytes=1695464
+                                                                                      p3: in_rows=26295 out_rows=26295 out_bytes=1709176
+                                                                                      p4: in_rows=26379 out_rows=26379 out_bytes=1714640
+                                                                                      p5: in_rows=26262 out_rows=26262 out_bytes=1707032
+                                                                                      p6: in_rows=26088 out_rows=26088 out_bytes=1695720
+                                                                                      p7: in_rows=26099 out_rows=26099 out_bytes=1696440
+                                                                                      GpuHashJoinExec: join_type=Inner, on=[(sr_customer_sk@2, ss_customer_sk@2), (sr_item_sk@1, ss_item_sk@1), (sr_ticket_number@3, ss_ticket_number@4)], projection=[0, 1, 2, 4, 5, 6, 8, 10], partitions=8, output_rows=209417, output_bytes=13612128
+                                                                                        p0: in_rows=35735 out_rows=25940 out_bytes=1686104
+                                                                                        p1: in_rows=36024 out_rows=26270 out_bytes=1707552
+                                                                                        p2: in_rows=35796 out_rows=26084 out_bytes=1695464
+                                                                                        p3: in_rows=36195 out_rows=26295 out_bytes=1709176
+                                                                                        p4: in_rows=36174 out_rows=26379 out_bytes=1714640
+                                                                                        p5: in_rows=35932 out_rows=26262 out_bytes=1707032
+                                                                                        p6: in_rows=35986 out_rows=26088 out_bytes=1695720
+                                                                                        p7: in_rows=36025 out_rows=26099 out_bytes=1696440
                                                                                         GpuCoalesceBatchesExec: target_batch_size=315806418, partitions=8, output_rows=287867, output_bytes=11694615
                                                                                           p0: in_rows=35735 out_rows=35735 out_bytes=1451735
                                                                                           p1: in_rows=36024 out_rows=36024 out_bytes=1463475
