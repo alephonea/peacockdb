@@ -1482,12 +1482,26 @@ static TableResult execute_aggregate(const fb::GpuAggregate* agg) {
         bool is_sum = (name == "sum" || name == "SUM");
         std::unique_ptr<cudf::column> result_col;
         if (is_count) {
-          // Avoid make_count_aggregation<reduce_aggregation> which is not
-          // exported in all cudf versions. Count = size - null_count.
-          int64_t cnt = static_cast<int64_t>(values_col.size()) -
-                        static_cast<int64_t>(values_col.null_count());
-          cudf::numeric_scalar<int64_t> s(cnt, true);
-          result_col = cudf::make_column_from_scalar(s, 1);
+          if (is_final) {
+            // #100: a GLOBAL (ungrouped) count at the Final stage merges the
+            // per-partition PARTIAL counts — it must SUM them (values_col holds one
+            // partial-count per partition), NOT re-count the partial rows. Mirrors
+            // the grouped make_agg count→sum-at-Final. (Bug: a global count(*) at
+            // real 8-way was counting the 8 partial rows = 8 instead of Σ = the true
+            // total.) The partial count column is INT64; reduce-sum to INT64.
+            auto ragg = cudf::make_sum_aggregation<cudf::reduce_aggregation>();
+            auto s = cudf::reduce(values_col, *ragg,
+                                  cudf::data_type{cudf::type_id::INT64});
+            result_col = cudf::make_column_from_scalar(*s, 1);
+          } else {
+            // Partial/Single: count the actual (non-null) rows.
+            // Avoid make_count_aggregation<reduce_aggregation> which is not
+            // exported in all cudf versions. Count = size - null_count.
+            int64_t cnt = static_cast<int64_t>(values_col.size()) -
+                          static_cast<int64_t>(values_col.null_count());
+            cudf::numeric_scalar<int64_t> s(cnt, true);
+            result_col = cudf::make_column_from_scalar(s, 1);
+          }
         } else if (values_col.type().id() == cudf::type_id::DECIMAL128 &&
                    (is_sum || is_avg)) {
           // cudf::reduce supports only min/max on fixed_point types; sum/mean
