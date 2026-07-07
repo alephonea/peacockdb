@@ -54,6 +54,7 @@ pub fn build_session_state_with_gpu_rules_mode(
 
     let ctx = SessionContext::new_with_state(state);
     ctx.register_udf(vector::l2_distance_udf());
+    ctx.register_udf(vector::to_vector_udf());
     ctx
 }
 
@@ -86,6 +87,7 @@ pub fn build_session_state(
 
     let ctx = SessionContext::new_with_state(state);
     ctx.register_udf(vector::l2_distance_udf());
+    ctx.register_udf(vector::to_vector_udf());
     ctx
 }
 

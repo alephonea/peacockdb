@@ -16,4 +16,4 @@ pub use logical::VectorTopK;
 pub use optimizer::PushFilterIntoVectorTopK;
 pub use planner::{VectorQueryPlanner, VectorTopKPlanner};
 pub use types::{is_vector_type, vector_dtype_for_dim, VectorMeta, VectorScalar};
-pub use udf::{l2_distance_udf, L2Distance};
+pub use udf::{l2_distance_udf, to_vector_udf, L2Distance, ToVector};

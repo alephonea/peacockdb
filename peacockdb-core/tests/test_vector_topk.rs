@@ -243,3 +243,53 @@ async fn e2e_top_k_with_prefilter_matches_reference() {
         "top-3 nearest among flagged rows (WHERE pre-filter below the top-k)"
     );
 }
+
+/// The k nearest ids (ascending distance) among rows whose id != `exclude`.
+fn brute_top_k_excluding(k: usize, exclude: i32) -> Vec<i32> {
+    let q = query();
+    let mut scored: Vec<(f32, i32)> = rows()
+        .iter()
+        .enumerate()
+        .map(|(id, r)| (id as i32, r))
+        .filter(|(id, _)| *id != exclude)
+        .map(|(id, r)| (ref_l2(r, &q), id))
+        .collect();
+    scored.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+    scored.into_iter().take(k).map(|(_, id)| id).collect()
+}
+
+/// The real point of ticket 4: a genuine `ctx.sql()` string reaches VectorTopK.
+/// The query vector is spelled with the `to_vector(...)` constructor UDF (SQL
+/// can't write a FixedSizeList literal), and we ORDER BY the `l2_distance(...)`
+/// EXPRESSION itself — not a SELECT alias — so the analyzer's sort-key match fires
+/// (ORDER BY an alias would sort on a plain column and never reach VectorTopK).
+#[tokio::test]
+async fn sql_end_to_end_top_k_via_to_vector() {
+    let ctx = ctx_with_table().await;
+    // WHERE pre-filter (excludes the exact-match row id=1) lands below VectorTopK.
+    let sql = "SELECT id FROM t \
+               WHERE id <> 1 \
+               ORDER BY l2_distance(v, to_vector(1, 2, 3, 4)) \
+               LIMIT 3";
+
+    let plan = ctx.sql(sql).await.unwrap().create_physical_plan().await.unwrap();
+    assert!(
+        contains_exec(&plan, "GpuVectorSearchExec"),
+        "SQL top-k must go through VectorTopK -> GpuVectorSearchExec, got:\n{}",
+        datafusion::physical_plan::displayable(plan.as_ref()).indent(true)
+    );
+
+    let batches = datafusion::physical_plan::collect(plan, ctx.task_ctx()).await.unwrap();
+    let mut ids = Vec::new();
+    for b in &batches {
+        let col = b.column(0).as_any().downcast_ref::<Int32Array>().unwrap();
+        for i in 0..b.num_rows() {
+            ids.push(col.value(i));
+        }
+    }
+    assert_eq!(
+        ids,
+        brute_top_k_excluding(3, 1),
+        "SQL returns exactly the 3 nearest ids among the WHERE-filtered rows"
+    );
+}

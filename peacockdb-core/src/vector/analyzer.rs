@@ -5,13 +5,18 @@
 //! is rewritten; multi-key sorts, descending, or non-vector keys are left as an
 //! ordinary Sort+Limit (still correct, just not accelerated).
 
-use datafusion::arrow::array::{Array, Float16Array};
+use std::sync::Arc;
+
+use datafusion::arrow::array::{Array, Float16Array, RecordBatch, RecordBatchOptions};
+use datafusion::arrow::datatypes::Schema;
 use datafusion::common::config::ConfigOptions;
 use datafusion::common::tree_node::{Transformed, TreeNode};
-use datafusion::common::{Result, ScalarValue};
+use datafusion::common::{DFSchema, Result, ScalarValue};
+use datafusion::execution::context::ExecutionProps;
 use datafusion::logical_expr::expr::ScalarFunction;
 use datafusion::logical_expr::{Expr, Extension, LogicalPlan};
 use datafusion::optimizer::AnalyzerRule;
+use datafusion::physical_expr::create_physical_expr;
 
 use super::logical::VectorTopK;
 
@@ -31,33 +36,80 @@ impl AnalyzerRule for VectorTopKAnalyzerRule {
 }
 
 fn rewrite_limit_sort(node: LogicalPlan) -> Result<Transformed<LogicalPlan>> {
-    let LogicalPlan::Limit(limit) = &node else {
-        return Ok(Transformed::no(node));
-    };
-    // Plain LIMIT k with no OFFSET.
-    if let Some(skip) = &limit.skip {
-        if literal_usize(skip) != Some(0) {
-            return Ok(Transformed::no(node));
+    // The top-k shape reaches the analyzer as either:
+    //  - `Limit(fetch=k) -> [Projection]* -> Sort(l2_distance)` — SQL
+    //    `SELECT id .. ORDER BY .. LIMIT k` interposes a projection between the
+    //    Limit and the Sort (the SELECT list, above the sort's own id+embedding
+    //    projection); DataFrame `.sort().limit()` has no interposed projection.
+    //  - `Sort(.., fetch=Some(k))` — a fetch already fused into the Sort node.
+    // The fetch (k) lives on whichever of Limit/Sort carries it; the Sort holding
+    // the l2_distance key is found by descending through any interposed Projections.
+    match &node {
+        LogicalPlan::Limit(limit) => {
+            // Plain LIMIT k with no OFFSET.
+            if let Some(skip) = &limit.skip {
+                if literal_usize(skip) != Some(0) {
+                    return Ok(Transformed::no(node));
+                }
+            }
+            let Some(fetch) = limit.fetch.as_deref().and_then(literal_usize) else {
+                return Ok(Transformed::no(node));
+            };
+            match rewrite_topk_under(limit.input.as_ref(), fetch) {
+                Some(new_input) => {
+                    let mut limit = limit.clone();
+                    limit.input = Arc::new(new_input);
+                    Ok(Transformed::yes(LogicalPlan::Limit(limit)))
+                }
+                None => Ok(Transformed::no(node)),
+            }
         }
+        LogicalPlan::Sort(sort) => match sort.fetch.and_then(|f| vector_top_k_from_sort(sort, f)) {
+            Some(vtopk) => Ok(Transformed::yes(vtopk)),
+            None => Ok(Transformed::no(node)),
+        },
+        _ => Ok(Transformed::no(node)),
     }
-    let Some(fetch) = limit.fetch.as_deref().and_then(literal_usize) else {
-        return Ok(Transformed::no(node));
-    };
-    let LogicalPlan::Sort(sort) = limit.input.as_ref() else {
-        return Ok(Transformed::no(node));
-    };
-    // A single ascending sort key (L2: smaller distance == nearer).
+}
+
+/// Descend a `Limit`'s input through any interposed `Projection`s to the `Sort`
+/// carrying the l2_distance key, and replace that `Sort` with a `VectorTopK{k}`,
+/// rebuilding the projections above it. `None` if no such Sort is found.
+fn rewrite_topk_under(plan: &LogicalPlan, k: usize) -> Option<LogicalPlan> {
+    match plan {
+        LogicalPlan::Sort(sort) => vector_top_k_from_sort(sort, k),
+        LogicalPlan::Projection(proj) => {
+            let new_input = rewrite_topk_under(proj.input.as_ref(), k)?;
+            // The rewritten input (VectorTopK) has the same schema as the Sort it
+            // replaced, so this projection still type-checks.
+            Some(LogicalPlan::Projection(
+                datafusion::logical_expr::Projection::try_new(
+                    proj.expr.clone(),
+                    Arc::new(new_input),
+                )
+                .ok()?,
+            ))
+        }
+        _ => None,
+    }
+}
+
+/// If `sort` is a single ascending `l2_distance(embedding, <const query>)` key,
+/// the `VectorTopK{k=fetch}` extension plan that replaces it; `None` otherwise
+/// (multi-key, descending, non-vector, or non-constant query — left as Sort+Limit).
+fn vector_top_k_from_sort(
+    sort: &datafusion::logical_expr::Sort,
+    fetch: usize,
+) -> Option<LogicalPlan> {
     if sort.expr.len() != 1 {
-        return Ok(Transformed::no(node));
+        return None;
     }
     let sort_expr = &sort.expr[0];
+    // L2: smaller distance == nearer, so only an ascending key is a top-k.
     if !sort_expr.asc {
-        return Ok(Transformed::no(node));
+        return None;
     }
-    let Some((query, dim)) = as_l2_distance(&sort_expr.expr) else {
-        return Ok(Transformed::no(node));
-    };
-
+    let (query, dim) = as_l2_distance(&sort_expr.expr)?;
     let vtopk = VectorTopK::new(
         sort.input.as_ref().clone(),
         sort_expr.expr.clone(),
@@ -65,15 +117,17 @@ fn rewrite_limit_sort(node: LogicalPlan) -> Result<Transformed<LogicalPlan>> {
         query,
         dim,
     );
-    Ok(Transformed::yes(LogicalPlan::Extension(Extension {
-        node: std::sync::Arc::new(vtopk),
-    })))
+    Some(LogicalPlan::Extension(Extension {
+        node: Arc::new(vtopk),
+    }))
 }
 
-/// `Some((query_bytes, dim))` iff `expr` is an `l2_distance(_, _)` call. The query
-/// bytes/dim come from whichever argument is a FixedSizeList<Float16> literal
-/// (little-endian element bytes); a non-literal query yields empty bytes (the CPU
-/// exec still scores via the expr — the bytes only feed the serialized IR).
+/// `Some((query_bytes, dim))` iff `expr` is an `l2_distance(_, _)` whose query
+/// argument resolves to a constant `FixedSizeList<Float16>` — either directly (a
+/// literal) or by folding a constant expression such as `to_vector(1,2,3,4)`. The
+/// embedding-column argument does not fold to a constant, which is how the two are
+/// told apart. `None` (not an l2_distance call, or the query isn't constant) leaves
+/// the plan as a plain Sort+Limit.
 fn as_l2_distance(expr: &Expr) -> Option<(Vec<u8>, u32)> {
     let Expr::ScalarFunction(ScalarFunction { func, args }) = expr else {
         return None;
@@ -81,14 +135,33 @@ fn as_l2_distance(expr: &Expr) -> Option<(Vec<u8>, u32)> {
     if func.name() != L2_DISTANCE_UDF || args.len() != 2 {
         return None;
     }
-    let query = args.iter().find_map(|a| match a {
-        Expr::Literal(sv) => encode_fp16_query(sv),
-        _ => None,
-    });
-    Some(query.unwrap_or_default())
+    // Query is conventionally the 2nd arg; accept the 1st too for robustness.
+    resolve_const_vector(&args[1]).or_else(|| resolve_const_vector(&args[0]))
 }
 
-/// A `FixedSizeList<Float16, dim>` literal → (little-endian f16 bytes, dim).
+/// Resolve `expr` to a constant `FixedSizeList<Float16>` → (little-endian f16
+/// bytes, dim). A literal is read directly; anything else is const-folded (built
+/// as a physical expr over an empty schema and evaluated). Returns `None` if it
+/// isn't constant (e.g. references a column) or doesn't fold to an fp16 vector.
+fn resolve_const_vector(expr: &Expr) -> Option<(Vec<u8>, u32)> {
+    if let Expr::Literal(sv) = expr {
+        return encode_fp16_query(sv);
+    }
+    let df_schema = DFSchema::empty();
+    let phys = create_physical_expr(expr, &df_schema, &ExecutionProps::new()).ok()?;
+    // A single-row, zero-column batch is enough to evaluate a constant expression.
+    let batch = RecordBatch::try_new_with_options(
+        Arc::new(Schema::empty()),
+        vec![],
+        &RecordBatchOptions::new().with_row_count(Some(1)),
+    )
+    .ok()?;
+    let arr = phys.evaluate(&batch).ok()?.into_array(1).ok()?;
+    let sv = ScalarValue::try_from_array(&arr, 0).ok()?;
+    encode_fp16_query(&sv)
+}
+
+/// A `FixedSizeList<Float16, dim>` scalar → (little-endian f16 bytes, dim).
 fn encode_fp16_query(sv: &ScalarValue) -> Option<(Vec<u8>, u32)> {
     let ScalarValue::FixedSizeList(arr) = sv else {
         return None;
