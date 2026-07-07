@@ -89,9 +89,11 @@ gpu_test!(tpcds, 1, q14, tp1_mem120gib, golden_approx);
 gpu_test!(tpcds, 1, q15, tp1_mem120gib, golden_exact);
 gpu_test!(tpcds, 1, q16, tp1_mem120gib, golden_exact);
 gpu_test!(tpcds, 1, q17, tp1_mem120gib, golden_exact);
-// q17 at real 8-way (Inc5): the mixed count(1)+avg(2)+stddev(3)×3-measure Final over a
-// Spark-murmur3 shuffle on Utf8 keys — the real-query STDDEV/VAR proof. golden_APPROX.
-gpu_test!(tpcds, 1, q17, tp8_mem120gib, golden_approx);
+// NOTE: q17's real-8-way GPU proof is DEFERRED to #18. q17 is the first #13 query with
+// a JOIN, whose join-key repartition uses INTEGER keys (item_sk) — the current
+// Spark-murmur3 partition kernel is STRING-only (I-2 boundary). The CPU-side #13 mixed
+// count/avg/stddev proof (cpu_tpcds_sf1_q17_tp8_mem120gib) stays; comet's hash handles
+// int keys. Re-add gpu_test!(tpcds, 1, q17, tp8_mem120gib, golden_approx) under #18.
 gpu_test!(tpcds, 1, q18, tp1_mem120gib, golden_exact);
 gpu_test!(tpcds, 1, q19, tp1_mem120gib, golden_exact);
 gpu_test!(tpcds, 1, q20, tp1_mem120gib, golden_exact);

@@ -1828,12 +1828,15 @@ static TableResult execute_aggregate(const fb::GpuAggregate* agg) {
       } else if ((is_stddev_name(name) || is_var_name(name)) &&
                  phase == AggPhase::Final && mergeable) {
         // Merge Welford state across partitions: pack the 3 partial cols
-        // [count, mean, m2] at [in_off, in_off+1, in_off+2] into a struct
-        // {int64, f64, f64} and MERGE_M2 per group (Welford-Chan). The finalize
-        // (var / stddev, ddof, count-ddof<=0 -> NULL) happens in the assembly.
-        // Consumes THREE Final input columns.
+        // [count, mean, m2] at [in_off, in_off+1, in_off+2] into a struct and
+        // MERGE_M2 per group (Welford-Chan). The finalize (var / stddev, ddof,
+        // count-ddof<=0 -> NULL) happens in the assembly. Consumes THREE Final cols.
+        // Child ORDER + TYPES are fixed by cuDF's group_merge_m2 (verified against
+        // the 25.02 runtime source): child(0)=valid_count INT32, child(1)=mean f64,
+        // child(2)=M2 f64. Count MUST be INT32 here (25.02 rejects INT64; 25.10
+        // relaxed it, which is why it compiled but failed the 25.02 GPU-remote run).
         auto cnt = cudf::cast(tv.column(static_cast<cudf::size_type>(in_off)),
-                              cudf::data_type{cudf::type_id::INT64});
+                              cudf::data_type{cudf::type_id::INT32});
         auto mean = std::make_unique<cudf::column>(
             tv.column(static_cast<cudf::size_type>(in_off + 1)));
         auto m2 = std::make_unique<cudf::column>(
@@ -1877,6 +1880,17 @@ static TableResult execute_aggregate(const fb::GpuAggregate* agg) {
             }
           }
           req.values = base;
+        } else if ((is_stddev_name(name) || is_var_name(name)) &&
+                   phase != AggPhase::Final) {
+          // SINGLE-PARTITION stddev/var (make_std/make_variance singleton path):
+          // stddev/var are FLOAT64 in DataFusion, but cuDF's make_std/make_variance
+          // keep the input (e.g. DECIMAL l_quantity) type → a narrow/decimal result
+          // that mismatches the f64 golden. Cast to FLOAT64 first, exactly as the
+          // mergeable M2 path does. (Final here is the singleton MEAN over the
+          // already-f64 partial, so no cast needed on that leg.)
+          computed_args.push_back(
+              cudf::cast(arg_col(func), cudf::data_type{cudf::type_id::FLOAT64}));
+          req.values = computed_args.back()->view();
         } else {
           req.values = arg_col(func);
         }

@@ -76,10 +76,12 @@ cpu_node13_result_test!(tpch, 1, shuffle_additive_avg, tp8_mem120gib, true);
 // q1: the canonical AVG carrier (3 avgs + 4 sums + count, GROUP BY rf,ls) — now real
 // 8-way #13 at tp8-mem120gib (was #11-only until Inc4). tp8-mem2gib q1 stays #11.
 cpu_node13_result_test!(tpch, 1, q1, tp8_mem120gib, true);
-// q17 (tpcds): the real-query STDDEV proof — per measure count(1)+avg(2)+stddev(3) state,
-// ×3 measures, GROUP BY i_item_id/i_item_desc/s_state (all Utf8 → murmur3 STRING kernel).
-// Exercises the mixed count/avg/stddev Final width-detect at real 8-way. Approx (M2 float).
-cpu_node13_result_approx_test!(tpcds, 1, q17, tp8_mem120gib, true);
+// q17 (tpcds): the CPU-side real-query STDDEV proof — per measure count(1)+avg(2)+
+// stddev(3) state, ×3 measures — exercising the #13 mixed count/avg/stddev Final
+// width-detect at real 8-way (comet hashes the int join keys). gen=false: the GPU
+// tp8 proof is deferred to #18 (STRING-only murmur3 kernel rejects int item_sk keys),
+// so no gpu_test! consumes a tp8 .result.txt; the .cpu/.cost cost goldens stay.
+cpu_node13_result_approx_test!(tpcds, 1, q17, tp8_mem120gib, false);
 
 // ── TPC-DS ────────────────────────────────────────────────────────────────
 cpu_result_test!(tpcds, 1, q1, tp8_mem2gib, false);
