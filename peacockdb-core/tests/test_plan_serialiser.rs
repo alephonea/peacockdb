@@ -504,3 +504,136 @@ async fn test_roundtrip_gpu_hash_join_null_equals_null_true() {
         "null_equals_null = true must survive deserialize -> re-serialize"
     );
 }
+
+/// Part-A IR round-trip for the vector-search additions: build a GpuPlan whose
+/// root is a GpuVectorSearch (query immediate + a FixedSizeList<Float16,4> output
+/// field), serialize to bytes, parse back, and assert every new field survives.
+/// The ExecutionPlan-level serialize/deserialize branch lands with
+/// GpuVectorSearchExec in part B; here we prove the fbs schema + generated code
+/// round-trip byte-for-byte on their own.
+#[test]
+fn test_vector_search_ir_roundtrip() {
+    let mut b = flatbuffers::FlatBufferBuilder::with_capacity(1024);
+
+    // output_schema: [ id: Int32, v: FixedSizeList<Float16, 4> ]
+    let id_name = b.create_string("id");
+    let id_field = fb::Field::create(
+        &mut b,
+        &fb::FieldArgs {
+            name: Some(id_name),
+            data_type: fb::DataType::Int32,
+            nullable: false,
+            decimal_precision: 0,
+            decimal_scale: 0,
+            child_type: fb::DataType::Null,
+            list_size: 0,
+        },
+    );
+    let v_name = b.create_string("v");
+    let v_field = fb::Field::create(
+        &mut b,
+        &fb::FieldArgs {
+            name: Some(v_name),
+            data_type: fb::DataType::FixedSizeList,
+            nullable: false,
+            decimal_precision: 0,
+            decimal_scale: 0,
+            child_type: fb::DataType::Float16,
+            list_size: 4,
+        },
+    );
+    let fields = b.create_vector(&[id_field, v_field]);
+    let schema = fb::Schema::create(&mut b, &fb::SchemaArgs { fields: Some(fields) });
+
+    // 4 fp16 query elements = 8 bytes; opaque here (byte fidelity is what matters).
+    let query_bytes: [u8; 8] = [0, 60, 0, 64, 0, 66, 0, 68];
+    let query = b.create_vector(&query_bytes);
+
+    let vs = fb::GpuVectorSearch::create(
+        &mut b,
+        &fb::GpuVectorSearchArgs {
+            metric: fb::VectorMetric::L2,
+            query: Some(query),
+            dim: 4,
+            scalar: fb::VectorScalar::F16,
+            k: 3,
+            strategy: fb::VectorSearchStrategy::ExactBrute,
+            ann_index_id: 0,
+            shortlist_size: 0,
+            filter_bitmap_input: None,
+            input: None,
+        },
+    );
+    let node = fb::PlanNode::create(
+        &mut b,
+        &fb::PlanNodeArgs {
+            node_type: fb::PlanNodeKind::GpuVectorSearch,
+            node: Some(vs.as_union_value()),
+            output_schema: Some(schema),
+        },
+    );
+    let plan = fb::GpuPlan::create(&mut b, &fb::GpuPlanArgs { root: Some(node) });
+    b.finish(plan, None);
+    let bytes = b.finished_data().to_vec();
+
+    // Parse back and assert the whole node + schema round-trips.
+    let plan = flatbuffers::root::<fb::GpuPlan>(&bytes).expect("invalid FlatBuffer");
+    let root = plan.root().unwrap();
+    assert_eq!(root.node_type(), fb::PlanNodeKind::GpuVectorSearch);
+
+    let vs = root.node_as_gpu_vector_search().expect("root is GpuVectorSearch");
+    assert_eq!(vs.metric(), fb::VectorMetric::L2);
+    assert_eq!(vs.dim(), 4);
+    assert_eq!(vs.scalar(), fb::VectorScalar::F16);
+    assert_eq!(vs.k(), 3);
+    assert_eq!(vs.strategy(), fb::VectorSearchStrategy::ExactBrute);
+    assert_eq!(vs.ann_index_id(), 0);
+    assert_eq!(vs.query().unwrap().bytes(), &query_bytes);
+    assert!(vs.input().is_none() && vs.filter_bitmap_input().is_none());
+
+    let sch = root.output_schema().unwrap();
+    let f = sch.fields().unwrap();
+    assert_eq!(f.len(), 2);
+    let vfield = f.get(1);
+    assert_eq!(vfield.data_type(), fb::DataType::FixedSizeList);
+    assert_eq!(vfield.child_type(), fb::DataType::Float16);
+    assert_eq!(vfield.list_size(), 4);
+}
+
+/// Part-B plan-level round-trip: wrap a real (serializable) GPU input plan in a
+/// GpuVectorSearchExec and assert serialize -> deserialize -> serialize is
+/// bytes-equal, exercising the exec-level GpuVectorSearch branch on both sides.
+#[tokio::test]
+async fn test_vector_search_plan_bytes_equal_roundtrip() {
+    use peacockdb_core::vector::GpuVectorSearchExec;
+
+    let data_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../testdata/tpch.minimal");
+    let ctx = peacockdb_core::create_context_with_tables(&data_dir, 1, 2 * 1024 * 1024 * 1024)
+        .await
+        .unwrap();
+    let input = ctx
+        .sql("SELECT c_custkey FROM customer")
+        .await
+        .unwrap()
+        .create_physical_plan()
+        .await
+        .unwrap();
+
+    // 4 fp16 query elements = 8 bytes; opaque here (byte fidelity is the point).
+    let query = vec![0u8, 60, 0, 64, 0, 66, 0, 68];
+    let vs: std::sync::Arc<dyn datafusion::physical_plan::ExecutionPlan> =
+        std::sync::Arc::new(GpuVectorSearchExec::new(input, None, 3, query, 4));
+
+    let bytes = serialize_plan(&vs).expect("serialization failed");
+    assert_valid_flatbuffer(&bytes);
+
+    let root = flatbuffers::root::<fb::GpuPlan>(&bytes).unwrap().root().unwrap();
+    assert_eq!(root.node_type(), fb::PlanNodeKind::GpuVectorSearch);
+    let vsn = root.node_as_gpu_vector_search().unwrap();
+    assert_eq!(vsn.k(), 3);
+    assert_eq!(vsn.dim(), 4);
+    assert_eq!(vsn.metric(), fb::VectorMetric::L2);
+    assert_eq!(vsn.strategy(), fb::VectorSearchStrategy::ExactBrute);
+
+    assert_roundtrip_bytes_equal(&bytes);
+}

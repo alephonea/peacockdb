@@ -11,9 +11,11 @@ flatc-fork = "0.6"
 
 [dependencies]
 arrow = "54.2.0"
+async-trait = "0.1"   # #[async_trait] QueryPlanner/ExtensionPlanner for VectorTopK lowering
 datafusion = "45"
 flatbuffers = "25"
 futures = "0.3"
+half = "2"   # fp16 vector element type (already in the tree via arrow); vector L2 kernel
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 peacockdb-ffi = { path = "../peacockdb-ffi" }
 # Inc2 hash-repartition CPU twin: Spark-compatible murmur3 (create_murmur3_hashes)

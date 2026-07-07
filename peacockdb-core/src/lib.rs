@@ -12,6 +12,7 @@ pub mod generated {
 pub mod node_executor;
 pub mod plan_serializer;
 pub mod resident;
+pub mod vector;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -41,6 +42,9 @@ pub fn build_session_state_with_gpu_rules_mode(
     config.options_mut().execution.target_partitions = target_partitions;
     let state = SessionStateBuilder::new_from_existing(base.state())
         .with_config(config)
+        .with_analyzer_rule(Arc::new(vector::VectorTopKAnalyzerRule))
+        .with_optimizer_rule(Arc::new(vector::PushFilterIntoVectorTopK))
+        .with_query_planner(Arc::new(vector::VectorQueryPlanner))
         .with_physical_optimizer_rule(Arc::new(GpuExecutionRule))
         .with_physical_optimizer_rule(Arc::new(GpuMemoryBudgetRule::new(
             gpu_memory_budget,
@@ -48,7 +52,10 @@ pub fn build_session_state_with_gpu_rules_mode(
         )))
         .build();
 
-    SessionContext::new_with_state(state)
+    let ctx = SessionContext::new_with_state(state);
+    ctx.register_udf(vector::l2_distance_udf());
+    ctx.register_udf(vector::to_vector_udf());
+    ctx
 }
 
 /// Single-partition convenience wrapper (the common case: tp1 and the tp8-mem2gib
@@ -73,9 +80,15 @@ pub fn build_session_state(
     config.options_mut().execution.target_partitions = target_partitions;
     let state = SessionStateBuilder::new_from_existing(base.state())
         .with_config(config)
+        .with_analyzer_rule(Arc::new(vector::VectorTopKAnalyzerRule))
+        .with_optimizer_rule(Arc::new(vector::PushFilterIntoVectorTopK))
+        .with_query_planner(Arc::new(vector::VectorQueryPlanner))
         .build();
-    
-    SessionContext::new_with_state(state)
+
+    let ctx = SessionContext::new_with_state(state);
+    ctx.register_udf(vector::l2_distance_udf());
+    ctx.register_udf(vector::to_vector_udf());
+    ctx
 }
 
 async fn read_table(path: PathBuf, ctx: &SessionContext) -> Result<(String, Arc<ListingTable>), ()> {

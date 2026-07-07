@@ -34,6 +34,11 @@ enum DataType : byte {
   Decimal128,
   Utf8View,
   BinaryView,
+  /// A FixedSizeList column (e.g. an fp16 embedding vector,
+  /// FixedSizeList<Float16, dim>). The element type and length live on the
+  /// carrying `Field` as `child_type` / `list_size` (this flat enum can't hold
+  /// them, same pattern as Decimal128's precision/scale on `Field`).
+  FixedSizeList,
 }
 
 // =========================================================================
@@ -208,6 +213,47 @@ table ScalarFunctionExprNode {
   nullable: bool;
 }
 
+// --- Vector search enums (design §3) ---
+
+/// Distance/similarity metric. The MVP implements L2 only.
+enum VectorMetric : byte {
+  L2 = 0,
+  Cosine,
+  InnerProduct,
+}
+
+/// Element type of a vector column / query vector.
+enum VectorScalar : byte {
+  F16 = 0,
+  F32,
+  I8,
+  Bit,
+}
+
+/// How a vector top-k is evaluated. Pinned to ExactBrute in the MVP; the ANN
+/// variants are the forward-looking IR surface for later tickets.
+enum VectorSearchStrategy : byte {
+  Unset = 0,
+  ExactBrute,
+  AnnRescore,
+  AnnDirect,
+}
+
+/// A vector distance score: `metric`(column, query). The query vector is an
+/// immediate — `dim` elements of `scalar` type, little-endian, in `query`.
+/// The MVP only produces L2 over Float16; the extra metrics/scalars are the
+/// forward-looking IR surface (design §3). The executor scores each input row's
+/// embedding against the query under `metric`.
+table VectorDistanceExpr {
+  metric: VectorMetric;
+  /// The embedding column being scored.
+  column: Expr;
+  /// Query vector, raw little-endian element bytes (dim * sizeof(scalar)).
+  query: [ubyte];
+  dim: uint32;
+  scalar: VectorScalar;
+}
+
 union ExprNode {
   ColumnRef,
   LiteralExpr,
@@ -218,6 +264,7 @@ union ExprNode {
   LikeExprNode,
   CaseExprNode,
   ScalarFunctionExprNode,
+  VectorDistanceExpr,
 }
 
 table Expr {
@@ -240,6 +287,12 @@ table Field {
   /// round-trips. Ignored for non-decimal types.
   decimal_precision: uint8;
   decimal_scale: int8;
+  /// For data_type == FixedSizeList only: the element type and fixed list
+  /// length (e.g. a fp16 vector column is FixedSizeList<Float16, dim>, so
+  /// child_type == Float16 and list_size == dim). Ignored for other types.
+  /// The child field is reconstructed as the conventional ("item", nullable).
+  child_type: DataType;
+  list_size: int32;
 }
 
 table Schema {
@@ -565,6 +618,27 @@ table GpuWindow {
   input: PlanNode;
 }
 
+/// Exact/approximate top-k over a vector column: score every input row's
+/// embedding against `query` under `metric`, then keep the k best (smallest L2 /
+/// largest inner-product/cosine). The MVP pins `strategy` to ExactBrute (brute
+/// force) and executes on CPU; `ann_index_id`/`shortlist_size` are reserved for
+/// the ANN path (ticket 3+). `filter_bitmap_input` is an optional pre-filter
+/// selection subtree (absent = no pre-filter). `input` is the single data child
+/// (not a list — top-k scores one relation).
+table GpuVectorSearch {
+  metric: VectorMetric;
+  /// Query vector, raw little-endian element bytes (dim * sizeof(scalar)).
+  query: [ubyte];
+  dim: uint32;
+  scalar: VectorScalar;
+  k: uint64;
+  strategy: VectorSearchStrategy;
+  ann_index_id: uint32;
+  shortlist_size: uint32;
+  filter_bitmap_input: PlanNode;
+  input: PlanNode;
+}
+
 // --- Plan node union ---
 
 union PlanNodeKind {
@@ -583,6 +657,7 @@ union PlanNodeKind {
   GpuUnion,
   GpuLimit,
   GpuWindow,
+  GpuVectorSearch,
 }
 
 /// A single node in the physical plan tree.

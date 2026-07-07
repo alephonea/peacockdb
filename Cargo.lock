@@ -2820,11 +2820,13 @@ name = "peacockdb-core"
 version = "0.1.0"
 dependencies = [
  "arrow 54.2.1",
+ "async-trait",
  "datafusion 45.0.0",
  "datafusion-comet-spark-expr",
  "flatbuffers 25.12.19",
  "flatc-fork",
  "futures",
+ "half",
  "paste",
  "peacockdb-ffi",
  "tokio",

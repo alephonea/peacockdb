@@ -33,6 +33,7 @@ use crate::gpu_rule::{
     GpuProjectExec, GpuRepartitionExec, GpuScanExec, GpuSortExec, GpuSortPreservingMergeExec,
     GpuUnionExec, GpuWindowExec,
 };
+use crate::vector::GpuVectorSearchExec;
 
 /// Serialize an entire GPU execution plan tree into a FlatBuffer byte vector.
 ///
@@ -89,6 +90,8 @@ fn serialize_plan_node<'a>(
         serialize_gpu_limit(b, plan)?
     } else if plan.as_any().is::<GpuWindowExec>() {
         serialize_gpu_window(b, plan)?
+    } else if plan.as_any().is::<GpuVectorSearchExec>() {
+        serialize_gpu_vector_search(b, plan)?
     } else {
         return Err(format!("unsupported plan node: {}", plan.name()));
     };
@@ -952,6 +955,36 @@ fn serialize_gpu_window<'a>(
     Ok((fb::PlanNodeKind::GpuWindow, node.as_union_value()))
 }
 
+// --- GpuVectorSearchExec ---
+
+fn serialize_gpu_vector_search<'a>(
+    b: &mut FlatBufferBuilder<'a>,
+    plan: &Arc<dyn ExecutionPlan>,
+) -> Result<(fb::PlanNodeKind, WIPOffset<flatbuffers::UnionWIPOffset>), String> {
+    let vs = plan.as_any().downcast_ref::<GpuVectorSearchExec>().unwrap();
+    let input = serialize_plan_node(b, vs.input())?;
+    let query = b.create_vector(vs.query());
+    // MVP: L2 metric, ExactBrute strategy, fp16 elements, no ANN index / filter
+    // bitmap. These are pinned (not stored on the exec) so they re-serialize
+    // identically after a deserialize round-trip.
+    let node = fb::GpuVectorSearch::create(
+        b,
+        &fb::GpuVectorSearchArgs {
+            metric: fb::VectorMetric::L2,
+            query: Some(query),
+            dim: vs.dim(),
+            scalar: fb::VectorScalar::F16,
+            k: vs.k() as u64,
+            strategy: fb::VectorSearchStrategy::ExactBrute,
+            ann_index_id: 0,
+            shortlist_size: 0,
+            filter_bitmap_input: None,
+            input: Some(input),
+        },
+    );
+    Ok((fb::PlanNodeKind::GpuVectorSearch, node.as_union_value()))
+}
+
 // ---------------------------------------------------------------------------
 // Expressions
 // ---------------------------------------------------------------------------
@@ -1275,6 +1308,9 @@ fn convert_data_type(dt: &ArrowDataType) -> Result<fb::DataType, String> {
         ArrowDataType::Decimal128(_, _) => fb::DataType::Decimal128,
         ArrowDataType::Utf8View => fb::DataType::Utf8View,
         ArrowDataType::BinaryView => fb::DataType::BinaryView,
+        // The element type + length are carried on the enclosing Field
+        // (child_type / list_size); serialize_schema fills them in.
+        ArrowDataType::FixedSizeList(_, _) => fb::DataType::FixedSizeList,
         other => return Err(format!("unsupported Arrow data type: {other:?}")),
     })
 }
@@ -1327,6 +1363,15 @@ fn serialize_schema<'a>(
                 ArrowDataType::Decimal128(p, s) => (*p, *s),
                 _ => (0, 0),
             };
+            // FixedSizeList carries its element type + length on the Field (the
+            // DataType enum can't), mirroring the Decimal128 precision/scale pattern.
+            let (child_type, list_size) = match f.data_type() {
+                ArrowDataType::FixedSizeList(child, size) => (
+                    convert_data_type(child.data_type()).unwrap_or(fb::DataType::Null),
+                    *size,
+                ),
+                _ => (fb::DataType::Null, 0),
+            };
             fb::Field::create(
                 b,
                 &fb::FieldArgs {
@@ -1335,6 +1380,8 @@ fn serialize_schema<'a>(
                     nullable: f.is_nullable(),
                     decimal_precision,
                     decimal_scale,
+                    child_type,
+                    list_size,
                 },
             )
         })
@@ -1443,6 +1490,10 @@ fn deserialize_plan_node(node: &fb::PlanNode) -> Result<Arc<dyn ExecutionPlan>, 
             let w = node.node_as_gpu_window().ok_or("expected GpuWindow")?;
             deserialize_gpu_window(&w)
         }
+        fb::PlanNodeKind::GpuVectorSearch => {
+            let vs = node.node_as_gpu_vector_search().ok_or("expected GpuVectorSearch")?;
+            deserialize_gpu_vector_search(&vs)
+        }
         other => Err(format!("unknown PlanNodeKind: {:?}", other)),
     }
 }
@@ -1461,6 +1512,18 @@ fn deserialize_schema(schema: &fb::Schema) -> SchemaRef {
                     let dt = match f.data_type() {
                         fb::DataType::Decimal128 => {
                             ArrowDataType::Decimal128(f.decimal_precision(), f.decimal_scale())
+                        }
+                        // Reconstruct FixedSizeList<child, list_size>. The child
+                        // field is normalized to the conventional ("item", nullable),
+                        // which matches how vector columns are built (vector::types).
+                        fb::DataType::FixedSizeList => {
+                            let child = fb_to_arrow_type(f.child_type());
+                            ArrowDataType::FixedSizeList(
+                                Arc::new(datafusion::arrow::datatypes::Field::new(
+                                    "item", child, true,
+                                )),
+                                f.list_size(),
+                            )
                         }
                         other => fb_to_arrow_type(other),
                     };
@@ -2264,6 +2327,25 @@ fn deserialize_gpu_limit(l: &fb::GpuLimit) -> Result<Arc<dyn ExecutionPlan>, Str
     Ok(Arc::new(GpuGlobalLimitExec::new(Arc::new(inner))))
 }
 
+/// Reconstruct a `GpuVectorSearchExec` from the IR. The scoring expr isn't carried
+/// on the wire (the C++ consumer rebuilds it from metric/query/dim), so the node
+/// comes back with `distance = None` — runnable only via the freshly-planned exec,
+/// not this one; it exists to make the plan round-trip byte-for-byte. The pinned
+/// metric/strategy/scalar re-serialize identically.
+fn deserialize_gpu_vector_search(
+    vs: &fb::GpuVectorSearch,
+) -> Result<Arc<dyn ExecutionPlan>, String> {
+    let input = deserialize_plan_node(&vs.input().ok_or("GpuVectorSearch missing input")?)?;
+    let query = vs.query().map(|q| q.bytes().to_vec()).unwrap_or_default();
+    Ok(Arc::new(GpuVectorSearchExec::new(
+        input,
+        None,
+        vs.k() as usize,
+        query,
+        vs.dim(),
+    )))
+}
+
 fn deserialize_gpu_window(win: &fb::GpuWindow) -> Result<Arc<dyn ExecutionPlan>, String> {
     use datafusion::logical_expr::{
         WindowFrame, WindowFrameBound as DfBound, WindowFrameUnits, WindowFunctionDefinition,
@@ -2391,4 +2473,33 @@ fn deserialize_gpu_window(win: &fb::GpuWindow) -> Result<Arc<dyn ExecutionPlan>,
         )
     };
     Ok(Arc::new(GpuWindowExec::new(exec)))
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use datafusion::arrow::datatypes::{Field, Schema};
+
+    /// A FixedSizeList<Float16, N> field carries its element type + length on the
+    /// wire `Field` (child_type / list_size); assert the schema round-trips through
+    /// serialize_schema -> deserialize_schema, exactly like the decimal case.
+    #[test]
+    fn fixed_size_list_schema_round_trips() {
+        let vec_ty = ArrowDataType::FixedSizeList(
+            Arc::new(Field::new("item", ArrowDataType::Float16, true)),
+            4,
+        );
+        let schema: SchemaRef = Arc::new(Schema::new(vec![
+            Field::new("id", ArrowDataType::Int32, false),
+            Field::new("v", vec_ty.clone(), false),
+        ]));
+
+        let mut b = FlatBufferBuilder::with_capacity(1024);
+        let off = serialize_schema(&mut b, &schema);
+        b.finish(off, None);
+        let fb_schema = flatbuffers::root::<fb::Schema>(b.finished_data()).unwrap();
+        let round = deserialize_schema(&fb_schema);
+
+        assert_eq!(round.field(0).data_type(), &ArrowDataType::Int32);
+        assert_eq!(round.field(1).data_type(), &vec_ty);
+    }
 }
