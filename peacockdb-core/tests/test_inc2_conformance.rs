@@ -173,6 +173,36 @@ fn gpu_spark_partition_ids_int64_match_comet_live() {
     assert_gpu_matches_comet_live(vec![(Field::new("k", DataType::Int64, true), k)], 8);
 }
 
+/// #18 I-1: INT16 key conformance — the GROUP-BY year case (cudf::extract_year emits
+/// INT16, so a year-grouped query repartitions on an INT16 key). Spark widens short→int
+/// (4-byte hash); the GPU casts INT16→INT32 before the fixed kernel, so this proves the
+/// widened hash is bit-exact vs comet. Edge values + NULL.
+#[cfg(not(feature = "rust-only"))]
+#[test]
+fn gpu_spark_partition_ids_int16_match_comet_live() {
+    use datafusion::arrow::array::Int16Array;
+    use datafusion::arrow::datatypes::{DataType, Field};
+    let k: ArrayRef = Arc::new(Int16Array::from(vec![
+        Some(1), Some(0), Some(-1), Some(i16::MAX), Some(i16::MIN), None, Some(1998),
+    ]));
+    assert_gpu_matches_comet_live(vec![(Field::new("k", DataType::Int16, true), k)], 8);
+}
+
+/// #18 I-1: DATE32 key conformance — the GROUP-BY date case (q3 groups by o_orderdate;
+/// cuDF stores it as TIMESTAMP_DAYS = int32 days-since-epoch). Spark hashes DATE as the
+/// int32 day count (4-byte); the GPU bit-casts TIMESTAMP_DAYS→INT32, so this proves the
+/// days hash is bit-exact vs comet. Epoch, real dates, pre-epoch negative, NULL.
+#[cfg(not(feature = "rust-only"))]
+#[test]
+fn gpu_spark_partition_ids_date32_match_comet_live() {
+    use datafusion::arrow::array::Date32Array;
+    use datafusion::arrow::datatypes::{DataType, Field};
+    let k: ArrayRef = Arc::new(Date32Array::from(vec![
+        Some(0), Some(9203), Some(-1), Some(i32::MAX), None, Some(10000),
+    ]));
+    assert_gpu_matches_comet_live(vec![(Field::new("k", DataType::Date32, true), k)], 8);
+}
+
 /// Inc6 I-1: COMPOSITE all-INT key conformance — the q17 join-key shape
 /// (ss_customer_sk, ss_item_sk, ss_ticket_number are all int surrogate keys).
 /// Proves the seed-chain across multiple int columns, incl per-column NULLs (a null

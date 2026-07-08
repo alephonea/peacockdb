@@ -5,6 +5,7 @@
 #include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/dictionary/encode.hpp>
 #include <cudf/partitioning.hpp>
+#include <cudf/unary.hpp>
 #include <cudf/strings/string_view.cuh>
 #include <cudf/utilities/error.hpp>
 
@@ -138,6 +139,25 @@ std::unique_ptr<cudf::column> spark_partition_ids(cudf::table_view const& input,
           cudf::dictionary::decode(cudf::dictionary_column_view{col}, stream, mr));
       col = decoded_keep.back()->view();
     }
+    // (#18) Normalize the small-int / date families to INT32 so the 4-byte fixed kernel
+    // hashes the Spark-identical bytes. Spark widens sub-32-bit ints to i32 (comet:
+    // int8/16/32 -> (v as i32) LE 4B), so value-CAST INT8/INT16 -> INT32. A DATE column
+    // (cuDF TIMESTAMP_DAYS) is int32 days-since-epoch (comet: DATE32 -> i32 4B), so
+    // zero-copy BIT-CAST it to INT32 (same bytes = the days value). This is hash-only —
+    // the scattered output keeps the ORIGINAL column, so no golden/type change.
+    switch (col.type().id()) {
+      case cudf::type_id::INT8:
+      case cudf::type_id::INT16:
+        decoded_keep.push_back(
+            cudf::cast(col, cudf::data_type{cudf::type_id::INT32}, stream, mr));
+        col = decoded_keep.back()->view();
+        break;
+      case cudf::type_id::TIMESTAMP_DAYS:
+        col = cudf::bit_cast(col, cudf::data_type{cudf::type_id::INT32});
+        break;
+      default:
+        break;
+    }
     auto const dcol = cudf::column_device_view::create(col, stream);
     if (n > 0) {
       // Dispatch by cuDF type id. Each column folds into the running (seed-chained)
@@ -164,9 +184,9 @@ std::unique_ptr<cudf::column> spark_partition_ids(cudf::table_view const& input,
           CUDF_FAIL(
               "peacock spark_partition_ids: unsupported key column cuDF type_id=" +
               std::to_string(static_cast<int>(col.type().id())) +
-              " (Inc6 supports STRING/INT32/INT64; date/timestamp/decimal/float/other "
-              "partition keys pending — extend the kernel + re-prove comet conformance, "
-              "see #18/Inc7)");
+              " (supported: STRING, dict-encoded string, INT8/16/32/64, DATE32; "
+              "timestamp/decimal/float partition keys pending — extend the kernel + "
+              "re-prove comet conformance, see #18/Inc7)");
       }
     }
   }

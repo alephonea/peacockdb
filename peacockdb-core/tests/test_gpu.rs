@@ -120,6 +120,7 @@ gpu_test!(tpch, 1, q5, tp8_mem120gib, golden_exact);
 // q7/q9 flipped (GPU repartition string-key normalization fix); single-sum → local+CI.
 // q8 GATED (spark_hash_partition kernel-key-type, exact cuDF type pending).
 gpu_test!(tpch, 1, q7, tp8_mem120gib, golden_exact);
+gpu_test!(tpch, 1, q8, tp8_mem120gib, golden_exact);
 gpu_test!(tpch, 1, q9, tp8_mem120gib, golden_exact);
 // q12/q19 real-8-way (Partitioned Inner, int keys, sum aggs, no LIMIT). q19 single-agg
 // (local+CI); q12 = 2 sums (multi-func → CI-gated GPU).
