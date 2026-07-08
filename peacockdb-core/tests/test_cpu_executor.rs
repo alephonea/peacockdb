@@ -102,17 +102,21 @@ cpu_node13_result_test!(tpch, 1, left_join, tp8_mem120gib, false);
 // CollectLeft/decimal/distinct — node13-executable at real 8-way. gen=true: each owns
 // the small .result.txt the tp8 gpu_test!(golden_exact) consumes (result is
 // partition-independent). Legacy tp8-mem2gib #11 carriers above stay.
-// q3 GATED: it's the only one with ORDER BY revenue ... LIMIT 10; the #13
-// per-partition TopK selects the wrong global top-10 at real 8-way (aggregation is
-// right, but the top-k/limit merge is broken) → its result diverges from DataFusion.
-// Deferred pending a #13 per-partition TopK fix; its legacy tp8-mem2gib line stays.
+// q3 (#99): ORDER BY revenue ... LIMIT 10 — the SPM/TopK gate is now FIXED (the #13
+// SortPreservingMerge k-way-merges the 8 sorted partitions + applies fetch instead of
+// concatenating), so the global top-10 == DataFusion. Re-flipped.
+cpu_node13_result_test!(tpch, 1, q3, tp8_mem120gib, true);
 cpu_node13_result_test!(tpch, 1, q5, tp8_mem120gib, true);
+// q7/q9 FLIPPED with the GPU repartition string-key fix (a group-by STRING key reached
+// the murmur3 kernel as a non-STRING cuDF type — DF45/dict-encoding; normalized before
+// the kernel). q8 GATED: it also hit spark_hash_partition.cu:145 (kernel-key-type) but
+// on a repart key the DataFusion-type audit didn't flag (Int32 group-by o_year, so the
+// bad key is elsewhere/dict-string) — pending its exact cuDF-type pin (shad-gpu down).
+// Legacy tp8-mem2gib #11 lines kept for all three.
 cpu_node13_result_test!(tpch, 1, q7, tp8_mem120gib, true);
-cpu_node13_result_test!(tpch, 1, q8, tp8_mem120gib, true);
-// Flip batch 2: q9/q12/q19 (all Partitioned Inner, int keys, mergeable sum, no
-// LIMIT/decimal/distinct → no #99/#95/#11 gate). q13 HELD (Partitioned LEFT → #100
-// outer-join gate). Legacy tp8-mem2gib #11 lines kept.
 cpu_node13_result_test!(tpch, 1, q9, tp8_mem120gib, true);
+// Flip batch 2: q12/q19 (Partitioned Inner, int keys, mergeable sum, no
+// LIMIT/decimal/distinct → no gate). Legacy tp8-mem2gib #11 lines kept.
 cpu_node13_result_test!(tpch, 1, q12, tp8_mem120gib, true);
 cpu_node13_result_test!(tpch, 1, q19, tp8_mem120gib, true);
 // q13 (bucket-2 addendum): grouped count over a Partitioned LEFT-outer join, ORDER BY

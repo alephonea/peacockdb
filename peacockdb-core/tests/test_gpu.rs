@@ -113,13 +113,16 @@ gpu_test!(tpch, 1, left_join, tp8_mem120gib, oracle);
 // int keys, mergeable sum aggs). Small results → golden_exact (consumes the
 // cpu_node13-owned .result.txt). q8 has 2 sum aggs (multi-func) → its GPU result is
 // gated by CI (the local flatc aggr_funcs-vector bug truncates multi-func aggs); q5/q7
-// are single-agg and verify locally too. q3 GATED (ORDER BY...LIMIT → #13 TopK bug).
+// are single-agg and verify locally too. q3 re-flipped (#99 SPM/TopK fix): ORDER BY
+// revenue LIMIT 10, single sum → local-reliable; the SPM now k-way-merges + fetches.
+gpu_test!(tpch, 1, q3, tp8_mem120gib, golden_exact);
 gpu_test!(tpch, 1, q5, tp8_mem120gib, golden_exact);
+// q7/q9 flipped (GPU repartition string-key normalization fix); single-sum → local+CI.
+// q8 GATED (spark_hash_partition kernel-key-type, exact cuDF type pending).
 gpu_test!(tpch, 1, q7, tp8_mem120gib, golden_exact);
-gpu_test!(tpch, 1, q8, tp8_mem120gib, golden_exact);
-// Flip batch 2: q9/q12/q19 real-8-way (Partitioned Inner, int keys, sum aggs, no
-// LIMIT). q9/q19 single-agg (local+CI); q12 = 2 sums (multi-func → CI-gated GPU).
 gpu_test!(tpch, 1, q9, tp8_mem120gib, golden_exact);
+// q12/q19 real-8-way (Partitioned Inner, int keys, sum aggs, no LIMIT). q19 single-agg
+// (local+CI); q12 = 2 sums (multi-func → CI-gated GPU).
 gpu_test!(tpch, 1, q12, tp8_mem120gib, golden_exact);
 gpu_test!(tpch, 1, q19, tp8_mem120gib, golden_exact);
 // q13: grouped count over a Partitioned LEFT-outer (nested group-bys, single-count

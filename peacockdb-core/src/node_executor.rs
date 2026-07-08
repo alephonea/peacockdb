@@ -109,7 +109,8 @@ use datafusion::arrow::array::{ArrayRef, UInt32Array};
 use datafusion::arrow::compute::{cast, concat_batches, take};
 use datafusion::arrow::datatypes::DataType;
 use datafusion::physical_plan::repartition::RepartitionExec;
-use datafusion::physical_plan::{Partitioning, PhysicalExpr};
+use datafusion::physical_plan::memory::MemoryExec;
+use datafusion::physical_plan::{execute_stream, Partitioning, PhysicalExpr};
 use datafusion_comet_spark_expr::hash_funcs::murmur3::create_murmur3_hashes;
 
 use crate::cpu_executor::{batch_varlen_content_bytes, execute_single_node, logical_size_from_schema};
@@ -493,6 +494,39 @@ impl NodeExecutor for CpuNodeExecutor {
             let mut acc = acc.expect("partitioned join has N>1 partitions");
             acc.part_stats = part_stats; // N>1 by the gate → always carries sub-lines
             return Ok((handles, acc));
+        }
+
+        // (#99) SortPreservingMerge = K-WAY MERGE the child's N SORTED partitions
+        // (respecting the SPM's sort keys + fetch), NOT concat. The generic collapse
+        // below concats the N partitions into ONE and runs SPM on it — but SPM merges
+        // N input partitions, so on 1 it's a NO-OP: the output is only per-partition
+        // sorted, and a downstream LIMIT then picks the wrong global top-N. Feed a
+        // MemoryExec of the N partitions to the inner SortPreservingMergeExec so its
+        // real merge + fetch run. (N==1 falls through to concat = byte-identical.)
+        if let Some(spm) = node.as_any().downcast_ref::<GpuSortPreservingMergeExec>() {
+            if child_parts.len() == 1 && child_parts[0].len() > 1 {
+                let parts = child_parts.into_iter().next().unwrap();
+                let inner = spm.inner().clone();
+                let child_schema = inner.children()[0].schema();
+                let mem = Arc::new(MemoryExec::try_new(&parts, child_schema, None)?);
+                let merged = inner.with_new_children(vec![mem])?;
+                let stream = execute_stream(merged, self.task_ctx.clone())?;
+                let batches: Vec<RecordBatch> = {
+                    use futures::TryStreamExt;
+                    stream.try_collect().await?
+                };
+                let rows: usize = batches.iter().map(|b| b.num_rows()).sum();
+                let varlen: usize = batches.iter().map(batch_varlen_content_bytes).sum();
+                let stat = NodeMemoryStats {
+                    node_name: node.name().to_string(),
+                    output_bytes: logical_size_from_schema(node.schema().as_ref(), rows, varlen),
+                    row_count: rows,
+                    max_batch_rows: batches.iter().map(|b| b.num_rows()).max().unwrap_or(0),
+                    ..Default::default()
+                };
+                let handle = self.store(batches);
+                return Ok((vec![handle], stat));
+            }
         }
 
         // Concat-into-one: each child's partitions concatenated into a single input,

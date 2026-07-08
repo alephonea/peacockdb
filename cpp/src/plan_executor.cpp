@@ -8,6 +8,7 @@
 #include <cudf/column/column_view.hpp>
 #include <cudf/concatenate.hpp>
 #include <cudf/copying.hpp>
+#include <cudf/merge.hpp>
 #include <cudf/column/column_factories.hpp>
 #include <cudf/datetime.hpp>
 #include <cudf/filling.hpp>
@@ -3076,7 +3077,50 @@ void NodeSession::execute_node(uint64_t seq, const uint64_t* input_handles,
     }
     TableResult result;
     result.column_names = owned.empty() ? std::vector<std::string>{} : owned[0].column_names;
-    result.table = cudf::concatenate(views);
+
+    const fb::GpuSortPreservingMerge* spm =
+        (node->node_type() == fb::PlanNodeKind_GpuSortPreservingMerge)
+            ? node->node_as_GpuSortPreservingMerge()
+            : nullptr;
+    if (spm && spm->exprs() && spm->exprs()->size() > 0 && views.size() > 1) {
+      // (#99) SortPreservingMerge = K-WAY MERGE the N already-sorted partitions by the
+      // SPM's sort keys, NOT a plain concat. Concat leaves the output globally
+      // UNSORTED (only per-partition-sorted), so a downstream LIMIT/fetch picks the
+      // wrong top-N. The N inputs are each sorted upstream by the SAME GpuSort spec
+      // (execute_sort reads the identical SortExprNode fields), which is cudf::merge's
+      // precondition. Column-ref keys only (post-aggregate ORDER BY, the whole top-N
+      // corpus); an EXPRESSION sort key would need per-partition materialization
+      // (none present) — throw loudly rather than silently mis-merge.
+      std::vector<cudf::size_type> key_cols;
+      std::vector<cudf::order> orders;
+      std::vector<cudf::null_order> null_orders;
+      for (flatbuffers::uoffset_t i = 0; i < spm->exprs()->size(); ++i) {
+        auto* se = spm->exprs()->Get(i);
+        auto* expr = se->expr();
+        if (!expr || expr->node_type() != fb::ExprNode_ColumnRef)
+          throw std::runtime_error(
+              "GpuSortPreservingMerge: expression sort key not supported by the k-way "
+              "merge (needs per-partition materialization) — file an increment");
+        key_cols.push_back(
+            static_cast<cudf::size_type>(expr->node_as_ColumnRef()->index()));
+        orders.push_back(se->asc() ? cudf::order::ASCENDING : cudf::order::DESCENDING);
+        null_orders.push_back(se->nulls_first() ? cudf::null_order::BEFORE
+                                                : cudf::null_order::AFTER);
+      }
+      result.table = cudf::merge(views, key_cols, orders, null_orders);
+      // Apply the SPM's own fetch (top-N) AFTER the global merge (-1 = unlimited).
+      if (spm->fetch() >= 0) {
+        auto n = std::min(static_cast<cudf::size_type>(spm->fetch()),
+                          result.table->view().num_rows());
+        std::vector<cudf::size_type> slice_indices{0, n};
+        auto sliced = cudf::slice(result.table->view(), slice_indices);
+        result.table = std::make_unique<cudf::table>(sliced[0]);
+      }
+    } else {
+      // GpuCoalescePartitions, or an SPM with no sort keys / a single partition:
+      // a plain in-order concat is the correct collapse.
+      result.table = cudf::concatenate(views);
+    }
     auto tv = result.table->view();
     if (out_stats)
       out_stats[0] = NodeStats{static_cast<uint64_t>(tv.num_rows()), varlen_content_bytes(tv)};

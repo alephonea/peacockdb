@@ -2,6 +2,8 @@
 
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/column/column_factories.hpp>
+#include <cudf/dictionary/dictionary_column_view.hpp>
+#include <cudf/dictionary/encode.hpp>
 #include <cudf/partitioning.hpp>
 #include <cudf/strings/string_view.cuh>
 #include <cudf/utilities/error.hpp>
@@ -120,8 +122,22 @@ std::unique_ptr<cudf::column> spark_partition_ids(cudf::table_view const& input,
 
   constexpr int block = 256;
   auto const grid     = (n + block - 1) / block;
+  // Decoded dictionary key columns are kept alive here until all hash kernels for this
+  // call have been enqueued (their device views feed async kernels below).
+  std::vector<std::unique_ptr<cudf::column>> decoded_keep;
   for (auto const ci : key_cols) {
-    auto const col  = input.column(ci);
+    cudf::column_view col = input.column(ci);
+    // (#18) Normalize a dict-encoded key to its STRING values FOR HASHING only. A
+    // dict-encoded parquet string reaches the GPU as cuDF DICTIONARY32 (the CPU comet
+    // path sees Utf8View and casts to Utf8 — same underlying bytes), which this kernel
+    // doesn't hash directly. Decoding yields the identical string bytes, so the
+    // murmur3 == comet (Inc2 STRING conformance covers it). The SCATTERED output keeps
+    // the ORIGINAL column (this decode is hash-only) → no golden/type change.
+    if (col.type().id() == cudf::type_id::DICTIONARY32) {
+      decoded_keep.push_back(
+          cudf::dictionary::decode(cudf::dictionary_column_view{col}, stream, mr));
+      col = decoded_keep.back()->view();
+    }
     auto const dcol = cudf::column_device_view::create(col, stream);
     if (n > 0) {
       // Dispatch by cuDF type id. Each column folds into the running (seed-chained)
@@ -142,10 +158,15 @@ std::unique_ptr<cudf::column> spark_partition_ids(cudf::table_view const& input,
               *dcol, hashes.data(), n);
           break;
         default:
+          // Print the exact cuDF type_id (int) of the offending key column so a CI/GPU
+          // failure log pins WHICH type to handle — the DataFusion-plan type (e.g.
+          // Utf8View) is only a proxy for what actually reaches this kernel.
           CUDF_FAIL(
-              "peacock spark_partition_ids: unsupported key column type (Inc6 supports "
-              "STRING, INT32, INT64; date/timestamp/decimal/float partition keys are "
-              "pending — extend the kernel + re-prove comet conformance, see #18/Inc7)");
+              "peacock spark_partition_ids: unsupported key column cuDF type_id=" +
+              std::to_string(static_cast<int>(col.type().id())) +
+              " (Inc6 supports STRING/INT32/INT64; date/timestamp/decimal/float/other "
+              "partition keys pending — extend the kernel + re-prove comet conformance, "
+              "see #18/Inc7)");
       }
     }
   }
