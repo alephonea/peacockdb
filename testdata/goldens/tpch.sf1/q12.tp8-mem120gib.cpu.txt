@@ -1,0 +1,157 @@
+GpuSortPreservingMergeExec: [l_shipmode@0 ASC NULLS LAST], partitions=1, output_rows=2, output_bytes=55
+  GpuSortExec: expr=[l_shipmode@0 ASC NULLS LAST], partitions=8, output_rows=2, output_bytes=86
+    p0: in_rows=1 out_rows=1 out_bytes=31
+    p1: in_rows=0 out_rows=0 out_bytes=4
+    p2: in_rows=0 out_rows=0 out_bytes=4
+    p3: in_rows=1 out_rows=1 out_bytes=31
+    p4: in_rows=0 out_rows=0 out_bytes=4
+    p5: in_rows=0 out_rows=0 out_bytes=4
+    p6: in_rows=0 out_rows=0 out_bytes=4
+    p7: in_rows=0 out_rows=0 out_bytes=4
+    GpuProjectExec: expr=[l_shipmode@0 as l_shipmode, sum(CASE WHEN orders.o_orderpriority = Utf8("1-URGENT") OR orders.o_orderpriority = Utf8("2-HIGH") THEN Int64(1) ELSE Int64(0) END)@1 as high_line_count, sum(CASE WHEN orders.o_orderpriority != Utf8("1-URGENT") AND orders.o_orderpriority != Utf8("2-HIGH") THEN Int64(1) ELSE Int64(0) END)@2 as low_line_count], partitions=8, output_rows=2, output_bytes=86
+      p0: in_rows=1 out_rows=1 out_bytes=31
+      p1: in_rows=0 out_rows=0 out_bytes=4
+      p2: in_rows=0 out_rows=0 out_bytes=4
+      p3: in_rows=1 out_rows=1 out_bytes=31
+      p4: in_rows=0 out_rows=0 out_bytes=4
+      p5: in_rows=0 out_rows=0 out_bytes=4
+      p6: in_rows=0 out_rows=0 out_bytes=4
+      p7: in_rows=0 out_rows=0 out_bytes=4
+      GpuAggregateExec: group_by=[l_shipmode], aggr=[sum(CASE WHEN orders.o_orderpriority = Utf8("1-URGENT") OR orders.o_orderpriority = Utf8("2-HIGH") THEN Int64(1) ELSE Int64(0) END), sum(CASE WHEN orders.o_orderpriority != Utf8("1-URGENT") AND orders.o_orderpriority != Utf8("2-HIGH") THEN Int64(1) ELSE Int64(0) END)], partitions=8, output_rows=2, output_bytes=86
+        p0: in_rows=8 out_rows=1 out_bytes=31
+        p1: in_rows=0 out_rows=0 out_bytes=4
+        p2: in_rows=0 out_rows=0 out_bytes=4
+        p3: in_rows=8 out_rows=1 out_bytes=31
+        p4: in_rows=0 out_rows=0 out_bytes=4
+        p5: in_rows=0 out_rows=0 out_bytes=4
+        p6: in_rows=0 out_rows=0 out_bytes=4
+        p7: in_rows=0 out_rows=0 out_bytes=4
+        GpuCoalesceBatchesExec: target_batch_size=894784853, partitions=8, output_rows=16, output_bytes=422
+          p0: in_rows=8 out_rows=8 out_bytes=199
+          p1: in_rows=0 out_rows=0 out_bytes=4
+          p2: in_rows=0 out_rows=0 out_bytes=4
+          p3: in_rows=8 out_rows=8 out_bytes=199
+          p4: in_rows=0 out_rows=0 out_bytes=4
+          p5: in_rows=0 out_rows=0 out_bytes=4
+          p6: in_rows=0 out_rows=0 out_bytes=4
+          p7: in_rows=0 out_rows=0 out_bytes=4
+          GpuRepartitionExec: partitioning=Hash([l_shipmode@0], 8), input_partitions=1, partitions=8, output_rows=16, output_bytes=422
+            p0: in_rows=8 out_rows=8 out_bytes=199
+            p1: in_rows=0 out_rows=0 out_bytes=4
+            p2: in_rows=0 out_rows=0 out_bytes=4
+            p3: in_rows=8 out_rows=8 out_bytes=199
+            p4: in_rows=0 out_rows=0 out_bytes=4
+            p5: in_rows=0 out_rows=0 out_bytes=4
+            p6: in_rows=0 out_rows=0 out_bytes=4
+            p7: in_rows=0 out_rows=0 out_bytes=4
+            GpuCoalescePartitionsExec, partitions=1, output_rows=16, output_bytes=394
+              GpuAggregateExec: group_by=[l_shipmode], aggr=[sum(CASE WHEN orders.o_orderpriority = Utf8("1-URGENT") OR orders.o_orderpriority = Utf8("2-HIGH") THEN Int64(1) ELSE Int64(0) END), sum(CASE WHEN orders.o_orderpriority != Utf8("1-URGENT") AND orders.o_orderpriority != Utf8("2-HIGH") THEN Int64(1) ELSE Int64(0) END)], partitions=8, output_rows=16, output_bytes=440
+                p0: in_rows=3861 out_rows=2 out_bytes=55
+                p1: in_rows=3927 out_rows=2 out_bytes=55
+                p2: in_rows=3875 out_rows=2 out_bytes=55
+                p3: in_rows=3795 out_rows=2 out_bytes=55
+                p4: in_rows=3940 out_rows=2 out_bytes=55
+                p5: in_rows=3835 out_rows=2 out_bytes=55
+                p6: in_rows=3815 out_rows=2 out_bytes=55
+                p7: in_rows=3940 out_rows=2 out_bytes=55
+                GpuProjectExec: expr=[o_orderpriority@1 as o_orderpriority, l_shipmode@0 as l_shipmode], partitions=8, output_rows=30988, output_bytes=641129
+                  p0: in_rows=3861 out_rows=3861 out_bytes=80028
+                  p1: in_rows=3927 out_rows=3927 out_bytes=80827
+                  p2: in_rows=3875 out_rows=3875 out_bytes=80812
+                  p3: in_rows=3795 out_rows=3795 out_bytes=78857
+                  p4: in_rows=3940 out_rows=3940 out_bytes=81407
+                  p5: in_rows=3835 out_rows=3835 out_bytes=78861
+                  p6: in_rows=3815 out_rows=3815 out_bytes=78485
+                  p7: in_rows=3940 out_rows=3940 out_bytes=81852
+                  GpuCoalesceBatchesExec: target_batch_size=894784853, partitions=8, output_rows=30988, output_bytes=641129
+                    p0: in_rows=3861 out_rows=3861 out_bytes=80028
+                    p1: in_rows=3927 out_rows=3927 out_bytes=80827
+                    p2: in_rows=3875 out_rows=3875 out_bytes=80812
+                    p3: in_rows=3795 out_rows=3795 out_bytes=78857
+                    p4: in_rows=3940 out_rows=3940 out_bytes=81407
+                    p5: in_rows=3835 out_rows=3835 out_bytes=78861
+                    p6: in_rows=3815 out_rows=3815 out_bytes=78485
+                    p7: in_rows=3940 out_rows=3940 out_bytes=81852
+                    GpuHashJoinExec: join_type=Inner, on=[(l_orderkey@0, o_orderkey@0)], projection=[1, 3], partitions=8, output_rows=30988, output_bytes=641129
+                      p0: in_rows=3861 out_rows=3861 out_bytes=80028
+                      p1: in_rows=3927 out_rows=3927 out_bytes=80827
+                      p2: in_rows=3875 out_rows=3875 out_bytes=80812
+                      p3: in_rows=3795 out_rows=3795 out_bytes=78857
+                      p4: in_rows=3940 out_rows=3940 out_bytes=81407
+                      p5: in_rows=3835 out_rows=3835 out_bytes=78861
+                      p6: in_rows=3815 out_rows=3815 out_bytes=78485
+                      p7: in_rows=3940 out_rows=3940 out_bytes=81852
+                      GpuCoalesceBatchesExec: target_batch_size=894784853, partitions=8, output_rows=30988, output_bytes=503594
+                        p0: in_rows=3861 out_rows=3861 out_bytes=62746
+                        p1: in_rows=3927 out_rows=3927 out_bytes=63818
+                        p2: in_rows=3875 out_rows=3875 out_bytes=62974
+                        p3: in_rows=3795 out_rows=3795 out_bytes=61674
+                        p4: in_rows=3940 out_rows=3940 out_bytes=64030
+                        p5: in_rows=3835 out_rows=3835 out_bytes=62324
+                        p6: in_rows=3815 out_rows=3815 out_bytes=61998
+                        p7: in_rows=3940 out_rows=3940 out_bytes=64030
+                        GpuRepartitionExec: partitioning=Hash([l_orderkey@0], 8), input_partitions=1, partitions=8, output_rows=30988, output_bytes=503594
+                          p0: in_rows=3861 out_rows=3861 out_bytes=62746
+                          p1: in_rows=3927 out_rows=3927 out_bytes=63818
+                          p2: in_rows=3875 out_rows=3875 out_bytes=62974
+                          p3: in_rows=3795 out_rows=3795 out_bytes=61674
+                          p4: in_rows=3940 out_rows=3940 out_bytes=64030
+                          p5: in_rows=3835 out_rows=3835 out_bytes=62324
+                          p6: in_rows=3815 out_rows=3815 out_bytes=61998
+                          p7: in_rows=3940 out_rows=3940 out_bytes=64030
+                          GpuCoalescePartitionsExec, partitions=1, output_rows=30988, output_bytes=503560
+                            GpuCoalesceBatchesExec: target_batch_size=894784853, partitions=8, output_rows=30988, output_bytes=503596
+                              p0: in_rows=3723 out_rows=3723 out_bytes=60504
+                              p1: in_rows=4243 out_rows=4243 out_bytes=68954
+                              p2: in_rows=4321 out_rows=4321 out_bytes=70222
+                              p3: in_rows=4159 out_rows=4159 out_bytes=67588
+                              p4: in_rows=4036 out_rows=4036 out_bytes=65590
+                              p5: in_rows=4105 out_rows=4105 out_bytes=66712
+                              p6: in_rows=4199 out_rows=4199 out_bytes=68238
+                              p7: in_rows=2202 out_rows=2202 out_bytes=35788
+                              GpuFilterExec: predicate=(l_shipmode@4 = MAIL OR l_shipmode@4 = SHIP) AND l_receiptdate@3 > l_commitdate@2 AND l_shipdate@1 < l_commitdate@2 AND l_receiptdate@3 >= 1994-01-01 AND l_receiptdate@3 < 1995-01-01, projection=[0, 4], partitions=8, output_rows=30988, output_bytes=503596
+                                p0: in_rows=245760 out_rows=3723 out_bytes=60504
+                                p1: in_rows=122880 out_rows=4243 out_bytes=68954
+                                p2: in_rows=122880 out_rows=4321 out_bytes=70222
+                                p3: in_rows=122880 out_rows=4159 out_bytes=67588
+                                p4: in_rows=122880 out_rows=4036 out_bytes=65590
+                                p5: in_rows=122880 out_rows=4105 out_bytes=66712
+                                p6: in_rows=122880 out_rows=4199 out_bytes=68238
+                                p7: in_rows=122880 out_rows=2202 out_bytes=35788
+                                GpuScanExec: table=lineitem, projections=[l_orderkey, l_shipdate, l_commitdate, l_receiptdate, l_shipmode], batch_size=894784853, partitions=8, output_rows=1105920, output_bytes=31973437
+                                  p0: row_groups=[12, 13] out_rows=245760 out_bytes=7105623
+                                  p1: row_groups=[14] out_rows=122880 out_bytes=3552444
+                                  p2: row_groups=[15] out_rows=122880 out_bytes=3552251
+                                  p3: row_groups=[16] out_rows=122880 out_bytes=3552983
+                                  p4: row_groups=[17] out_rows=122880 out_bytes=3552595
+                                  p5: row_groups=[18] out_rows=122880 out_bytes=3552036
+                                  p6: row_groups=[19] out_rows=122880 out_bytes=3552342
+                                  p7: row_groups=[20] out_rows=122880 out_bytes=3553163
+                      GpuCoalesceBatchesExec: target_batch_size=894784853, partitions=8, output_rows=1500000, output_bytes=30974869
+                        p0: in_rows=187219 out_rows=187219 out_bytes=3864639
+                        p1: in_rows=187453 out_rows=187453 out_bytes=3871351
+                        p2: in_rows=187808 out_rows=187808 out_bytes=3880152
+                        p3: in_rows=188082 out_rows=188082 out_bytes=3881835
+                        p4: in_rows=187103 out_rows=187103 out_bytes=3864153
+                        p5: in_rows=187137 out_rows=187137 out_bytes=3864921
+                        p6: in_rows=187378 out_rows=187378 out_bytes=3869812
+                        p7: in_rows=187820 out_rows=187820 out_bytes=3878006
+                        GpuRepartitionExec: partitioning=Hash([o_orderkey@0], 8), input_partitions=1, partitions=8, output_rows=1500000, output_bytes=30974869
+                          p0: in_rows=187219 out_rows=187219 out_bytes=3864639
+                          p1: in_rows=187453 out_rows=187453 out_bytes=3871351
+                          p2: in_rows=187808 out_rows=187808 out_bytes=3880152
+                          p3: in_rows=188082 out_rows=188082 out_bytes=3881835
+                          p4: in_rows=187103 out_rows=187103 out_bytes=3864153
+                          p5: in_rows=187137 out_rows=187137 out_bytes=3864921
+                          p6: in_rows=187378 out_rows=187378 out_bytes=3869812
+                          p7: in_rows=187820 out_rows=187820 out_bytes=3878006
+                          GpuCoalescePartitionsExec, partitions=1, output_rows=1500000, output_bytes=30974833
+                            GpuScanExec: table=orders, projections=[o_orderkey, o_orderpriority], batch_size=894784853, partitions=8, output_rows=1500000, output_bytes=30974861
+                              p0: row_groups=[0, 1] out_rows=245760 out_bytes=5077876
+                              p1: row_groups=[2, 3] out_rows=245760 out_bytes=5074274
+                              p2: row_groups=[4, 5] out_rows=245760 out_bytes=5073817
+                              p3: row_groups=[6, 7] out_rows=245760 out_bytes=5074806
+                              p4: row_groups=[8, 9] out_rows=245760 out_bytes=5075131
+                              p5: row_groups=[10] out_rows=122880 out_bytes=2537484
+                              p6: row_groups=[11] out_rows=122880 out_bytes=2535609
+                              p7: row_groups=[12] out_rows=25440 out_bytes=525864

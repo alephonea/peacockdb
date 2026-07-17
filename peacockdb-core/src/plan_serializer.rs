@@ -31,7 +31,7 @@ use crate::gpu_rule::{
     GpuAggregateExec, GpuCoalesceBatchesExec, GpuCoalescePartitionsExec, GpuCrossJoinExec,
     GpuFilterExec, GpuGlobalLimitExec, GpuHashJoinExec, GpuInterleaveExec, GpuNestedLoopJoinExec,
     GpuProjectExec, GpuRepartitionExec, GpuScanExec, GpuSortExec, GpuSortPreservingMergeExec,
-    GpuUnionExec, GpuWindowExec,
+    GpuUnionExec, GpuWindowExec, PartitionMode,
 };
 
 /// Serialize an entire GPU execution plan tree into a FlatBuffer byte vector.
@@ -39,8 +39,21 @@ use crate::gpu_rule::{
 /// Returns `Err` if the plan contains nodes that cannot be serialized (e.g.
 /// unsupported expression types or plan nodes)
 pub fn serialize_plan(plan: &Arc<dyn ExecutionPlan>) -> Result<Vec<u8>, String> {
+    serialize_plan_mode(plan, PartitionMode::SinglePartition)
+}
+
+/// Like [`serialize_plan`] but at an explicit [`PartitionMode`]. The mode is
+/// threaded to every `GpuAggregate` node so its `mergeable_agg_state` flag is set
+/// iff [`PartitionMode::RealMultiPartition`] — driving the STDDEV/VAR partial-state
+/// shape (see the flatbuffer field doc / #25). `serialize_plan` defaults to
+/// `SinglePartition`, so existing callers and the flatbuffer roundtrips stay
+/// byte-identical (the flag serializes as its `false` default and is omitted).
+pub fn serialize_plan_mode(
+    plan: &Arc<dyn ExecutionPlan>,
+    pm: PartitionMode,
+) -> Result<Vec<u8>, String> {
     let mut builder = FlatBufferBuilder::with_capacity(4096);
-    let root = serialize_plan_node(&mut builder, plan)?;
+    let root = serialize_plan_node(&mut builder, plan, pm)?;
     let gpu_plan = fb::GpuPlan::create(&mut builder, &fb::GpuPlanArgs { root: Some(root) });
     builder.finish(gpu_plan, None);
     Ok(builder.finished_data().to_vec())
@@ -53,6 +66,7 @@ pub fn serialize_plan(plan: &Arc<dyn ExecutionPlan>) -> Result<Vec<u8>, String> 
 fn serialize_plan_node<'a>(
     b: &mut FlatBufferBuilder<'a>,
     plan: &Arc<dyn ExecutionPlan>,
+    pm: PartitionMode,
 ) -> Result<WIPOffset<fb::PlanNode<'a>>, String> {
     let output_schema = serialize_schema(b, &plan.schema());
 
@@ -60,35 +74,35 @@ fn serialize_plan_node<'a>(
     {
         serialize_gpu_scan(b, scan)?
     } else if plan.as_any().is::<GpuFilterExec>() {
-        serialize_gpu_filter(b, plan)?
+        serialize_gpu_filter(b, plan, pm)?
     } else if plan.as_any().is::<GpuProjectExec>() {
-        serialize_gpu_project(b, plan)?
+        serialize_gpu_project(b, plan, pm)?
     } else if plan.as_any().is::<GpuAggregateExec>() {
-        serialize_gpu_aggregate(b, plan)?
+        serialize_gpu_aggregate(b, plan, pm)?
     } else if plan.as_any().is::<GpuHashJoinExec>() {
-        serialize_gpu_hash_join(b, plan)?
+        serialize_gpu_hash_join(b, plan, pm)?
     } else if plan.as_any().is::<GpuCrossJoinExec>() {
-        serialize_gpu_cross_join(b, plan)?
+        serialize_gpu_cross_join(b, plan, pm)?
     } else if plan.as_any().is::<GpuNestedLoopJoinExec>() {
-        serialize_gpu_nested_loop_join(b, plan)?
+        serialize_gpu_nested_loop_join(b, plan, pm)?
     } else if plan.as_any().is::<GpuSortExec>() {
-        serialize_gpu_sort(b, plan)?
+        serialize_gpu_sort(b, plan, pm)?
     } else if plan.as_any().is::<GpuCoalesceBatchesExec>() {
-        serialize_gpu_coalesce_batches(b, plan)?
+        serialize_gpu_coalesce_batches(b, plan, pm)?
     } else if plan.as_any().is::<GpuCoalescePartitionsExec>() {
-        serialize_gpu_coalesce_partitions(b, plan)?
+        serialize_gpu_coalesce_partitions(b, plan, pm)?
     } else if plan.as_any().is::<GpuRepartitionExec>() {
-        serialize_gpu_repartition(b, plan)?
+        serialize_gpu_repartition(b, plan, pm)?
     } else if plan.as_any().is::<GpuSortPreservingMergeExec>() {
-        serialize_gpu_sort_preserving_merge(b, plan)?
+        serialize_gpu_sort_preserving_merge(b, plan, pm)?
     } else if plan.as_any().is::<GpuUnionExec>() {
-        serialize_gpu_union(b, plan, false)?
+        serialize_gpu_union(b, plan, false, pm)?
     } else if plan.as_any().is::<GpuInterleaveExec>() {
-        serialize_gpu_union(b, plan, true)?
+        serialize_gpu_union(b, plan, true, pm)?
     } else if plan.as_any().is::<GpuGlobalLimitExec>() {
-        serialize_gpu_limit(b, plan)?
+        serialize_gpu_limit(b, plan, pm)?
     } else if plan.as_any().is::<GpuWindowExec>() {
-        serialize_gpu_window(b, plan)?
+        serialize_gpu_window(b, plan, pm)?
     } else {
         return Err(format!("unsupported plan node: {}", plan.name()));
     };
@@ -217,6 +231,7 @@ fn serialize_gpu_scan<'a>(
 fn serialize_gpu_filter<'a>(
     b: &mut FlatBufferBuilder<'a>,
     plan: &Arc<dyn ExecutionPlan>,
+    pm: PartitionMode,
 ) -> Result<(fb::PlanNodeKind, WIPOffset<flatbuffers::UnionWIPOffset>), String> {
     let gpu_filter = plan
         .as_any()
@@ -230,7 +245,7 @@ fn serialize_gpu_filter<'a>(
 
     let predicate = serialize_expr(b, filter.predicate(), &filter.input().schema())?;
     let input_plan = filter.input();
-    let input = serialize_plan_node(b, input_plan)?;
+    let input = serialize_plan_node(b, input_plan, pm)?;
 
     let projection = filter.projection().map(|p| {
         let indices: Vec<u32> = p.iter().map(|&i| i as u32).collect();
@@ -253,6 +268,7 @@ fn serialize_gpu_filter<'a>(
 fn serialize_gpu_project<'a>(
     b: &mut FlatBufferBuilder<'a>,
     plan: &Arc<dyn ExecutionPlan>,
+    pm: PartitionMode,
 ) -> Result<(fb::PlanNodeKind, WIPOffset<flatbuffers::UnionWIPOffset>), String> {
     let gpu_proj = plan
         .as_any()
@@ -273,7 +289,7 @@ fn serialize_gpu_project<'a>(
     let exprs_vec = b.create_vector(&exprs);
     let aliases_vec = b.create_vector(&alias_offsets);
 
-    let input = serialize_plan_node(b, proj.input())?;
+    let input = serialize_plan_node(b, proj.input(), pm)?;
 
     let node = fb::GpuProject::create(
         b,
@@ -291,6 +307,7 @@ fn serialize_gpu_project<'a>(
 fn serialize_gpu_aggregate<'a>(
     b: &mut FlatBufferBuilder<'a>,
     plan: &Arc<dyn ExecutionPlan>,
+    pm: PartitionMode,
 ) -> Result<(fb::PlanNodeKind, WIPOffset<flatbuffers::UnionWIPOffset>), String> {
     let gpu_agg = plan
         .as_any()
@@ -375,7 +392,7 @@ fn serialize_gpu_aggregate<'a>(
 
     let aggr_input_schema = serialize_schema(b, &agg.input_schema());
 
-    let input = serialize_plan_node(b, agg.input())?;
+    let input = serialize_plan_node(b, agg.input(), pm)?;
 
     let node = fb::GpuAggregate::create(
         b,
@@ -389,6 +406,10 @@ fn serialize_gpu_aggregate<'a>(
             null_names: Some(null_names_vec),
             grouping_sets: Some(grouping_sets_vec),
             aggr_input_schema: Some(aggr_input_schema),
+            // Set iff this run merges partial state across real hash partitions;
+            // the executor uses it to pick the 3-col Welford stddev/var state (see
+            // the flatbuffer field doc / #25). AVG is unaffected in either mode.
+            mergeable_agg_state: pm == PartitionMode::RealMultiPartition,
         },
     );
     Ok((fb::PlanNodeKind::GpuAggregate, node.as_union_value()))
@@ -399,6 +420,7 @@ fn serialize_gpu_aggregate<'a>(
 fn serialize_gpu_hash_join<'a>(
     b: &mut FlatBufferBuilder<'a>,
     plan: &Arc<dyn ExecutionPlan>,
+    pm: PartitionMode,
 ) -> Result<(fb::PlanNodeKind, WIPOffset<flatbuffers::UnionWIPOffset>), String> {
     let gpu_join = plan
         .as_any()
@@ -460,8 +482,8 @@ fn serialize_gpu_hash_join<'a>(
         (None, None)
     };
 
-    let left = serialize_plan_node(b, join.left())?;
-    let right = serialize_plan_node(b, join.right())?;
+    let left = serialize_plan_node(b, join.left(), pm)?;
+    let right = serialize_plan_node(b, join.right(), pm)?;
 
     let projection = join.projection.as_ref().map(|proj| {
         let indices: Vec<u32> = proj.iter().map(|&i| i as u32).collect();
@@ -489,6 +511,7 @@ fn serialize_gpu_hash_join<'a>(
 fn serialize_gpu_cross_join<'a>(
     b: &mut FlatBufferBuilder<'a>,
     plan: &Arc<dyn ExecutionPlan>,
+    pm: PartitionMode,
 ) -> Result<(fb::PlanNodeKind, WIPOffset<flatbuffers::UnionWIPOffset>), String> {
     let gpu = plan.as_any().downcast_ref::<GpuCrossJoinExec>().unwrap();
     let cross = gpu
@@ -497,8 +520,8 @@ fn serialize_gpu_cross_join<'a>(
         .downcast_ref::<CrossJoinExec>()
         .ok_or("GpuCrossJoinExec inner is not CrossJoinExec")?;
 
-    let left = serialize_plan_node(b, cross.left())?;
-    let right = serialize_plan_node(b, cross.right())?;
+    let left = serialize_plan_node(b, cross.left(), pm)?;
+    let right = serialize_plan_node(b, cross.right(), pm)?;
 
     let node = fb::GpuCrossJoin::create(
         b,
@@ -515,6 +538,7 @@ fn serialize_gpu_cross_join<'a>(
 fn serialize_gpu_nested_loop_join<'a>(
     b: &mut FlatBufferBuilder<'a>,
     plan: &Arc<dyn ExecutionPlan>,
+    pm: PartitionMode,
 ) -> Result<(fb::PlanNodeKind, WIPOffset<flatbuffers::UnionWIPOffset>), String> {
     let gpu = plan.as_any().downcast_ref::<GpuNestedLoopJoinExec>().unwrap();
     let nlj = gpu
@@ -561,8 +585,8 @@ fn serialize_gpu_nested_loop_join<'a>(
         (None, None)
     };
 
-    let left = serialize_plan_node(b, nlj.left())?;
-    let right = serialize_plan_node(b, nlj.right())?;
+    let left = serialize_plan_node(b, nlj.left(), pm)?;
+    let right = serialize_plan_node(b, nlj.right(), pm)?;
 
     let projection = nlj.projection().map(|proj| {
         let indices: Vec<u32> = proj.iter().map(|&i| i as u32).collect();
@@ -588,6 +612,7 @@ fn serialize_gpu_nested_loop_join<'a>(
 fn serialize_gpu_sort<'a>(
     b: &mut FlatBufferBuilder<'a>,
     plan: &Arc<dyn ExecutionPlan>,
+    pm: PartitionMode,
 ) -> Result<(fb::PlanNodeKind, WIPOffset<flatbuffers::UnionWIPOffset>), String> {
     let gpu_sort = plan
         .as_any()
@@ -615,7 +640,7 @@ fn serialize_gpu_sort<'a>(
 
     let fetch = sort.fetch().map(|f| f as i64).unwrap_or(-1);
 
-    let input = serialize_plan_node(b, sort.input())?;
+    let input = serialize_plan_node(b, sort.input(), pm)?;
 
     let node = fb::GpuSort::create(
         b,
@@ -634,6 +659,7 @@ fn serialize_gpu_sort<'a>(
 fn serialize_gpu_coalesce_batches<'a>(
     b: &mut FlatBufferBuilder<'a>,
     plan: &Arc<dyn ExecutionPlan>,
+    pm: PartitionMode,
 ) -> Result<(fb::PlanNodeKind, WIPOffset<flatbuffers::UnionWIPOffset>), String> {
     let gpu_cb = plan.as_any().downcast_ref::<GpuCoalesceBatchesExec>().unwrap();
     let cb = gpu_cb
@@ -642,7 +668,7 @@ fn serialize_gpu_coalesce_batches<'a>(
         .downcast_ref::<datafusion::physical_plan::coalesce_batches::CoalesceBatchesExec>()
         .ok_or("GpuCoalesceBatchesExec inner is not CoalesceBatchesExec")?;
 
-    let input = serialize_plan_node(b, cb.input())?;
+    let input = serialize_plan_node(b, cb.input(), pm)?;
     let node = fb::GpuCoalesceBatches::create(
         b,
         &fb::GpuCoalesceBatchesArgs {
@@ -658,6 +684,7 @@ fn serialize_gpu_coalesce_batches<'a>(
 fn serialize_gpu_coalesce_partitions<'a>(
     b: &mut FlatBufferBuilder<'a>,
     plan: &Arc<dyn ExecutionPlan>,
+    pm: PartitionMode,
 ) -> Result<(fb::PlanNodeKind, WIPOffset<flatbuffers::UnionWIPOffset>), String> {
     let gpu_cp = plan.as_any().downcast_ref::<GpuCoalescePartitionsExec>().unwrap();
     let cp = gpu_cp
@@ -666,7 +693,7 @@ fn serialize_gpu_coalesce_partitions<'a>(
         .downcast_ref::<datafusion::physical_plan::coalesce_partitions::CoalescePartitionsExec>()
         .ok_or("GpuCoalescePartitionsExec inner is not CoalescePartitionsExec")?;
 
-    let input = serialize_plan_node(b, cp.input())?;
+    let input = serialize_plan_node(b, cp.input(), pm)?;
     let node = fb::GpuCoalescePartitions::create(
         b,
         &fb::GpuCoalescePartitionsArgs {
@@ -681,6 +708,7 @@ fn serialize_gpu_coalesce_partitions<'a>(
 fn serialize_gpu_repartition<'a>(
     b: &mut FlatBufferBuilder<'a>,
     plan: &Arc<dyn ExecutionPlan>,
+    pm: PartitionMode,
 ) -> Result<(fb::PlanNodeKind, WIPOffset<flatbuffers::UnionWIPOffset>), String> {
     use datafusion::physical_plan::repartition::RepartitionExec;
     use datafusion::physical_plan::Partitioning;
@@ -692,7 +720,7 @@ fn serialize_gpu_repartition<'a>(
         .downcast_ref::<RepartitionExec>()
         .ok_or("GpuRepartitionExec inner is not RepartitionExec")?;
 
-    let input = serialize_plan_node(b, rp.input())?;
+    let input = serialize_plan_node(b, rp.input(), pm)?;
 
     let (kind, num_partitions, hash_exprs) = match rp.partitioning() {
         Partitioning::RoundRobinBatch(n) => (fb::PartitioningKind::RoundRobinBatch, *n, None),
@@ -724,6 +752,7 @@ fn serialize_gpu_repartition<'a>(
 fn serialize_gpu_sort_preserving_merge<'a>(
     b: &mut FlatBufferBuilder<'a>,
     plan: &Arc<dyn ExecutionPlan>,
+    pm: PartitionMode,
 ) -> Result<(fb::PlanNodeKind, WIPOffset<flatbuffers::UnionWIPOffset>), String> {
     use datafusion::physical_plan::sorts::sort_preserving_merge::SortPreservingMergeExec;
 
@@ -734,7 +763,7 @@ fn serialize_gpu_sort_preserving_merge<'a>(
         .downcast_ref::<SortPreservingMergeExec>()
         .ok_or("GpuSortPreservingMergeExec inner is not SortPreservingMergeExec")?;
 
-    let input = serialize_plan_node(b, spm.input())?;
+    let input = serialize_plan_node(b, spm.input(), pm)?;
 
     let mut sort_exprs = Vec::new();
     for se in spm.expr().iter() {
@@ -769,12 +798,13 @@ fn serialize_gpu_union<'a>(
     b: &mut FlatBufferBuilder<'a>,
     plan: &Arc<dyn ExecutionPlan>,
     interleave: bool,
+    pm: PartitionMode,
 ) -> Result<(fb::PlanNodeKind, WIPOffset<flatbuffers::UnionWIPOffset>), String> {
     // UnionExec and InterleaveExec carry no extra state beyond their children,
     // so serialize the inputs directly off the wrapper (no inner downcast).
     let mut inputs = Vec::with_capacity(plan.children().len());
     for child in plan.children() {
-        inputs.push(serialize_plan_node(b, child)?);
+        inputs.push(serialize_plan_node(b, child, pm)?);
     }
     let inputs_vec = b.create_vector(&inputs);
 
@@ -798,6 +828,7 @@ fn serialize_gpu_union<'a>(
 fn serialize_gpu_limit<'a>(
     b: &mut FlatBufferBuilder<'a>,
     plan: &Arc<dyn ExecutionPlan>,
+    pm: PartitionMode,
 ) -> Result<(fb::PlanNodeKind, WIPOffset<flatbuffers::UnionWIPOffset>), String> {
     use datafusion::physical_plan::limit::GlobalLimitExec;
 
@@ -808,7 +839,7 @@ fn serialize_gpu_limit<'a>(
         .downcast_ref::<GlobalLimitExec>()
         .ok_or("GpuGlobalLimitExec inner is not GlobalLimitExec")?;
 
-    let input = serialize_plan_node(b, limit.input())?;
+    let input = serialize_plan_node(b, limit.input(), pm)?;
     let fetch = limit.fetch().map(|f| f as i64).unwrap_or(-1);
 
     let node = fb::GpuLimit::create(
@@ -827,6 +858,7 @@ fn serialize_gpu_limit<'a>(
 fn serialize_gpu_window<'a>(
     b: &mut FlatBufferBuilder<'a>,
     plan: &Arc<dyn ExecutionPlan>,
+    pm: PartitionMode,
 ) -> Result<(fb::PlanNodeKind, WIPOffset<flatbuffers::UnionWIPOffset>), String> {
     use datafusion::logical_expr::WindowFrameBound as DfBound;
     use datafusion::physical_expr::window::{
@@ -940,7 +972,7 @@ fn serialize_gpu_window<'a>(
         ));
     }
     let exprs_vec = b.create_vector(&expr_offsets);
-    let input = serialize_plan_node(b, input_plan)?;
+    let input = serialize_plan_node(b, input_plan, pm)?;
 
     let node = fb::GpuWindow::create(
         b,

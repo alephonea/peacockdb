@@ -47,6 +47,10 @@ cpu_result_test!(tpch, 1, shuffle_additive, tp1_mem120gib, true);
 // shuffle_additive_avg at tp1: single-partition baseline (DF mode=Single, plain mean);
 // the GPU verifies its result against this golden. Real 8-way variant is tp8-mem120gib.
 cpu_result_test!(tpch, 1, shuffle_additive_avg, tp1_mem120gib, true);
+// shuffle_stddev at tp1: single-partition baseline (DF mode=Partial+Final over 1 part;
+// stddev/var = make_std/make_variance singleton, NOT the M2-merge path). The GPU verifies
+// its result here; real 8-way M2 merge is tp8-mem120gib. Approx (stddev/var are float).
+cpu_result_approx_test!(tpch, 1, shuffle_stddev, tp1_mem120gib, true);
 
 // ── TPC-DS (GPU-operational set) ───────────────────────────────────────────
 cpu_result_test!(tpcds, 1, q1, tp1_mem120gib, true);

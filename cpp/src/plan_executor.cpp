@@ -8,6 +8,7 @@
 #include <cudf/column/column_view.hpp>
 #include <cudf/concatenate.hpp>
 #include <cudf/copying.hpp>
+#include <cudf/merge.hpp>
 #include <cudf/column/column_factories.hpp>
 #include <cudf/datetime.hpp>
 #include <cudf/filling.hpp>
@@ -1248,12 +1249,18 @@ static bool is_stddev_name(const std::string& f) {
 static bool is_avg_name(const std::string& f) {
   return f == "avg" || f == "AVG" || f == "mean" || f == "MEAN";
 }
-static cudf::size_type stddev_ddof(const std::string& f) {
-  return (f == "stddev_pop" || f == "STDDEV_POP") ? 0 : 1;
-}
 static bool is_var_name(const std::string& f) {
   return f == "var" || f == "VAR" || f == "var_samp" || f == "VAR_SAMP" ||
          f == "var_pop" || f == "VAR_POP" || f == "variance" || f == "VARIANCE";
+}
+// ddof (delta degrees of freedom) for the STDDEV/VAR divisor n-ddof: population
+// variants (STDDEV_POP/VAR_POP) use ddof=0 (divisor n), the sample default
+// (STDDEV/STDDEV_SAMP/VAR/VAR_SAMP/VARIANCE) uses ddof=1 (divisor n-1). Matches
+// DataFusion (StddevPop/VarPop = population; the rest = sample).
+static cudf::size_type stddev_ddof(const std::string& f) {
+  return (f == "stddev_pop" || f == "STDDEV_POP" || f == "var_pop" || f == "VAR_POP")
+             ? 0
+             : 1;
 }
 
 // Aggregate execution phase — THREE-WAY (Inc4). The old `is_final` bool
@@ -1308,15 +1315,20 @@ static std::unique_ptr<cudf::groupby_aggregation> make_agg(
     // https://github.com/asymptote-tech/peacockdb/issues/25
     return cudf::make_mean_aggregation<cudf::groupby_aggregation>();
   }
-  if (is_stddev_name(func_name)) {
-    // Two-phase stddev: the Partial stage computes the real per-group std over
-    // the raw rows; with passthrough repartition that output is one row per key,
-    // so the Final regroup is an identity. cuDF cannot merge partial std states,
-    // so model the Final stage as a singleton-identity (MEAN over the lone
-    // partial row), exactly as AVG does above. The has_singleton_final guard in
-    // execute_aggregate fails loudly if a real multi-row merge ever happens.
+  if (is_stddev_name(func_name) || is_var_name(func_name)) {
+    // SINGLE-PARTITION stddev/var (this make_agg path). The Partial stage computes
+    // the real per-group std/var over the raw rows; with passthrough repartition
+    // that output is one row per key, so the Final regroup is an identity — model
+    // it as a singleton-identity (MEAN over the lone partial row), exactly as AVG.
+    // The grouped guard in execute_aggregate fails loudly if a real multi-row merge
+    // is attempted on THIS path. Real cross-partition merging (RealMultiPartition)
+    // takes the separate 3-col Welford M2-state path (mergeable_agg_state), NOT
+    // this make_agg call — see execute_aggregate. #25.
     if (is_final)
       return cudf::make_mean_aggregation<cudf::groupby_aggregation>();
+    if (is_var_name(func_name))
+      return cudf::make_variance_aggregation<cudf::groupby_aggregation>(
+          stddev_ddof(func_name));
     return cudf::make_std_aggregation<cudf::groupby_aggregation>(
         stddev_ddof(func_name));
   }
@@ -1471,12 +1483,26 @@ static TableResult execute_aggregate(const fb::GpuAggregate* agg) {
         bool is_sum = (name == "sum" || name == "SUM");
         std::unique_ptr<cudf::column> result_col;
         if (is_count) {
-          // Avoid make_count_aggregation<reduce_aggregation> which is not
-          // exported in all cudf versions. Count = size - null_count.
-          int64_t cnt = static_cast<int64_t>(values_col.size()) -
-                        static_cast<int64_t>(values_col.null_count());
-          cudf::numeric_scalar<int64_t> s(cnt, true);
-          result_col = cudf::make_column_from_scalar(s, 1);
+          if (is_final) {
+            // #100: a GLOBAL (ungrouped) count at the Final stage merges the
+            // per-partition PARTIAL counts — it must SUM them (values_col holds one
+            // partial-count per partition), NOT re-count the partial rows. Mirrors
+            // the grouped make_agg count→sum-at-Final. (Bug: a global count(*) at
+            // real 8-way was counting the 8 partial rows = 8 instead of Σ = the true
+            // total.) The partial count column is INT64; reduce-sum to INT64.
+            auto ragg = cudf::make_sum_aggregation<cudf::reduce_aggregation>();
+            auto s = cudf::reduce(values_col, *ragg,
+                                  cudf::data_type{cudf::type_id::INT64});
+            result_col = cudf::make_column_from_scalar(*s, 1);
+          } else {
+            // Partial/Single: count the actual (non-null) rows.
+            // Avoid make_count_aggregation<reduce_aggregation> which is not
+            // exported in all cudf versions. Count = size - null_count.
+            int64_t cnt = static_cast<int64_t>(values_col.size()) -
+                          static_cast<int64_t>(values_col.null_count());
+            cudf::numeric_scalar<int64_t> s(cnt, true);
+            result_col = cudf::make_column_from_scalar(s, 1);
+          }
         } else if (values_col.type().id() == cudf::type_id::DECIMAL128 &&
                    (is_sum || is_avg)) {
           // cudf::reduce supports only min/max on fixed_point types; sum/mean
@@ -1688,39 +1714,58 @@ static TableResult execute_aggregate(const fb::GpuAggregate* agg) {
     bool avg_div;     // Final-avg: out = Σsum / Σcount
     int32_t out_scale;      // decimal out scale for the avg divide
     uint8_t out_precision;  // 0 => float avg
+    // Final-stddev/var (Inc5): the request result is a MERGE_M2 struct
+    // {count, mean, m2}; finalize to var = m2/(count-ddof) (or NULL when
+    // count-ddof<=0), stddev = sqrt(var). Defaulted so existing inits are unchanged.
+    bool std_finalize = false;
+    bool is_variance = false;  // finalize as variance (skip the sqrt)
+    int ddof = 1;              // divisor n-ddof (0 = population, 1 = sample)
   };
   std::vector<cudf::groupby::aggregation_request> requests;
   std::vector<OutBuild> builds;
   bool has_stddev_or_var_final = false;
   size_t in_off = key_indices.size();  // Final positional input cursor
 
-  // Does a Final-stage avg read a 2-col [sum,count] STATE, or a 1-col MEAN?
-  // The plain Partial path (Inc4) emits 2 cols per avg; the GROUPING-SET Partial
-  // path (ROLLUP/CUBE) still emits 1 MEAN col per avg — and ITS Final re-groups
-  // [keys, __grouping_id] as a plain GROUP BY, so it lands HERE. Reading 2 cols
-  // for such a 1-col avg over-runs the input (the q18/q22 tp1 OOB regression).
-  // Discriminate by the Final input WIDTH: a plain-Partial input is
-  // keys + Σ(2·avg + 1·other) wide, a grouping-set-Partial input is keys + Σ1.
-  // At tp1 the Partial is one-row-per-key, so a 1-col avg-Final is the exact
-  // mean-of-singleton identity (pre-Inc4 behaviour). Multi-partition ROLLUP-avg
-  // merge — making the grouping-set Partial emit real [sum,count] state — is #18.
+  // True when this run merges partial state across REAL hash partitions
+  // (RealMultiPartition device, e.g. tp8-mem120gib): the serializer set it iff so.
+  // Drives the STDDEV/VAR state shape — 3-col Welford [count,mean,m2] + MERGE_M2
+  // when set, else the 1-col make_std singleton (byte-stable at tp1/tp8-mem2gib,
+  // protecting the existing exact goldens, e.g. tpcds q17 tp1). AVG is unaffected.
+  const bool mergeable = agg->mergeable_agg_state();
+  // Per-agg Final STRIDE (input columns consumed): count/sum/min/max = 1;
+  // avg = 2 [sum,count] (Inc4) or 1 (grouping-set/ROLLUP mean); stddev/var = 3
+  // Welford cols when `mergeable`, else 1 (singleton). q17 interleaves all three.
+  const size_t stddev_stride = mergeable ? 3 : 1;
+
+  // Recover avg's 2-vs-1 stride from the RESIDUAL after removing keys + the
+  // flag-known stddev strides + the 1-col others — NOT from the total column count,
+  // which stddev's variable stride would confound (coordinator's sharpening). A
+  // grouping-set/ROLLUP Partial emits 1 MEAN col per avg and its Final re-groups
+  // [keys,__grouping_id] as a plain GROUP BY, landing HERE; reading 2 cols for such
+  // a 1-col avg over-runs the input (the q18/q22 tp1 OOB regression fixed in Inc4).
   bool avg_state_2col = true;
   if (phase == AggPhase::Final && agg->aggr_funcs()) {
     size_t n_funcs = agg->aggr_funcs()->size();
-    size_t n_avg = 0;
+    size_t n_avg = 0, n_std = 0;
     for (flatbuffers::uoffset_t i = 0; i < n_funcs; ++i) {
-      auto* f = agg->aggr_funcs()->Get(i);
-      if (is_avg_name(f->name() ? f->name()->str() : "")) ++n_avg;
+      std::string nm = agg->aggr_funcs()->Get(i)->name()
+                           ? agg->aggr_funcs()->Get(i)->name()->str()
+                           : "";
+      if (is_avg_name(nm))
+        ++n_avg;
+      else if (is_stddev_name(nm) || is_var_name(nm))
+        ++n_std;
     }
-    size_t width_1col = key_indices.size() + n_funcs;               // grouping-set Partial
-    size_t width_2col = key_indices.size() + n_funcs + n_avg;       // plain Partial
+    size_t n_other = n_funcs - n_avg - n_std;  // count/sum/min/max = 1 col each
+    size_t fixed = key_indices.size() + n_std * stddev_stride + n_other;
     size_t got = static_cast<size_t>(tv.num_columns());
-    if (n_avg > 0 && got == width_1col && width_1col != width_2col)
+    size_t residual = (got >= fixed) ? got - fixed : ~static_cast<size_t>(0);
+    if (n_avg > 0 && residual == n_avg)  // 1 col per avg -> grouping-set/ROLLUP mean
       avg_state_2col = false;
-    else if (got != width_2col)
+    else if (residual != n_avg * 2)
       throw std::runtime_error(
-          "Final-stage aggregate input width does not match either the 2-col "
-          "[sum,count] avg-state layout or the 1-col grouping-set-avg layout");
+          "Final-stage aggregate input width does not match the expected "
+          "count(1)/avg(1|2)/stddev(1|3) state layout");
   }
 
   if (agg->aggr_funcs()) {
@@ -1729,7 +1774,11 @@ static TableResult execute_aggregate(const fb::GpuAggregate* agg) {
       std::string name = func->name() ? func->name()->str() : "count";
       std::string alias = func->alias() ? func->alias()->str() : name;
       bool is_avg = is_avg_name(name);
-      if (phase == AggPhase::Final && (is_stddev_name(name) || is_var_name(name)))
+      // Guard only the NON-mergeable (singleton) stddev/var Final: it must see one
+      // partial row per key. The mergeable path below (MERGE_M2) is DESIGNED to
+      // merge many partial rows, so it must NOT trip the guard.
+      if (phase == AggPhase::Final && (is_stddev_name(name) || is_var_name(name)) &&
+          !mergeable)
         has_stddev_or_var_final = true;
 
       if (is_avg && phase == AggPhase::Partial) {
@@ -1773,6 +1822,60 @@ static TableResult execute_aggregate(const fb::GpuAggregate* agg) {
                           func->out_decimal_precision()});
         in_off += 2;
         continue;  // avg consumed TWO Final input columns
+      } else if ((is_stddev_name(name) || is_var_name(name)) &&
+                 phase == AggPhase::Partial && mergeable) {
+        // Welford STATE [count, mean, m2] over the value cast to FLOAT64 (stddev/
+        // var are float-valued in DataFusion). One request, three aggregations —
+        // matching DataFusion's 3-col Partial state schema so the Final can
+        // MERGE_M2 across real hash partitions (#25). count -> INT64.
+        computed_args.push_back(
+            cudf::cast(arg_col(func), cudf::data_type{cudf::type_id::FLOAT64}));
+        cudf::groupby::aggregation_request req;
+        req.values = computed_args.back()->view();
+        req.aggregations.push_back(cudf::make_count_aggregation<cudf::groupby_aggregation>());
+        req.aggregations.push_back(cudf::make_mean_aggregation<cudf::groupby_aggregation>());
+        req.aggregations.push_back(cudf::make_m2_aggregation<cudf::groupby_aggregation>());
+        int r = static_cast<int>(requests.size());
+        builds.push_back({alias, r, 0, true, -1, false, 0, 0});   // count -> INT64
+        builds.push_back({alias, r, 1, false, -1, false, 0, 0});  // mean
+        builds.push_back({alias, r, 2, false, -1, false, 0, 0});  // m2
+        requests.push_back(std::move(req));
+      } else if ((is_stddev_name(name) || is_var_name(name)) &&
+                 phase == AggPhase::Final && mergeable) {
+        // Merge Welford state across partitions: pack the 3 partial cols
+        // [count, mean, m2] at [in_off, in_off+1, in_off+2] into a struct and
+        // MERGE_M2 per group (Welford-Chan). The finalize (var / stddev, ddof,
+        // count-ddof<=0 -> NULL) happens in the assembly. Consumes THREE Final cols.
+        // Child ORDER + TYPES are fixed by cuDF's group_merge_m2 (verified against
+        // the 25.02 runtime source): child(0)=valid_count INT32, child(1)=mean f64,
+        // child(2)=M2 f64. Count MUST be INT32 here (25.02 rejects INT64; 25.10
+        // relaxed it, which is why it compiled but failed the 25.02 GPU-remote run).
+        auto cnt = cudf::cast(tv.column(static_cast<cudf::size_type>(in_off)),
+                              cudf::data_type{cudf::type_id::INT32});
+        auto mean = std::make_unique<cudf::column>(
+            tv.column(static_cast<cudf::size_type>(in_off + 1)));
+        auto m2 = std::make_unique<cudf::column>(
+            tv.column(static_cast<cudf::size_type>(in_off + 2)));
+        std::vector<std::unique_ptr<cudf::column>> members;
+        members.push_back(std::move(cnt));
+        members.push_back(std::move(mean));
+        members.push_back(std::move(m2));
+        computed_args.push_back(cudf::make_structs_column(
+            tv.num_rows(), std::move(members), 0, rmm::device_buffer{}));
+        cudf::groupby::aggregation_request req;
+        req.values = computed_args.back()->view();
+        req.aggregations.push_back(
+            cudf::make_merge_m2_aggregation<cudf::groupby_aggregation>());
+        OutBuild ob;
+        ob.name = alias;
+        ob.req = static_cast<int>(requests.size());
+        ob.std_finalize = true;
+        ob.is_variance = is_var_name(name);
+        ob.ddof = static_cast<int>(stddev_ddof(name));
+        builds.push_back(ob);
+        requests.push_back(std::move(req));
+        in_off += 3;
+        continue;  // stddev/var consumed THREE Final input columns
       } else {
         // Single-avg (plain mean) OR sum/count/min/max/stddev — one request.
         cudf::groupby::aggregation_request req;
@@ -1792,6 +1895,17 @@ static TableResult execute_aggregate(const fb::GpuAggregate* agg) {
             }
           }
           req.values = base;
+        } else if ((is_stddev_name(name) || is_var_name(name)) &&
+                   phase != AggPhase::Final) {
+          // SINGLE-PARTITION stddev/var (make_std/make_variance singleton path):
+          // stddev/var are FLOAT64 in DataFusion, but cuDF's make_std/make_variance
+          // keep the input (e.g. DECIMAL l_quantity) type → a narrow/decimal result
+          // that mismatches the f64 golden. Cast to FLOAT64 first, exactly as the
+          // mergeable M2 path does. (Final here is the singleton MEAN over the
+          // already-f64 partial, so no cast needed on that leg.)
+          computed_args.push_back(
+              cudf::cast(arg_col(func), cudf::data_type{cudf::type_id::FLOAT64}));
+          req.values = computed_args.back()->view();
         } else {
           req.values = arg_col(func);
         }
@@ -1826,7 +1940,33 @@ static TableResult execute_aggregate(const fb::GpuAggregate* agg) {
   }
   for (auto& b : builds) {
     std::unique_ptr<cudf::column> col;
-    if (b.avg_div) {
+    if (b.std_finalize) {
+      // MERGE_M2 result is a struct {count, mean, m2}. Finalize:
+      //   var = m2 / (count - ddof);  stddev = sqrt(var)
+      // with DataFusion's sample-NULL semantics: count-ddof <= 0 (a single-row
+      // sample group, or an empty group) -> NULL, not NaN/inf.
+      auto merged = agg_results[b.req].results[b.res]->view();  // struct
+      auto count_v = merged.child(0);  // INT64
+      auto m2_v = merged.child(2);     // FLOAT64
+      auto count_f = cudf::cast(count_v, cudf::data_type{cudf::type_id::FLOAT64});
+      cudf::numeric_scalar<double> ddof_s(static_cast<double>(b.ddof), true);
+      auto denom = cudf::binary_operation(count_f->view(), ddof_s,
+                                          cudf::binary_operator::SUB,
+                                          cudf::data_type{cudf::type_id::FLOAT64});
+      auto var = cudf::binary_operation(m2_v, denom->view(),
+                                        cudf::binary_operator::DIV,
+                                        cudf::data_type{cudf::type_id::FLOAT64});
+      cudf::numeric_scalar<double> zero(0.0, true);
+      auto valid = cudf::binary_operation(denom->view(), zero,
+                                          cudf::binary_operator::GREATER,
+                                          cudf::data_type{cudf::type_id::BOOL8});
+      auto null_f64 =
+          cudf::make_default_constructed_scalar(cudf::data_type{cudf::type_id::FLOAT64});
+      auto var_masked = cudf::copy_if_else(var->view(), *null_f64, valid->view());
+      col = b.is_variance
+                ? std::move(var_masked)
+                : cudf::unary_operation(var_masked->view(), cudf::unary_operator::SQRT);
+    } else if (b.avg_div) {
       // Σsum / Σcount at DataFusion's declared out type.
       auto sum_v = agg_results[b.req].results[b.res]->view();
       auto cnt_v = agg_results[b.req_div].results[0]->view();
@@ -2937,7 +3077,50 @@ void NodeSession::execute_node(uint64_t seq, const uint64_t* input_handles,
     }
     TableResult result;
     result.column_names = owned.empty() ? std::vector<std::string>{} : owned[0].column_names;
-    result.table = cudf::concatenate(views);
+
+    const fb::GpuSortPreservingMerge* spm =
+        (node->node_type() == fb::PlanNodeKind_GpuSortPreservingMerge)
+            ? node->node_as_GpuSortPreservingMerge()
+            : nullptr;
+    if (spm && spm->exprs() && spm->exprs()->size() > 0 && views.size() > 1) {
+      // (#99) SortPreservingMerge = K-WAY MERGE the N already-sorted partitions by the
+      // SPM's sort keys, NOT a plain concat. Concat leaves the output globally
+      // UNSORTED (only per-partition-sorted), so a downstream LIMIT/fetch picks the
+      // wrong top-N. The N inputs are each sorted upstream by the SAME GpuSort spec
+      // (execute_sort reads the identical SortExprNode fields), which is cudf::merge's
+      // precondition. Column-ref keys only (post-aggregate ORDER BY, the whole top-N
+      // corpus); an EXPRESSION sort key would need per-partition materialization
+      // (none present) — throw loudly rather than silently mis-merge.
+      std::vector<cudf::size_type> key_cols;
+      std::vector<cudf::order> orders;
+      std::vector<cudf::null_order> null_orders;
+      for (flatbuffers::uoffset_t i = 0; i < spm->exprs()->size(); ++i) {
+        auto* se = spm->exprs()->Get(i);
+        auto* expr = se->expr();
+        if (!expr || expr->node_type() != fb::ExprNode_ColumnRef)
+          throw std::runtime_error(
+              "GpuSortPreservingMerge: expression sort key not supported by the k-way "
+              "merge (needs per-partition materialization) — file an increment");
+        key_cols.push_back(
+            static_cast<cudf::size_type>(expr->node_as_ColumnRef()->index()));
+        orders.push_back(se->asc() ? cudf::order::ASCENDING : cudf::order::DESCENDING);
+        null_orders.push_back(se->nulls_first() ? cudf::null_order::BEFORE
+                                                : cudf::null_order::AFTER);
+      }
+      result.table = cudf::merge(views, key_cols, orders, null_orders);
+      // Apply the SPM's own fetch (top-N) AFTER the global merge (-1 = unlimited).
+      if (spm->fetch() >= 0) {
+        auto n = std::min(static_cast<cudf::size_type>(spm->fetch()),
+                          result.table->view().num_rows());
+        std::vector<cudf::size_type> slice_indices{0, n};
+        auto sliced = cudf::slice(result.table->view(), slice_indices);
+        result.table = std::make_unique<cudf::table>(sliced[0]);
+      }
+    } else {
+      // GpuCoalescePartitions, or an SPM with no sort keys / a single partition:
+      // a plain in-order concat is the correct collapse.
+      result.table = cudf::concatenate(views);
+    }
     auto tv = result.table->view();
     if (out_stats)
       out_stats[0] = NodeStats{static_cast<uint64_t>(tv.num_rows()), varlen_content_bytes(tv)};

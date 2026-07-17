@@ -270,8 +270,10 @@ pub fn assert_plan_matches_canonical(plan: &Arc<dyn ExecutionPlan>, name: &str) 
     assert_plan_matches_canonical_at(plan, &plan_golden("tpch", "1", name, "tp8-mem2gib"));
 }
 
-/// Plan `<dataset>-queries/<query>.sql` and compare to the plan golden.
-pub async fn run_query_test_at(dataset: &str, sf: &str, query: &str, device: &str) {
+/// Build the GPU physical plan for `<dataset>-queries/<query>.sql` at `device`'s
+/// partition config + [`PartitionMode`] (via [`partition_mode`]). Shared by the
+/// plan-canonical test and bespoke serializer tests that need the lowered plan.
+pub async fn plan_for(dataset: &str, sf: &str, query: &str, device: &str) -> Arc<dyn ExecutionPlan> {
     let data_dir = data_dir_for(dataset, sf);
     if !data_dir.exists() {
         panic!(
@@ -290,7 +292,12 @@ pub async fn run_query_test_at(dataset: &str, sf: &str, query: &str, device: &st
     )
     .await
     .unwrap();
-    let plan = gpu_ctx.sql(&sql).await.unwrap().create_physical_plan().await.unwrap();
+    gpu_ctx.sql(&sql).await.unwrap().create_physical_plan().await.unwrap()
+}
+
+/// Plan `<dataset>-queries/<query>.sql` and compare to the plan golden.
+pub async fn run_query_test_at(dataset: &str, sf: &str, query: &str, device: &str) {
+    let plan = plan_for(dataset, sf, query, device).await;
     assert_plan_matches_canonical_at(&plan, &plan_golden(dataset, sf, query, device));
 }
 
@@ -698,12 +705,17 @@ fn has_repartition(plan: &Arc<dyn ExecutionPlan>) -> bool {
 /// Whether an aggregate's two-phase STATE is mergeable across hash partitions by a
 /// per-bucket Final re-aggregation. SUM/COUNT/MIN/MAX merge trivially (Σ / extremum);
 /// AVG merges because its state (sum, count) IS additive — the per-bucket Final does
-/// Σsum/Σcount = correct mean, no mean-of-means (Inc4, #25). STDDEV/VAR do NOT — their
-/// state is compound moments needing the M2 combine (Inc5). Whitelist (not blacklist)
-/// so any unrecognized aggregate defaults to NON-mergeable → the query stays on the
-/// #11 single-partition path (correct) rather than silently mis-merging on #13.
+/// Σsum/Σcount = correct mean, no mean-of-means (Inc4, #25). STDDEV/VAR merge via the
+/// Welford [count, mean, m2] state + cuDF MERGE_M2 across buckets (Inc5, #25). Whitelist
+/// (not blacklist) so any unrecognized aggregate defaults to NON-mergeable → the query
+/// stays on the #11 single-partition path (correct) rather than silently mis-merging on #13.
 fn state_mergeable_agg(fun_name: &str) -> bool {
-    matches!(fun_name.to_ascii_lowercase().as_str(), "sum" | "count" | "min" | "max" | "avg" | "mean")
+    matches!(
+        fun_name.to_ascii_lowercase().as_str(),
+        "sum" | "count" | "min" | "max" | "avg" | "mean"
+            | "stddev" | "stddev_samp" | "stddev_pop"
+            | "var" | "var_samp" | "var_pop" | "variance"
+    )
 }
 
 /// True iff every multi-partition FINAL-stage aggregate in the plan is state-mergeable
@@ -978,7 +990,15 @@ pub async fn assert_gpu_nodes_match_golden(dataset: &str, sf: &str, query: &str,
 /// Per-query result-assertion mode for the merged GPU test (`gpu_test!`) — chosen
 /// EXPLICITLY at each call site so a reader sees, per query, golden vs live oracle.
 /// `GoldenExact`  = static result-golden, exact compare (fail-closed: missing panics).
-/// `GoldenApprox` = static result-golden, 1e-12 float-tolerant (q14/q39).
+/// `GoldenApprox` = static result-golden, 1e-12 float-tolerant (q14/q39 — avg/sum
+///                  summation reassociation across partitions, ~1 ULP).
+/// `GoldenApproxStddev` = static result-golden, 1e-11 float-tolerant. STDDEV/VAR ONLY:
+///                  cuDF's variance algorithm (Σ(x-x̄)² then sqrt) accumulates more
+///                  float error than sum/avg, and cuDF make_std/MERGE_M2 vs DataFusion's
+///                  Welford diverge ~2e-12 (observed 1.996e-12) — beyond the 1e-12
+///                  convention. 1e-11 = ~5× headroom, still 11 significant digits. The
+///                  CPU-side #13 approx tests stay at 1e-12 (CPU#13 == DataFusion at
+///                  ~3e-14); this looser tol is GPU-cuDF-specific. See #94-adjacent.
 /// `Oracle`       = live CPU-oracle compare, NO golden — for results too large to
 ///                  commit as text (>= RESULT_GOLDEN_MAX_BYTES, e.g. anti-join's
 ///                  ~240MB/1.2M rows). R4 preserved: still result-validated, live.
@@ -988,6 +1008,7 @@ pub async fn assert_gpu_nodes_match_golden(dataset: &str, sf: &str, query: &str,
 pub enum GpuResultMode {
     GoldenExact,
     GoldenApprox,
+    GoldenApproxStddev,
     Oracle,
     Skip,
 }
@@ -998,10 +1019,11 @@ pub fn gpu_result_mode(s: &str) -> GpuResultMode {
     match s {
         "golden_exact" => GpuResultMode::GoldenExact,
         "golden_approx" => GpuResultMode::GoldenApprox,
+        "golden_approx_std" => GpuResultMode::GoldenApproxStddev,
         "oracle" => GpuResultMode::Oracle,
         "skip" => GpuResultMode::Skip,
         other => panic!(
-            "gpu_test!: unknown result mode '{other}' (expected golden_exact|golden_approx|oracle|skip)"
+            "gpu_test!: unknown result mode '{other}' (expected golden_exact|golden_approx|golden_approx_std|oracle|skip)"
         ),
     }
 }
@@ -1052,6 +1074,15 @@ pub async fn assert_gpu_query(
             &actual,
             &result_golden(dataset, sf, query, device),
             Some(1e-12),
+            &qlabel,
+        ),
+        // STDDEV/VAR: 1e-11 (vs the 1e-12 convention) — cuDF's variance algorithm
+        // diverges from DataFusion's Welford by ~2e-12, more than sum/avg. See the
+        // GpuResultMode::GoldenApproxStddev doc.
+        GpuResultMode::GoldenApproxStddev => assert_result_golden(
+            &actual,
+            &result_golden(dataset, sf, query, device),
+            Some(1e-11),
             &qlabel,
         ),
         GpuResultMode::Oracle => {
@@ -1168,6 +1199,34 @@ macro_rules! cpu_result_approx_test {
                     &stringify!($device).replace('_', "-"),
                     Some(1e-12),
                     false, // #11 executor
+                    $gen,
+                )
+                .await;
+            }
+        }
+    };
+}
+
+/// `cpu_node13_result_approx_test!(dataset, sf, query, device, gen)` — like
+/// [`cpu_node13_result_test!`] (the #13 real-N-partition CpuNodeExecutor) but with a
+/// 1e-12 relative tolerance on Float64 columns. Required for STDDEV/VAR queries (Inc5):
+/// the Welford M2 state, merged across the 8 hash partitions, reassociates float
+/// summation (~1 ULP; ~3e-14 rel) vs the DataFusion single-pass oracle, so exact-string
+/// compare can't be used. The output_bytes cost golden stays exact (float byte width
+/// is unchanged). `gen` writes the `.result.txt` iff a golden `gpu_test!` consumes it.
+#[macro_export]
+macro_rules! cpu_node13_result_approx_test {
+    ($dataset:ident, $sf:literal, $query:ident, $device:ident, $gen:literal) => {
+        paste::paste! {
+            #[tokio::test]
+            async fn [<cpu_ $dataset _sf $sf _ $query _ $device>]() {
+                $crate::common::assert_cpu_results_match_datafusion(
+                    stringify!($dataset),
+                    stringify!($sf),
+                    &stringify!($query).replace('_', "-"),
+                    &stringify!($device).replace('_', "-"),
+                    Some(1e-12),
+                    true, // #13 CpuNodeExecutor
                     $gen,
                 )
                 .await;

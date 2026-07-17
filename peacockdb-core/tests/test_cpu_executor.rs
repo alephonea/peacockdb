@@ -51,6 +51,11 @@ cpu_result_test!(tpch, 1, shuffle_additive, tp8_mem2gib, false);
 // shuffle_additive_avg (GROUP BY rf,ls; count, avg, sum — avg BEFORE sum) — the Inc4
 // AVG proof query. tp8-mem2gib stays on #11; the real 8-way #13 golden is below.
 cpu_result_test!(tpch, 1, shuffle_additive_avg, tp8_mem2gib, false);
+// shuffle_stddev (GROUP BY rf,ls; stddev_samp/pop + var_samp/pop) — the Inc5 STDDEV/VAR
+// proof. tp8-mem2gib stays on #11 (SinglePartition make_std/make_variance singleton);
+// the real 8-way #13 Welford-M2-merge golden is at tp8-mem120gib. Approx: the M2
+// summation reassociates across partitions (~1 ULP), so float compare is tolerant.
+cpu_result_approx_test!(tpch, 1, shuffle_stddev, tp8_mem2gib, false);
 
 // ── H200/tp8 (Phase 2 Inc1): real 8-way partitioning ────────────────────────
 // The scan's RG→partition map drives this through the #13 CpuNodeExecutor, so
@@ -71,6 +76,55 @@ cpu_node13_result_test!(tpch, 1, shuffle_additive_avg, tp8_mem120gib, true);
 // q1: the canonical AVG carrier (3 avgs + 4 sums + count, GROUP BY rf,ls) — now real
 // 8-way #13 at tp8-mem120gib (was #11-only until Inc4). tp8-mem2gib q1 stays #11.
 cpu_node13_result_test!(tpch, 1, q1, tp8_mem120gib, true);
+// join-int (#96): minimal 2-table single-INT-key inner join (orders⋈customer on custkey)
+// + GROUP BY count — the smallest real-8-way carrier for per-partition INNER JOIN
+// execution, isolating it from q17's 15-join complexity. gen=false until the GPU join
+// fix lands (then a gpu_test! consumes its .result.txt).
+cpu_node13_result_test!(tpch, 1, join_int, tp8_mem120gib, false);
+// q17 (tpcds): the CPU-side real-query STDDEV proof — per measure count(1)+avg(2)+
+// stddev(3) state, ×3 measures — exercising the #13 mixed count/avg/stddev Final
+// width-detect at real 8-way (comet hashes the composite int join keys). gen=true
+// (#96): the CPU oracle now runs q17's 7 Partitioned joins per-partition (8-way),
+// and the tp8 gpu_test! (golden_approx_std) consumes this owned .result.txt.
+cpu_node13_result_approx_test!(tpcds, 1, q17, tp8_mem120gib, true);
+// semi/anti/left joins (#97-a): per-partition NON-inner Partitioned joins at real 8-way.
+// DataFusion runs all three Partitioned 8→8 (semi-join=RightSemi, anti-join=RightAnti,
+// left-join=Left); the #96 MAP arm admits every join type, so this is the conformance
+// proof — each asserts the #13 per-partition result against VANILLA DataFusion, so a
+// wrong per-partition anti (NOT-IN global-null edge) fails LOUD here. gen=false: the
+// GPU tp8 tests use oracle mode (>256KB result), so no .result.txt is consumed. The
+// legacy tp8-mem2gib cpu_result_test carriers above stay (exercise the #11 executor).
+cpu_node13_result_test!(tpch, 1, semi_join, tp8_mem120gib, false);
+cpu_node13_result_test!(tpch, 1, anti_join, tp8_mem120gib, false);
+cpu_node13_result_test!(tpch, 1, left_join, tp8_mem120gib, false);
+// Real TPC-H join-query flip batch 1 (post-#96/#97-a): all Partitioned Inner joins,
+// Int32/Int64 keys (q5 composite), all-sum mergeable aggs, scan-map present, zero
+// CollectLeft/decimal/distinct — node13-executable at real 8-way. gen=true: each owns
+// the small .result.txt the tp8 gpu_test!(golden_exact) consumes (result is
+// partition-independent). Legacy tp8-mem2gib #11 carriers above stay.
+// q3 (#99): ORDER BY revenue ... LIMIT 10 — the SPM/TopK gate is now FIXED (the #13
+// SortPreservingMerge k-way-merges the 8 sorted partitions + applies fetch instead of
+// concatenating), so the global top-10 == DataFusion. Re-flipped.
+cpu_node13_result_test!(tpch, 1, q3, tp8_mem120gib, true);
+cpu_node13_result_test!(tpch, 1, q5, tp8_mem120gib, true);
+// q7/q8/q9 FLIPPED via the GPU repartition key-type extensions: (1) dict-encoded string
+// keys decode to STRING (DF45 dict-encoding); (2) their GROUP-BY o_year/l_year reaches
+// the kernel as cuDF INT16 (cudf::extract_year → INT16, NOT the DataFusion Int32 the
+// audit saw — the cuDF-vs-DF type gap), now widened to INT32; (3) q3-class DATE keys
+// (TIMESTAMP_DAYS) bit-cast to INT32. All hash-only (scattered output unchanged → no
+// golden regen). Legacy tp8-mem2gib #11 lines kept.
+cpu_node13_result_test!(tpch, 1, q7, tp8_mem120gib, true);
+cpu_node13_result_test!(tpch, 1, q8, tp8_mem120gib, true);
+cpu_node13_result_test!(tpch, 1, q9, tp8_mem120gib, true);
+// Flip batch 2: q12/q19 (Partitioned Inner, int keys, mergeable sum, no
+// LIMIT/decimal/distinct → no gate). Legacy tp8-mem2gib #11 lines kept.
+cpu_node13_result_test!(tpch, 1, q12, tp8_mem120gib, true);
+cpu_node13_result_test!(tpch, 1, q19, tp8_mem120gib, true);
+// q13 (bucket-2 addendum): grouped count over a Partitioned LEFT-outer join, ORDER BY
+// without LIMIT. Un-gated once #100 clarified the LEFT-outer is correct (only global
+// count(*) mis-merged; q13's counts are GROUPED). No LIMIT (no #99), no global count
+// (no #100). Legacy tp8-mem2gib #11 line kept.
+cpu_node13_result_test!(tpch, 1, q13, tp8_mem120gib, true);
 
 // ── TPC-DS ────────────────────────────────────────────────────────────────
 cpu_result_test!(tpcds, 1, q1, tp8_mem2gib, false);

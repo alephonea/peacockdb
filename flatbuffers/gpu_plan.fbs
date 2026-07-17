@@ -396,6 +396,16 @@ table GpuAggregate {
   /// `input` is the Partial-stage output (group cols + partial accumulator
   /// columns) rather than the original ungrouped columns the args reference.
   aggr_input_schema: Schema;
+  /// True when this aggregate's partial state will be MERGED across real hash
+  /// partitions (RealMultiPartition device, e.g. tp8-mem120gib). Drives the
+  /// executor's STDDEV/VAR state shape: when set, a Partial stddev/var emits the
+  /// 3-col Welford state [count, mean, m2] (matching DataFusion's Partial schema)
+  /// so the Final can MERGE_M2 across partitions; when false (SinglePartition,
+  /// e.g. tp1 / tp8-mem2gib) a Partial stddev keeps the 1-col make_std singleton
+  /// (byte-identical to pre-Inc5, protecting the existing exact goldens). AVG is
+  /// unaffected — its 2-col [sum,count] state is emitted in both modes (Inc4).
+  /// Additive field (default false); old plans parse as SinglePartition. See #25.
+  mergeable_agg_state: bool = false;
 }
 
 /// Hash join (equi-join on key pairs, with optional residual filter).

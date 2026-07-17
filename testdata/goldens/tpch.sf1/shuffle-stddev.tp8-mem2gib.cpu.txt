@@ -1,0 +1,6 @@
+GpuProjectExec: expr=[l_returnflag@0 as l_returnflag, l_linestatus@1 as l_linestatus, stddev(lineitem.l_quantity)@2 as std_samp_qty, stddev_pop(lineitem.l_quantity)@3 as std_pop_qty, var(lineitem.l_quantity)@4 as var_samp_qty, var_pop(lineitem.l_quantity)@5 as var_pop_qty], partitions=1, output_rows=4, output_bytes=182
+  GpuAggregateExec: group_by=[l_returnflag, l_linestatus], aggr=[stddev(lineitem.l_quantity), stddev_pop(lineitem.l_quantity), var(lineitem.l_quantity), var_pop(lineitem.l_quantity)], partitions=1, output_rows=4, output_bytes=182
+    GpuCoalesceBatchesExec: target_batch_size=8388608, partitions=1, output_rows=4, output_bytes=446
+      GpuRepartitionExec: partitioning=Hash([l_returnflag@0, l_linestatus@1], 8), input_partitions=8, partitions=1, output_rows=4, output_bytes=446
+        GpuAggregateExec: group_by=[l_returnflag, l_linestatus], aggr=[stddev(lineitem.l_quantity), stddev_pop(lineitem.l_quantity), var(lineitem.l_quantity), var_pop(lineitem.l_quantity)], partitions=1, output_rows=4, output_bytes=446
+          GpuScanExec: table=lineitem, projections=[l_quantity, l_returnflag, l_linestatus], batch_size=8388608, partitions=1, output_rows=6001215, output_bytes=158282054

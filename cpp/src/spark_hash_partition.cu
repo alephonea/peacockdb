@@ -2,7 +2,10 @@
 
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/column/column_factories.hpp>
+#include <cudf/dictionary/dictionary_column_view.hpp>
+#include <cudf/dictionary/encode.hpp>
 #include <cudf/partitioning.hpp>
+#include <cudf/unary.hpp>
 #include <cudf/strings/string_view.cuh>
 #include <cudf/utilities/error.hpp>
 
@@ -75,6 +78,24 @@ __global__ void spark_hash_string_col_kernel(cudf::column_device_view col,
   hashes[row]    = spark_hash_bytes(s.data(), s.size_bytes(), hashes[row]);
 }
 
+// One thread per row; folds one FIXED-WIDTH key column into the running hash.
+// comet hashes `value.to_le_bytes()` of the natural-width representation through the
+// SAME murmur3; on a little-endian GPU the value's in-memory bytes ARE its LE bytes,
+// so hashing sizeof(T) bytes at &v is bit-identical to comet (Int32/Date-as-i32 → 4B,
+// Int64/Timestamp-as-i64 → 8B — one/two 4-byte blocks, no tail since sizeof%4==0).
+// Null rows are SKIPPED (running hash unchanged), matching comet's is_null skip.
+template <typename T>
+__global__ void spark_hash_fixed_col_kernel(cudf::column_device_view col,
+                                            uint32_t* hashes,
+                                            cudf::size_type n) {
+  auto const row = static_cast<cudf::size_type>(blockIdx.x) * blockDim.x + threadIdx.x;
+  if (row >= n) return;
+  if (col.is_null(row)) return;
+  T const v   = col.element<T>(row);
+  hashes[row] = spark_hash_bytes(reinterpret_cast<char const*>(&v),
+                                 static_cast<int>(sizeof(T)), hashes[row]);
+}
+
 // pmod (positive modulo), NOT raw % — negative hashes must wrap into [0, parts).
 __global__ void pmod_kernel(uint32_t const* hashes,
                             int32_t* pid,
@@ -102,14 +123,71 @@ std::unique_ptr<cudf::column> spark_partition_ids(cudf::table_view const& input,
 
   constexpr int block = 256;
   auto const grid     = (n + block - 1) / block;
+  // Decoded dictionary key columns are kept alive here until all hash kernels for this
+  // call have been enqueued (their device views feed async kernels below).
+  std::vector<std::unique_ptr<cudf::column>> decoded_keep;
   for (auto const ci : key_cols) {
-    auto const col = input.column(ci);
-    CUDF_EXPECTS(col.type().id() == cudf::type_id::STRING,
-                 "peacock spark_partition_ids: only STRING key columns are supported "
-                 "(Inc2 string-key boundary; extend + re-prove conformance for other types)");
+    cudf::column_view col = input.column(ci);
+    // (#18) Normalize a dict-encoded key to its STRING values FOR HASHING only. A
+    // dict-encoded parquet string reaches the GPU as cuDF DICTIONARY32 (the CPU comet
+    // path sees Utf8View and casts to Utf8 — same underlying bytes), which this kernel
+    // doesn't hash directly. Decoding yields the identical string bytes, so the
+    // murmur3 == comet (Inc2 STRING conformance covers it). The SCATTERED output keeps
+    // the ORIGINAL column (this decode is hash-only) → no golden/type change.
+    if (col.type().id() == cudf::type_id::DICTIONARY32) {
+      decoded_keep.push_back(
+          cudf::dictionary::decode(cudf::dictionary_column_view{col}, stream, mr));
+      col = decoded_keep.back()->view();
+    }
+    // (#18) Normalize the small-int / date families to INT32 so the 4-byte fixed kernel
+    // hashes the Spark-identical bytes. Spark widens sub-32-bit ints to i32 (comet:
+    // int8/16/32 -> (v as i32) LE 4B), so value-CAST INT8/INT16 -> INT32. A DATE column
+    // (cuDF TIMESTAMP_DAYS) is int32 days-since-epoch (comet: DATE32 -> i32 4B), so
+    // zero-copy BIT-CAST it to INT32 (same bytes = the days value). This is hash-only —
+    // the scattered output keeps the ORIGINAL column, so no golden/type change.
+    switch (col.type().id()) {
+      case cudf::type_id::INT8:
+      case cudf::type_id::INT16:
+        decoded_keep.push_back(
+            cudf::cast(col, cudf::data_type{cudf::type_id::INT32}, stream, mr));
+        col = decoded_keep.back()->view();
+        break;
+      case cudf::type_id::TIMESTAMP_DAYS:
+        col = cudf::bit_cast(col, cudf::data_type{cudf::type_id::INT32});
+        break;
+      default:
+        break;
+    }
     auto const dcol = cudf::column_device_view::create(col, stream);
     if (n > 0) {
-      spark_hash_string_col_kernel<<<grid, block, 0, stream.value()>>>(*dcol, hashes.data(), n);
+      // Dispatch by cuDF type id. Each column folds into the running (seed-chained)
+      // hash in key order — composite keys work for free. STRING + INT32/INT64 are
+      // supported (Inc6); date/timestamp/decimal/float are pending (#18/Inc7) and
+      // fail loudly below rather than hash a wrong encoding.
+      switch (col.type().id()) {
+        case cudf::type_id::STRING:
+          spark_hash_string_col_kernel<<<grid, block, 0, stream.value()>>>(
+              *dcol, hashes.data(), n);
+          break;
+        case cudf::type_id::INT32:
+          spark_hash_fixed_col_kernel<int32_t><<<grid, block, 0, stream.value()>>>(
+              *dcol, hashes.data(), n);
+          break;
+        case cudf::type_id::INT64:
+          spark_hash_fixed_col_kernel<int64_t><<<grid, block, 0, stream.value()>>>(
+              *dcol, hashes.data(), n);
+          break;
+        default:
+          // Print the exact cuDF type_id (int) of the offending key column so a CI/GPU
+          // failure log pins WHICH type to handle — the DataFusion-plan type (e.g.
+          // Utf8View) is only a proxy for what actually reaches this kernel.
+          CUDF_FAIL(
+              "peacock spark_partition_ids: unsupported key column cuDF type_id=" +
+              std::to_string(static_cast<int>(col.type().id())) +
+              " (supported: STRING, dict-encoded string, INT8/16/32/64, DATE32; "
+              "timestamp/decimal/float partition keys pending — extend the kernel + "
+              "re-prove comet conformance, see #18/Inc7)");
+      }
     }
   }
 

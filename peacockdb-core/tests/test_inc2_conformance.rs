@@ -77,39 +77,29 @@ fn cpu_reference_2col_partition_ids_for_probe() {
     eprintln!("  rows: (A,F)(N,F)(N,O)(R,F)(NULL,F)(A,NULL)");
 }
 
-/// PERMANENT I-1 conformance gate (runs in the GPU-remote job): the REAL GPU path
-/// (peacock::partitioning::spark_partition_ids via the FFI hook) and the REAL comet
-/// CPU helper, in ONE process, over the SAME bytes — asserted bit-exact. NOT
-/// hardcoded reference values. Requires a GPU + the cudf-linked build.
+/// I-1 conformance harness: drive the REAL GPU path (peacock::partitioning::
+/// spark_partition_ids via the FFI hook) and the REAL comet CPU helper, in ONE
+/// process, over the SAME `cols` — assert bit-exact. NOT hardcoded reference values.
+/// Each `(Field, ArrayRef)` is a key column; they seed-chain left-to-right (composite
+/// keys). Requires a GPU + the cudf-linked build.
 #[cfg(not(feature = "rust-only"))]
-#[test]
-fn gpu_spark_partition_ids_match_comet_live() {
+fn assert_gpu_matches_comet_live(cols: Vec<(datafusion::arrow::datatypes::Field, ArrayRef)>, n_parts: i32) {
     use datafusion::arrow::array::{Array, StructArray};
-    use datafusion::arrow::datatypes::{DataType, Field};
     use datafusion::arrow::ffi::{to_ffi, FFI_ArrowArray, FFI_ArrowSchema};
     use std::ffi::c_void;
 
-    // Full proof-query key shape: 2 columns (l_returnflag, l_linestatus) + a NULL
-    // in each — exercises multi-key left-to-right seeding + Spark null-skip.
-    let rf: ArrayRef = Arc::new(StringArray::from(vec![
-        Some("A"), Some("N"), Some("N"), Some("R"), None, Some("A"),
-    ]));
-    let ls: ArrayRef = Arc::new(StringArray::from(vec![
-        Some("F"), Some("F"), Some("O"), Some("F"), Some("F"), None,
-    ]));
-    let n_parts: i32 = 8;
-    let rows = rf.len();
-    let comet = cpu_partition_ids(&[rf.clone(), ls.clone()], n_parts);
+    let arrays: Vec<ArrayRef> = cols.iter().map(|(_, a)| Arc::clone(a)).collect();
+    let rows = arrays[0].len();
+    let comet = cpu_partition_ids(&arrays, n_parts);
 
     // Export the key columns as a struct array (= the table) over the Arrow C-Data
     // interface; cuDF reads the struct as a table.
-    let struct_arr = StructArray::from(vec![
-        (Arc::new(Field::new("rf", DataType::Utf8, true)), rf),
-        (Arc::new(Field::new("ls", DataType::Utf8, true)), ls),
-    ]);
+    let struct_arr = StructArray::from(
+        cols.into_iter().map(|(f, a)| (Arc::new(f), a)).collect::<Vec<_>>(),
+    );
     let (ffi_arr, ffi_schema) = to_ffi(&struct_arr.to_data()).unwrap();
 
-    let key_cols: [u32; 2] = [0, 1];
+    let key_cols: Vec<u32> = (0..arrays.len() as u32).collect();
     let mut out = vec![0i32; rows];
     let mut got_n: u64 = 0;
     let rc = unsafe {
@@ -132,6 +122,131 @@ fn gpu_spark_partition_ids_match_comet_live() {
     assert_eq!(
         out, comet,
         "GPU Spark-murmur3 partition-ids must match the comet CPU twin bit-exact"
+    );
+}
+
+/// PERMANENT I-1 gate (STRING keys — the Inc2 proof shape): 2 string columns
+/// (l_returnflag, l_linestatus) + a NULL in each (multi-key seeding + null-skip).
+#[cfg(not(feature = "rust-only"))]
+#[test]
+fn gpu_spark_partition_ids_match_comet_live() {
+    use datafusion::arrow::datatypes::{DataType, Field};
+    let rf: ArrayRef = Arc::new(StringArray::from(vec![
+        Some("A"), Some("N"), Some("N"), Some("R"), None, Some("A"),
+    ]));
+    let ls: ArrayRef = Arc::new(StringArray::from(vec![
+        Some("F"), Some("F"), Some("O"), Some("F"), Some("F"), None,
+    ]));
+    assert_gpu_matches_comet_live(
+        vec![
+            (Field::new("rf", DataType::Utf8, true), rf),
+            (Field::new("ls", DataType::Utf8, true), ls),
+        ],
+        8,
+    );
+}
+
+/// Inc6 I-1: INT32 key conformance — edge values (0, -1, i32::MAX/MIN) + a NULL.
+/// int32 = one 4-byte LE block, no tail; exercises the generic fixed-width kernel
+/// and the negative/extreme two's-complement encodings + Spark null-skip.
+#[cfg(not(feature = "rust-only"))]
+#[test]
+fn gpu_spark_partition_ids_int32_match_comet_live() {
+    use datafusion::arrow::array::Int32Array;
+    use datafusion::arrow::datatypes::{DataType, Field};
+    let k: ArrayRef = Arc::new(Int32Array::from(vec![
+        Some(1), Some(0), Some(-1), Some(i32::MAX), Some(i32::MIN), None, Some(42),
+    ]));
+    assert_gpu_matches_comet_live(vec![(Field::new("k", DataType::Int32, true), k)], 8);
+}
+
+/// Inc6 I-1: INT64 key conformance — the dominant surrogate-key (*_sk) case.
+/// int64 = two 4-byte LE blocks (low then high), no tail. Edge values + NULL.
+#[cfg(not(feature = "rust-only"))]
+#[test]
+fn gpu_spark_partition_ids_int64_match_comet_live() {
+    use datafusion::arrow::array::Int64Array;
+    use datafusion::arrow::datatypes::{DataType, Field};
+    let k: ArrayRef = Arc::new(Int64Array::from(vec![
+        Some(1), Some(0), Some(-1), Some(i64::MAX), Some(i64::MIN), None, Some(1234567890123),
+    ]));
+    assert_gpu_matches_comet_live(vec![(Field::new("k", DataType::Int64, true), k)], 8);
+}
+
+/// #18 I-1: INT16 key conformance — the GROUP-BY year case (cudf::extract_year emits
+/// INT16, so a year-grouped query repartitions on an INT16 key). Spark widens short→int
+/// (4-byte hash); the GPU casts INT16→INT32 before the fixed kernel, so this proves the
+/// widened hash is bit-exact vs comet. Edge values + NULL.
+#[cfg(not(feature = "rust-only"))]
+#[test]
+fn gpu_spark_partition_ids_int16_match_comet_live() {
+    use datafusion::arrow::array::Int16Array;
+    use datafusion::arrow::datatypes::{DataType, Field};
+    let k: ArrayRef = Arc::new(Int16Array::from(vec![
+        Some(1), Some(0), Some(-1), Some(i16::MAX), Some(i16::MIN), None, Some(1998),
+    ]));
+    assert_gpu_matches_comet_live(vec![(Field::new("k", DataType::Int16, true), k)], 8);
+}
+
+/// #18 I-1: DATE32 key conformance — the GROUP-BY date case (q3 groups by o_orderdate;
+/// cuDF stores it as TIMESTAMP_DAYS = int32 days-since-epoch). Spark hashes DATE as the
+/// int32 day count (4-byte); the GPU bit-casts TIMESTAMP_DAYS→INT32, so this proves the
+/// days hash is bit-exact vs comet. Epoch, real dates, pre-epoch negative, NULL.
+#[cfg(not(feature = "rust-only"))]
+#[test]
+fn gpu_spark_partition_ids_date32_match_comet_live() {
+    use datafusion::arrow::array::Date32Array;
+    use datafusion::arrow::datatypes::{DataType, Field};
+    let k: ArrayRef = Arc::new(Date32Array::from(vec![
+        Some(0), Some(9203), Some(-1), Some(i32::MAX), None, Some(10000),
+    ]));
+    assert_gpu_matches_comet_live(vec![(Field::new("k", DataType::Date32, true), k)], 8);
+}
+
+/// Inc6 I-1: COMPOSITE all-INT key conformance — the q17 join-key shape
+/// (ss_customer_sk, ss_item_sk, ss_ticket_number are all int surrogate keys).
+/// Proves the seed-chain across multiple int columns, incl per-column NULLs (a null
+/// in ONE column of a row still folds the other columns — Spark skips only that col).
+#[cfg(not(feature = "rust-only"))]
+#[test]
+fn gpu_spark_partition_ids_composite_int_match_comet_live() {
+    use datafusion::arrow::array::{Int32Array, Int64Array};
+    use datafusion::arrow::datatypes::{DataType, Field};
+    let a: ArrayRef = Arc::new(Int32Array::from(vec![
+        Some(1), Some(2), Some(-1), None, Some(i32::MIN), Some(7),
+    ]));
+    let b: ArrayRef = Arc::new(Int64Array::from(vec![
+        Some(100), None, Some(-100), Some(i64::MAX), Some(0), Some(7),
+    ]));
+    assert_gpu_matches_comet_live(
+        vec![
+            (Field::new("a", DataType::Int32, true), a),
+            (Field::new("b", DataType::Int64, true), b),
+        ],
+        8,
+    );
+}
+
+/// Inc6 I-1: COMPOSITE MIXED-type key conformance (int64 + string, nulls in each) —
+/// proves the running seed chains correctly across type-heterogeneous columns (the
+/// general case: an int join/group key interleaved with a string dimension key).
+#[cfg(not(feature = "rust-only"))]
+#[test]
+fn gpu_spark_partition_ids_composite_mixed_match_comet_live() {
+    use datafusion::arrow::array::Int64Array;
+    use datafusion::arrow::datatypes::{DataType, Field};
+    let ints: ArrayRef = Arc::new(Int64Array::from(vec![
+        Some(10), Some(-5), None, Some(i64::MAX), Some(0), Some(999),
+    ]));
+    let strs: ArrayRef = Arc::new(StringArray::from(vec![
+        Some("A"), Some("BB"), Some("C"), None, Some(""), Some("ticket"),
+    ]));
+    assert_gpu_matches_comet_live(
+        vec![
+            (Field::new("i", DataType::Int64, true), ints),
+            (Field::new("s", DataType::Utf8, true), strs),
+        ],
+        8,
     );
 }
 

@@ -52,6 +52,10 @@ gpu_test!(tpch, 1, q22, tp1_mem120gib, golden_exact);
 
 gpu_test!(tpch, 1, shuffle_additive, tp1_mem120gib, golden_exact);
 gpu_test!(tpch, 1, shuffle_additive_avg, tp1_mem120gib, golden_exact);
+// Inc5 STDDEV/VAR proof at tp1 (single-partition make_std/make_variance singleton).
+// golden_approx_std (1e-11): cuDF's variance algo diverges from DataFusion's Welford
+// by ~2e-12 — more than the 1e-12 sum/avg convention. See GpuResultMode doc.
+gpu_test!(tpch, 1, shuffle_stddev, tp1_mem120gib, golden_approx_std);
 
 // ── H200/tp8 (Phase 2 Inc1/Inc2): real 8-way partitioning ───────────────────
 // One GPU run asserts per-node Σ-over-8 rows+cost vs the tp8-mem120gib .cpu.txt
@@ -65,6 +69,10 @@ gpu_test!(tpch, 1, shuffle_additive_avg, tp8_mem120gib, golden_exact);
 // q1: canonical AVG carrier (3 avgs + 4 sums + count, GROUP BY rf,ls) — real 8-way
 // #13 at tp8-mem120gib. Exercises the running column-offset (avgs before count).
 gpu_test!(tpch, 1, q1, tp8_mem120gib, golden_exact);
+// Inc5 STDDEV/VAR proof: real 8-way Welford [count,mean,m2] state merged via cuDF
+// MERGE_M2 per hash bucket (stddev_samp/pop + var_samp/pop, all 4 finalize branches).
+// golden_approx_std (1e-11): same tol as tp1 for consistency (tp8 passes at 1e-12 too).
+gpu_test!(tpch, 1, shuffle_stddev, tp8_mem120gib, golden_approx_std);
 
 // ── TPC-DS (GPU-operational set) ────────────────────────────────────────────
 gpu_test!(tpcds, 1, q1, tp1_mem120gib, golden_exact);
@@ -82,6 +90,45 @@ gpu_test!(tpcds, 1, q14, tp1_mem120gib, golden_approx);
 gpu_test!(tpcds, 1, q15, tp1_mem120gib, golden_exact);
 gpu_test!(tpcds, 1, q16, tp1_mem120gib, golden_exact);
 gpu_test!(tpcds, 1, q17, tp1_mem120gib, golden_exact);
+// (#96) Real-8-way per-partition JOIN capstone. The CPU-#13 oracle now runs
+// PartitionMode::Partitioned joins per-partition (child0[p] ⋈ child1[p]), matching
+// vanilla DataFusion (all q17 joins are Partitioned 8→8) and the GPU C++ MAP arm —
+// so the GPU's 8-way join subtree now matches the (regenerated) 8-way cost golden.
+// q17: mixed count/avg/stddev over 7 real-8-way joins (golden_approx_std for the
+// GPU-cuDF-M2 stddev). join_int: minimal 1-key fact-dim join (oracle: small result,
+// live CPU compare).
+gpu_test!(tpcds, 1, q17, tp8_mem120gib, golden_approx_std);
+gpu_test!(tpch, 1, join_int, tp8_mem120gib, oracle);
+// (#97-a) Real-8-way per-partition NON-inner Partitioned joins. DataFusion runs each
+// Partitioned 8→8 (semi-join=RightSemi, anti-join=RightAnti, left-join=Left); the #96
+// MAP arm + C++ execute_hash_join already handle every join type, so these verify the
+// GPU 8-way join == the regen'd CPU-#13 golden. oracle mode (>256KB results): the GPU
+// output is checked against a LIVE CPU-oracle run (which itself conforms to vanilla
+// DataFusion via the cpu_node13 carriers), so anti's NOT-IN null handling is gated at
+// both levels.
+gpu_test!(tpch, 1, semi_join, tp8_mem120gib, oracle);
+gpu_test!(tpch, 1, anti_join, tp8_mem120gib, oracle);
+gpu_test!(tpch, 1, left_join, tp8_mem120gib, oracle);
+// Real TPC-H join-query flip batch 1: q5/q7/q8 at real 8-way (all Partitioned Inner,
+// int keys, mergeable sum aggs). Small results → golden_exact (consumes the
+// cpu_node13-owned .result.txt). q8 has 2 sum aggs (multi-func) → its GPU result is
+// gated by CI (the local flatc aggr_funcs-vector bug truncates multi-func aggs); q5/q7
+// are single-agg and verify locally too. q3 re-flipped (#99 SPM/TopK fix): ORDER BY
+// revenue LIMIT 10, single sum → local-reliable; the SPM now k-way-merges + fetches.
+gpu_test!(tpch, 1, q3, tp8_mem120gib, golden_exact);
+gpu_test!(tpch, 1, q5, tp8_mem120gib, golden_exact);
+// q7/q9 flipped (GPU repartition string-key normalization fix); single-sum → local+CI.
+// q8 GATED (spark_hash_partition kernel-key-type, exact cuDF type pending).
+gpu_test!(tpch, 1, q7, tp8_mem120gib, golden_exact);
+gpu_test!(tpch, 1, q8, tp8_mem120gib, golden_exact);
+gpu_test!(tpch, 1, q9, tp8_mem120gib, golden_exact);
+// q12/q19 real-8-way (Partitioned Inner, int keys, sum aggs, no LIMIT). q19 single-agg
+// (local+CI); q12 = 2 sums (multi-func → CI-gated GPU).
+gpu_test!(tpch, 1, q12, tp8_mem120gib, golden_exact);
+gpu_test!(tpch, 1, q19, tp8_mem120gib, golden_exact);
+// q13: grouped count over a Partitioned LEFT-outer (nested group-bys, single-count
+// each level → local-reliable). golden_exact (small custdist result).
+gpu_test!(tpch, 1, q13, tp8_mem120gib, golden_exact);
 gpu_test!(tpcds, 1, q18, tp1_mem120gib, golden_exact);
 gpu_test!(tpcds, 1, q19, tp1_mem120gib, golden_exact);
 gpu_test!(tpcds, 1, q20, tp1_mem120gib, golden_exact);
