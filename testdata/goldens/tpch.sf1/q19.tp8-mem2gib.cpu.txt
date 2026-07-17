@@ -8,8 +8,7 @@ GpuProjectExec: expr=[sum(lineitem.l_extendedprice * Int64(1) - lineitem.l_disco
               GpuRepartitionExec: partitioning=Hash([p_partkey@0], 8), input_partitions=8, partitions=1, output_rows=485, output_bytes=17111
                 GpuCoalesceBatchesExec: target_batch_size=12201611, partitions=1, output_rows=485, output_bytes=17111
                   GpuFilterExec: predicate=(p_brand@1 = Brand#12 AND (p_container@3 = SM CASE OR p_container@3 = SM BOX OR p_container@3 = SM PACK OR p_container@3 = SM PKG) AND p_size@2 <= 5 OR p_brand@1 = Brand#23 AND (p_container@3 = MED BAG OR p_container@3 = MED BOX OR p_container@3 = MED PKG OR p_container@3 = MED PACK) AND p_size@2 <= 10 OR p_brand@1 = Brand#34 AND (p_container@3 = LG CASE OR p_container@3 = LG BOX OR p_container@3 = LG PACK OR p_container@3 = LG PKG) AND p_size@2 <= 15) AND p_size@2 >= 1, partitions=1, output_rows=485, output_bytes=17111
-                    GpuRepartitionExec: partitioning=RoundRobinBatch(8), input_partitions=1, partitions=1, output_rows=200000, output_bytes=7214979
-                      GpuScanExec: table=part, projections=[p_partkey, p_brand, p_size, p_container], batch_size=12201611, partitions=1, output_rows=200000, output_bytes=7214979
+                    GpuScanExec: table=part, projections=[p_partkey, p_brand, p_size, p_container], batch_size=12201611, partitions=1, output_rows=200000, output_bytes=7214979
             GpuCoalesceBatchesExec: target_batch_size=12201611, partitions=1, output_rows=128371, output_bytes=7252964
               GpuRepartitionExec: partitioning=Hash([l_partkey@0], 8), input_partitions=8, partitions=1, output_rows=128371, output_bytes=7252964
                 GpuCoalesceBatchesExec: target_batch_size=12201611, partitions=1, output_rows=128371, output_bytes=7252964

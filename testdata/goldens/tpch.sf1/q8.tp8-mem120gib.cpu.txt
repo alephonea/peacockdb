@@ -514,12 +514,9 @@ GpuSortPreservingMergeExec: [o_year@0 ASC NULLS LAST], partitions=1, output_rows
                                                                                                     GpuFilterExec: predicate=p_type@1 = ECONOMY ANODIZED STEEL, projection=[0], partitions=2, output_rows=1451, output_bytes=11790
                                                                                                       p0: in_rows=122880 out_rows=896 out_bytes=7280
                                                                                                       p1: in_rows=77120 out_rows=555 out_bytes=4510
-                                                                                                      GpuRepartitionExec: partitioning=RoundRobinBatch(8), input_partitions=1, partitions=2, output_rows=200000, output_bytes=6569954
-                                                                                                        p0: in_rows=122880 out_rows=122880 out_bytes=4036033
-                                                                                                        p1: in_rows=77120 out_rows=77120 out_bytes=2533921
-                                                                                                        GpuScanExec: table=part, projections=[p_partkey, p_type], batch_size=847690913, partitions=2, output_rows=200000, output_bytes=6569954
-                                                                                                          p0: row_groups=[0] out_rows=122880 out_bytes=4036033
-                                                                                                          p1: row_groups=[1] out_rows=77120 out_bytes=2533921
+                                                                                                      GpuScanExec: table=part, projections=[p_partkey, p_type], batch_size=847690913, partitions=2, output_rows=200000, output_bytes=6569954
+                                                                                                        p0: row_groups=[0] out_rows=122880 out_bytes=4036033
+                                                                                                        p1: row_groups=[1] out_rows=77120 out_bytes=2533921
                                                                                             GpuCoalesceBatchesExec: target_batch_size=847690913, partitions=8, output_rows=6001215, output_bytes=339818820
                                                                                               p0: in_rows=749801 out_rows=749801 out_bytes=42457486
                                                                                               p1: in_rows=751400 out_rows=751400 out_bytes=42548025
