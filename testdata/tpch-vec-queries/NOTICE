@@ -1,0 +1,32 @@
+The SQL queries in this directory are TPC-H benchmark queries augmented with a
+vector-search range predicate over synthetic embedding columns ("TPC-H+V").
+
+--- TPC-H ---
+
+TPC-H is a decision support benchmark developed and maintained by the Transaction
+Processing Performance Council (TPC). The benchmark specification and queries are
+Copyright (C) 1993-2022 Transaction Processing Performance Council. All rights reserved.
+
+These queries are used here solely for non-commercial benchmarking and research purposes
+in accordance with the TPC Fair Use Policy (https://www.tpc.org/tpc_documents_current_versions/pdf/tpc_fair_use_policy.pdf).
+
+The source of the benchmark specification is: https://www.tpc.org/tpch/
+
+--- Vector augmentation (TPC-H+V) ---
+
+The idea of augmenting TPC-H with embedding columns and vector-search predicates
+is drawn from:
+
+    Exqutor: Extended Query Optimizer for Vector-augmented Analytical Queries.
+    arXiv:2512.09695. https://arxiv.org/abs/2512.09695
+
+("TPC-H+V" above is our informal nickname for this augmented dataset, not the
+paper's benchmark name.)
+
+The SQL in this directory is authored independently from the public TPC-H
+specification (https://www.tpc.org/tpch/); it is NOT copied from the Exqutor
+paper's accompanying repository, which is licensed CC BY-NC 4.0. Only the
+augmentation scheme (which tables carry embeddings, and the shape of the
+pgvector range predicate) is taken from the paper. The embedding columns
+(part.p_text_embedding, partsupp.ps_image_embedding, partsupp.ps_text_embedding,
+partsupp.ps_tag) are generated deterministically by testdata/generate_testdata.sh.

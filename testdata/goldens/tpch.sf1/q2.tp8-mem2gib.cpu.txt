@@ -38,8 +38,7 @@ GpuSortPreservingMergeExec: [s_acctbal@0 DESC, n_name@2 ASC NULLS LAST, s_name@1
                                                 GpuRepartitionExec: partitioning=Hash([p_partkey@0], 8), input_partitions=8, partitions=1, output_rows=747, output_bytes=19614
                                                   GpuCoalesceBatchesExec: target_batch_size=4473924, partitions=1, output_rows=747, output_bytes=19614
                                                     GpuFilterExec: predicate=p_size@3 = 15 AND p_type@2 LIKE %BRASS, projection=[0, 1], partitions=1, output_rows=747, output_bytes=19614
-                                                      GpuRepartitionExec: partitioning=RoundRobinBatch(8), input_partitions=1, partitions=1, output_rows=200000, output_bytes=11019954
-                                                        GpuScanExec: table=part, projections=[p_partkey, p_mfgr, p_type, p_size], batch_size=4473924, partitions=1, output_rows=200000, output_bytes=11019954
+                                                      GpuScanExec: table=part, projections=[p_partkey, p_mfgr, p_type, p_size], batch_size=4473924, partitions=1, output_rows=200000, output_bytes=11019954
                                               GpuCoalesceBatchesExec: target_batch_size=4473924, partitions=1, output_rows=800000, output_bytes=25900000
                                                 GpuRepartitionExec: partitioning=Hash([ps_partkey@0], 8), input_partitions=8, partitions=1, output_rows=800000, output_bytes=25900000
                                                   GpuScanExec: table=partsupp, projections=[ps_partkey, ps_suppkey, ps_supplycost], batch_size=4473924, partitions=1, output_rows=800000, output_bytes=25900000

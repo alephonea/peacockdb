@@ -86,8 +86,32 @@ COPY nation    TO '${OUTDIR}/nation.parquet'    (FORMAT parquet);
 COPY region    TO '${OUTDIR}/region.parquet'    (FORMAT parquet);
 COPY supplier  TO '${OUTDIR}/supplier.parquet'  (FORMAT parquet);
 COPY customer  TO '${OUTDIR}/customer.parquet'  (FORMAT parquet);
-COPY part      TO '${OUTDIR}/part.parquet'      (FORMAT parquet);
-COPY partsupp  TO '${OUTDIR}/partsupp.parquet'  (FORMAT parquet);
+# --- Vector augmentation (TPC-H+V) ---------------------------------------
+# part/partsupp get synthetic embedding columns so the engine can be exercised
+# on vector-search-style queries over a familiar schema. The augmentation scheme
+# (which tables/columns carry embeddings) follows:
+#   Exqutor: Extended Query Optimizer for Vector-augmented Analytical Queries
+#   arXiv:2512.09695. The paper's repo is CC BY-NC 4.0; NONE of its code is used
+#   here — these embeddings are generated independently below.
+# Embeddings are DETERMINISTIC: an 8-dim FLOAT array seeded by hash() of the row
+# key (p_partkey for part; ps_partkey||ps_suppkey for partsupp). DuckDB's hash()
+# is version-stable and platform-independent, so with threads=1 the parquet is
+# byte-identical across hosts and re-runs. ps_tag is a deterministic categorical.
+# HARD CONSTRAINT: new columns are APPENDED AFTER every stock column so existing
+# column indices (and thus projection-pushdown goldens) do not shift.
+COPY (
+  SELECT part.*,
+    [ (hash(p_partkey::VARCHAR || ':p_text:' || i::VARCHAR) % 100000)::FLOAT / 100000.0 FOR i IN range(8) ]::FLOAT[8] AS p_text_embedding
+  FROM part
+) TO '${OUTDIR}/part.parquet' (FORMAT parquet);
+COPY (
+  SELECT partsupp.*,
+    [ (hash(ps_partkey::VARCHAR || '_' || ps_suppkey::VARCHAR || ':ps_image:' || i::VARCHAR) % 100000)::FLOAT / 100000.0 FOR i IN range(8) ]::FLOAT[8] AS ps_image_embedding,
+    [ (hash(ps_partkey::VARCHAR || '_' || ps_suppkey::VARCHAR || ':ps_text:'  || i::VARCHAR) % 100000)::FLOAT / 100000.0 FOR i IN range(8) ]::FLOAT[8] AS ps_text_embedding,
+    (['electronics','apparel','home','toys','sports','automotive','grocery','books'])[ ((hash(ps_partkey::VARCHAR || '_' || ps_suppkey::VARCHAR || ':tag') % 8) + 1)::BIGINT ] AS ps_tag
+  FROM partsupp
+) TO '${OUTDIR}/partsupp.parquet' (FORMAT parquet);
+# --- end vector augmentation ---------------------------------------------
 COPY (SELECT * FROM orders   ORDER BY o_orderdate NULLS LAST, o_orderkey)               TO '${OUTDIR}/orders.parquet'   (FORMAT parquet);
 COPY (SELECT * FROM lineitem ORDER BY l_shipdate NULLS LAST, l_orderkey, l_linenumber)  TO '${OUTDIR}/lineitem.parquet' (FORMAT parquet);
 SQL

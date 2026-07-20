@@ -26,8 +26,7 @@ GpuSortPreservingMergeExec: [supplier_cnt@3 DESC, p_brand@0 ASC NULLS LAST, p_ty
                                       GpuRepartitionExec: partitioning=Hash([p_partkey@0], 8), input_partitions=8, partitions=1, output_rows=29581, output_bytes=1452040
                                         GpuCoalesceBatchesExec: target_batch_size=12782640, partitions=1, output_rows=29581, output_bytes=1452040
                                           GpuFilterExec: predicate=p_brand@1 != Brand#45 AND p_type@2 NOT LIKE MEDIUM POLISHED% AND (p_size@3 = 49 OR p_size@3 = 14 OR p_size@3 = 23 OR p_size@3 = 45 OR p_size@3 = 19 OR p_size@3 = 3 OR p_size@3 = 36 OR p_size@3 = 9), partitions=1, output_rows=29581, output_bytes=1452040
-                                            GpuRepartitionExec: partitioning=RoundRobinBatch(8), input_partitions=1, partitions=1, output_rows=200000, output_bytes=9819954
-                                              GpuScanExec: table=part, projections=[p_partkey, p_brand, p_type, p_size], batch_size=12782640, partitions=1, output_rows=200000, output_bytes=9819954
+                                            GpuScanExec: table=part, projections=[p_partkey, p_brand, p_type, p_size], batch_size=12782640, partitions=1, output_rows=200000, output_bytes=9819954
                                     GpuCoalesceBatchesExec: target_batch_size=12782640, partitions=1, output_rows=800000, output_bytes=13000000
                                       GpuRepartitionExec: partitioning=Hash([ps_partkey@0], 8), input_partitions=8, partitions=1, output_rows=800000, output_bytes=13000000
                                         GpuScanExec: table=partsupp, projections=[ps_partkey, ps_suppkey], batch_size=12782640, partitions=1, output_rows=800000, output_bytes=13000000

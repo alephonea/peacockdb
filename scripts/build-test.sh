@@ -68,7 +68,7 @@ testdata_dirs_for_kind() {
     goldens)          echo "goldens" ;;
     duckdb-profiles)  echo "duckdb-profiles" ;;
     duckdb-dynfilters) echo "duckdb-dynfilters" ;;
-    queries)          echo "tpch-queries tpcds-queries" ;;
+    queries)          echo "tpch-queries tpcds-queries tpch-vec-queries" ;;
     *) echo "error: unknown testdata kind '$1' (parquet|goldens|duckdb-profiles|duckdb-dynfilters|queries)" >&2; exit 1 ;;
   esac
 }
