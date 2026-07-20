@@ -8,16 +8,34 @@
 #   ./testdata/generate_testdata.sh --bench tpcds      # generate tpcds.sf1
 #   ./testdata/generate_testdata.sh --bench tpcds --sf 10
 #
+#   --embeddings synthetic|external   (tpch only; default: synthetic)
+#     synthetic  hash-generated FLOAT[8] embedding columns — no download, this is what
+#                CI and the GPU host use.
+#     external   DEEP1B (image, 96d) + GloVe (text, 100d) vectors read from
+#                testdata/embeddings-cache — run testdata/fetch_embeddings.sh first.
+#   e.g. ./testdata/generate_testdata.sh --bench tpch --embeddings external
+#
 # Requires duckdb in PATH, or set DUCKDB=/path/to/duckdb.
 
 set -euo pipefail
 
 SF=1
-BENCH=""   # required — pass --bench tpch|tpcds explicitly
+BENCH=""            # required — pass --bench tpch|tpcds explicitly
+EMB_MODE="synthetic" # --embeddings synthetic|external. synthetic = hash-generated
+                     # FLOAT[8] (no fetch) and is the DEFAULT so CI/H200 keep working
+                     # unchanged; external = DEEP1B image + GloVe text vectors from the
+                     # testdata/embeddings-cache populated by fetch_embeddings.sh.
 while [ $# -gt 0 ]; do
   case "$1" in
     --sf) SF="$2"; shift ;;
     --bench) BENCH="$2"; shift ;;
+    --embeddings)
+      # Reject a missing value explicitly so `--embeddings --sf 10` can't silently
+      # swallow the next flag as the mode.
+      case "${2:-}" in
+        ""|-*) echo "error: --embeddings requires a value (synthetic|external)" >&2; exit 1 ;;
+      esac
+      EMB_MODE="$2"; shift ;;
     *) echo "Unknown flag: $1"; exit 1 ;;
   esac
   shift
@@ -27,6 +45,11 @@ case "$BENCH" in
   tpch|tpcds) ;;
   "") echo "error: --bench is required (tpch or tpcds)"; exit 1 ;;
   *) echo "error: --bench must be tpch or tpcds (got: $BENCH)"; exit 1 ;;
+esac
+
+case "$EMB_MODE" in
+  synthetic|external) ;;
+  *) echo "error: --embeddings must be synthetic or external (got: $EMB_MODE)"; exit 1 ;;
 esac
 
 DUCKDB=${DUCKDB:-$(which duckdb 2>/dev/null)} || { echo "error: duckdb not found in PATH"; exit 1; }
@@ -76,6 +99,125 @@ if [ "$BENCH" = "tpch" ]; then
   # ORDER BY'd on their lead date column (NULLS LAST) + PK tiebreak so each parquet
   # row group's date min/max is tight — this clusters by date to match the
   # Hortonworks bin_partitioned layout and lets row-group pruning take effect.
+  # --- Vector augmentation (TPC-H+V) ---------------------------------------
+  # part/partsupp carry embedding columns so the engine can be exercised on
+  # vector-search queries over a familiar schema. The augmentation scheme (which
+  # tables/columns carry embeddings) follows:
+  #   Exqutor: Extended Query Optimizer for Vector-augmented Analytical Queries
+  #   arXiv:2512.09695. The paper's repo is CC BY-NC 4.0; NONE of its code is used.
+  # Two modes, chosen by --embeddings synthetic|external; both APPEND columns AFTER every stock
+  # column so existing column indices (and projection-pushdown goldens) don't shift:
+  #   synthetic  FLOAT[8], seeded by DuckDB hash() of the row key (default; no fetch).
+  #   external   image = DEEP1B (CC BY 4.0) 96-dim, ordinal per partsupp scan row;
+  #              text  = mean of GloVe 100d (PDDL) word-vectors over the row's tokens.
+  # Both are DETERMINISTIC (threads=1 + pinned DuckDB). Synthetic (hash-based) reproduces
+  # byte-for-byte on any pinned-duckdb host. external mode is generated on THIS gen box and
+  # SHIPPED as parquet — verda/shad-gpu never regenerate it — so its determinism is
+  # run-to-run on the gen box, not "reproducible on verda".
+  #
+  # ROW-ORDER CONTRACT (load-bearing): both modes emit part/partsupp in BASE SCAN ORDER.
+  # Synthetic gets this for free (plain SELECT off the base table); external mode reaches the
+  # COPY through hash joins (GloVe text agg, DEEP ordinal), and DuckDB does NOT guarantee
+  # probe-side order, so external mode pins it explicitly: take an ordinal _rn =
+  # row_number() OVER () on the BASE scan and ORDER BY _rn (the ordinal, NOT the key —
+  # base order is not assumed key-ascending). This is required because CI-synthetic and
+  # verda-external share ONE golden set, and some tp8 goldens are order-SENSITIVE (per-
+  # partition filter counts in q8/q9/q19 .tp8-mem120gib). Without the pin the shared-
+  # golden invariant would hold only by luck.
+  CACHE="${SCRIPT_DIR}/embeddings-cache"
+  if [ "$EMB_MODE" = external ]; then
+    N=$(( 800000 * SF ))                       # partsupp row count = image-vector count
+    DEEP_FBIN="${CACHE}/deep_base.sf${SF}.fbin"
+    GLOVE_TXT="${CACHE}/glove.6B.100d.txt"
+    for f in "$DEEP_FBIN" "$GLOVE_TXT"; do
+      [ -f "$f" ] || { echo "error: missing $f — run testdata/fetch_embeddings.sh --sf ${SF} first" >&2; exit 1; }
+    done
+    # HARD CONTRACT: the saved slice keeps the original fbin header (num_vectors reads
+    # 1e9) but holds only N vectors. Assert size == 8 + N*96*4 and read EXACTLY N rows;
+    # never trust the header count or we read past EOF.
+    EXPECT_BYTES=$(( 8 + N * 96 * 4 ))
+    ACT_BYTES=$(stat -c%s "$DEEP_FBIN")
+    [ "$ACT_BYTES" = "$EXPECT_BYTES" ] || { echo "error: $DEEP_FBIN size $ACT_BYTES != 8+${N}*96*4=$EXPECT_BYTES" >&2; exit 1; }
+    DEEP_PARQUET="${CACHE}/deep_base.sf${SF}.image.parquet"   # transient (gitignored cache, never shipped)
+    echo "  converting DEEP1B slice ($N vectors) -> $DEEP_PARQUET ..."
+    python3 - "$DEEP_FBIN" "$N" "$DEEP_PARQUET" <<'PY'
+import numpy as np, pyarrow as pa, pyarrow.parquet as pq, os, sys
+path, N, out = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+DIM = 96
+assert os.path.getsize(path) == 8 + N*DIM*4          # hard contract; never trust header
+with open(path, 'rb') as f:
+    _nv, nd = np.frombuffer(f.read(8), dtype='<i4'); assert nd == DIM, nd
+    data = np.frombuffer(f.read(N*DIM*4), dtype='<f4').reshape(N, DIM)   # read EXACTLY N
+arr = pa.FixedSizeListArray.from_arrays(pa.array(data.reshape(-1), type=pa.float32()), DIM)
+pq.write_table(pa.table({'idx': pa.array(np.arange(N, dtype='<i8')), 'image_embedding': arr}), out)
+PY
+    GLOVE_COLS=$(python3 -c "print('{'+\"'column0':'VARCHAR',\"+','.join(\"'column%d':'FLOAT'\"%i for i in range(1,101))+'}')")
+    GLOVE_LIST=$(python3 -c "print(','.join('column%d'%i for i in range(1,101)))")
+    # 100 per-dimension SUM aggregates. Summing each dim in a streaming/spillable hash
+    # aggregate (rather than list()-ing every word-vector then folding) keeps peak memory
+    # bounded on long text like ps_comment; threads=1 fixes the reduction order.
+    SUMG=$(python3 -c "print(','.join('sum(g.vec[%d])'%i for i in range(1,101)))")
+    # GloVe vocab as word -> FLOAT[100]. Read whole rows via sep=' ' (word + 100 floats).
+    EMB_PREAMBLE="CREATE TEMP TABLE glove AS
+  SELECT column0 AS word, [${GLOVE_LIST}]::FLOAT[100] AS vec
+  FROM read_csv('${GLOVE_TXT}', sep=' ', header=false, quote='', escape='', auto_detect=false, columns=${GLOVE_COLS});"
+    # part.p_text_embedding = mean GloVe over lower(p_name || ' ' || p_type): the 100
+    # per-dim sums divided by the MATCHED in-vocab token count (OOV tokens excluded from
+    # both sum and count). Empty-vocab row -> zero vector via the LEFT JOIN + CASE.
+    PART_COPY="COPY (
+  WITH p_rn AS (SELECT *, row_number() OVER () AS _rn FROM part),
+  toks AS (
+    SELECT p_partkey, tok FROM part,
+      unnest(regexp_split_to_array(lower(p_name || ' ' || p_type), '[^a-z0-9]+')) AS u(tok)
+  ),
+  matched AS (
+    SELECT t.p_partkey, [${SUMG}] AS sums, count(*)::FLOAT AS n
+    FROM toks t JOIN glove g ON g.word = t.tok WHERE t.tok <> '' GROUP BY t.p_partkey
+  )
+  SELECT p_rn.* EXCLUDE (_rn),
+    CASE WHEN m.p_partkey IS NULL THEN [0.0 FOR _ IN range(100)]::FLOAT[100]
+         ELSE list_transform(m.sums, lambda s: s / m.n)::FLOAT[100] END AS p_text_embedding
+  FROM p_rn LEFT JOIN matched m ON m.p_partkey = p_rn.p_partkey
+  ORDER BY p_rn._rn
+) TO '${OUTDIR}/part.parquet' (FORMAT parquet);"
+    # partsupp: ps_image_embedding = DEEP1B[ordinal in scan order]; ps_text_embedding =
+    # mean GloVe over ps_comment; ps_tag = same deterministic categorical as synthetic.
+    PARTSUPP_COPY="COPY (
+  WITH ps_rn AS (SELECT *, (row_number() OVER () - 1) AS _rn FROM partsupp),
+  toks AS (
+    SELECT ps_partkey, ps_suppkey, tok FROM partsupp,
+      unnest(regexp_split_to_array(lower(ps_comment), '[^a-z0-9]+')) AS u(tok)
+  ),
+  matched AS (
+    SELECT t.ps_partkey, t.ps_suppkey, [${SUMG}] AS sums, count(*)::FLOAT AS n
+    FROM toks t JOIN glove g ON g.word = t.tok WHERE t.tok <> '' GROUP BY t.ps_partkey, t.ps_suppkey
+  )
+  SELECT ps_rn.* EXCLUDE (_rn),
+    deep.image_embedding::FLOAT[96] AS ps_image_embedding,
+    CASE WHEN m.ps_partkey IS NULL THEN [0.0 FOR _ IN range(100)]::FLOAT[100]
+         ELSE list_transform(m.sums, lambda s: s / m.n)::FLOAT[100] END AS ps_text_embedding,
+    (['electronics','apparel','home','toys','sports','automotive','grocery','books'])[ ((hash(ps_rn.ps_partkey::VARCHAR || '_' || ps_rn.ps_suppkey::VARCHAR || ':tag') % 8) + 1)::BIGINT ] AS ps_tag
+  FROM ps_rn
+  JOIN read_parquet('${DEEP_PARQUET}') deep ON deep.idx = ps_rn._rn
+  LEFT JOIN matched m ON m.ps_partkey = ps_rn.ps_partkey AND m.ps_suppkey = ps_rn.ps_suppkey
+  ORDER BY ps_rn._rn
+) TO '${OUTDIR}/partsupp.parquet' (FORMAT parquet);"
+  else
+    EMB_PREAMBLE=""
+    PART_COPY="COPY (
+  SELECT part.*,
+    [ (hash(p_partkey::VARCHAR || ':p_text:' || i::VARCHAR) % 100000)::FLOAT / 100000.0 FOR i IN range(8) ]::FLOAT[8] AS p_text_embedding
+  FROM part
+) TO '${OUTDIR}/part.parquet' (FORMAT parquet);"
+    PARTSUPP_COPY="COPY (
+  SELECT partsupp.*,
+    [ (hash(ps_partkey::VARCHAR || '_' || ps_suppkey::VARCHAR || ':ps_image:' || i::VARCHAR) % 100000)::FLOAT / 100000.0 FOR i IN range(8) ]::FLOAT[8] AS ps_image_embedding,
+    [ (hash(ps_partkey::VARCHAR || '_' || ps_suppkey::VARCHAR || ':ps_text:'  || i::VARCHAR) % 100000)::FLOAT / 100000.0 FOR i IN range(8) ]::FLOAT[8] AS ps_text_embedding,
+    (['electronics','apparel','home','toys','sports','automotive','grocery','books'])[ ((hash(ps_partkey::VARCHAR || '_' || ps_suppkey::VARCHAR || ':tag') % 8) + 1)::BIGINT ] AS ps_tag
+  FROM partsupp
+) TO '${OUTDIR}/partsupp.parquet' (FORMAT parquet);"
+  fi
+
   $DUCKDB :memory: <<SQL
 PRAGMA threads=1;
 INSTALL tpch;
@@ -86,32 +228,9 @@ COPY nation    TO '${OUTDIR}/nation.parquet'    (FORMAT parquet);
 COPY region    TO '${OUTDIR}/region.parquet'    (FORMAT parquet);
 COPY supplier  TO '${OUTDIR}/supplier.parquet'  (FORMAT parquet);
 COPY customer  TO '${OUTDIR}/customer.parquet'  (FORMAT parquet);
-# --- Vector augmentation (TPC-H+V) ---------------------------------------
-# part/partsupp get synthetic embedding columns so the engine can be exercised
-# on vector-search-style queries over a familiar schema. The augmentation scheme
-# (which tables/columns carry embeddings) follows:
-#   Exqutor: Extended Query Optimizer for Vector-augmented Analytical Queries
-#   arXiv:2512.09695. The paper's repo is CC BY-NC 4.0; NONE of its code is used
-#   here — these embeddings are generated independently below.
-# Embeddings are DETERMINISTIC: an 8-dim FLOAT array seeded by hash() of the row
-# key (p_partkey for part; ps_partkey||ps_suppkey for partsupp). DuckDB's hash()
-# is version-stable and platform-independent, so with threads=1 the parquet is
-# byte-identical across hosts and re-runs. ps_tag is a deterministic categorical.
-# HARD CONSTRAINT: new columns are APPENDED AFTER every stock column so existing
-# column indices (and thus projection-pushdown goldens) do not shift.
-COPY (
-  SELECT part.*,
-    [ (hash(p_partkey::VARCHAR || ':p_text:' || i::VARCHAR) % 100000)::FLOAT / 100000.0 FOR i IN range(8) ]::FLOAT[8] AS p_text_embedding
-  FROM part
-) TO '${OUTDIR}/part.parquet' (FORMAT parquet);
-COPY (
-  SELECT partsupp.*,
-    [ (hash(ps_partkey::VARCHAR || '_' || ps_suppkey::VARCHAR || ':ps_image:' || i::VARCHAR) % 100000)::FLOAT / 100000.0 FOR i IN range(8) ]::FLOAT[8] AS ps_image_embedding,
-    [ (hash(ps_partkey::VARCHAR || '_' || ps_suppkey::VARCHAR || ':ps_text:'  || i::VARCHAR) % 100000)::FLOAT / 100000.0 FOR i IN range(8) ]::FLOAT[8] AS ps_text_embedding,
-    (['electronics','apparel','home','toys','sports','automotive','grocery','books'])[ ((hash(ps_partkey::VARCHAR || '_' || ps_suppkey::VARCHAR || ':tag') % 8) + 1)::BIGINT ] AS ps_tag
-  FROM partsupp
-) TO '${OUTDIR}/partsupp.parquet' (FORMAT parquet);
-# --- end vector augmentation ---------------------------------------------
+${EMB_PREAMBLE}
+${PART_COPY}
+${PARTSUPP_COPY}
 COPY (SELECT * FROM orders   ORDER BY o_orderdate NULLS LAST, o_orderkey)               TO '${OUTDIR}/orders.parquet'   (FORMAT parquet);
 COPY (SELECT * FROM lineitem ORDER BY l_shipdate NULLS LAST, l_orderkey, l_linenumber)  TO '${OUTDIR}/lineitem.parquet' (FORMAT parquet);
 SQL

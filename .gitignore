@@ -32,3 +32,6 @@ testdata/*/.duckdb_cache/
 # Python bytecode (duckdb_cost.py tests)
 __pycache__/
 *.pyc
+
+# Local-only embedding source cache (fetch_embeddings.sh); never committed — data ships as parquet
+testdata/embeddings-cache/

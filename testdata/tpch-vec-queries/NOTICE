@@ -1,5 +1,7 @@
 The SQL queries in this directory are TPC-H benchmark queries augmented with a
-vector-search range predicate over synthetic embedding columns ("TPC-H+V").
+vector-search range predicate over embedding columns ("TPC-H+V"). This directory
+also contains query_params.jsonl — committed (q, D) query parameters whose vectors
+are de-minimis samples of the open datasets attributed below.
 
 --- TPC-H ---
 
@@ -30,3 +32,26 @@ augmentation scheme (which tables carry embeddings, and the shape of the
 pgvector range predicate) is taken from the paper. The embedding columns
 (part.p_text_embedding, partsupp.ps_image_embedding, partsupp.ps_text_embedding,
 partsupp.ps_tag) are generated deterministically by testdata/generate_testdata.sh.
+
+--- Committed query vectors (query_params.jsonl) ---
+
+query_params.jsonl stores ~100 (q, D) pairs. The `q` vectors are de-minimis
+samples derived from two open datasets (a few dozen vectors each), redistributed
+here for reproducible benchmarking:
+
+  DEEP1B (image queries) — Licensed CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/).
+    The `q` of each "image" entry is a vector from the DEEP1B public query set.
+    Source: https://research.yandex.com/blog/benchmarks-for-billion-scale-similarity-search
+    (big-ann-benchmarks DEEP dataset, storage.yandexcloud.net/yandex-research/ann-datasets/DEEP/).
+    Attribution: Yandex Research, DEEP1B / DEEP10M billion-scale ANN benchmark.
+
+  GloVe 6B (text queries) — Public domain, released under the PDDL 1.0
+    (https://opendatacommons.org/licenses/pddl/1-0/).
+    The `q` of each "text" entry is the mean of GloVe 100d word-vectors over a
+    short TPC-H-vocabulary phrase (the same mean used for the text columns).
+    Source: GloVe, Stanford NLP (https://nlp.stanford.edu/projects/glove/).
+
+The D (distance threshold) of every entry is computed locally with DuckDB
+array_distance (k-th-nearest over the loaded vectors); see gen_query_params.py.
+The full source datasets are fetched locally by testdata/fetch_embeddings.sh and
+are NOT redistributed (testdata/embeddings-cache/ is gitignored).
