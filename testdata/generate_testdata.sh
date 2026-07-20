@@ -83,6 +83,14 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 OUTDIR="${SCRIPT_DIR}/${BENCH}.sf${SF}"
 
+# DuckDB spill directory. Large scale factors sort more than memory_limit (partsupp's
+# wide-row ORDER BY, lineitem's 3-key sort) and DuckDB spills to temp_directory. Its
+# default is a RELATIVE ".tmp" (resolved against the CWD at run time) — pin it to an
+# ABSOLUTE path so ~180GB of spill can never land on a small mount by accident. Defaults
+# under testdata/ (same volume as the output); override with DUCKDB_TEMP_DIR.
+DUCKDB_TEMP_DIR="${DUCKDB_TEMP_DIR:-${SCRIPT_DIR}/.tmp}"
+mkdir -p "$DUCKDB_TEMP_DIR"
+
 if [ -d "$OUTDIR" ]; then
   echo "Directory $OUTDIR already exists, skipping generation."
   echo "Run testdata/clean_testdata.sh first to regenerate."
@@ -133,23 +141,42 @@ if [ "$BENCH" = "tpch" ]; then
       [ -f "$f" ] || { echo "error: missing $f — run testdata/fetch_embeddings.sh --sf ${SF} first" >&2; exit 1; }
     done
     # HARD CONTRACT: the saved slice keeps the original fbin header (num_vectors reads
-    # 1e9) but holds only N vectors. Assert size == 8 + N*96*4 and read EXACTLY N rows;
-    # never trust the header count or we read past EOF.
+    # 1e9) but only the first N vectors are ours to read. Assert the file holds AT LEAST
+    # 8 + N*96*4 bytes and read EXACTLY N rows; never trust the header count or we read
+    # past EOF. ">=" not "==" because a larger slice legitimately serves a smaller SF as
+    # a byte-prefix (fetch_embeddings.sh links sf40 at the sf200 download).
     EXPECT_BYTES=$(( 8 + N * 96 * 4 ))
-    ACT_BYTES=$(stat -c%s "$DEEP_FBIN")
-    [ "$ACT_BYTES" = "$EXPECT_BYTES" ] || { echo "error: $DEEP_FBIN size $ACT_BYTES != 8+${N}*96*4=$EXPECT_BYTES" >&2; exit 1; }
+    ACT_BYTES=$(stat -Lc%s "$DEEP_FBIN")
+    [ "$ACT_BYTES" -ge "$EXPECT_BYTES" ] || { echo "error: $DEEP_FBIN holds $ACT_BYTES bytes, need >= 8+${N}*96*4=$EXPECT_BYTES" >&2; exit 1; }
     DEEP_PARQUET="${CACHE}/deep_base.sf${SF}.image.parquet"   # transient (gitignored cache, never shipped)
     echo "  converting DEEP1B slice ($N vectors) -> $DEEP_PARQUET ..."
-    python3 - "$DEEP_FBIN" "$N" "$DEEP_PARQUET" <<'PY'
+    # PYTHON: needs numpy + pyarrow. Override when the default python3 lacks them
+    # (e.g. a venv on the generation host).
+    "${PYTHON:-python3}" - "$DEEP_FBIN" "$N" "$DEEP_PARQUET" <<'PY'
 import numpy as np, pyarrow as pa, pyarrow.parquet as pq, os, sys
 path, N, out = sys.argv[1], int(sys.argv[2]), sys.argv[3]
 DIM = 96
-assert os.path.getsize(path) == 8 + N*DIM*4          # hard contract; never trust header
-with open(path, 'rb') as f:
-    _nv, nd = np.frombuffer(f.read(8), dtype='<i4'); assert nd == DIM, nd
-    data = np.frombuffer(f.read(N*DIM*4), dtype='<f4').reshape(N, DIM)   # read EXACTLY N
-arr = pa.FixedSizeListArray.from_arrays(pa.array(data.reshape(-1), type=pa.float32()), DIM)
-pq.write_table(pa.table({'idx': pa.array(np.arange(N, dtype='<i8')), 'image_embedding': arr}), out)
+need = 8 + N * DIM * 4
+assert os.path.getsize(path) >= need, (os.path.getsize(path), need)
+# STREAM in row-group sized chunks. Reading the whole slice would be 61GB at sf200 —
+# and more than that once the numpy read and the arrow buffer both exist — so convert
+# incrementally: bounded memory regardless of SF.
+CHUNK = 262144                      # vectors per row group (~96MB of float32)
+schema = pa.schema([('idx', pa.int64()), ('image_embedding', pa.list_(pa.float32(), DIM))])
+with open(path, 'rb') as f, pq.ParquetWriter(out, schema) as w:
+    hdr = np.frombuffer(f.read(8), dtype='<i4')
+    assert hdr[1] == DIM, hdr[1]
+    done = 0
+    while done < N:
+        n = min(CHUNK, N - done)
+        buf = f.read(n * DIM * 4)
+        assert len(buf) == n * DIM * 4, 'short read at vector %d' % done
+        vals = pa.array(np.frombuffer(buf, dtype='<f4'), type=pa.float32())
+        w.write_table(pa.table({
+            'idx': pa.array(np.arange(done, done + n, dtype='<i8')),
+            'image_embedding': pa.FixedSizeListArray.from_arrays(vals, DIM),
+        }, schema=schema))
+        done += n
 PY
     GLOVE_COLS=$(python3 -c "print('{'+\"'column0':'VARCHAR',\"+','.join(\"'column%d':'FLOAT'\"%i for i in range(1,101))+'}')")
     GLOVE_LIST=$(python3 -c "print(','.join('column%d'%i for i in range(1,101)))")
@@ -220,6 +247,7 @@ PY
 
   $DUCKDB :memory: <<SQL
 PRAGMA threads=1;
+SET temp_directory='${DUCKDB_TEMP_DIR}';
 INSTALL tpch;
 LOAD tpch;
 CALL dbgen(sf=${SF});
@@ -245,6 +273,7 @@ else
   # pruning). Dimension tables stay in generation order (small; no scan benefit).
   $DUCKDB :memory: <<SQL
 PRAGMA threads=1;
+SET temp_directory='${DUCKDB_TEMP_DIR}';
 INSTALL tpcds;
 LOAD tpcds;
 CALL dsdgen(sf=${SF});

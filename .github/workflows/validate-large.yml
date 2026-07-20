@@ -1,0 +1,77 @@
+name: Validate large datasets
+
+# Tier C: manual-only heavy validation of the large scale factors that live on the
+# GPU host (they are far too big for a GitHub runner). SSHes to shad-gpu and runs the
+# same scale-safe validators in place against tpch.sf40 / tpch.sf200 / tpcds.sf200,
+# then the cheap S3 metadata check. workflow_dispatch ONLY — never on PR/push.
+on:
+  workflow_dispatch:
+    inputs:
+      datasets:
+        description: 'Space-separated: tpch.sf40 tpch.sf200 tpcds.sf200 (default: all)'
+        required: false
+        default: 'tpch.sf40 tpch.sf200 tpcds.sf200'
+
+jobs:
+  validate-large:
+    name: Validate large datasets (shad-gpu, in place)
+    runs-on: ubuntu-latest
+    # Only maintainers with the secret can dispatch; still gate on same-repo for safety.
+    if: github.repository == 'asymptote-tech/peacockdb'
+    env:
+      DATA_ROOT: /home/info/peacock-datasets
+      VENV_PY: /home/info/peacock-datasets/venv/bin/python
+    steps:
+      - uses: actions/checkout@v4
+
+      # Mirror the GPU-tests job in pipeline.yml: same secret (SHAD_GPU_SSH_KEY), same
+      # hardcoded host, same 'gpu' alias.
+      - name: Setup SSH to shad-gpu
+        env:
+          SSH_KEY: ${{ secrets.SHAD_GPU_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          cat > ~/.ssh/config <<EOF
+          Host gpu
+              HostName llm-gpu0h200.velkerr.ru
+              User info
+              IdentityFile ~/.ssh/id_ed25519
+              StrictHostKeyChecking accept-new
+              UserKnownHostsFile ~/.ssh/known_hosts_ci
+          EOF
+
+      - name: Ship validators
+        run: |
+          ssh gpu "mkdir -p $DATA_ROOT/scripts"
+          scp scripts/_dataset_checks.py scripts/validate_tpch.py scripts/validate_tpcds.py \
+              scripts/check_s3_datasets.py gpu:$DATA_ROOT/scripts/
+
+      - name: Validate in place
+        env:
+          # Via env (not inlined) so the dispatch input can't break out of the shell;
+          # then validated against an allow-list before any use.
+          DATASETS: ${{ github.event.inputs.datasets }}
+        run: |
+          set -e
+          ALLOWED="tpch.sf40 tpch.sf200 tpcds.sf200"
+          for ds in $DATASETS; do
+            case " $ALLOWED " in
+              *" $ds "*) : ;;
+              *) echo "error: '$ds' not in allow-list ($ALLOWED)"; exit 1 ;;
+            esac
+            bench=${ds%%.*}; sf=${ds#*.sf}
+            echo "::group::validate $ds"
+            ssh gpu "bash -lc 'cd $DATA_ROOT && $VENV_PY scripts/validate_${bench}.py --sf $sf'"
+            echo "::endgroup::"
+          done
+
+      - name: S3 metadata check
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
+        run: |
+          python3 -m pip install --quiet awscli || true
+          python3 scripts/check_s3_datasets.py \
+            --endpoint https://storage.eu-north1.nebius.cloud:443

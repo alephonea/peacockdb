@@ -29,20 +29,22 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-# HARD GUARD — local-only. CI and the remote test hosts receive generated parquet via
-# rsync; they must never reach out to the dataset origins (network policy + determinism:
-# the bytes are pinned here once and shipped). Bail loudly if a CI or known remote env
-# is detected.
+# HARD GUARD — never fetch from an AUTOMATED run. CI must never reach out to the
+# dataset origins (network policy + determinism: the bytes are pinned once and the
+# generated parquet is distributed).
+#
+# The guard is on the ENVIRONMENT, not the host, and that distinction matters: the
+# GPU host is BOTH the CI runner AND the only machine with the disk to generate the
+# large scale factors (sf200 needs ~380GB parquet + ~62GB of sources; dev boxes have
+# nowhere near that). So a MANUAL run on that host is legitimate and allowed, while a
+# CI run on the very same machine is still blocked — CI sets CI/GITHUB_ACTIONS, and
+# any other automation can set PEACOCK_NO_FETCH to opt out explicitly.
 if [ -n "${CI:-}" ] || [ -n "${GITHUB_ACTIONS:-}" ] || [ -n "${PEACOCK_NO_FETCH:-}" ]; then
-  echo "error: fetch_embeddings.sh is LOCAL-ONLY (CI/remote env detected via CI/GITHUB_ACTIONS/PEACOCK_NO_FETCH)." >&2
-  echo "       Embedding sources are fetched on a dev box; hosts receive the generated parquet." >&2
+  echo "error: fetch_embeddings.sh must not run from CI/automation" >&2
+  echo "       (detected via CI / GITHUB_ACTIONS / PEACOCK_NO_FETCH)." >&2
+  echo "       Automated jobs consume generated parquet; they never fetch sources." >&2
   exit 1
 fi
-case "$(hostname 2>/dev/null)" in
-  llm-gpu0h200*|*shad-gpu*)
-    echo "error: fetch_embeddings.sh must not run on the remote GPU host ($(hostname))." >&2
-    exit 1 ;;
-esac
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CACHE="${SCRIPT_DIR}/embeddings-cache"
@@ -81,7 +83,14 @@ fetch() {
   local url="$1" out="$2" sha="$3"; shift 3
   if verify "$out" "$sha"; then echo "  cached+verified: $(basename "$out")"; return 0; fi
   echo "  fetching $(basename "$out") ..."
-  curl -fSL --retry 5 --retry-delay 3 "$@" "$url" -o "$out"
+  # Same stall guard as the base slice: some origins are unreachable from some hosts
+  # (the GPU box cannot reach downloads.cs.stanford.edu at all — the connection opens
+  # and then transfers nothing), and without this curl sits there until --retry gives
+  # up minutes later. Abort a dead connection fast instead.
+  # If an origin is blocked from a host, copy the file in from a machine that can reach
+  # it: the pinned SHA256 below is what makes that safe.
+  curl -fSL --retry 5 --retry-delay 3 --speed-limit "${FETCH_MIN_BPS:-262144}" --speed-time 120 \
+       "$@" "$url" -o "$out"
   if [ -n "$sha" ]; then
     verify "$out" "$sha" || { echo "error: checksum mismatch for $out" >&2; exit 1; }
     echo "  ok (sha256 verified): $(basename "$out")"
@@ -98,18 +107,87 @@ echo "==> DEEP1B base slice: first $N vectors (SF=$SF), $BASE_BYTES bytes"
 # authenticates the whole file (for SF=1 the prefix IS the file). SF1_PREFIX_BYTES is a
 # fixed constant, NOT derived from $SF.
 SF1_PREFIX_BYTES=307200008   # 8 + 800000*96*4
-base_prefix_ok() {
-  [ -f "$BASE_FILE" ] && [ "$(stat -c%s "$BASE_FILE")" -ge "$SF1_PREFIX_BYTES" ] \
-    && [ "$(head -c "$SF1_PREFIX_BYTES" "$BASE_FILE" | sha256sum | awk '{print $1}')" = "$SHA_BASE_SF1" ]
+base_prefix_ok() {   # $1 = file
+  [ -f "$1" ] && [ "$(stat -c%s "$1")" -ge "$SF1_PREFIX_BYTES" ] \
+    && [ "$(head -c "$SF1_PREFIX_BYTES" "$1" | sha256sum | awk '{print $1}')" = "$SHA_BASE_SF1" ]
 }
-if base_prefix_ok && [ "$(stat -c%s "$BASE_FILE")" -eq "$BASE_BYTES" ]; then
-  echo "  cached+verified: $(basename "$BASE_FILE")"
+
+# Every slice is a byte-PREFIX of every larger one (immutable source, always
+# range-fetched from offset 0), so an already-downloaded BIGGER slice serves a smaller
+# SF as-is: sf40 reads the first 12GB of the sf200 file instead of pulling its own
+# 12GB copy. Link to it rather than duplicating ~12-61GB on disk.
+larger_slice_for() {   # $1 = bytes needed -> prints a usable file, or returns 1
+  local need=$1 f sz
+  for f in "$CACHE"/deep_base.sf*.fbin; do
+    [ -e "$f" ] || continue
+    [ "$f" -ef "$BASE_FILE" ] 2>/dev/null && continue
+    sz=$(stat -Lc%s "$f" 2>/dev/null || echo 0)
+    if [ "$sz" -ge "$need" ] && base_prefix_ok "$f"; then echo "$f"; return 0; fi
+  done
+  return 1
+}
+
+# PRE-FLIGHT FREE SPACE. The guard above is environment-based, so a manual run can now
+# happen on ANY machine — including hosts with a small root filesystem, where a 61GB pull
+# would fill / and destabilise the box rather than merely failing. Refuse before the
+# first byte, counting only what is actually still missing.
+need=0
+have_base=$(stat -Lc%s "$BASE_FILE" 2>/dev/null || echo 0)
+if [ "$have_base" -lt "$BASE_BYTES" ] && ! larger_slice_for "$BASE_BYTES" >/dev/null 2>&1; then
+  need=$(( need + BASE_BYTES - have_base ))
+fi
+[ -f "$QUERY_FILE" ] || need=$(( need + 3840008 ))
+[ -f "$GT_FILE" ]    || need=$(( need + 4000008 ))
+[ -f "$GLOVE_100D" ] || need=$(( need + 862182613 + 347116733 ))   # zip + extracted 100d
+need=$(( need + need / 20 + 1073741824 ))                          # 5% + 1GiB margin
+avail=$(df -PB1 "$CACHE" | awk 'NR==2 {print $4}')
+if [ "$need" -gt "${avail:-0}" ]; then
+  echo "error: not enough free space for the fetch on $(df -P "$CACHE" | awk 'NR==2{print $6}')" >&2
+  echo "       need ~$(( need / 1048576 )) MiB (incl. margin), have $(( ${avail:-0} / 1048576 )) MiB" >&2
+  echo "       SF=$SF wants a $(( BASE_BYTES / 1048576 )) MiB DEEP slice; use a smaller --sf or a bigger volume." >&2
+  exit 1
+fi
+echo "  pre-flight: need ~$(( need / 1048576 )) MiB, have $(( ${avail:-0} / 1048576 )) MiB free"
+
+if base_prefix_ok "$BASE_FILE" && [ "$(stat -Lc%s "$BASE_FILE")" -ge "$BASE_BYTES" ]; then
+  echo "  cached+verified: $(basename "$BASE_FILE") ($(stat -Lc%s "$BASE_FILE") bytes, need $BASE_BYTES)"
+elif donor=$(larger_slice_for "$BASE_BYTES"); then
+  ln -sfn "$donor" "$BASE_FILE"
+  echo "  reusing prefix of $(basename "$donor") ($(stat -Lc%s "$donor") bytes >= $BASE_BYTES) -> $(basename "$BASE_FILE")"
 else
-  echo "  fetching $(basename "$BASE_FILE") ..."
-  curl -fSL --retry 5 --retry-delay 3 -r "0-$((BASE_BYTES-1))" "$DEEP/base.1B.fbin" -o "$BASE_FILE"
-  base_prefix_ok || { echo "error: DEEP base prefix-gate sha256 mismatch (want $SHA_BASE_SF1 over first $SF1_PREFIX_BYTES bytes)" >&2; exit 1; }
+  # RESUMABLE ranged download. curl's --retry RESTARTS a transfer rather than resuming
+  # it, and -o truncates the target first; at sf1 (307MB) that is invisible, but at
+  # sf200 (61GB) over a flaky link a single hiccup would cost the entire pull. So drive
+  # the range ourselves: append only the bytes still missing and loop until complete.
+  # (-C - cannot be combined with an explicit -r range.)
+  [ -L "$BASE_FILE" ] && rm -f "$BASE_FILE"          # never append into a reused donor
+  have=$(stat -c%s "$BASE_FILE" 2>/dev/null || echo 0)
+  if [ "$have" -gt "$BASE_BYTES" ]; then rm -f "$BASE_FILE"; have=0; fi   # stale bigger file
+  stall=0
+  while [ "$have" -lt "$BASE_BYTES" ]; do
+    echo "  fetching bytes ${have}..$((BASE_BYTES-1))  ($(( (BASE_BYTES - have) / 1048576 )) MiB remaining)"
+    # --speed-limit/--speed-time turn a dead-but-open connection into a fast abort +
+    # resume instead of an indefinite hang. 256KB/s over 120s: low enough not to thrash
+    # on a genuinely slow-but-progressing link, high enough to kill a stalled one in 2min.
+    curl -fL --retry 5 --retry-delay 3 --speed-limit "${FETCH_MIN_BPS:-262144}" --speed-time 120 \
+         -r "${have}-$((BASE_BYTES-1))" "$DEEP/base.1B.fbin" >> "$BASE_FILE" || true
+    new=$(stat -c%s "$BASE_FILE" 2>/dev/null || echo 0)
+    if [ "$new" -le "$have" ]; then
+      stall=$((stall + 1))
+      if [ "$stall" -ge 10 ]; then
+        echo "error: no download progress after 10 attempts (stuck at $new/$BASE_BYTES bytes)" >&2
+        exit 1
+      fi
+      echo "  no progress; retrying in 10s (attempt $stall/10)"; sleep 10
+    else
+      stall=0
+    fi
+    have=$new
+  done
+  base_prefix_ok "$BASE_FILE" || { echo "error: DEEP base prefix-gate sha256 mismatch (want $SHA_BASE_SF1 over first $SF1_PREFIX_BYTES bytes)" >&2; exit 1; }
   echo "  ok (sha256 prefix-gate verified): $(basename "$BASE_FILE")"
 fi
+df -h "$CACHE" | tail -1 | awk '{print "  cache disk: "$4" free ("$5" used)"}'
 
 echo "==> DEEP1B query set + groundtruth (full)"
 fetch "$DEEP/query.public.10K.fbin"       "$QUERY_FILE" "$SHA_QUERY" -C -

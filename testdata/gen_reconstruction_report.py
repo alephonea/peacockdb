@@ -3,10 +3,16 @@
 embedding fixtures encode, so a reviewer can eyeball fidelity WITHOUT the data.
 
 LOCAL-ONLY generation (needs the GloVe cache + the --embeddings external parquet). The
-HTML OUTPUT is committed (testdata/tpch-vec-queries/reconstruction_report.html);
-it contains only public TPC-H text + public-domain GloVe words + relational keys —
-NO raw DEEP1B content (image vectors are not invertible). Self-contained (inline
+HTML OUTPUT is committed, one per dataset, at
+    testdata/reports/tpch.sf<N>/reconstruction_report.html
+(mirroring the testdata/goldens/tpch.sf<N>/ shape — the report describes ONE dataset,
+so the path must carry the scale factor or a later --sf silently overwrites an earlier
+report). It contains only public TPC-H text + public-domain GloVe words + relational
+keys — NO raw DEEP1B content (image vectors are not invertible). Self-contained (inline
 CSS, no external assets) and DETERMINISTIC (fixed samples) so it doesn't churn.
+
+These reports are for humans reading the repo; they are deliberately NOT in any
+build-test.sh sync KIND, so they never ship to the test hosts.
 
   python3 testdata/gen_reconstruction_report.py [--sf 1]
 """
@@ -14,7 +20,6 @@ import numpy as np, pyarrow.parquet as pq, json, os, re, html, argparse
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CACHE = os.path.join(ROOT, "testdata/embeddings-cache")
-OUT = os.path.join(ROOT, "testdata/tpch-vec-queries/reconstruction_report.html")
 N_TEXT, N_IMG_PANEL, TOPW, TOPR = 20, 5, 5, 5
 
 def load_vecs(parquet, col):
@@ -52,6 +57,10 @@ def main():
     sf = ap.parse_args().sf
     TD = os.path.join(ROOT, f"testdata/tpch.sf{sf}")
     PART, PS = os.path.join(TD, "part.parquet"), os.path.join(TD, "partsupp.parquet")
+    # per-dataset output, so --sf 40 can never overwrite the sf1 report
+    out_dir = os.path.join(ROOT, f"testdata/reports/tpch.sf{sf}")
+    os.makedirs(out_dir, exist_ok=True)
+    OUT = os.path.join(out_dir, "reconstruction_report.html")
 
     W, G = load_glove()
     G = G / np.linalg.norm(G, axis=1, keepdims=True)   # L2-normalized -> cosine via dot product
