@@ -37,15 +37,18 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       # Cache ~/.cargo + target/ so the opt-level-3 DataFusion/Arrow dep tree
-      # compiles once and restores on warm runs. shared-key (not the default
-      # per-job key) makes the two cudf matrix legs (25.02/26.02) share ONE cache:
-      # the cudf version only affects the C++ side, which rust-cache doesn't touch,
-      # so their Rust deps are byte-identical. Same RUSTFLAGS (-C debuginfo=0) as
-      # the build/run steps below, so restored artifacts fingerprint-match.
+      # compiles once and restores on warm runs. The key is PER cudf matrix leg
+      # (25.02/26.02) — they must NOT share one cache. target/ holds flatc-fork's
+      # compiled `flatc` host binary, which dynamically links the build container's
+      # glibc; the two cudf images ship different glibc, so a flatc built on the
+      # 26.02 image (GLIBC_2.38) fails to run on the older-glibc 25.02 image
+      # ("GLIBC_2.38 not found" -> build.rs flatc panic). A shared key let 26.02
+      # poison 25.02's cache. Same RUSTFLAGS (-C debuginfo=0) as the build/run
+      # steps below, so restored artifacts fingerprint-match.
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: rust-cudf
+          shared-key: rust-cudf-${{ matrix.cudf }}
 
       - name: Run CPU tests (CPP)
         run: ctest --test-dir cpp/build -L cpu --output-on-failure
