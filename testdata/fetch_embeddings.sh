@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Fetch open-dataset embedding sources for `generate_testdata.sh --real-embeddings`.
+# Fetch open-dataset embedding sources for `generate_testdata.sh --embeddings external`.
 #
 # LOCAL-ONLY. Downloads ~1.1GB into testdata/embeddings-cache/ and checksum-verifies
 # every artifact. The augmented parquet is generated locally and SHIPPED to the test

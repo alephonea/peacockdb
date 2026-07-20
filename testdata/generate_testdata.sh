@@ -8,20 +8,34 @@
 #   ./testdata/generate_testdata.sh --bench tpcds      # generate tpcds.sf1
 #   ./testdata/generate_testdata.sh --bench tpcds --sf 10
 #
+#   --embeddings synthetic|external   (tpch only; default: synthetic)
+#     synthetic  hash-generated FLOAT[8] embedding columns — no download, this is what
+#                CI and the GPU host use.
+#     external   DEEP1B (image, 96d) + GloVe (text, 100d) vectors read from
+#                testdata/embeddings-cache — run testdata/fetch_embeddings.sh first.
+#   e.g. ./testdata/generate_testdata.sh --bench tpch --embeddings external
+#
 # Requires duckdb in PATH, or set DUCKDB=/path/to/duckdb.
 
 set -euo pipefail
 
 SF=1
-BENCH=""   # required — pass --bench tpch|tpcds explicitly
-REAL_EMB=0 # --real-embeddings: populate part/partsupp embeddings from fetched
-           # open datasets (DEEP1B image + GloVe text). Default OFF = synthetic
-           # FLOAT[8] embeddings (no fetch), so CI/H200 keep working unchanged.
+BENCH=""            # required — pass --bench tpch|tpcds explicitly
+EMB_MODE="synthetic" # --embeddings synthetic|external. synthetic = hash-generated
+                     # FLOAT[8] (no fetch) and is the DEFAULT so CI/H200 keep working
+                     # unchanged; external = DEEP1B image + GloVe text vectors from the
+                     # testdata/embeddings-cache populated by fetch_embeddings.sh.
 while [ $# -gt 0 ]; do
   case "$1" in
     --sf) SF="$2"; shift ;;
     --bench) BENCH="$2"; shift ;;
-    --real-embeddings) REAL_EMB=1 ;;
+    --embeddings)
+      # Reject a missing value explicitly so `--embeddings --sf 10` can't silently
+      # swallow the next flag as the mode.
+      case "${2:-}" in
+        ""|-*) echo "error: --embeddings requires a value (synthetic|external)" >&2; exit 1 ;;
+      esac
+      EMB_MODE="$2"; shift ;;
     *) echo "Unknown flag: $1"; exit 1 ;;
   esac
   shift
@@ -31,6 +45,11 @@ case "$BENCH" in
   tpch|tpcds) ;;
   "") echo "error: --bench is required (tpch or tpcds)"; exit 1 ;;
   *) echo "error: --bench must be tpch or tpcds (got: $BENCH)"; exit 1 ;;
+esac
+
+case "$EMB_MODE" in
+  synthetic|external) ;;
+  *) echo "error: --embeddings must be synthetic or external (got: $EMB_MODE)"; exit 1 ;;
 esac
 
 DUCKDB=${DUCKDB:-$(which duckdb 2>/dev/null)} || { echo "error: duckdb not found in PATH"; exit 1; }
@@ -86,17 +105,27 @@ if [ "$BENCH" = "tpch" ]; then
   # tables/columns carry embeddings) follows:
   #   Exqutor: Extended Query Optimizer for Vector-augmented Analytical Queries
   #   arXiv:2512.09695. The paper's repo is CC BY-NC 4.0; NONE of its code is used.
-  # Two modes, chosen by --real-embeddings; both APPEND columns AFTER every stock
+  # Two modes, chosen by --embeddings synthetic|external; both APPEND columns AFTER every stock
   # column so existing column indices (and projection-pushdown goldens) don't shift:
-  #   default  synthetic FLOAT[8], seeded by DuckDB hash() of the row key.
-  #   --real   image = DEEP1B (CC BY 4.0) 96-dim, ordinal per partsupp scan row;
-  #            text  = mean of GloVe 100d (PDDL) word-vectors over the row's tokens.
+  #   synthetic  FLOAT[8], seeded by DuckDB hash() of the row key (default; no fetch).
+  #   external   image = DEEP1B (CC BY 4.0) 96-dim, ordinal per partsupp scan row;
+  #              text  = mean of GloVe 100d (PDDL) word-vectors over the row's tokens.
   # Both are DETERMINISTIC (threads=1 + pinned DuckDB). Synthetic (hash-based) reproduces
-  # byte-for-byte on any pinned-duckdb host. --real is generated on THIS gen box and
+  # byte-for-byte on any pinned-duckdb host. external mode is generated on THIS gen box and
   # SHIPPED as parquet — verda/shad-gpu never regenerate it — so its determinism is
   # run-to-run on the gen box, not "reproducible on verda".
+  #
+  # ROW-ORDER CONTRACT (load-bearing): both modes emit part/partsupp in BASE SCAN ORDER.
+  # Synthetic gets this for free (plain SELECT off the base table); external mode reaches the
+  # COPY through hash joins (GloVe text agg, DEEP ordinal), and DuckDB does NOT guarantee
+  # probe-side order, so external mode pins it explicitly: take an ordinal _rn =
+  # row_number() OVER () on the BASE scan and ORDER BY _rn (the ordinal, NOT the key —
+  # base order is not assumed key-ascending). This is required because CI-synthetic and
+  # verda-external share ONE golden set, and some tp8 goldens are order-SENSITIVE (per-
+  # partition filter counts in q8/q9/q19 .tp8-mem120gib). Without the pin the shared-
+  # golden invariant would hold only by luck.
   CACHE="${SCRIPT_DIR}/embeddings-cache"
-  if [ "$REAL_EMB" = 1 ]; then
+  if [ "$EMB_MODE" = external ]; then
     N=$(( 800000 * SF ))                       # partsupp row count = image-vector count
     DEEP_FBIN="${CACHE}/deep_base.sf${SF}.fbin"
     GLOVE_TXT="${CACHE}/glove.6B.100d.txt"
@@ -132,11 +161,12 @@ PY
     EMB_PREAMBLE="CREATE TEMP TABLE glove AS
   SELECT column0 AS word, [${GLOVE_LIST}]::FLOAT[100] AS vec
   FROM read_csv('${GLOVE_TXT}', sep=' ', header=false, quote='', escape='', auto_detect=false, columns=${GLOVE_COLS});"
-    # part.p_text_embedding = mean GloVe over lower(p_name || ' ' || p_type). list_reduce
-    # folds vectors in a FIXED order (list ordered by word,tok_ord) -> deterministic sum.
-    # Empty-vocab row -> zero vector.
+    # part.p_text_embedding = mean GloVe over lower(p_name || ' ' || p_type): the 100
+    # per-dim sums divided by the MATCHED in-vocab token count (OOV tokens excluded from
+    # both sum and count). Empty-vocab row -> zero vector via the LEFT JOIN + CASE.
     PART_COPY="COPY (
-  WITH toks AS (
+  WITH p_rn AS (SELECT *, row_number() OVER () AS _rn FROM part),
+  toks AS (
     SELECT p_partkey, tok FROM part,
       unnest(regexp_split_to_array(lower(p_name || ' ' || p_type), '[^a-z0-9]+')) AS u(tok)
   ),
@@ -144,10 +174,11 @@ PY
     SELECT t.p_partkey, [${SUMG}] AS sums, count(*)::FLOAT AS n
     FROM toks t JOIN glove g ON g.word = t.tok WHERE t.tok <> '' GROUP BY t.p_partkey
   )
-  SELECT part.*,
+  SELECT p_rn.* EXCLUDE (_rn),
     CASE WHEN m.p_partkey IS NULL THEN [0.0 FOR _ IN range(100)]::FLOAT[100]
          ELSE list_transform(m.sums, lambda s: s / m.n)::FLOAT[100] END AS p_text_embedding
-  FROM part LEFT JOIN matched m ON m.p_partkey = part.p_partkey
+  FROM p_rn LEFT JOIN matched m ON m.p_partkey = p_rn.p_partkey
+  ORDER BY p_rn._rn
 ) TO '${OUTDIR}/part.parquet' (FORMAT parquet);"
     # partsupp: ps_image_embedding = DEEP1B[ordinal in scan order]; ps_text_embedding =
     # mean GloVe over ps_comment; ps_tag = same deterministic categorical as synthetic.
@@ -169,6 +200,7 @@ PY
   FROM ps_rn
   JOIN read_parquet('${DEEP_PARQUET}') deep ON deep.idx = ps_rn._rn
   LEFT JOIN matched m ON m.ps_partkey = ps_rn.ps_partkey AND m.ps_suppkey = ps_rn.ps_suppkey
+  ORDER BY ps_rn._rn
 ) TO '${OUTDIR}/partsupp.parquet' (FORMAT parquet);"
   else
     EMB_PREAMBLE=""

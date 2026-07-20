@@ -2,7 +2,7 @@
 """Generate reconstruction_report.html — a human-skimmable view of what the
 embedding fixtures encode, so a reviewer can eyeball fidelity WITHOUT the data.
 
-LOCAL-ONLY generation (needs the GloVe cache + the --real-embeddings parquet). The
+LOCAL-ONLY generation (needs the GloVe cache + the --embeddings external parquet). The
 HTML OUTPUT is committed (testdata/tpch-vec-queries/reconstruction_report.html);
 it contains only public TPC-H text + public-domain GloVe words + relational keys —
 NO raw DEEP1B content (image vectors are not invertible). Self-contained (inline

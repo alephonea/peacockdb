@@ -5,7 +5,7 @@ LOCAL-ONLY. Operates on a generated tpch.sf<N> plus testdata/tpch-vec-queries/
 query_params.jsonl. It is NOT wired into CI: CI generates the SYNTHETIC dataset
 (FLOAT[8]) with no fetch, and the DEEP1B/GloVe-specific invariants below don't
 apply there — those checks auto-skip when dims != 96/100. Run it locally after
-`generate_testdata.sh --real-embeddings` to gate the shipped real bytes.
+`generate_testdata.sh --embeddings external` to gate the shipped real bytes.
 
 Exits non-zero if any check fails; prints a summary table.
 

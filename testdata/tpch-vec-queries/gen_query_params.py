@@ -2,7 +2,7 @@
 """Generate query_params.jsonl — (q, D) pairs for the TPC-H+V vector queries.
 
 LOCAL-ONLY (like fetch_embeddings.sh): reads the gitignored embeddings cache and
-the locally generated --real-embeddings parquet. The OUTPUT query_params.jsonl IS
+the locally generated --embeddings external parquet. The OUTPUT query_params.jsonl IS
 committed (a de-minimis sample of DEEP1B + GloVe-derived vectors — see NOTICE for
 attribution); the cache and parquet are not.
 
@@ -63,7 +63,7 @@ def count_for(parquet):
 DEEP_Q = os.path.join(CACHE, "deep_query.public.10K.fbin")
 for p in [DEEP_Q, os.path.join(TD, "partsupp.parquet"), os.path.join(TD, "part.parquet")]:
     if not os.path.exists(p):
-        err(f"error: missing {p} — run fetch_embeddings.sh then generate_testdata.sh --real-embeddings first")
+        err(f"error: missing {p} — run fetch_embeddings.sh then generate_testdata.sh --embeddings external first")
         sys.exit(1)
 
 PS = os.path.join(TD, "partsupp.parquet"); N_PS = count_for(PS)
