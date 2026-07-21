@@ -535,5 +535,9 @@ jobs:
             echo "S3 credentials not present — skipping (fork PR or unconfigured)."
             exit 0
           fi
+          # NEW DEPENDENCY: the check now reads parquet FOOTERS over ranged GETs to verify
+          # schema/embedding-dims/row-counts, so it needs pyarrow (it previously needed only
+          # aws + python3). Same import-or-pip self-heal as the Tier A step.
+          python3 -c "import pyarrow" 2>/dev/null || pip install --quiet pyarrow
           python3 scripts/check_s3_datasets.py \
             --endpoint https://storage.eu-north1.nebius.cloud:443

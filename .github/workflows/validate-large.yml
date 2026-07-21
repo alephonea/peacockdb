@@ -45,7 +45,7 @@ jobs:
       - name: Ship validators
         run: |
           ssh gpu "mkdir -p $DATA_ROOT/scripts"
-          scp scripts/_dataset_checks.py scripts/validate_tpch.py scripts/validate_tpcds.py \
+          scp scripts/dataset_checks.py scripts/validate_tpch.py scripts/validate_tpcds.py \
               scripts/check_s3_datasets.py gpu:$DATA_ROOT/scripts/
 
       - name: Validate in place

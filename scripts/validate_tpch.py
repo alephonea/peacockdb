@@ -29,21 +29,13 @@ import numpy as np
 import pyarrow.parquet as pq
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import _dataset_checks as dc
+import dataset_checks as dc
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# exact row counts as multiples of SF (lineitem is ~6.001215M*SF -> tolerance band)
-COUNTS = {"part": 200_000, "partsupp": 800_000, "customer": 150_000,
-          "supplier": 10_000, "orders": 1_500_000}
-FIXED = {"nation": 25, "region": 5}
-STOCK = {
-    "part": ["p_partkey", "p_name", "p_mfgr", "p_brand", "p_type", "p_size",
-             "p_container", "p_retailprice", "p_comment"],
-    "partsupp": ["ps_partkey", "ps_suppkey", "ps_availqty", "ps_supplycost", "ps_comment"],
-}
-EMB_COLS = {"part": ["p_text_embedding"],
-            "partsupp": ["ps_image_embedding", "ps_text_embedding", "ps_tag"]}
+# Row counts / column lists / embedding dims come from dataset_checks — the SINGLE
+# SOURCE OF TRUTH shared with check_s3_datasets.py. Don't restate them here.
+EMB_COLS = dc.TPCH_EMB_COLS
 
 
 def emb_dim(parquet, col):
@@ -62,22 +54,23 @@ def main():
             print(f"error: missing {P(t)}", file=sys.stderr); sys.exit(2)
 
     print("-- ROW COUNTS --")
-    for t, per in COUNTS.items():
-        dc.check_row_count(P(t), per * sf, t)
-    for t, n in FIXED.items():
-        dc.check_row_count(P(t), n, t)
-    dc.check_row_count(P("lineitem"), 6_001_215 * sf, "lineitem", tol=0.02)
+    for t in dc.TPCH_TABLES:
+        exp, tol = dc.expected_rows("tpch", t, sf)
+        if exp is not None:
+            dc.check_row_count(P(t), exp, t, tol=tol)
 
     print("-- SCHEMA --")
     dims = {}
     for t in ("part", "partsupp"):
         names = [f.name for f in pq.ParquetFile(P(t)).schema_arrow]
-        has_emb = all(c in names for c in EMB_COLS[t])
-        dc.check_columns(P(t), STOCK[t], t, appended_last=EMB_COLS[t] if has_emb else None)
+        stock, trailing = dc.expected_columns("tpch", t)
+        has_emb = all(c in names for c in trailing)
+        dc.check_columns(P(t), stock, t, appended_last=trailing if has_emb else None)
         if has_emb:
-            dims[t] = emb_dim(P(t), EMB_COLS[t][0])
+            dims[t] = emb_dim(P(t), trailing[0])
 
-    external = dims.get("partsupp", 0) == 96 and dims.get("part", 0) == 100
+    external = (dims.get("partsupp", 0) == dc.TPCH_EMB_DIMS["ps_image_embedding"]
+                and dims.get("part", 0) == dc.TPCH_EMB_DIMS["p_text_embedding"])
     if not external:
         # record the skip as a check so "N/N passed" can't be misread as "embeddings validated"
         dc.check("embedding invariants", True, 'meta',

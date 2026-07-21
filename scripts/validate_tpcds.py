@@ -22,17 +22,15 @@ import argparse
 import pyarrow.parquet as pq
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import _dataset_checks as dc
+import dataset_checks as dc
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-TABLES = [
-    "call_center", "catalog_page", "catalog_returns", "catalog_sales", "customer",
-    "customer_address", "customer_demographics", "date_dim", "household_demographics",
-    "income_band", "inventory", "item", "promotion", "reason", "ship_mode", "store",
-    "store_returns", "store_sales", "time_dim", "warehouse", "web_page", "web_returns",
-    "web_sales", "web_site",
-]
+# Table list, fact sort keys and SF-invariant counts come from dataset_checks — the
+# SINGLE SOURCE OF TRUTH shared with check_s3_datasets.py. Don't restate them here.
+TABLES = dc.TPCDS_TABLES
+FACTS = dc.TPCDS_FACT_SORT_KEYS
+
 
 # 7 fact tables: (lead date_sk, then item_sk, then transaction key) — must match the
 # ORDER BY in generate_testdata.sh.
@@ -66,8 +64,9 @@ def main():
     # false-fail across SFs, so we don't hard-assert them — table presence + fact-table
     # sort order are the load-bearing checks here.
     print("-- ROW COUNTS (SF-invariant) --")
-    dc.check_row_count(P("income_band"), 20, "income_band")
-    dc.check_row_count(P("ship_mode"), 20, "ship_mode")
+    for t in sorted(dc.TPCDS_ROWS_FIXED):
+        exp, tol = dc.expected_rows("tpcds", t, sf)
+        dc.check_row_count(P(t), exp, t, tol=tol)
 
     print("-- SORT ORDER (7 fact tables) --")
     for tbl, keys in FACTS.items():

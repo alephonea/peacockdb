@@ -11,6 +11,115 @@ Every check records whether it was EXHAUSTIVE or SAMPLED so the output can't ove
 import numpy as np
 import pyarrow.parquet as pq
 
+# =====================================================================
+# DATASET EXPECTATIONS — THE SINGLE SOURCE OF TRUTH.
+#
+# Everything that defines "what a correct dataset looks like" lives HERE and is
+# imported by every consumer: the local validators (validate_tpch.py,
+# validate_tpcds.py) and the S3 metadata check (check_s3_datasets.py). Do NOT
+# restate a row-count formula or column list in a consumer — if the local
+# validator and the S3 check could disagree about correctness, one of them is
+# silently wrong.
+# =====================================================================
+
+# --- TPC-H ---
+# rows = per-SF multiple * SF
+TPCH_ROWS_PER_SF = {"part": 200_000, "partsupp": 800_000, "customer": 150_000,
+                    "supplier": 10_000, "orders": 1_500_000}
+# SF-invariant
+TPCH_ROWS_FIXED = {"nation": 25, "region": 5}
+# lineitem is only APPROXIMATELY linear in SF -> tolerance band, never equality
+TPCH_LINEITEM_PER_SF = 6_001_215
+TPCH_LINEITEM_TOL = 0.02
+
+TPCH_TABLES = ["nation", "region", "supplier", "customer", "part", "partsupp",
+               "orders", "lineitem"]
+
+# stock (pre-augmentation) columns, in order
+TPCH_STOCK_COLS = {
+    "part": ["p_partkey", "p_name", "p_mfgr", "p_brand", "p_type", "p_size",
+             "p_container", "p_retailprice", "p_comment"],
+    "partsupp": ["ps_partkey", "ps_suppkey", "ps_availqty", "ps_supplycost", "ps_comment"],
+}
+# embedding columns, in the order they are APPENDED (must be the trailing columns —
+# that column-index invariant is what the projection-pushdown goldens depend on)
+TPCH_EMB_COLS = {"part": ["p_text_embedding"],
+                 "partsupp": ["ps_image_embedding", "ps_text_embedding", "ps_tag"]}
+# EXTERNAL-mode embedding dimensions (DEEP1B image 96, GloVe text 100). Synthetic mode
+# uses FLOAT[8]; published datasets are external BY CONTRACT, so asserting these dims
+# catches a synthetic dataset being published by mistake.
+TPCH_EMB_DIMS = {"p_text_embedding": 100, "ps_image_embedding": 96, "ps_text_embedding": 100}
+
+# --- TPC-DS ---
+TPCDS_TABLES = [
+    "call_center", "catalog_page", "catalog_returns", "catalog_sales", "customer",
+    "customer_address", "customer_demographics", "date_dim", "household_demographics",
+    "income_band", "inventory", "item", "promotion", "reason", "ship_mode", "store",
+    "store_returns", "store_sales", "time_dim", "warehouse", "web_page", "web_returns",
+    "web_sales", "web_site",
+]
+# Only genuinely SF-INVARIANT counts. Most TPC-DS dimensions grow by a sub-linear spec
+# formula (e.g. reason 35@sf1 -> 55 later), so asserting them would false-fail across SFs.
+TPCDS_ROWS_FIXED = {"income_band": 20, "ship_mode": 20}
+# 7 fact tables -> (lead date_sk, item_sk, transaction key); must match generate_testdata.sh
+TPCDS_FACT_SORT_KEYS = {
+    "catalog_sales":   ["cs_sold_date_sk", "cs_item_sk", "cs_order_number"],
+    "catalog_returns": ["cr_returned_date_sk", "cr_item_sk", "cr_order_number"],
+    "store_sales":     ["ss_sold_date_sk", "ss_item_sk", "ss_ticket_number"],
+    "store_returns":   ["sr_returned_date_sk", "sr_item_sk", "sr_ticket_number"],
+    "web_sales":       ["ws_sold_date_sk", "ws_item_sk", "ws_order_number"],
+    "web_returns":     ["wr_returned_date_sk", "wr_item_sk", "wr_order_number"],
+    "inventory":       ["inv_date_sk", "inv_item_sk", "inv_warehouse_sk"],
+}
+
+
+def expected_rows(bench, table, sf):
+    """(expected_rows, tolerance) for a table, or (None, 0) when we deliberately don't
+    assert it. tolerance is a fraction (0 => exact)."""
+    if bench == "tpch":
+        if table in TPCH_ROWS_PER_SF:
+            return TPCH_ROWS_PER_SF[table] * sf, 0.0
+        if table in TPCH_ROWS_FIXED:
+            return TPCH_ROWS_FIXED[table], 0.0
+        if table == "lineitem":
+            return TPCH_LINEITEM_PER_SF * sf, TPCH_LINEITEM_TOL
+    elif bench == "tpcds":
+        if table in TPCDS_ROWS_FIXED:
+            return TPCDS_ROWS_FIXED[table], 0.0
+    return None, 0.0
+
+
+def expected_columns(bench, table):
+    """(required_columns, trailing_columns) — trailing must be the LAST columns in order,
+    or None when there is no ordering requirement."""
+    if bench == "tpch" and table in TPCH_STOCK_COLS:
+        return TPCH_STOCK_COLS[table], TPCH_EMB_COLS[table]
+    return [], None
+
+
+def tables_for(bench):
+    return TPCH_TABLES if bench == "tpch" else TPCDS_TABLES
+
+
+def embedding_dims_from_metadata(md):
+    """{column: dim} for list-typed columns, derived from the parquet FOOTER alone.
+
+    DuckDB writes the embeddings as VARIABLE-size list<float>, so the dimension is not in
+    the schema — but the footer carries the child column's num_values, and
+    num_values / num_rows is the (constant) list length. That makes a dim assertion free:
+    no data pages are read, which is what keeps the S3 check to ranged footer GETs.
+    """
+    if md.num_row_groups == 0:
+        return {}
+    rg = md.row_group(0)
+    out = {}
+    for i in range(md.num_columns):
+        path = rg.column(i).path_in_schema          # e.g. ps_image_embedding.list.element
+        if path.endswith(".list.element") and rg.num_rows:
+            out[path.split(".")[0]] = rg.column(i).num_values // rg.num_rows
+    return out
+
+
 RESULTS = []  # (name, ok, scope, detail)   scope in {'exhaustive','sampled','meta'}
 
 
