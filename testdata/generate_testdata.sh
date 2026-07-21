@@ -185,7 +185,17 @@ PY
     # bounded on long text like ps_comment; threads=1 fixes the reduction order.
     SUMG=$(python3 -c "print(','.join('sum(g.vec[%d])'%i for i in range(1,101)))")
     # GloVe vocab as word -> FLOAT[100]. Read whole rows via sep=' ' (word + 100 floats).
-    EMB_PREAMBLE="CREATE TEMP TABLE glove AS
+    # preserve_insertion_order=false: the part/partsupp embedding COPYs both end in an
+    # ORDER BY _rn over a UNIQUE ordinal (a total order), so their output is byte-identical
+    # regardless of this flag — but with it ON (the default) DuckDB additionally buffers to
+    # preserve pipeline order through the joins/agg, which on partsupp's wide rows (160M x
+    # ~1.2KB at sf200) inflated the working set past memory_limit and OOM'd. Turning it OFF
+    # lets those operators stream and the sort spill, while ORDER BY _rn still fixes the
+    # order. It is set AFTER the small dimension tables are already written (which have no
+    # ORDER BY, so they must keep the default) and before the ORDER BY'd part/partsupp/
+    # orders/lineitem COPYs.
+    EMB_PREAMBLE="SET preserve_insertion_order=false;
+CREATE TEMP TABLE glove AS
   SELECT column0 AS word, [${GLOVE_LIST}]::FLOAT[100] AS vec
   FROM read_csv('${GLOVE_TXT}', sep=' ', header=false, quote='', escape='', auto_detect=false, columns=${GLOVE_COLS});"
     # part.p_text_embedding = mean GloVe over lower(p_name || ' ' || p_type): the 100
@@ -247,6 +257,7 @@ PY
 
   $DUCKDB :memory: <<SQL
 PRAGMA threads=1;
+.bail on
 SET temp_directory='${DUCKDB_TEMP_DIR}';
 INSTALL tpch;
 LOAD tpch;
@@ -256,11 +267,21 @@ COPY nation    TO '${OUTDIR}/nation.parquet'    (FORMAT parquet);
 COPY region    TO '${OUTDIR}/region.parquet'    (FORMAT parquet);
 COPY supplier  TO '${OUTDIR}/supplier.parquet'  (FORMAT parquet);
 COPY customer  TO '${OUTDIR}/customer.parquet'  (FORMAT parquet);
+COPY (SELECT * FROM orders   ORDER BY o_orderdate NULLS LAST, o_orderkey)               TO '${OUTDIR}/orders.parquet'   (FORMAT parquet);
+COPY (SELECT * FROM lineitem ORDER BY l_shipdate NULLS LAST, l_orderkey, l_linenumber)  TO '${OUTDIR}/lineitem.parquet' (FORMAT parquet);
+-- Free the base tables the part/partsupp embedding COPYs don't need, so those sorts get
+-- the full memory budget. dbgen materializes EVERY table in the :memory: DB; left
+-- resident (part/partsupp used to be COPY'd BEFORE orders/lineitem), lineitem's
+-- 240M/1.2B rows + orders competed with partsupp's wide-row ORDER BY _rn and OOM'd it at
+-- sf200. Writing them first + DROP frees the blocks. Each COPY is independent, so this
+-- reorder leaves every table's output BYTES unchanged (verified sf1/sf40 byte-identical).
+DROP TABLE lineitem;
+DROP TABLE orders;
+DROP TABLE customer;
+DROP TABLE supplier;
 ${EMB_PREAMBLE}
 ${PART_COPY}
 ${PARTSUPP_COPY}
-COPY (SELECT * FROM orders   ORDER BY o_orderdate NULLS LAST, o_orderkey)               TO '${OUTDIR}/orders.parquet'   (FORMAT parquet);
-COPY (SELECT * FROM lineitem ORDER BY l_shipdate NULLS LAST, l_orderkey, l_linenumber)  TO '${OUTDIR}/lineitem.parquet' (FORMAT parquet);
 SQL
 else
   # TPC-DS: 24 tables. Discover them from the duckdb extension rather than
@@ -273,6 +294,7 @@ else
   # pruning). Dimension tables stay in generation order (small; no scan benefit).
   $DUCKDB :memory: <<SQL
 PRAGMA threads=1;
+.bail on
 SET temp_directory='${DUCKDB_TEMP_DIR}';
 INSTALL tpcds;
 LOAD tpcds;
