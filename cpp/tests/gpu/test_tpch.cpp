@@ -25,7 +25,16 @@
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/scalar/scalar_factories.hpp>
 #include <cudf/groupby.hpp>
-#include <cudf/join.hpp>
+// cuDF MOVED THIS HEADER between 25.02 and 26.02: cudf/join.hpp -> cudf/join/join.hpp.
+// CI builds both legs, so the source has to satisfy both. Verified against the two local
+// installs — join.hpp is the ONLY header this file includes that moved, and the
+// inner_join signature is byte-identical in both versions (same parameters, same
+// null_equality/stream/mr defaults), so this is purely a path change, not an API change.
+#if __has_include(<cudf/join/join.hpp>)
+#  include <cudf/join/join.hpp>   // cudf >= 26.02
+#else
+#  include <cudf/join.hpp>        // cudf 25.02
+#endif
 #include <cudf/sorting.hpp>
 #include <cudf/stream_compaction.hpp>
 #include <cudf/table/table.hpp>
