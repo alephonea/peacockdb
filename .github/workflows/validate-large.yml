@@ -5,15 +5,6 @@ name: Validate large datasets
 # same scale-safe validators in place against tpch.sf40 / tpch.sf200 / tpcds.sf200,
 # then the cheap S3 metadata check. workflow_dispatch ONLY — never on PR/push.
 on:
-  # ###################################################################################
-  # TEMPORARY — REMOVE THIS `push:` BLOCK BEFORE MERGING #106 TO master.
-  # It exists for ONE reason: GitHub only registers workflow_dispatch for workflows on
-  # the DEFAULT branch, so this workflow cannot be dispatched until it is merged — which
-  # would mean merging it unproven. This trigger lets it actually execute on the feature
-  # branch first. On master it would SSH to the GPU host on EVERY push; it must not ship.
-  # ###################################################################################
-  push:
-    branches: [ENS-large-datasets]
   workflow_dispatch:
     inputs:
       datasets:
@@ -64,16 +55,7 @@ jobs:
         env:
           # Via env (not inlined) so the dispatch input can't break out of the shell;
           # then validated against an allow-list before any use.
-          #
-          # On a `push` event github.event.inputs.datasets does not exist, so it evaluates
-          # to the empty string and the empty-input guard below would (correctly) fail the
-          # run. Resolved with an EVENT-CONDITIONAL, not with a default-if-empty fallback:
-          # a fallback would also swallow a genuinely-empty DISPATCH and silently defeat
-          # that guard. GitHub's &&/|| yield operand values, so push -> the literal, and
-          # dispatch -> the raw input INCLUDING empty, which stays fatal.
-          # TEMPORARY: revert to plain `${{ github.event.inputs.datasets }}` when the
-          # push: trigger above is removed.
-          DATASETS: ${{ github.event_name == 'push' && 'tpch.sf40 tpcds.sf200' || github.event.inputs.datasets }}
+          DATASETS: ${{ github.event.inputs.datasets }}
         run: |
           set -e
           ALLOWED="tpch.sf40 tpch.sf200 tpcds.sf200"
