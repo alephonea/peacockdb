@@ -19,6 +19,7 @@
 #include <cudf/binaryop.hpp>
 #include <cudf/column/column.hpp>
 #include <cudf/copying.hpp>
+#include <cudf/datetime.hpp>
 #include <cudf/fixed_point/fixed_point.hpp>
 #include <cudf/io/parquet.hpp>
 #include <cudf/reduction.hpp>
@@ -445,6 +446,8 @@ int64_t int64_at(cudf::column_view const& col, cudf::size_type i) {
   auto s = cudf::get_element(col, i);
   if (auto* n64 = dynamic_cast<cudf::numeric_scalar<int64_t>*>(s.get())) return n64->value();
   if (auto* n32 = dynamic_cast<cudf::numeric_scalar<int32_t>*>(s.get())) return n32->value();
+  // INT16 too: cudf::datetime::extract_year returns INT16, so Q8's o_year lands here.
+  if (auto* n16 = dynamic_cast<cudf::numeric_scalar<int16_t>*>(s.get())) return n16->value();
   ADD_FAILURE() << "expected an integer column, got type id "
                 << static_cast<int>(col.type().id());
   return 0;
@@ -901,6 +904,273 @@ TEST_F(TpchSf40, Q3JoinsGroupByTopN) {
     return std::chrono::duration_cast<std::chrono::milliseconds>(b - a).count();
   };
   std::fprintf(stderr, "[q3] load %ld ms, execute %ld ms, total %ld ms\n",
+               ms(t0, t_loaded), ms(t_loaded, t_done), ms(t0, t_done));
+}
+
+// ===========================================================================
+// Q8 — national market share. SEVEN distinct tables, the most of any TPC-H query
+// (customer, lineitem, nation, orders, part, region, supplier; nation twice as n1/n2).
+//
+//   SELECT o_year, sum(CASE WHEN nation='BRAZIL' THEN volume ELSE 0 END)/sum(volume)
+//   FROM (part, supplier, lineitem, orders, customer, nation n1, nation n2, region
+//         joined on the key chain, with r_name='AMERICA',
+//         o_orderdate BETWEEN 1995-01-01 AND 1996-12-31,
+//         p_type='ECONOMY ANODIZED STEEL')
+//   GROUP BY o_year ORDER BY o_year
+//
+// JOIN ORDER IS HAND-CHOSEN — there is no optimizer here, so the plan below is the test's
+// own engineering decision. Measured sf40 selectivities drove it:
+//   p_type='ECONOMY ANODIZED STEEL' -> 53,952 of 8,000,000 parts (1 in 148)
+//   o_orderdate in 1995-96          -> 18,230,826 of 60,000,000 orders (30%)
+//   r_name='AMERICA'                -> 1 of 5 regions -> 5 nations
+// Plan, with expected cardinalities:
+//   A1 region(1) |X| nation n1(25)      -> 5
+//   A2   |X| customer(6M)               -> ~1.2M
+//   A3   |X| orders(filtered 18.2M)     -> ~3.65M          [subtree A]
+//   B1 part(53,952) |X| lineitem(240M)  -> ~1.62M          [subtree B]  <- THE DECISIVE STEP
+//   C  A3 |X| B1 on orderkey            -> ~98k
+//   D  |X| supplier(400k) |X| nation n2 -> ~98k
+//
+// THIS IS A BUSHY PLAN, NOT A LEFT-DEEP CHAIN. Subtree A (steps A1-A3) and subtree B
+// (step B1) are built independently and only meet at C, so two intermediates coexist —
+// cheap here (3.65M + 1.62M rows) and deliberate. A reader used to left-deep plans will
+// wonder why part|X|lineitem happens "out of order"; that is why.
+// WHY B1 MUST HAPPEN EARLY: lineitem is the only large table and carries NO filter of its
+// own, so its reduction can only come from a join. Joining it against the 53,952 matching
+// parts cuts 240M -> ~1.62M before it ever meets orders. Following the query's textual
+// order instead (lineitem |X| orders first) would materialize ~68M rows and only then
+// filter by part — 40x larger for the same answer.
+//
+// REPRESENTATION, per column:
+//   o_year        : integer (cudf extract_year gives INT16), compared EXACTLY
+//   brazil_volume : DECIMAL128 scale -4, compared EXACTLY
+//   total_volume  : DECIMAL128 scale -4, compared EXACTLY
+//   mkt_share     : DOUBLE, RELATIVE TOLERANCE — forced, not chosen. Verified against
+//                   DuckDB: sum(...) is DECIMAL(38,4) but DECIMAL/DECIMAL division
+//                   returns DOUBLE, so the ratio cannot be exact on either side.
+// The golden carries the two sums as their own columns (the spec's Q8 outputs only
+// o_year and mkt_share) SPECIFICALLY so both can be checked exactly: comparing the ratio
+// alone would let two compensating errors in the sums cancel inside the division.
+// ===========================================================================
+TEST_F(TpchSf40, Q8SevenTableJoin) {
+  const auto golden_path = golden_dir() + "/duckdb_q8.csv";
+  ASSERT_TRUE(file_exists(golden_path))
+      << "golden missing: " << golden_path
+      << " (regenerate with testdata/gen_duckdb_goldens.sh --sf 40)";
+
+  const auto t0 = std::chrono::steady_clock::now();
+
+  // ---------------- PHASE 1: LOAD (seven files, columns only) ----------------
+  auto read_cols = [](const std::string& path, std::vector<std::string> cols) {
+    auto o = cudf::io::parquet_reader_options::builder(
+                 cudf::io::source_info{std::vector<std::string>{path}})
+                 .columns(std::move(cols))
+                 .build();
+    return cudf::io::read_parquet(o);
+  };
+  auto part_in = read_cols(data_dir() + "/part.parquet", {"p_partkey", "p_type"});
+  auto supp_in = read_cols(data_dir() + "/supplier.parquet", {"s_suppkey", "s_nationkey"});
+  auto line_in = read_cols(data_dir() + "/lineitem.parquet",
+                           {"l_orderkey", "l_partkey", "l_suppkey", "l_extendedprice", "l_discount"});
+  auto ord_in = read_cols(data_dir() + "/orders.parquet",
+                          {"o_orderkey", "o_custkey", "o_orderdate"});
+  auto cust_in = read_cols(data_dir() + "/customer.parquet", {"c_custkey", "c_nationkey"});
+  // NATION IS LOADED ONCE AND JOINED TWICE (n1 via customer, n2 via supplier). cudf joins
+  // take key table_views rather than named relations, so the same in-memory table serves
+  // both roles — no second read, no copy. n1 is used only to reach region; n2 supplies the
+  // output nation name.
+  auto nation_in = read_cols(data_dir() + "/nation.parquet",
+                             {"n_nationkey", "n_name", "n_regionkey"});
+  auto region_in = read_cols(data_dir() + "/region.parquet", {"r_regionkey", "r_name"});
+  const auto t_loaded = std::chrono::steady_clock::now();
+  note_peak();
+  std::fprintf(stderr,
+               "[q8] loaded part %ld, supplier %ld, lineitem %ld, orders %ld, customer %ld, "
+               "nation %ld, region %ld\n",
+               static_cast<long>(part_in.tbl->num_rows()), static_cast<long>(supp_in.tbl->num_rows()),
+               static_cast<long>(line_in.tbl->num_rows()), static_cast<long>(ord_in.tbl->num_rows()),
+               static_cast<long>(cust_in.tbl->num_rows()), static_cast<long>(nation_in.tbl->num_rows()),
+               static_cast<long>(region_in.tbl->num_rows()));
+
+  // ---------------- PHASE 2: EXECUTE ----------------
+  const auto boolean = cudf::data_type{cudf::type_id::BOOL8};
+  const auto dec128_s2 = cudf::data_type{cudf::type_id::DECIMAL128, -2};
+  const auto dec128_s4 = cudf::data_type{cudf::type_id::DECIMAL128, -4};
+  const auto f64 = cudf::data_type{cudf::type_id::FLOAT64};
+  auto map_view = [](std::unique_ptr<rmm::device_uvector<cudf::size_type>> const& m) {
+    return cudf::column_view(cudf::data_type{cudf::type_id::INT32},
+                             static_cast<cudf::size_type>(m->size()), m->data(), nullptr, 0);
+  };
+
+  auto nation_v = nation_in.tbl->view();
+
+  // --- subtree A ---
+  // A1: region where r_name='AMERICA', then nation n1 on n_regionkey
+  auto america = cudf::string_scalar(std::string("AMERICA"));
+  auto rmask = cudf::binary_operation(region_in.tbl->view().column(1), america,
+                                      cudf::binary_operator::EQUAL, boolean);
+  auto region_f = cudf::apply_boolean_mask(
+      cudf::table_view{{region_in.tbl->view().column(0)}}, rmask->view());
+  auto [n1_map, r_map] = cudf::inner_join(cudf::table_view{{nation_v.column(2)}},   // n_regionkey
+                                          cudf::table_view{{region_f->get_column(0).view()}});
+  auto n1 = cudf::gather(cudf::table_view{{nation_v.column(0)}}, map_view(n1_map));  // n_nationkey
+  std::fprintf(stderr, "[q8] A1 region|X|nation n1 -> %ld nations\n",
+               static_cast<long>(n1->num_rows()));
+
+  // A2: customer on c_nationkey
+  auto [c_map, n1b_map] = cudf::inner_join(cudf::table_view{{cust_in.tbl->view().column(1)}},
+                                           cudf::table_view{{n1->get_column(0).view()}});
+  auto cust_am = cudf::gather(cudf::table_view{{cust_in.tbl->view().column(0)}}, map_view(c_map));
+  std::fprintf(stderr, "[q8] A2 |X|customer -> %ld\n", static_cast<long>(cust_am->num_rows()));
+
+  // A3: orders filtered to 1995-96, joined on o_custkey
+  auto lo = cudf::timestamp_scalar<cudf::timestamp_D>(
+      cudf::timestamp_D{cudf::duration_D{days_since_epoch(1995, 1, 1)}}, true);
+  auto hi = cudf::timestamp_scalar<cudf::timestamp_D>(
+      cudf::timestamp_D{cudf::duration_D{days_since_epoch(1996, 12, 31)}}, true);
+  auto om1 = cudf::binary_operation(ord_in.tbl->view().column(2), lo,
+                                    cudf::binary_operator::GREATER_EQUAL, boolean);
+  auto om2 = cudf::binary_operation(ord_in.tbl->view().column(2), hi,
+                                    cudf::binary_operator::LESS_EQUAL, boolean);
+  auto omask = cudf::binary_operation(om1->view(), om2->view(),
+                                      cudf::binary_operator::LOGICAL_AND, boolean);
+  auto ord_f = cudf::apply_boolean_mask(ord_in.tbl->view(), omask->view());
+  note_peak();
+  auto [o_map, ca_map] = cudf::inner_join(cudf::table_view{{ord_f->get_column(1).view()}},  // o_custkey
+                                          cudf::table_view{{cust_am->get_column(0).view()}});
+  auto orders_am = cudf::gather(cudf::table_view{{ord_f->get_column(0).view(),    // o_orderkey
+                                                  ord_f->get_column(2).view()}},  // o_orderdate
+                                map_view(o_map));
+  note_peak();
+  std::fprintf(stderr, "[q8] A3 |X|orders(1995-96) -> %ld\n",
+               static_cast<long>(orders_am->num_rows()));
+
+  // --- subtree B: part |X| lineitem, the step that keeps this query small ---
+  auto ptype = cudf::string_scalar(std::string("ECONOMY ANODIZED STEEL"));
+  auto pmask = cudf::binary_operation(part_in.tbl->view().column(1), ptype,
+                                      cudf::binary_operator::EQUAL, boolean);
+  auto part_f = cudf::apply_boolean_mask(
+      cudf::table_view{{part_in.tbl->view().column(0)}}, pmask->view());
+  std::fprintf(stderr, "[q8] B0 part filtered -> %ld\n", static_cast<long>(part_f->num_rows()));
+  auto [l_map, p_map] = cudf::inner_join(cudf::table_view{{line_in.tbl->view().column(1)}},  // l_partkey
+                                         cudf::table_view{{part_f->get_column(0).view()}});
+  auto line_p = cudf::gather(cudf::table_view{{line_in.tbl->view().column(0),    // l_orderkey
+                                               line_in.tbl->view().column(2),    // l_suppkey
+                                               line_in.tbl->view().column(3),    // l_extendedprice
+                                               line_in.tbl->view().column(4)}},  // l_discount
+                             map_view(l_map));
+  note_peak();
+  std::fprintf(stderr, "[q8] B1 part|X|lineitem -> %ld (from %ld)\n",
+               static_cast<long>(line_p->num_rows()),
+               static_cast<long>(line_in.tbl->num_rows()));
+
+  // --- C: the two subtrees meet on orderkey ---
+  auto [lp_map, oa_map] = cudf::inner_join(cudf::table_view{{line_p->get_column(0).view()}},
+                                           cudf::table_view{{orders_am->get_column(0).view()}});
+  auto lp_side = cudf::gather(cudf::table_view{{line_p->get_column(1).view(),    // l_suppkey
+                                                line_p->get_column(2).view(),    // l_extendedprice
+                                                line_p->get_column(3).view()}},  // l_discount
+                              map_view(lp_map));
+  auto oa_side = cudf::gather(cudf::table_view{{orders_am->get_column(1).view()}},  // o_orderdate
+                              map_view(oa_map));
+  note_peak();
+  std::fprintf(stderr, "[q8] C A|X|B on orderkey -> %ld\n", static_cast<long>(lp_side->num_rows()));
+  ASSERT_GT(lp_side->num_rows(), 0) << "seven-table join produced no rows";
+
+  // --- D: supplier, then nation n2 (the SECOND use of the same nation table) ---
+  auto [s_map2, sp_map] = cudf::inner_join(cudf::table_view{{lp_side->get_column(0).view()}},  // l_suppkey
+                                           cudf::table_view{{supp_in.tbl->view().column(0)}});
+  auto d_price = cudf::gather(cudf::table_view{{lp_side->get_column(1).view(),
+                                                lp_side->get_column(2).view()}},
+                              map_view(s_map2));
+  auto d_date = cudf::gather(cudf::table_view{{oa_side->get_column(0).view()}}, map_view(s_map2));
+  auto d_snation = cudf::gather(cudf::table_view{{supp_in.tbl->view().column(1)}},  // s_nationkey
+                                map_view(sp_map));
+  auto [sn_map, n2_map] = cudf::inner_join(cudf::table_view{{d_snation->get_column(0).view()}},
+                                           cudf::table_view{{nation_v.column(0)}});  // n_nationkey
+  auto e_price = cudf::gather(cudf::table_view{{d_price->get_column(0).view(),
+                                                d_price->get_column(1).view()}},
+                              map_view(sn_map));
+  auto e_date = cudf::gather(cudf::table_view{{d_date->get_column(0).view()}}, map_view(sn_map));
+  auto e_nname = cudf::gather(cudf::table_view{{nation_v.column(1)}}, map_view(n2_map));  // n_name
+  note_peak();
+  std::fprintf(stderr, "[q8] D |X|supplier|X|nation n2 -> %ld\n",
+               static_cast<long>(e_price->num_rows()));
+
+  // --- project: volume, o_year, and the BRAZIL-only volume ---
+  auto price = cudf::cast(e_price->get_column(0).view(), dec128_s2);
+  auto disc = cudf::cast(e_price->get_column(1).view(), dec128_s2);
+  auto one_s2 = cudf::fixed_point_scalar<numeric::decimal128>(100, numeric::scale_type{-2});
+  auto one_minus_disc =
+      cudf::binary_operation(one_s2, disc->view(), cudf::binary_operator::SUB, dec128_s2);
+  auto volume = cudf::binary_operation(price->view(), one_minus_disc->view(),
+                                       cudf::binary_operator::MUL, dec128_s4);
+  // extract_datetime_component(..., YEAR), NOT extract_year: 25.02 has both but marks
+  // extract_year [[deprecated]], and 26.02 REMOVED it outright. The generic form exists
+  // with an identical signature and an identical datetime_component enum in both, so this
+  // needs no #if — a portable call beats a conditional include. (Found by compiling the
+  // 26.02 leg locally before handing over, which is the habit the cudf/join.hpp break
+  // taught; this one is a genuine API removal, not just a moved header.)
+  auto o_year = cudf::datetime::extract_datetime_component(
+      e_date->get_column(0).view(), cudf::datetime::datetime_component::YEAR);
+  // CASE WHEN nation='BRAZIL' THEN volume ELSE 0 — copy_if_else against a zero decimal
+  auto brazil = cudf::string_scalar(std::string("BRAZIL"));
+  auto is_brazil = cudf::binary_operation(e_nname->get_column(0).view(), brazil,
+                                          cudf::binary_operator::EQUAL, boolean);
+  auto zero_s4 = cudf::fixed_point_scalar<numeric::decimal128>(0, numeric::scale_type{-4});
+  auto brazil_volume = cudf::copy_if_else(volume->view(), zero_s4, is_brazil->view());
+  note_peak();
+
+  // --- groupby o_year -> sum(brazil_volume), sum(volume) ---
+  cudf::groupby::groupby gb(cudf::table_view{{o_year->view()}});
+  std::vector<cudf::groupby::aggregation_request> reqs;
+  auto add = [&](cudf::column_view v) {
+    cudf::groupby::aggregation_request r;
+    r.values = v;
+    r.aggregations.push_back(cudf::make_sum_aggregation<cudf::groupby_aggregation>());
+    reqs.push_back(std::move(r));
+  };
+  add(brazil_volume->view());
+  add(volume->view());
+  auto [ykeys, yaggs] = gb.aggregate(reqs);
+  auto brazil_sum = std::move(yaggs[0].results[0]);
+  auto total_sum = std::move(yaggs[1].results[0]);
+
+  // mkt_share = brazil / total. DuckDB returns DOUBLE for DECIMAL/DECIMAL, so the division
+  // is done in float64 on BOTH sides — matching semantics rather than inventing a decimal
+  // quotient cuDF and DuckDB would round differently.
+  auto brazil_f = cudf::cast(brazil_sum->view(), f64);
+  auto total_f = cudf::cast(total_sum->view(), f64);
+  auto mkt_share =
+      cudf::binary_operation(brazil_f->view(), total_f->view(), cudf::binary_operator::DIV, f64);
+
+  // sort by o_year (one row per year; the key is unique so the order is total)
+  auto order = cudf::sorted_order(cudf::table_view{{ykeys->view().column(0)}},
+                                  {cudf::order::ASCENDING}, {cudf::null_order::AFTER});
+  auto sorted = cudf::gather(cudf::table_view{{ykeys->view().column(0), brazil_sum->view(),
+                                               total_sum->view(), mkt_share->view()}},
+                             order->view());
+  const auto t_done = std::chrono::steady_clock::now();
+
+  // ---------------- COMPARE ----------------
+  // Only mkt_share is toleranced; both sums are EXACT. Tolerance justified by measurement
+  // below (the run prints the observed relative error).
+  constexpr double kShareRelTol = 1e-9;
+  const std::vector<ColSpec> kQ8Spec = {
+      {"o_year", Cmp::ExactInt},
+      {"brazil_volume", Cmp::ExactDecimal},
+      {"total_volume", Cmp::ExactDecimal},
+      {"mkt_share", Cmp::TolerantDouble, kShareRelTol},
+  };
+  const auto golden = read_csv_golden(golden_path);
+  const double worst_rel = compare_table_to_golden(sorted->view(), golden, kQ8Spec, "q8");
+
+  std::fprintf(stderr, "[q8] worst mkt_share relative error %.3e (tolerance %.1e)\n",
+               worst_rel, kShareRelTol);
+  const auto ms = [](auto a, auto b) {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(b - a).count();
+  };
+  std::fprintf(stderr, "[q8] load %ld ms, execute %ld ms, total %ld ms\n",
                ms(t0, t_loaded), ms(t_loaded, t_done), ms(t0, t_done));
 }
 

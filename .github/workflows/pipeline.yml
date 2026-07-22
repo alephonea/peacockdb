@@ -224,6 +224,14 @@ jobs:
     env:
       GPU_HOST: info@llm-gpu0h200.velkerr.ru
       REMOTE_DIR: /home/info/peacockdb-ci/run-${{ github.run_id }}-${{ github.run_attempt }}
+      # WARNING TO ANYONE ADDING A STEP THAT USES THIS: exporting it poisons the HOST's
+      # own coreutils. It puts glibc-2.35 ahead of the system libc, and the GPU host runs
+      # glibc 2.31 — so mktemp / tee / grep / cat / rm / readelf all SEGFAULT (exit 139)
+      # in any shell where it is exported. Our patched test binaries NEED it; shell
+      # utilities must not see it. Use bash BUILTINS (>, read, printf, case) inside such a
+      # step, or run the utility with the variable unset. This already cost one red CI run:
+      # mktemp segfaulted -> empty log path -> tee segfaulted -> the test binary died on
+      # SIGPIPE having produced no output, which looks like a test crash and is not.
       REMOTE_LD_LIBRARY_PATH: /usr/local/cuda-12.5/compat:/home/info/glibc-2.35/lib:/home/info/miniforge3/envs/rapids-cuda-12.2/lib
 
     steps:

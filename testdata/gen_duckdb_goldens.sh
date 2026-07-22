@@ -37,7 +37,7 @@ OUT="${ROOT}/testdata/goldens/tpch.sf${SF}"
 
 command -v "$DUCKDB" >/dev/null 2>&1 || { echo "error: duckdb not found ($DUCKDB)" >&2; exit 1; }
 [ -d "$DATA_DIR" ] || { echo "error: data dir not found: $DATA_DIR" >&2; exit 1; }
-for t in lineitem orders customer; do
+for t in lineitem orders customer part supplier nation region; do
   [ -f "${DATA_DIR}/${t}.parquet" ] || { echo "error: missing ${DATA_DIR}/${t}.parquet" >&2; exit 1; }
 done
 mkdir -p "$OUT"
@@ -53,6 +53,10 @@ run() {
     CREATE VIEW lineitem AS SELECT * FROM read_parquet('${DATA_DIR}/lineitem.parquet');
     CREATE VIEW orders   AS SELECT * FROM read_parquet('${DATA_DIR}/orders.parquet');
     CREATE VIEW customer AS SELECT * FROM read_parquet('${DATA_DIR}/customer.parquet');
+    CREATE VIEW part     AS SELECT * FROM read_parquet('${DATA_DIR}/part.parquet');
+    CREATE VIEW supplier AS SELECT * FROM read_parquet('${DATA_DIR}/supplier.parquet');
+    CREATE VIEW nation   AS SELECT * FROM read_parquet('${DATA_DIR}/nation.parquet');
+    CREATE VIEW region   AS SELECT * FROM read_parquet('${DATA_DIR}/region.parquet');
     ${sql}" > "${OUT}/duckdb_${name}.csv"
 }
 
@@ -118,6 +122,39 @@ run q3 "
   GROUP BY l_orderkey, o_orderdate, o_shippriority
   ORDER BY revenue DESC, o_orderdate, l_orderkey
   LIMIT 10;"
+
+# Q8: national market share. SEVEN distinct tables (nation appears twice as n1/n2).
+#
+# FOUR COLUMNS, NOT THE SPEC'S TWO — deliberate. TPC-H Q8 outputs (o_year, mkt_share), but
+# mkt_share is a DIVISION of two sums and DuckDB returns DOUBLE for it (verified:
+# typeof(DECIMAL/DECIMAL) = DOUBLE), so it can only be compared within a tolerance. The two
+# sums themselves are DECIMAL(38,4) and exact. Emitting them separately lets the test
+# compare both EXACTLY and confine the tolerance to the ratio alone; comparing only
+# mkt_share would let two compensating errors in the sums cancel inside the division and
+# pass unnoticed.
+run q8 "
+  SELECT o_year,
+         sum(CASE WHEN nation = 'BRAZIL' THEN volume ELSE 0 END) AS brazil_volume,
+         sum(volume)                                             AS total_volume,
+         sum(CASE WHEN nation = 'BRAZIL' THEN volume ELSE 0 END) / sum(volume) AS mkt_share
+  FROM (
+    SELECT extract(year FROM o_orderdate)        AS o_year,
+           l_extendedprice * (1 - l_discount)    AS volume,
+           n2.n_name                             AS nation
+    FROM part, supplier, lineitem, orders, customer, nation n1, nation n2, region
+    WHERE p_partkey = l_partkey
+      AND s_suppkey = l_suppkey
+      AND l_orderkey = o_orderkey
+      AND o_custkey = c_custkey
+      AND c_nationkey = n1.n_nationkey
+      AND n1.n_regionkey = r_regionkey
+      AND r_name = 'AMERICA'
+      AND s_nationkey = n2.n_nationkey
+      AND o_orderdate BETWEEN DATE '1995-01-01' AND DATE '1996-12-31'
+      AND p_type = 'ECONOMY ANODIZED STEEL'
+  ) AS all_nations
+  GROUP BY o_year
+  ORDER BY o_year;"
 
 echo "done. goldens in ${OUT}:"
 ls -la "$OUT"
