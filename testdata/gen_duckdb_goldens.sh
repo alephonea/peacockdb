@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# gen_query_goldens.sh — regenerate the TPC-H query RESULT goldens that the bare-cudf
+# gen_duckdb_goldens.sh — regenerate the TPC-H query RESULT goldens that the bare-cudf
 # GPU test (cpp/tests/gpu/test_tpch.cpp) asserts against.
 #
 # The goldens are DuckDB's answers to the same queries over the SAME parquet files the
@@ -13,7 +13,7 @@
 # Determinism: threads=1 and an explicit ORDER BY in every query with >1 row, so the
 # row order is fixed and the file is byte-stable across runs and machines.
 #
-# Usage:  testdata/gen_query_goldens.sh --sf 40 [--data-dir DIR] [--duckdb PATH]
+# Usage:  testdata/gen_duckdb_goldens.sh --sf 40 [--data-dir DIR] [--duckdb PATH]
 #   --data-dir defaults to <repo>/testdata/tpch.sf<SF>; on shad-gpu the datasets live
 #   outside the repo, so point it at /home/info/peacock-datasets/testdata/tpch.sf40.
 set -euo pipefail
@@ -53,7 +53,7 @@ run() {
     CREATE VIEW lineitem AS SELECT * FROM read_parquet('${DATA_DIR}/lineitem.parquet');
     CREATE VIEW orders   AS SELECT * FROM read_parquet('${DATA_DIR}/orders.parquet');
     CREATE VIEW customer AS SELECT * FROM read_parquet('${DATA_DIR}/customer.parquet');
-    ${sql}" > "${OUT}/${name}.csv"
+    ${sql}" > "${OUT}/duckdb_${name}.csv"
 }
 
 echo "generating goldens from ${DATA_DIR} -> ${OUT}"

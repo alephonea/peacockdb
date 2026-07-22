@@ -321,20 +321,32 @@ jobs:
               echo "         It is a permanent precondition of peacock_tpch_tests, not a transient skip."
               rc=1
             else
-              tpch_log=\$(mktemp)
+              # ONLY BASH BUILTINS BELOW — no mktemp/tee/grep/rm. This step runs with
+              # LD_LIBRARY_PATH exporting glibc-2.35, and under that env the HOST's own
+              # coreutils segfault (verified: mktemp/tee/grep/rm all exit 139). The first
+              # version of this block used mktemp+tee+grep and every one of them died:
+              # mktemp segfaulted so the log path was empty, tee segfaulted, and the test
+              # binary was then killed by SIGPIPE having produced no output at all.
+              # The patched test binary is fine — it NEEDS this env. Shell utilities do not.
+              tpch_log=$REMOTE_DIR/tpch_tests.log
               PEACOCK_TPCH_SF40_DIR=\$TPCH_SF40 \
               PEACOCK_TPCH_GOLDEN_DIR=$REMOTE_DIR/testdata/goldens/tpch.sf40 \
-                $REMOTE_DIR/cpp/install/bin/peacock_tpch_tests 2>&1 | tee "\$tpch_log"
-              # PIPESTATUS, not \$? — the pipe through tee would otherwise report tee's
-              # exit status and a failing test would look green.
-              [ "\${PIPESTATUS[0]}" -eq 0 ] || rc=1
-              # A run that executed NOTHING must not pass. gtest prints "[  PASSED  ] N
-              # tests"; N==0 means every test skipped, which exits 0 and would be green.
-              if grep -qE "\[  PASSED  \] 0 tests" "\$tpch_log"; then
+                $REMOTE_DIR/cpp/install/bin/peacock_tpch_tests > "\$tpch_log" 2>&1
+              # plain redirect => \$? is the BINARY's status; no pipe, no PIPESTATUS needed
+              tpch_rc=\$?
+              [ "\$tpch_rc" -eq 0 ] || rc=1
+              # echo the log and scan it in one builtin pass (no cat, no grep). A run that
+              # executed NOTHING must not pass: gtest prints "[  PASSED  ] N tests", and
+              # N==0 means everything skipped, which exits 0 and would otherwise be green.
+              tpch_zero=0
+              while IFS= read -r line; do
+                printf '%s\n' "\$line"
+                case "\$line" in *"[  PASSED  ] 0 tests"*) tpch_zero=1 ;; esac
+              done < "\$tpch_log"
+              if [ "\$tpch_zero" -eq 1 ]; then
                 echo "::error::peacock_tpch_tests ran 0 tests (all skipped) — nothing was verified"
                 rc=1
               fi
-              rm -f "\$tpch_log"
             fi
 
             echo "==> rust GPU integration tests"

@@ -234,10 +234,10 @@ class TpchSf40 : public ::testing::Test {
 // ===========================================================================
 TEST_F(TpchSf40, Q6ExactDecimal) {
   const auto lineitem_path = data_dir() + "/lineitem.parquet";
-  const auto golden_path = golden_dir() + "/q6.csv";
+  const auto golden_path = golden_dir() + "/duckdb_q6.csv";
   ASSERT_TRUE(file_exists(golden_path))
       << "golden missing: " << golden_path
-      << " (regenerate with testdata/gen_query_goldens.sh --sf 40)";
+      << " (regenerate with testdata/gen_duckdb_goldens.sh --sf 40)";
 
   const auto t0 = std::chrono::steady_clock::now();
 
@@ -467,14 +467,132 @@ std::string string_at(cudf::column_view const& col, cudf::size_type i) {
   return str ? str->to_string() : std::string{};
 }
 
+// ---------------------------------------------------------------------------
+// TABLE-VS-GOLDEN COMPARISON
+//
+// Q1 and Q3 both did: read golden rows -> assert row count -> assert field count ->
+// compare column by column with MIXED exact/tolerant semantics -> on mismatch print both
+// values, the row and the column. That is ONE helper driven by a per-column spec, so a new
+// query declares its column types and inherits every assertion.
+//
+// THE SEMANTICS ARE THE POINT, not the deduplication. Each column names how it is compared
+// and the default is EXACT. A helper that quietly made everything tolerant would destroy
+// the property this suite exists to hold: 5 of Q1's 8 aggregates, and every column of Q3
+// and Q6, are compared EXACTLY. Only a value that genuinely cannot be exact (an AVG, a
+// division) gets a tolerance, and only one justified by measurement.
+// ---------------------------------------------------------------------------
+enum class Cmp {
+  ExactString,    // string column vs the raw golden field
+  ExactDecimal,   // fixed-point, scale-normalized before comparing
+  ExactInt,       // integer of either width (see int64_at)
+  ExactDate,      // TIMESTAMP_DAYS vs a YYYY-MM-DD golden field
+  TolerantDouble  // float64, RELATIVE tolerance — only where a float is unavoidable
+};
+
+struct ColSpec {
+  const char* name;      // used in failure messages
+  Cmp cmp;
+  double rel_tol = 0.0;  // read only for TolerantDouble
+};
+
+// Compare `table` against `golden`. Returns the worst relative error seen across
+// TolerantDouble columns, so a caller can report how much headroom the tolerance had.
+double compare_table_to_golden(cudf::table_view const& table,
+                               std::vector<std::vector<std::string>> const& golden,
+                               std::vector<ColSpec> const& spec,
+                               const char* qtag) {
+  double worst_rel = 0.0;
+
+  // ROW COUNT — a result with more or fewer rows than the golden must fail here, not
+  // silently compare whichever rows it happens to have.
+  EXPECT_EQ(static_cast<int>(golden.size()), table.num_rows())
+      << qtag << ": row count differs from golden";
+  if (static_cast<int>(golden.size()) != table.num_rows()) return worst_rel;
+  EXPECT_EQ(static_cast<int>(spec.size()), table.num_columns())
+      << qtag << ": spec describes a different column count than the result has";
+
+  for (int r = 0; r < table.num_rows(); ++r) {
+    const auto& g = golden[r];
+    // FIELD COUNT — this guard caught a real off-by-one (Q1 asserted 11 fields for a
+    // 10-column result). Keep it: a short golden row would otherwise be compared against
+    // empty strings and could pass.
+    // (ADD_FAILURE + continue rather than ASSERT_*: this function returns a value, so a
+    // void-returning ASSERT cannot be used here. Same guarantee — the run fails — while
+    // skipping the malformed row instead of reading past its end.)
+    if (static_cast<int>(g.size()) != static_cast<int>(spec.size())) {
+      ADD_FAILURE() << qtag << ": golden row " << r << " has " << g.size()
+                    << " fields, expected " << spec.size();
+      continue;
+    }
+
+    for (size_t c = 0; c < spec.size(); ++c) {
+      const auto& sp = spec[c];
+      const auto col = table.column(static_cast<cudf::size_type>(c));
+      const std::string where =
+          std::string(qtag) + " row " + std::to_string(r) + " col '" + sp.name + "'";
+
+      switch (sp.cmp) {
+        case Cmp::ExactString:
+          EXPECT_EQ(string_at(col, r), g[c]) << where;
+          break;
+        case Cmp::ExactDecimal: {
+          const Decimal got = decimal_at(col, r);
+          const Decimal want = parse_decimal(g[c]);
+          EXPECT_TRUE(decimal_values_equal(got, want))
+              << where << " EXACT decimal mismatch\n"
+              << "  cudf   : " << decimal_to_string(got) << "\n"
+              << "  duckdb : " << decimal_to_string(want);
+          break;
+        }
+        case Cmp::ExactInt: {
+          const int64_t got = int64_at(col, r);
+          const int64_t want = std::strtoll(g[c].c_str(), nullptr, 10);
+          EXPECT_EQ(got, want) << where << " EXACT int mismatch\n"
+                               << "  cudf   : " << got << "\n"
+                               << "  duckdb : " << want;
+          break;
+        }
+        case Cmp::ExactDate: {
+          // parse the golden YYYY-MM-DD to days-since-epoch; the COLUMN stays a timestamp,
+          // so no string formatting and no cast of the column is involved
+          const int y = std::atoi(g[c].substr(0, 4).c_str());
+          const int mo = std::atoi(g[c].substr(5, 2).c_str());
+          const int dy = std::atoi(g[c].substr(8, 2).c_str());
+          const int64_t got = days_at(col, r);
+          const int64_t want = days_since_epoch(y, mo, dy);
+          EXPECT_EQ(got, want) << where << " EXACT date mismatch\n"
+                               << "  cudf   : " << got << " days\n"
+                               << "  duckdb : " << want << " days (" << g[c] << ")";
+          break;
+        }
+        case Cmp::TolerantDouble: {
+          const double got = double_at(col, r);
+          const double want = std::strtod(g[c].c_str(), nullptr);
+          const double rel =
+              want != 0.0 ? std::abs(got - want) / std::abs(want) : std::abs(got);
+          if (rel > worst_rel) worst_rel = rel;
+          EXPECT_LE(rel, sp.rel_tol)
+              << where << " outside relative tolerance " << sp.rel_tol << "\n"
+              << "  cudf   : " << got << "\n"
+              << "  duckdb : " << want << "\n"
+              << "  rel err: " << rel;
+          break;
+        }
+      }
+    }
+  }
+  return worst_rel;
+}
+
 }  // namespace
+
 
 TEST_F(TpchSf40, Q1GroupByAggregates) {
   const auto lineitem_path = data_dir() + "/lineitem.parquet";
-  const auto golden_path = golden_dir() + "/q1.csv";
+  const auto golden_path = golden_dir() + "/duckdb_q1.csv";
   ASSERT_TRUE(file_exists(golden_path))
       << "golden missing: " << golden_path
-      << " (regenerate with testdata/gen_query_goldens.sh --sf 40)";
+      << " (regenerate with testdata/gen_duckdb_goldens.sh --sf 40)";
 
   const auto t0 = std::chrono::steady_clock::now();
 
@@ -584,53 +702,24 @@ TEST_F(TpchSf40, Q1GroupByAggregates) {
   const auto t_done = std::chrono::steady_clock::now();
 
   // ---------------- COMPARE ----------------
-  const auto golden = read_csv_golden(golden_path);
-  ASSERT_EQ(static_cast<int>(golden.size()), sorted->num_rows())
-      << "row count differs from golden";
-  ASSERT_EQ(sorted->num_columns(), 10);
-
-  auto sv = sorted->view();
+  // Per-column semantics: the four SUMs and the COUNT are EXACT; only the three AVGs are
+  // toleranced, because DuckDB's AVG over DECIMAL returns DOUBLE and cuDF's MEAN likewise.
   constexpr double kAvgRelTol = 1e-9;  // see the header comment for why 1e-9
-  double worst_rel = 0.0;
-
-  for (int r = 0; r < sorted->num_rows(); ++r) {
-    const auto& g = golden[r];
-    // 10 fields: 2 group keys + 8 aggregates
-    ASSERT_EQ(static_cast<int>(g.size()), 10) << "golden row " << r << " has wrong field count";
-    const std::string tag = "row " + std::to_string(r) + " (" + g[0] + "," + g[1] + ")";
-
-    EXPECT_EQ(string_at(sv.column(0), r), g[0]) << tag << " l_returnflag";
-    EXPECT_EQ(string_at(sv.column(1), r), g[1]) << tag << " l_linestatus";
-
-    // EXACT decimal columns
-    const char* dec_names[] = {"sum_qty", "sum_base_price", "sum_disc_price", "sum_charge"};
-    for (int c = 0; c < 4; ++c) {
-      const Decimal got = decimal_at(sv.column(2 + c), r);
-      const Decimal want = parse_decimal(g[2 + c]);
-      EXPECT_TRUE(decimal_values_equal(got, want))
-          << tag << " " << dec_names[c] << " EXACT mismatch\n"
-          << "  cudf   : " << decimal_to_string(got) << "\n"
-          << "  duckdb : " << decimal_to_string(want);
-    }
-
-    // TOLERANCED double columns (AVG only)
-    const char* avg_names[] = {"avg_qty", "avg_price", "avg_disc"};
-    for (int c = 0; c < 3; ++c) {
-      const double got = double_at(sv.column(6 + c), r);
-      const double want = std::strtod(g[6 + c].c_str(), nullptr);
-      const double rel = want != 0.0 ? std::abs(got - want) / std::abs(want) : std::abs(got);
-      if (rel > worst_rel) worst_rel = rel;
-      EXPECT_LE(rel, kAvgRelTol)
-          << tag << " " << avg_names[c] << " outside relative tolerance " << kAvgRelTol << "\n"
-          << "  cudf   : " << got << "\n"
-          << "  duckdb : " << want << "\n"
-          << "  rel err: " << rel;
-    }
-
-    // EXACT count
-    EXPECT_EQ(int64_at(sv.column(9), r), std::strtoll(g[9].c_str(), nullptr, 10))
-        << tag << " count_order";
-  }
+  const std::vector<ColSpec> kQ1Spec = {
+      {"l_returnflag", Cmp::ExactString},
+      {"l_linestatus", Cmp::ExactString},
+      {"sum_qty", Cmp::ExactDecimal},
+      {"sum_base_price", Cmp::ExactDecimal},
+      {"sum_disc_price", Cmp::ExactDecimal},
+      {"sum_charge", Cmp::ExactDecimal},
+      {"avg_qty", Cmp::TolerantDouble, kAvgRelTol},
+      {"avg_price", Cmp::TolerantDouble, kAvgRelTol},
+      {"avg_disc", Cmp::TolerantDouble, kAvgRelTol},
+      {"count_order", Cmp::ExactInt},
+  };
+  const auto golden = read_csv_golden(golden_path);
+  const double worst_rel =
+      compare_table_to_golden(sorted->view(), golden, kQ1Spec, "q1");
 
   std::fprintf(stderr, "[q1] worst AVG relative error %.3e (tolerance %.1e)\n",
                worst_rel, kAvgRelTol);
@@ -664,10 +753,10 @@ TEST_F(TpchSf40, Q1GroupByAggregates) {
 // 10 boundary could return different rows run to run — flaky, not wrong, which is worse.
 // ===========================================================================
 TEST_F(TpchSf40, Q3JoinsGroupByTopN) {
-  const auto golden_path = golden_dir() + "/q3.csv";
+  const auto golden_path = golden_dir() + "/duckdb_q3.csv";
   ASSERT_TRUE(file_exists(golden_path))
       << "golden missing: " << golden_path
-      << " (regenerate with testdata/gen_query_goldens.sh --sf 40)";
+      << " (regenerate with testdata/gen_duckdb_goldens.sh --sf 40)";
 
   const auto t0 = std::chrono::steady_clock::now();
 
@@ -795,37 +884,18 @@ TEST_F(TpchSf40, Q3JoinsGroupByTopN) {
   auto top = cudf::slice(sorted->view(), {0, 10})[0];
   const auto t_done = std::chrono::steady_clock::now();
 
-  // ---------------- COMPARE (exact, no tolerance) ----------------
+  // ---------------- COMPARE (exact, NO tolerance anywhere in Q3) ----------------
+  // revenue stays DECIMAL128 scale -4 end to end; o_orderdate stays TIMESTAMP_DAYS and is
+  // compared as days, so the column is never cast or formatted just to be checked.
+  const std::vector<ColSpec> kQ3Spec = {
+      {"l_orderkey", Cmp::ExactInt},
+      {"revenue", Cmp::ExactDecimal},
+      {"o_orderdate", Cmp::ExactDate},
+      {"o_shippriority", Cmp::ExactInt},
+  };
   const auto golden = read_csv_golden(golden_path);
   ASSERT_EQ(static_cast<int>(golden.size()), 10) << "golden should hold 10 rows";
-  ASSERT_EQ(top.num_rows(), 10);
-
-  for (int r = 0; r < 10; ++r) {
-    const auto& g = golden[r];
-    ASSERT_EQ(static_cast<int>(g.size()), 4) << "golden row " << r << " field count";
-    const std::string tag = "row " + std::to_string(r);
-
-    EXPECT_EQ(int64_at(top.column(0), r), std::strtoll(g[0].c_str(), nullptr, 10))
-        << tag << " l_orderkey";
-
-    const Decimal got = decimal_at(top.column(1), r);
-    const Decimal want = parse_decimal(g[1]);
-    EXPECT_TRUE(decimal_values_equal(got, want))
-        << tag << " revenue EXACT mismatch\n"
-        << "  cudf   : " << decimal_to_string(got) << "\n"
-        << "  duckdb : " << decimal_to_string(want);
-
-    // o_orderdate: cudf gives days-since-epoch; the golden has YYYY-MM-DD. Compare as
-    // days by parsing the golden date, so no string formatting is involved.
-    const int y = std::atoi(g[2].substr(0, 4).c_str());
-    const int mo = std::atoi(g[2].substr(5, 2).c_str());
-    const int dy = std::atoi(g[2].substr(8, 2).c_str());
-    EXPECT_EQ(days_at(top.column(2), r), days_since_epoch(y, mo, dy))
-        << tag << " o_orderdate (golden " << g[2] << ")";
-
-    EXPECT_EQ(int64_at(top.column(3), r), std::strtoll(g[3].c_str(), nullptr, 10))
-        << tag << " o_shippriority";
-  }
+  compare_table_to_golden(top, golden, kQ3Spec, "q3");
 
   const auto ms = [](auto a, auto b) {
     return std::chrono::duration_cast<std::chrono::milliseconds>(b - a).count();
