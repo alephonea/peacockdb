@@ -25,6 +25,7 @@
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/scalar/scalar_factories.hpp>
 #include <cudf/groupby.hpp>
+#include <cudf/join.hpp>
 #include <cudf/sorting.hpp>
 #include <cudf/stream_compaction.hpp>
 #include <cudf/table/table.hpp>
@@ -32,6 +33,8 @@
 #include <cudf/types.hpp>
 #include <cudf/unary.hpp>
 #include <cudf/wrappers/timestamps.hpp>
+
+#include <rmm/device_uvector.hpp>
 
 #include <cuda_runtime.h>
 #include <gtest/gtest.h>
@@ -438,6 +441,16 @@ int64_t int64_at(cudf::column_view const& col, cudf::size_type i) {
   return 0;
 }
 
+// o_orderdate stays a TIMESTAMP_DAYS column through the whole chain (type id 12), so it
+// needs its own reader — int64_at cannot see it, and casting the column to an integer just
+// to compare would throw away the type information the plan is supposed to preserve.
+int64_t days_at(cudf::column_view const& col, cudf::size_type i) {
+  auto s = cudf::get_element(col, i);
+  auto* ts = dynamic_cast<cudf::timestamp_scalar<cudf::timestamp_D>*>(s.get());
+  EXPECT_NE(ts, nullptr) << "expected a timestamp_D column";
+  return ts ? static_cast<int64_t>(ts->value().time_since_epoch().count()) : 0;
+}
+
 std::string string_at(cudf::column_view const& col, cudf::size_type i) {
   auto s = cudf::get_element(col, i);
   auto* str = dynamic_cast<cudf::string_scalar*>(s.get());
@@ -616,6 +629,199 @@ TEST_F(TpchSf40, Q1GroupByAggregates) {
     return std::chrono::duration_cast<std::chrono::milliseconds>(b - a).count();
   };
   std::fprintf(stderr, "[q1] load %ld ms, execute %ld ms, total %ld ms\n",
+               ms(t0, t_loaded), ms(t_loaded, t_done), ms(t0, t_done));
+}
+
+// ===========================================================================
+// Q3 — shipping priority (the first query needing JOINS)
+//
+//   SELECT l_orderkey, sum(l_extendedprice*(1-l_discount)) AS revenue,
+//          o_orderdate, o_shippriority
+//   FROM customer, orders, lineitem
+//   WHERE c_mktsegment='BUILDING' AND c_custkey=o_custkey AND l_orderkey=o_orderkey
+//     AND o_orderdate < DATE '1995-03-15' AND l_shipdate > DATE '1995-03-15'
+//   GROUP BY l_orderkey, o_orderdate, o_shippriority
+//   ORDER BY revenue DESC, o_orderdate, l_orderkey LIMIT 10
+//
+// operator chain: scan x3 -> filter x3 -> join -> join -> project -> groupby -> sort -> limit
+//
+// REPRESENTATION: revenue is DECIMAL128 scale -4 throughout and compared EXACTLY — the
+// (1 - l_discount) literal is a decimal scalar, so no float enters. o_orderdate is
+// compared as a date string, l_orderkey / o_shippriority as integers. NO TOLERANCE
+// ANYWHERE in Q3 (unlike Q1, which needs one only because AVG forces a double).
+//
+// TIE-BREAK: the spec's ORDER BY revenue DESC, o_orderdate is not a total order, so
+// l_orderkey is appended here AND in the golden generator. Without it a tie at the LIMIT
+// 10 boundary could return different rows run to run — flaky, not wrong, which is worse.
+// ===========================================================================
+TEST_F(TpchSf40, Q3JoinsGroupByTopN) {
+  const auto golden_path = golden_dir() + "/q3.csv";
+  ASSERT_TRUE(file_exists(golden_path))
+      << "golden missing: " << golden_path
+      << " (regenerate with testdata/gen_query_goldens.sh --sf 40)";
+
+  const auto t0 = std::chrono::steady_clock::now();
+
+  // ---------------- PHASE 1: LOAD (all three tables, columns only) ----------------
+  auto read_cols = [](const std::string& path, std::vector<std::string> cols) {
+    auto o = cudf::io::parquet_reader_options::builder(
+                 cudf::io::source_info{std::vector<std::string>{path}})
+                 .columns(std::move(cols))
+                 .build();
+    return cudf::io::read_parquet(o);
+  };
+  auto cust_in = read_cols(data_dir() + "/customer.parquet", {"c_custkey", "c_mktsegment"});
+  auto ord_in = read_cols(data_dir() + "/orders.parquet",
+                          {"o_orderkey", "o_custkey", "o_orderdate", "o_shippriority"});
+  auto line_in = read_cols(data_dir() + "/lineitem.parquet",
+                           {"l_orderkey", "l_extendedprice", "l_discount", "l_shipdate"});
+  const auto t_loaded = std::chrono::steady_clock::now();
+  note_peak();
+  std::fprintf(stderr, "[q3] loaded customer %ld, orders %ld, lineitem %ld rows\n",
+               static_cast<long>(cust_in.tbl->num_rows()),
+               static_cast<long>(ord_in.tbl->num_rows()),
+               static_cast<long>(line_in.tbl->num_rows()));
+
+  // ---------------- PHASE 2: EXECUTE ----------------
+  const auto boolean = cudf::data_type{cudf::type_id::BOOL8};
+  const auto dec128_s2 = cudf::data_type{cudf::type_id::DECIMAL128, -2};
+  const auto dec128_s4 = cudf::data_type{cudf::type_id::DECIMAL128, -4};
+
+  // filter customer: c_mktsegment = 'BUILDING'
+  auto seg = cudf::string_scalar(std::string("BUILDING"));
+  auto cust_mask = cudf::binary_operation(cust_in.tbl->view().column(1), seg,
+                                          cudf::binary_operator::EQUAL, boolean);
+  auto cust_f = cudf::apply_boolean_mask(
+      cudf::table_view{{cust_in.tbl->view().column(0)}}, cust_mask->view());
+
+  // filter orders: o_orderdate < 1995-03-15
+  auto d1995 = cudf::timestamp_scalar<cudf::timestamp_D>(
+      cudf::timestamp_D{cudf::duration_D{days_since_epoch(1995, 3, 15)}}, true);
+  auto ord_mask = cudf::binary_operation(ord_in.tbl->view().column(2), d1995,
+                                         cudf::binary_operator::LESS, boolean);
+  auto ord_f = cudf::apply_boolean_mask(ord_in.tbl->view(), ord_mask->view());
+
+  // filter lineitem: l_shipdate > 1995-03-15
+  auto line_mask = cudf::binary_operation(line_in.tbl->view().column(3), d1995,
+                                          cudf::binary_operator::GREATER, boolean);
+  auto line_f = cudf::apply_boolean_mask(line_in.tbl->view(), line_mask->view());
+  note_peak();
+  std::fprintf(stderr, "[q3] after filters: customer %ld, orders %ld, lineitem %ld\n",
+               static_cast<long>(cust_f->num_rows()), static_cast<long>(ord_f->num_rows()),
+               static_cast<long>(line_f->num_rows()));
+  ASSERT_GT(cust_f->num_rows(), 0);
+  ASSERT_GT(ord_f->num_rows(), 0);
+  ASSERT_GT(line_f->num_rows(), 0);
+
+  // helper: build a column_view over a join gather map
+  // cudf::inner_join returns a PAIR OF unique_ptr<device_uvector<size_type>> gather maps,
+  // not tables: the join tells you which row indices pair up, and you gather the columns
+  // you actually want. That is why only the needed columns are gathered below.
+  auto map_view = [](std::unique_ptr<rmm::device_uvector<cudf::size_type>> const& m) {
+    return cudf::column_view(cudf::data_type{cudf::type_id::INT32},
+                             static_cast<cudf::size_type>(m->size()), m->data(), nullptr, 0);
+  };
+
+  // join 1: customer.c_custkey = orders.o_custkey
+  auto [c_map, o_map] = cudf::inner_join(cudf::table_view{{cust_f->get_column(0).view()}},
+                                         cudf::table_view{{ord_f->get_column(1).view()}});
+  // only orders columns are needed downstream (c_custkey is consumed by the join)
+  auto co = cudf::gather(cudf::table_view{{ord_f->get_column(0).view(),    // o_orderkey
+                                           ord_f->get_column(2).view(),    // o_orderdate
+                                           ord_f->get_column(3).view()}},  // o_shippriority
+                         map_view(o_map));
+  note_peak();
+  std::fprintf(stderr, "[q3] customer|X|orders -> %ld rows\n", static_cast<long>(co->num_rows()));
+
+  // join 2: (customer|X|orders).o_orderkey = lineitem.l_orderkey
+  auto [co_map, l_map] = cudf::inner_join(cudf::table_view{{co->get_column(0).view()}},
+                                          cudf::table_view{{line_f->get_column(0).view()}});
+  auto co_side = cudf::gather(cudf::table_view{{co->get_column(0).view(),    // o_orderkey
+                                                co->get_column(1).view(),    // o_orderdate
+                                                co->get_column(2).view()}},  // o_shippriority
+                              map_view(co_map));
+  auto l_side = cudf::gather(cudf::table_view{{line_f->get_column(1).view(),    // extendedprice
+                                               line_f->get_column(2).view()}},  // discount
+                             map_view(l_map));
+  note_peak();
+  std::fprintf(stderr, "[q3] |X|lineitem -> %ld rows\n", static_cast<long>(co_side->num_rows()));
+  ASSERT_GT(co_side->num_rows(), 0) << "join produced no rows";
+
+  // project: revenue = l_extendedprice * (1 - l_discount), exact decimal
+  auto price = cudf::cast(l_side->get_column(0).view(), dec128_s2);
+  auto disc = cudf::cast(l_side->get_column(1).view(), dec128_s2);
+  auto one_s2 = cudf::fixed_point_scalar<numeric::decimal128>(100, numeric::scale_type{-2});
+  auto one_minus_disc = cudf::binary_operation(one_s2, disc->view(), cudf::binary_operator::SUB, dec128_s2);
+  auto revenue = cudf::binary_operation(price->view(), one_minus_disc->view(),
+                                        cudf::binary_operator::MUL, dec128_s4);
+  note_peak();
+
+  // groupby (l_orderkey, o_orderdate, o_shippriority) -> sum(revenue)
+  cudf::groupby::groupby gb(cudf::table_view{{co_side->get_column(0).view(),
+                                              co_side->get_column(1).view(),
+                                              co_side->get_column(2).view()}});
+  std::vector<cudf::groupby::aggregation_request> reqs;
+  {
+    cudf::groupby::aggregation_request r;
+    r.values = revenue->view();
+    r.aggregations.push_back(cudf::make_sum_aggregation<cudf::groupby_aggregation>());
+    reqs.push_back(std::move(r));
+  }
+  auto [gkeys, gaggs] = gb.aggregate(reqs);
+  note_peak();
+  std::fprintf(stderr, "[q3] groups: %ld\n", static_cast<long>(gkeys->num_rows()));
+
+  // sort: revenue DESC, o_orderdate ASC, l_orderkey ASC (total order — see header)
+  auto gk = gkeys->view();
+  auto rev_col = std::move(gaggs[0].results[0]);
+  auto order = cudf::sorted_order(
+      cudf::table_view{{rev_col->view(), gk.column(1), gk.column(0)}},
+      {cudf::order::DESCENDING, cudf::order::ASCENDING, cudf::order::ASCENDING},
+      {cudf::null_order::AFTER, cudf::null_order::AFTER, cudf::null_order::AFTER});
+  auto sorted = cudf::gather(
+      cudf::table_view{{gk.column(0), rev_col->view(), gk.column(1), gk.column(2)}},
+      order->view());
+
+  // limit 10
+  auto top = cudf::slice(sorted->view(), {0, 10})[0];
+  const auto t_done = std::chrono::steady_clock::now();
+
+  // ---------------- COMPARE (exact, no tolerance) ----------------
+  const auto golden = read_csv_golden(golden_path);
+  ASSERT_EQ(static_cast<int>(golden.size()), 10) << "golden should hold 10 rows";
+  ASSERT_EQ(top.num_rows(), 10);
+
+  for (int r = 0; r < 10; ++r) {
+    const auto& g = golden[r];
+    ASSERT_EQ(static_cast<int>(g.size()), 4) << "golden row " << r << " field count";
+    const std::string tag = "row " + std::to_string(r);
+
+    EXPECT_EQ(int64_at(top.column(0), r), std::strtoll(g[0].c_str(), nullptr, 10))
+        << tag << " l_orderkey";
+
+    const Decimal got = decimal_at(top.column(1), r);
+    const Decimal want = parse_decimal(g[1]);
+    EXPECT_TRUE(decimal_values_equal(got, want))
+        << tag << " revenue EXACT mismatch\n"
+        << "  cudf   : " << decimal_to_string(got) << "\n"
+        << "  duckdb : " << decimal_to_string(want);
+
+    // o_orderdate: cudf gives days-since-epoch; the golden has YYYY-MM-DD. Compare as
+    // days by parsing the golden date, so no string formatting is involved.
+    const int y = std::atoi(g[2].substr(0, 4).c_str());
+    const int mo = std::atoi(g[2].substr(5, 2).c_str());
+    const int dy = std::atoi(g[2].substr(8, 2).c_str());
+    EXPECT_EQ(days_at(top.column(2), r), days_since_epoch(y, mo, dy))
+        << tag << " o_orderdate (golden " << g[2] << ")";
+
+    EXPECT_EQ(int64_at(top.column(3), r), std::strtoll(g[3].c_str(), nullptr, 10))
+        << tag << " o_shippriority";
+  }
+
+  const auto ms = [](auto a, auto b) {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(b - a).count();
+  };
+  std::fprintf(stderr, "[q3] load %ld ms, execute %ld ms, total %ld ms\n",
                ms(t0, t_loaded), ms(t_loaded, t_done), ms(t0, t_done));
 }
 

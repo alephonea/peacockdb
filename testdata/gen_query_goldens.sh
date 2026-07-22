@@ -96,5 +96,28 @@ run q1 "
   GROUP BY l_returnflag, l_linestatus
   ORDER BY l_returnflag, l_linestatus;"
 
+# Q3: shipping priority. customer JOIN orders JOIN lineitem, filters, groupby, sort, top 10.
+#
+# TIE-BREAK: TPC-H Q3 specifies ORDER BY revenue DESC, o_orderdate — which is NOT a total
+# order, so two rows with equal (revenue, o_orderdate) could come back either way round and
+# a LIMIT 10 could even include different rows run to run. l_orderkey is appended as a
+# final tie-breaker (it is unique per group here) so the ordering is TOTAL and the golden
+# is reproducible. The cudf side sorts by the same three keys. Without this the comparison
+# would be flaky rather than wrong — the worst kind of test.
+run q3 "
+  SELECT l_orderkey,
+         sum(l_extendedprice * (1 - l_discount)) AS revenue,
+         o_orderdate,
+         o_shippriority
+  FROM customer, orders, lineitem
+  WHERE c_mktsegment = 'BUILDING'
+    AND c_custkey = o_custkey
+    AND l_orderkey = o_orderkey
+    AND o_orderdate < DATE '1995-03-15'
+    AND l_shipdate  > DATE '1995-03-15'
+  GROUP BY l_orderkey, o_orderdate, o_shippriority
+  ORDER BY revenue DESC, o_orderdate, l_orderkey
+  LIMIT 10;"
+
 echo "done. goldens in ${OUT}:"
 ls -la "$OUT"
