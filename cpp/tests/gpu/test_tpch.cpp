@@ -93,6 +93,7 @@ bool file_exists(const std::string& p) {
 struct Decimal {
   __int128 unscaled = 0;
   int scale = 0;  // digits after the point; value = unscaled / 10^scale
+  bool ok = true; // false => the golden field was not a plain decimal (see parse_decimal)
 };
 
 Decimal parse_decimal(const std::string& raw) {
@@ -104,15 +105,25 @@ Decimal parse_decimal(const std::string& raw) {
   if (neg || (!s.empty() && s[0] == '+')) s.erase(0, 1);
   Decimal d;
   bool seen_point = false;
+  bool any_digit = false;
+  // STRICT: reject anything that is not a plain decimal instead of skipping it.
+  // This used to `continue` past unexpected characters, which meant a golden field in
+  // scientific notation (say "1.23e9", if a future DuckDB changed its formatting) would
+  // silently parse as 1239 and be compared as a WRONG value rather than failing. That is
+  // the same silent-wrong-value shape that bit us three times from the cuDF side (INT32
+  // count, TIMESTAMP_DAYS, INT16 year) — this one would have been in our own parser.
   for (char c : s) {
     if (c == '.') {
+      if (seen_point) { d.ok = false; return d; }   // two decimal points
       seen_point = true;
       continue;
     }
-    if (c < '0' || c > '9') continue;
+    if (c < '0' || c > '9') { d.ok = false; return d; }
+    any_digit = true;
     d.unscaled = d.unscaled * 10 + (c - '0');
     if (seen_point) ++d.scale;
   }
+  if (!any_digit) { d.ok = false; return d; }
   if (neg) d.unscaled = -d.unscaled;
   return d;
 }
@@ -541,6 +552,11 @@ double compare_table_to_golden(cudf::table_view const& table,
         case Cmp::ExactDecimal: {
           const Decimal got = decimal_at(col, r);
           const Decimal want = parse_decimal(g[c]);
+          if (!want.ok) {
+            ADD_FAILURE() << where << ": golden field '" << g[c]
+                          << "' is not a plain decimal — refusing to guess at its value";
+            break;
+          }
           EXPECT_TRUE(decimal_values_equal(got, want))
               << where << " EXACT decimal mismatch\n"
               << "  cudf   : " << decimal_to_string(got) << "\n"
@@ -549,7 +565,14 @@ double compare_table_to_golden(cudf::table_view const& table,
         }
         case Cmp::ExactInt: {
           const int64_t got = int64_at(col, r);
-          const int64_t want = std::strtoll(g[c].c_str(), nullptr, 10);
+          // strtoll returns 0 on garbage, so check the WHOLE field was consumed — an
+          // unparseable golden must fail, not silently compare against zero.
+          char* endp = nullptr;
+          const int64_t want = std::strtoll(g[c].c_str(), &endp, 10);
+          if (endp == g[c].c_str() || (endp && *endp != '\0')) {
+            ADD_FAILURE() << where << ": golden field '" << g[c] << "' is not an integer";
+            break;
+          }
           EXPECT_EQ(got, want) << where << " EXACT int mismatch\n"
                                << "  cudf   : " << got << "\n"
                                << "  duckdb : " << want;
@@ -570,7 +593,14 @@ double compare_table_to_golden(cudf::table_view const& table,
         }
         case Cmp::TolerantDouble: {
           const double got = double_at(col, r);
-          const double want = std::strtod(g[c].c_str(), nullptr);
+          // same full-consumption check; strtod accepts scientific notation, which is
+          // legitimate for a double column, but must still consume the entire field
+          char* dendp = nullptr;
+          const double want = std::strtod(g[c].c_str(), &dendp);
+          if (dendp == g[c].c_str() || (dendp && *dendp != '\0')) {
+            ADD_FAILURE() << where << ": golden field '" << g[c] << "' is not a number";
+            break;
+          }
           const double rel =
               want != 0.0 ? std::abs(got - want) / std::abs(want) : std::abs(got);
           if (rel > worst_rel) worst_rel = rel;

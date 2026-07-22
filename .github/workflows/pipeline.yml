@@ -346,6 +346,12 @@ jobs:
               # echo the log and scan it in one builtin pass (no cat, no grep). A run that
               # executed NOTHING must not pass: gtest prints "[  PASSED  ] N tests", and
               # N==0 means everything skipped, which exits 0 and would otherwise be green.
+              # COUPLING TO GTEST'"'"'S OUTPUT FORMAT: the match below is gtest'"'"'s exact
+              # "[  PASSED  ] 0 tests" text, two spaces and all. A gtest major bump could
+              # change that wording and SILENTLY disable this arm — it would stop matching
+              # and never fire again, with no error. If you upgrade gtest, re-check this
+              # string. It is belt-and-braces behind the dataset-precondition check above,
+              # which is why a silent failure here is survivable rather than critical.
               tpch_zero=0
               while IFS= read -r line; do
                 printf '%s\n' "\$line"

@@ -72,6 +72,20 @@ gpu_test!(tpch, 1, q1, tp8_mem120gib, golden_exact);
 // Inc5 STDDEV/VAR proof: real 8-way Welford [count,mean,m2] state merged via cuDF
 // MERGE_M2 per hash bucket (stddev_samp/pop + var_samp/pop, all 4 finalize branches).
 // golden_approx_std (1e-11): same tol as tp1 for consistency (tp8 passes at 1e-12 too).
+//
+// FLAKY ON shad-gpu — see https://github.com/asymptote-tech/peacockdb/issues/103
+// This test intermittently SIGSEGVs (exit 139) on the shad-gpu cuda-12.2 runtime, and
+// sometimes fails instead with an Err from execute_instrumented — two different failure
+// signatures from identical inputs, which is what marks it as nondeterministic rather
+// than broken. Observed 3/3 failures in one session and 128/128 passes in CI hours
+// earlier, on the same host.
+// It is NOT #[ignore]d on purpose: CI passes it consistently (the issue notes the crash
+// does not reproduce in the CI GPU job), so ignoring it would forfeit real coverage of
+// the only 8-way Welford M2 merge path to work around an environment-specific fault.
+// Suspected origin per the issue: the N-way Welford merge added in 8b8ec67; tp1 (no
+// merge) never crashes.
+// IF YOU SEE THIS FAIL LOCALLY, check #103 before assuming your change caused it — it
+// has already cost one wrongly-diagnosed "regression" and an unnecessary rollback.
 gpu_test!(tpch, 1, shuffle_stddev, tp8_mem120gib, golden_approx_std);
 
 // ── TPC-DS (GPU-operational set) ────────────────────────────────────────────
