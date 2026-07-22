@@ -271,6 +271,7 @@ jobs:
           # them the node-by-node verify cannot run.
           rsync -a testdata/tpch-queries testdata/tpcds-queries testdata/tpch.minimal \
             testdata/goldens \
+            testdata/tpch-vec-queries \
             testdata/generate_testdata.sh \
             gpu:$REMOTE_DIR/testdata/
           # Ship the updated setup-glibc.sh so its patch_rust_dir step is
@@ -307,61 +308,78 @@ jobs:
 
             rc=0
 
-            echo "==> peacock_plan_tests (C++)"
-            $REMOTE_DIR/cpp/install/bin/peacock_plan_tests || rc=1
-
-            # Bare-cudf TPC-H queries vs committed DuckDB goldens, over the LARGE sf40
-            # dataset. That dataset lives at /home/info/peacock-datasets — deliberately
-            # OUTSIDE \$REMOTE_DIR, which the cleanup step rm -rf's. It is read in place:
-            # this step never writes to, regenerates, or deletes it.
-            # Goldens ride along in the testdata/goldens rsync above.
+            # The large sf40 dataset lives at /home/info/peacock-datasets — deliberately
+            # OUTSIDE \$REMOTE_DIR, which the cleanup step rm -rf's, and it is read in place:
+            # nothing here writes to, regenerates or deletes it.
             #
-            # SKIP SEMANTICS ARE SPLIT ON PURPOSE. The binary skips (exit 0) when the
-            # dataset is absent — right for a dev box that legitimately has no sf40. In
-            # CI it is NOT right: on this host sf40 is a permanent precondition of the
-            # test existing at all, so its absence is a real failure, and a skip that
-            # exits 0 renders GREEN having verified nothing. So CI asserts the
-            # precondition itself, and separately fails if the binary ran 0 tests.
-            echo "==> peacock_tpch_tests (bare-cudf TPC-H vs DuckDB goldens, sf40)"
+            # SKIP SEMANTICS ARE SPLIT ON PURPOSE. The test binaries skip (exit 0) when the
+            # dataset is absent — right for a dev box that legitimately has no sf40. In CI it
+            # is NOT right: on this host sf40 is a permanent precondition of those tests
+            # existing at all, and a skip that exits 0 renders GREEN having verified nothing.
+            # So CI asserts the precondition itself, and the per-binary zero-tests guard
+            # below is the belt-and-braces behind it.
             TPCH_SF40=/home/info/peacock-datasets/testdata/tpch.sf40
             if [ ! -f "\$TPCH_SF40/lineitem.parquet" ]; then
               echo "::error::tpch.sf40 missing on the GPU host (\$TPCH_SF40/lineitem.parquet)."
-              echo "         It is a permanent precondition of peacock_tpch_tests, not a transient skip."
+              echo "         It is a permanent precondition of the TPC-H tests, not a transient skip."
               rc=1
-            else
-              # ONLY BASH BUILTINS BELOW — no mktemp/tee/grep/rm. This step runs with
-              # LD_LIBRARY_PATH exporting glibc-2.35, and under that env the HOST's own
-              # coreutils segfault (verified: mktemp/tee/grep/rm all exit 139). The first
-              # version of this block used mktemp+tee+grep and every one of them died:
-              # mktemp segfaulted so the log path was empty, tee segfaulted, and the test
-              # binary was then killed by SIGPIPE having produced no output at all.
-              # The patched test binary is fine — it NEEDS this env. Shell utilities do not.
-              tpch_log=$REMOTE_DIR/tpch_tests.log
-              PEACOCK_TPCH_SF40_DIR=\$TPCH_SF40 \
-              PEACOCK_TPCH_GOLDEN_DIR=$REMOTE_DIR/testdata/goldens/tpch.sf40 \
-                $REMOTE_DIR/cpp/install/bin/peacock_tpch_tests > "\$tpch_log" 2>&1
-              # plain redirect => \$? is the BINARY's status; no pipe, no PIPESTATUS needed
-              tpch_rc=\$?
-              [ "\$tpch_rc" -eq 0 ] || rc=1
-              # echo the log and scan it in one builtin pass (no cat, no grep). A run that
-              # executed NOTHING must not pass: gtest prints "[  PASSED  ] N tests", and
-              # N==0 means everything skipped, which exits 0 and would otherwise be green.
-              # COUPLING TO GTEST'"'"'S OUTPUT FORMAT: the match below is gtest'"'"'s exact
-              # "[  PASSED  ] 0 tests" text, two spaces and all. A gtest major bump could
-              # change that wording and SILENTLY disable this arm — it would stop matching
-              # and never fire again, with no error. If you upgrade gtest, re-check this
-              # string. It is belt-and-braces behind the dataset-precondition check above,
-              # which is why a silent failure here is survivable rather than critical.
-              tpch_zero=0
+            fi
+
+            # ---------------------------------------------------------------------
+            # RUN EVERY SHIPPED C++ TEST BINARY — glob, not a hand-written list.
+            #
+            # This step used to name peacock_plan_tests explicitly, which meant a new test
+            # binary could be built, shipped, glibc-patched and verified on the host and
+            # STILL NEVER RUN. That is exactly what happened to peacock_tpchv_tests: the
+            # job went green having never executed it. The patcher had already been made
+            # capability-based so it picks new binaries up automatically — which made the
+            # gap HARDER to see, because the log showed the binary being patched.
+            #
+            # Note why the per-binary zero-tests guard could not catch it either: that guard
+            # inspects one binary's output, and a guard scoped to one binary cannot notice a
+            # DIFFERENT binary being absent. Hence the glob plus the ran_any assertion below.
+            #
+            # The glob is peacock_*_tests, which excludes the vendored flatc that also lives
+            # in bin/. A new test target needs no edit here.
+            #
+            # Superset env: every binary gets every variable it might need. Unused ones are
+            # ignored, and that keeps this loop from re-growing per-binary special cases.
+            export PEACOCK_TESTDATA_DIR=$REMOTE_DIR/testdata
+            export PEACOCK_TPCH_SF40_DIR=\$TPCH_SF40
+            export PEACOCK_TPCH_GOLDEN_DIR=$REMOTE_DIR/testdata/goldens/tpch.sf40
+            export PEACOCK_TPCH_VEC_PARAMS=$REMOTE_DIR/testdata/tpch-vec-queries/query_params.jsonl
+
+            ran_any=0
+            for t in $REMOTE_DIR/cpp/install/bin/peacock_*_tests; do
+              [ -x "\$t" ] || continue
+              # \${t##*/} not basename: basename is coreutils and segfaults under the
+              # glibc-2.35 LD_LIBRARY_PATH exported above.
+              tname=\${t##*/}
+              echo "==> \$tname"
+              tlog=$REMOTE_DIR/\$tname.log
+              "\$t" > "\$tlog" 2>&1
+              trc=\$?
+              [ "\$trc" -eq 0 ] || rc=1
+              # echo + scan in one builtin pass (no cat, no grep — see the warning on
+              # REMOTE_LD_LIBRARY_PATH above)
+              tzero=0
               while IFS= read -r line; do
                 printf '%s\n' "\$line"
-                case "\$line" in *"[  PASSED  ] 0 tests"*) tpch_zero=1 ;; esac
-              done < "\$tpch_log"
-              if [ "\$tpch_zero" -eq 1 ]; then
-                echo "::error::peacock_tpch_tests ran 0 tests (all skipped) — nothing was verified"
+                case "\$line" in *"[  PASSED  ] 0 tests"*) tzero=1 ;; esac
+              done < "\$tlog"
+              if [ "\$tzero" -eq 1 ]; then
+                echo "::error::\$tname ran 0 tests (all skipped) — nothing was verified"
                 rc=1
               fi
+              ran_any=\$((ran_any + 1))
+            done
+            # If the glob matched nothing, every C++ test silently vanished. That must be
+            # red, not green — it is the same failure this whole block exists to prevent.
+            if [ "\$ran_any" -eq 0 ]; then
+              echo "::error::no peacock_*_tests binaries found in $REMOTE_DIR/cpp/install/bin"
+              rc=1
             fi
+            echo "==> ran \$ran_any C++ test binaries"
 
             echo "==> rust GPU integration tests"
             for t in $REMOTE_DIR/cpp/install/rust-tests/*; do
