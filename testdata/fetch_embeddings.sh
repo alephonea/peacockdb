@@ -39,6 +39,12 @@ done
 # nowhere near that). So a MANUAL run on that host is legitimate and allowed, while a
 # CI run on the very same machine is still blocked — CI sets CI/GITHUB_ACTIONS, and
 # any other automation can set PEACOCK_NO_FETCH to opt out explicitly.
+#
+# LIMIT OF THE GUARD: our CI reaches this host over SSH, and ssh does NOT inherit the
+# runner's CI/GITHUB_ACTIONS — inside such a session the environment is the GPU host's,
+# so those two variables would be unset and the guard would NOT fire on its own. That is
+# why pipeline.yml passes PEACOCK_NO_FETCH=1 explicitly on its ssh commands. Any new
+# automation that shells in must do the same; the variables alone are not enough.
 if [ -n "${CI:-}" ] || [ -n "${GITHUB_ACTIONS:-}" ] || [ -n "${PEACOCK_NO_FETCH:-}" ]; then
   echo "error: fetch_embeddings.sh must not run from CI/automation" >&2
   echo "       (detected via CI / GITHUB_ACTIONS / PEACOCK_NO_FETCH)." >&2

@@ -191,9 +191,10 @@ PY
     # preserve pipeline order through the joins/agg, which on partsupp's wide rows (160M x
     # ~1.2KB at sf200) inflated the working set past memory_limit and OOM'd. Turning it OFF
     # lets those operators stream and the sort spill, while ORDER BY _rn still fixes the
-    # order. It is set AFTER the small dimension tables are already written (which have no
-    # ORDER BY, so they must keep the default) and before the ORDER BY'd part/partsupp/
-    # orders/lineitem COPYs.
+    # order. It is set AFTER every other table is already written — the small dimensions
+    # (no ORDER BY, so they must keep the default) AND orders/lineitem, which are now
+    # COPYed and DROPped before this point to free their memory — so it applies only to the
+    # part/partsupp embedding COPYs that follow.
     EMB_PREAMBLE="SET preserve_insertion_order=false;
 CREATE TEMP TABLE glove AS
   SELECT column0 AS word, [${GLOVE_LIST}]::FLOAT[100] AS vec
@@ -235,6 +236,8 @@ CREATE TEMP TABLE glove AS
          ELSE list_transform(m.sums, lambda s: s / m.n)::FLOAT[100] END AS ps_text_embedding,
     (['electronics','apparel','home','toys','sports','automotive','grocery','books'])[ ((hash(ps_rn.ps_partkey::VARCHAR || '_' || ps_rn.ps_suppkey::VARCHAR || ':tag') % 8) + 1)::BIGINT ] AS ps_tag
   FROM ps_rn
+  -- Looks like an obvious POSITIONAL JOIN candidate; it was tried and REJECTED — positional
+  -- join materializes the whole DEEP slice and pushed peak RSS 149->161GiB at sf200.
   JOIN read_parquet('${DEEP_PARQUET}') deep ON deep.idx = ps_rn._rn
   LEFT JOIN matched m ON m.ps_partkey = ps_rn.ps_partkey AND m.ps_suppkey = ps_rn.ps_suppkey
   ORDER BY ps_rn._rn

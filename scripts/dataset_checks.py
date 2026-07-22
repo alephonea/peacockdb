@@ -156,7 +156,13 @@ def sample_groups(ng, k=8):
 
 
 def _rg_stats(pf, col):
-    """Per-row-group (min, max, null_count, num_rows) for `col`, from METADATA only."""
+    """Per-row-group (min, max, null_count, num_rows, has_minmax) for `col`, METADATA only.
+
+    has_minmax is carried separately because "no min/max" has two very different causes:
+    an all-NULL row group (legitimate — there is no value to bound) versus a writer that
+    emitted no statistics at all (which would make the ordering checks vacuous). Callers
+    must tell those apart; see check_clustering.
+    """
     md = pf.metadata
     names = [md.schema.column(i).name for i in range(md.num_columns)]
     # leaf column index (flat columns for the sort keys we check)
@@ -166,10 +172,11 @@ def _rg_stats(pf, col):
         st = md.row_group(g).column(ci).statistics
         nr = md.row_group(g).num_rows
         if st is None or not st.has_min_max:
-            out.append((None, None, None, nr))
+            nc = st.null_count if (st is not None and st.has_null_count) else None
+            out.append((None, None, nc, nr, False))
         else:
             nc = st.null_count if st.has_null_count else None
-            out.append((st.min, st.max, nc, nr))
+            out.append((st.min, st.max, nc, nr, True))
     return out
 
 
@@ -177,14 +184,26 @@ def check_clustering(parquet, lead_col, label):
     """EXHAUSTIVE (metadata): per-row-group min/max on the lead sort column are
     non-decreasing and non-overlapping, and NULLS land LAST (no non-null group after a
     null-bearing one). This is the property the date-sort exists for (tight row-group
-    min/max => row-group pruning)."""
+    min/max => row-group pruning).
+
+    COVERAGE IS ASSERTED, NOT ASSUMED. With no column statistics every row group yields
+    min=max=None, no comparison ever runs, and this would report PASS/EXHAUSTIVE having
+    compared ZERO groups — a silent no-op that reads as a green check and breaks this
+    module's promise that output can't overstate coverage. So: a group missing min/max is
+    excused only when it is entirely NULL (nothing to bound); otherwise the writer emitted
+    no usable stats and we FAIL. Multi-group files must also make at least one real
+    comparison."""
     pf = pq.ParquetFile(parquet)
     st = _rg_stats(pf, lead_col)
     ng = len(st)
     prev_max = None
     seen_null = False
     ov = nn = 0
-    for (mn, mx, nc, nr) in st:
+    compared = 0     # groups actually compared against a predecessor's max
+    nostats = 0      # missing min/max NOT explained by an all-null group
+    for (mn, mx, nc, nr, has_mm) in st:
+        if not has_mm and not (nc is not None and nc == nr):
+            nostats += 1
         # NULLS LAST: once a group carries nulls, no later group may have non-null values
         has_nonnull = (mn is not None)
         if seen_null and has_nonnull:
@@ -192,12 +211,22 @@ def check_clustering(parquet, lead_col, label):
         if nc:
             seen_null = True
         if has_nonnull and prev_max is not None:
+            compared += 1
             if mn < prev_max:            # overlap / out of order across groups
                 ov += 1
         if mx is not None:
             prev_max = mx
+    check(f"{label}: row-group statistics present (check is not vacuous)",
+          nostats == 0, 'exhaustive',
+          f"{ng} row groups, {nostats} without usable min/max"
+          if nostats else f"{ng} row groups, all with min/max")
+    # Verdict is conditioned on nostats==0: with stats missing there is nothing to compare,
+    # and "0 overlaps out of 0 comparisons" must not read as a pass. `compared` is reported
+    # so the coverage is visible rather than implied. (Do NOT require compared>0 instead:
+    # a file whose only value-bearing group is the first legitimately compares nothing.)
     check(f"{label}: row-group min/max non-decreasing & non-overlapping",
-          ov == 0, 'exhaustive', f"{ng} row groups, {ov} overlaps")
+          ov == 0 and nostats == 0, 'exhaustive',
+          f"{ng} row groups, {compared} compared, {ov} overlaps")
     check(f"{label}: NULLS LAST (no non-null group after a null-bearing group)",
           nn == 0, 'exhaustive', f"{nn} violations")
 
@@ -284,7 +313,7 @@ def stream_vector_stats(parquet, col, dim):
     S2 = np.zeros(dim, dtype=np.float64)
     cnt = 0
     nmin, nmax = np.inf, -np.inf
-    bad = nan = 0
+    bad = nan = zero = 0
     for g in range(pf.num_row_groups):
         v = np.asarray(pf.read_row_group(g, columns=[col]).column(col).chunk(0).values,
                        dtype=np.float32).reshape(-1, dim)
@@ -292,8 +321,49 @@ def stream_vector_stats(parquet, col, dim):
         nmin = min(nmin, float(norms.min())); nmax = max(nmax, float(norms.max()))
         bad += int((np.abs(norms - 1.0) > 1e-4).sum())
         nan += int((~np.isfinite(v)).sum())
+        zero += int((norms == 0).sum())
         S += v.sum(0); S2 += (v.astype(np.float64) ** 2).sum(0); cnt += len(v)
     mean = S / cnt
     var = S2 / cnt - mean ** 2
-    return dict(n=cnt, nmin=nmin, nmax=nmax, bad_norm=bad, nan=nan, mean=mean, var=var,
-                ng=pf.num_row_groups)
+    return dict(n=cnt, nmin=nmin, nmax=nmax, bad_norm=bad, nan=nan, zero=zero, mean=mean,
+                var=var, ng=pf.num_row_groups)
+
+
+def glove_words(path):
+    """Vocabulary (word set) from a GloVe .txt — first whitespace-separated field per line."""
+    with open(path) as f:
+        return {line.split(" ", 1)[0] for line in f}
+
+
+def check_zero_vec_vs_empty_vocab(parquet, vec_col, text_cols, words, dim, label, k=None):
+    """PROVENANCE tie for a mean-GloVe text embedding: a row's vector is the zero vector
+    IF AND ONLY IF none of its tokens are in the GloVe vocabulary.
+
+    This is the only check that ties the stored vectors back to the source text — the stats
+    checks (finite, bounded norm) would all pass on vectors from the wrong rows. Compares
+    ROW BY ROW (stronger than the old count-vs-count equality, which could cancel out) and
+    streams per row group so it stays bounded at sf200.
+
+    k=None -> every row group (EXHAUSTIVE); k=N -> sampled row groups (SAMPLED), because
+    tokenizing 32M ps_comment values is minutes of CPU at the large scale factors.
+    """
+    import re
+    import numpy as np
+    pf = pq.ParquetFile(parquet)
+    ng = pf.num_row_groups
+    groups = range(ng) if k is None else sample_groups(ng, k)
+    mism = rows = 0
+    for g in groups:
+        t = pf.read_row_group(g, columns=[vec_col] + list(text_cols))
+        v = np.asarray(t.column(vec_col).chunk(0).values, dtype=np.float32).reshape(-1, dim)
+        is_zero = (np.abs(v).sum(1) == 0)
+        cols = [t.column(c).to_pylist() for c in text_cols]
+        for i in range(t.num_rows):
+            txt = " ".join(str(c[i]) for c in cols).lower()
+            toks = [tk for tk in re.split(r"[^a-z0-9]+", txt) if tk]
+            if bool(is_zero[i]) != (not any(tk in words for tk in toks)):
+                mism += 1
+        rows += t.num_rows
+    return check(f"{label}: zero-vector IFF no in-GloVe-vocab token (provenance)",
+                 mism == 0, 'exhaustive' if k is None else 'sampled',
+                 f"{len(list(groups)) if k else ng}/{ng} groups, {rows:,} rows, {mism} mismatched")

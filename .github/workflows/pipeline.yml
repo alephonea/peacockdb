@@ -280,8 +280,12 @@ jobs:
 
       - name: Generate SF-1 testdata (skips if present)
         run: |
-          ssh gpu "cd $REMOTE_DIR && DUCKDB=/home/info/.local/bin/duckdb testdata/generate_testdata.sh --bench tpch"
-          ssh gpu "cd $REMOTE_DIR && DUCKDB=/home/info/.local/bin/duckdb testdata/generate_testdata.sh --bench tpcds"
+          # PEACOCK_NO_FETCH=1 is set EXPLICITLY because ssh does not inherit the runner's
+          # CI/GITHUB_ACTIONS vars — fetch_embeddings.sh's automation guard keys on the
+          # environment, and over ssh that environment is the GPU host's, not the runner's.
+          # Nothing here invokes fetch today; this keeps the guard honest if that changes.
+          ssh gpu "cd $REMOTE_DIR && PEACOCK_NO_FETCH=1 DUCKDB=/home/info/.local/bin/duckdb testdata/generate_testdata.sh --bench tpch"
+          ssh gpu "cd $REMOTE_DIR && PEACOCK_NO_FETCH=1 DUCKDB=/home/info/.local/bin/duckdb testdata/generate_testdata.sh --bench tpcds"
 
       - name: Run GPU tests
         run: |

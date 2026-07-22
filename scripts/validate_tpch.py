@@ -83,6 +83,24 @@ def main():
     dc.check_clustering(P("lineitem"), "l_shipdate", "lineitem")
     dc.check_within_group_order(P("lineitem"), ["l_shipdate", "l_orderkey", "l_linenumber"], "lineitem")
 
+    # ROW ORDER of part/partsupp — the contract generate_testdata.sh calls "load-bearing".
+    # CI-synthetic and verda-external share ONE golden set and some tp8 goldens are
+    # order-SENSITIVE (per-partition filter counts in q8/q9/q19), so external mode pins the
+    # order with ORDER BY _rn. Nothing verified that pin until now: it held because
+    # threads=1 makes the unordered row_number() deterministic in practice, which is luck,
+    # not contract. We cannot check "same order as the base scan" from parquet alone, so we
+    # assert the stronger observable property the pin currently yields — key-ascending —
+    # which is what actually has to stay stable for the shared goldens.
+    dc.check_clustering(P("part"), "p_partkey", "part rows")
+    dc.check_within_group_order(P("part"), ["p_partkey"], "part rows")
+    # partsupp: ps_partkey ONLY. The review suggested (ps_partkey, ps_suppkey), but that is
+    # not the stored order and the check fails on real data: within one part dbgen emits the
+    # 4 suppliers by a formula that WRAPS modulo the supplier count (sf1 part 2500 runs
+    # ...,7501,1), so ps_suppkey is not ascending within a part. The within-part supplier
+    # sequence is base-scan order and is not expressible as a sort key — it stays unverified.
+    dc.check_clustering(P("partsupp"), "ps_partkey", "partsupp rows")
+    dc.check_within_group_order(P("partsupp"), ["ps_partkey"], "partsupp rows")
+
     if external:
         print("-- EMBEDDINGS (external) --")
         d = 96
@@ -96,12 +114,29 @@ def main():
         dc.check("image: per-dim variance in [0.3/d,3/d]",
                  bool(((st["var"] >= lo) & (st["var"] <= hi)).all()),
                  'exhaustive', f"var[{st['var'].min():.5f},{st['var'].max():.5f}]")
-        for c, t in [("p_text_embedding", "part"), ("ps_text_embedding", "partsupp")]:
+        # zero-vector <-> empty-vocab is the ONLY provenance tie for the text embeddings:
+        # every other text check would pass on vectors computed from the wrong rows. It
+        # needs the GloVe vocabulary, so it is GATED on the cache being present (absent on a
+        # machine that only has the parquet) and reports the skip rather than vanishing.
+        GLOVE = os.path.join(ROOT, "testdata/embeddings-cache/glove.6B.100d.txt")
+        words = dc.glove_words(GLOVE) if os.path.exists(GLOVE) else None
+        for c, t, txt in [("p_text_embedding", "part", ["p_name", "p_type"]),
+                          ("ps_text_embedding", "partsupp", ["ps_comment"])]:
             ts = dc.stream_vector_stats(P(t), c, 100)
             dc.check(f"{c}: no NaN/Inf, bounded norms", ts["nan"] == 0 and ts["nmax"] < 50.0,
-                     'exhaustive', f"norm max {ts['nmax']:.3f}, {ts['nan']} nan")
+                     'exhaustive', f"norm max {ts['nmax']:.3f}, {ts['nan']} nan, "
+                                   f"{ts['zero']} zero-vectors")
+            if words is None:
+                dc.check(f"{c}: zero-vector IFF no in-GloVe-vocab token (provenance)", True,
+                         'meta', f"skipped: {os.path.relpath(GLOVE, ROOT)} not present")
+            else:
+                # exhaustive at sf1 (Tier A, every PR); sampled above it — tokenizing 32M
+                # ps_comment values is minutes of CPU at sf40+.
+                dc.check_zero_vec_vs_empty_vocab(P(t), c, txt, words, 100, c,
+                                                 k=None if sf == 1 else 6)
         for parq, c, dim in [(P("partsupp"), "ps_image_embedding", 96),
-                             (P("part"), "p_text_embedding", 100)]:
+                             (P("part"), "p_text_embedding", 100),
+                             (P("partsupp"), "ps_text_embedding", 100)]:
             V, ng = dc.load_vecs_sampled(parq, c, dim, k=6)
             m = min(len(V), 2000)
             S = V[np.linspace(0, len(V) - 1, m).astype(int)].astype(np.float64)
@@ -118,10 +153,16 @@ def main():
         if sf == 1 and os.path.exists(QP):
             import json, subprocess
             entries = [json.loads(x) for x in open(QP)]
-            bad = 0
+            bad = badq = 0
             for e in entries:
                 col = "ps_image_embedding" if e["modality"] == "image" else "p_text_embedding"
                 pq_ = P("partsupp") if e["modality"] == "image" else P("part")
+                # image queries are DEEP1B vectors and must themselves be unit-norm — a
+                # non-normalized q would silently change what D means for that query
+                if e["modality"] == "image":
+                    qn = float(np.linalg.norm(np.asarray(e["q"], dtype=np.float32)))
+                    if abs(qn - 1.0) >= 1e-3:
+                        badq += 1
                 lit = "[" + ",".join(repr(float(x)) for x in e["q"]) + "]"
                 r = subprocess.run(["duckdb", ":memory:", "-noheader", "-list",
                     f"SELECT count(*) FROM '{pq_}' WHERE array_distance({col}::FLOAT[{e['dim']}], {lit}::FLOAT[{e['dim']}]) < {e['D']!r};"],
@@ -130,6 +171,8 @@ def main():
                     bad += 1
             dc.check("query file: (q,D) reproduce count==k-1", bad == 0, 'exhaustive',
                      f"{len(entries)} entries, {bad} bad")
+            dc.check("query file: image q unit-norm", badq == 0, 'exhaustive',
+                     f"{len(entries)} entries, {badq} not unit-norm")
         else:
             dc.check("query file: (q,D) selectivity", True, 'meta',
                      f"skipped (D is sf1-calibrated; sf={sf})")

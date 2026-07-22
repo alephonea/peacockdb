@@ -8,9 +8,12 @@ on:
   workflow_dispatch:
     inputs:
       datasets:
-        description: 'Space-separated: tpch.sf40 tpch.sf200 tpcds.sf200 (default: all)'
+        description: 'Space-separated subset of: tpch.sf40 tpch.sf200 tpcds.sf200'
         required: false
-        default: 'tpch.sf40 tpch.sf200 tpcds.sf200'
+        # DEFAULT = only the datasets that actually EXIST on shad-gpu today. tpch.sf200 is
+        # generated-but-postponed, so defaulting to it would make the very first dispatch
+        # red. It stays in the allow-list, so dispatching it explicitly still works.
+        default: 'tpch.sf40 tpcds.sf200'
 
 jobs:
   validate-large:
@@ -56,16 +59,42 @@ jobs:
         run: |
           set -e
           ALLOWED="tpch.sf40 tpch.sf200 tpcds.sf200"
+          # EMPTY input -> RED, never green. A cleared datasets box would otherwise run the
+          # loop zero times and report success, and "green" is what someone will cite as
+          # evidence the datasets are fine.
+          if [ -z "$(printf '%s' "$DATASETS" | tr -d '[:space:]')" ]; then
+            echo "error: 'datasets' input is empty; choose from: $ALLOWED"; exit 1
+          fi
+          validated=0
           for ds in $DATASETS; do
             case " $ALLOWED " in
               *" $ds "*) : ;;
               *) echo "error: '$ds' not in allow-list ($ALLOWED)"; exit 1 ;;
             esac
             bench=${ds%%.*}; sf=${ds#*.sf}
+            # ABSENT dataset -> SKIP, not FAIL. Same semantics as Tier B's absent-manifest
+            # skip: a dataset that hasn't been generated yet is not a broken dataset, and
+            # generation takes hours. Only a dataset that IS there and is WRONG goes red.
+            # Distinguish "absent" (test -d -> 1) from "ssh broke" (255 etc). An
+            # unreachable host must NOT masquerade as an absent dataset and skip green.
+            ssh gpu "test -d $DATA_ROOT/testdata/$ds" && rc=0 || rc=$?
+            if [ "$rc" = 1 ]; then
+              echo "SKIP $ds — $DATA_ROOT/testdata/$ds absent on shad-gpu (not generated yet)"
+              continue
+            elif [ "$rc" != 0 ]; then
+              echo "error: ssh probe for $ds failed with exit $rc (host unreachable?)"; exit 1
+            fi
             echo "::group::validate $ds"
             ssh gpu "bash -lc 'cd $DATA_ROOT && $VENV_PY scripts/validate_${bench}.py --sf $sf'"
             echo "::endgroup::"
+            validated=$((validated + 1))
           done
+          # Every requested dataset was absent -> nothing was checked. Skips are fine
+          # individually, but a run where NOT ONE dataset validated must not be green.
+          if [ "$validated" -eq 0 ]; then
+            echo "error: no dataset was validated (all requested datasets absent on shad-gpu)"; exit 1
+          fi
+          echo "validated $validated dataset(s)"
 
       - name: S3 metadata check
         env:
@@ -73,5 +102,10 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
         run: |
           python3 -m pip install --quiet awscli || true
+          # check_s3_datasets.py reads parquet FOOTERS, so it needs pyarrow — a clean
+          # ubuntu-latest runner has neither it nor numpy. Same import-or-pip self-heal as
+          # the Tier B job in pipeline.yml. (numpy is belt-and-braces: dataset_checks.py
+          # imports it lazily, so the footer-only path does not need it today.)
+          python3 -c "import pyarrow, numpy" 2>/dev/null || pip install --quiet pyarrow numpy
           python3 scripts/check_s3_datasets.py \
             --endpoint https://storage.eu-north1.nebius.cloud:443

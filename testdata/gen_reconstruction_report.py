@@ -22,11 +22,6 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CACHE = os.path.join(ROOT, "testdata/embeddings-cache")
 N_TEXT, N_IMG_PANEL, TOPW, TOPR = 20, 5, 5, 5
 
-def load_vecs(parquet, col):
-    ca = pq.read_table(parquet, columns=[col]).column(col).combine_chunks()
-    v = np.asarray(ca.values, dtype=np.float32); n = len(ca)
-    return v.reshape(n, v.size // n)
-
 def load_glove():
     words, vecs = [], []
     with open(os.path.join(CACHE, "glove.6B.100d.txt")) as f:
