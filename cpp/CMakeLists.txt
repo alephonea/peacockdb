@@ -178,12 +178,28 @@ set_target_properties(peacock_tpch_tests PROPERTIES CXX_STANDARD 20 CXX_STANDARD
 add_test(NAME peacock_tpch_tests COMMAND peacock_tpch_tests)
 set_tests_properties(peacock_tpch_tests PROPERTIES LABELS "gpu")
 
+# TPC-H+V vector query tests — bare cudf + cuVS BRUTE FORCE (exact; an ANN index cannot
+# match an exact DuckDB golden) over the sf40 dataset on the GPU host. Skips itself when
+# that dataset or query_params.jsonl is absent.
+#
+# cuVS must be found the same way cudf is (same conda prefix), and libcuvs.so is unusable
+# standalone: rmm is header-only, so libcudf DEFINES the rmm symbols libcuvs REFERENCES.
+# Linking both here is what resolves it — see the comment at the top of test_tpchv.cpp.
+find_package(cuvs REQUIRED CONFIG)
+message(STATUS "Using cuVS: ${cuvs_VERSION}")
+add_executable(peacock_tpchv_tests tests/gpu/test_tpchv.cpp)
+target_include_directories(peacock_tpchv_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(peacock_tpchv_tests PRIVATE cudf::cudf cuvs::cuvs GTest::gtest)
+set_target_properties(peacock_tpchv_tests PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+add_test(NAME peacock_tpchv_tests COMMAND peacock_tpchv_tests)
+set_tests_properties(peacock_tpchv_tests PROPERTIES LABELS "gpu")
+
 # ---------------------------------------------------------------------------
 # Install
 # ---------------------------------------------------------------------------
 install(TARGETS peacock_gpu LIBRARY DESTINATION lib)
 install(TARGETS peacock_gpu_tests peacock_cpu_tests peacock_plan_tests peacock_tpch_tests
-        RUNTIME DESTINATION bin)
+        peacock_tpchv_tests RUNTIME DESTINATION bin)
 install(DIRECTORY include/ DESTINATION include)
 
 # Ensure installed test binaries can find libpeacock_gpu.so in ../lib.

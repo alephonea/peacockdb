@@ -156,5 +156,87 @@ run q8 "
   GROUP BY o_year
   ORDER BY o_year;"
 
+# ---------------------------------------------------------------------------
+# TPC-H+V q11 — the vector query. Emitted once per (q,D) entry from the COMMITTED
+# query_params.jsonl, so the golden and the GPU test resolve ${q}/${D} from the same
+# source rather than each embedding its own copy of a 96-float literal.
+#
+# array_distance(), not the pgvector <-> operator: DuckDB has no <-> and the committed
+# .sql uses it only as notation.
+#
+# TWO goldens per entry, on purpose:
+#   duckdb_q11v_<id>.csv        the final grouped result (ps_partkey, value)
+#   duckdb_q11v_<id>.count.csv  the number of partsupp rows under D, BEFORE any join
+# The count is the corroboration that matters for a vector query: it pins the row set the
+# distance predicate selects, independent of everything the joins and the HAVING do
+# afterwards. A final result can coincidentally match while the search returned the wrong
+# neighbours; the count cannot.
+# An erroring DuckDB run writes nothing to stdout, producing a 0-byte golden that is
+# INDISTINGUISHABLE from a query that legitimately returned no rows. That ambiguity hid a
+# real bug here once (an empty q11v golden that should have had rows). So: run to a temp
+# file, check duckdb's exit status explicitly, and only then publish. A genuinely empty
+# result is still allowed — it just has to come from a SUCCESSFUL query.
+duck_to() {
+  local out="$1"; shift
+  local tmp="${out}.tmp"
+  if ! "$DUCKDB" :memory: -csv -noheader -c "$*" > "$tmp" 2>"${tmp}.err"; then
+    echo "error: duckdb failed generating $(basename "$out"):" >&2
+    sed 's/^/    /' "${tmp}.err" >&2
+    rm -f "$tmp" "${tmp}.err"
+    exit 1
+  fi
+  mv "$tmp" "$out"; rm -f "${tmp}.err"
+}
+
+gen_q11v() {
+  local id="$1" D="$2" lit="$3"
+  echo "  q11v ${id}"
+  duck_to "${OUT}/duckdb_q11v_${id}.count.csv" "
+    PRAGMA threads=1;
+    CREATE VIEW partsupp AS SELECT * FROM read_parquet('${DATA_DIR}/partsupp.parquet');
+    SELECT count(*) FROM partsupp
+    WHERE array_distance(ps_image_embedding::FLOAT[96], ${lit}::FLOAT[96]) < ${D};
+  "
+  duck_to "${OUT}/duckdb_q11v_${id}.csv" "
+    PRAGMA threads=1;
+    CREATE VIEW partsupp AS SELECT * FROM read_parquet('${DATA_DIR}/partsupp.parquet');
+    CREATE VIEW supplier AS SELECT * FROM read_parquet('${DATA_DIR}/supplier.parquet');
+    CREATE VIEW nation   AS SELECT * FROM read_parquet('${DATA_DIR}/nation.parquet');
+    SELECT ps_partkey, sum(ps_supplycost * ps_availqty) AS value
+    FROM partsupp, supplier, nation
+    WHERE ps_suppkey = s_suppkey
+      AND s_nationkey = n_nationkey
+      AND n_name = 'GERMANY'
+      AND array_distance(ps_image_embedding::FLOAT[96], ${lit}::FLOAT[96]) < ${D}
+    GROUP BY ps_partkey
+    HAVING sum(ps_supplycost * ps_availqty) > (
+      SELECT sum(ps_supplycost * ps_availqty) * 0.000002
+      FROM partsupp, supplier, nation
+      WHERE ps_suppkey = s_suppkey AND s_nationkey = n_nationkey AND n_name = 'GERMANY'
+    )
+    ORDER BY value DESC, ps_partkey;
+  "
+}
+
+# ORDER BY adds ps_partkey after value: TPC-H q11 orders by value alone, which is not a
+# total order once two parts share a value. ps_partkey is unique per group, so appending
+# it makes the row order reproducible instead of leaving ties to the engine.
+if [ -f "${ROOT}/testdata/tpch-vec-queries/query_params.jsonl" ]; then
+  while IFS=$'\t' read -r vid vD vlit; do
+    gen_q11v "$vid" "$vD" "$vlit"
+  done < <(python3 - "${ROOT}/testdata/tpch-vec-queries/query_params.jsonl" <<'PY'
+import json, sys
+WANT = {"img_000", "img_017", "img_034"}   # one per k tier (10/100/1000), all image
+for line in open(sys.argv[1]):
+    r = json.loads(line)
+    if r["id"] in WANT:
+        lit = "[" + ",".join(repr(float(x)) for x in r["q"]) + "]"
+        print(f"{r['id']}\t{r['D']!r}\t{lit}")
+PY
+)
+else
+  echo "  q11v SKIPPED — query_params.jsonl not found"
+fi
+
 echo "done. goldens in ${OUT}:"
 ls -la "$OUT"
