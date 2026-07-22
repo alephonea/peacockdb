@@ -168,11 +168,22 @@ add_dependencies(peacock_plan_tests gpu_plan_fbs)
 add_test(NAME peacock_plan_tests COMMAND peacock_plan_tests)
 set_tests_properties(peacock_plan_tests PROPERTIES LABELS "gpu")
 
+# TPC-H bare-cudf query tests — hand-written operator chains over the LARGE (sf40)
+# dataset that lives on the GPU host, checked against committed DuckDB goldens. Skips
+# itself when that dataset is absent, so it is safe to run anywhere.
+add_executable(peacock_tpch_tests tests/gpu/test_tpch.cpp)
+target_include_directories(peacock_tpch_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(peacock_tpch_tests PRIVATE cudf::cudf GTest::gtest)
+set_target_properties(peacock_tpch_tests PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+add_test(NAME peacock_tpch_tests COMMAND peacock_tpch_tests)
+set_tests_properties(peacock_tpch_tests PROPERTIES LABELS "gpu")
+
 # ---------------------------------------------------------------------------
 # Install
 # ---------------------------------------------------------------------------
 install(TARGETS peacock_gpu LIBRARY DESTINATION lib)
-install(TARGETS peacock_gpu_tests peacock_cpu_tests peacock_plan_tests RUNTIME DESTINATION bin)
+install(TARGETS peacock_gpu_tests peacock_cpu_tests peacock_plan_tests peacock_tpch_tests
+        RUNTIME DESTINATION bin)
 install(DIRECTORY include/ DESTINATION include)
 
 # Ensure installed test binaries can find libpeacock_gpu.so in ../lib.

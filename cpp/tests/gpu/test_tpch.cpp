@@ -1,0 +1,626 @@
+// test_tpch.cpp — TPC-H query plans hand-written in BARE cuDF, checked against DuckDB.
+//
+// No Rust, no DataFusion, no SQL: every query below is an explicit sequence of libcudf
+// calls. The point is to exercise the operator chain peacockdb's executor has to produce,
+// against real sf40 data, with an independent oracle (DuckDB over the SAME parquet files)
+// deciding whether the answer is right.
+//
+// TWO VISIBLY SEPARATE PHASES, mirroring peacockdb's load-then-execute model:
+//   PHASE 1 (load)     read the needed COLUMNS from parquet into cudf tables. Column
+//                      selection is expected; ROW filtering is deliberately NOT pushed
+//                      into the reader — no filters, no row-group pruning, no num_rows.
+//   PHASE 2 (execute)  the operator chain runs over those in-memory columns.
+// If a predicate ever migrates into phase 1 this test stops testing what it exists for.
+//
+// DATA: read-only, in place, from an EXISTING tpch.sf40 on the GPU host. Never downloaded,
+// never regenerated, never written to. Absent data => SKIP loudly (see the fixture): a
+// green run that silently tested nothing is the one outcome worse than a red one.
+#include <cudf/aggregation.hpp>
+#include <cudf/binaryop.hpp>
+#include <cudf/column/column.hpp>
+#include <cudf/copying.hpp>
+#include <cudf/fixed_point/fixed_point.hpp>
+#include <cudf/io/parquet.hpp>
+#include <cudf/reduction.hpp>
+#include <cudf/scalar/scalar.hpp>
+#include <cudf/scalar/scalar_factories.hpp>
+#include <cudf/groupby.hpp>
+#include <cudf/sorting.hpp>
+#include <cudf/stream_compaction.hpp>
+#include <cudf/table/table.hpp>
+#include <cudf/table/table_view.hpp>
+#include <cudf/types.hpp>
+#include <cudf/unary.hpp>
+#include <cudf/wrappers/timestamps.hpp>
+
+#include <cuda_runtime.h>
+#include <gtest/gtest.h>
+
+#include <chrono>
+#include <cstdint>
+#include <cmath>
+#include <cstdlib>
+#include <fstream>
+#include <string>
+#include <vector>
+
+namespace {
+
+// ---------------------------------------------------------------------------
+// paths — overridable so the same binary runs on the GPU host and a dev box
+// ---------------------------------------------------------------------------
+std::string env_or(const char* key, const std::string& fallback) {
+  const char* v = std::getenv(key);
+  return (v && *v) ? std::string(v) : fallback;
+}
+
+std::string data_dir() {
+  return env_or("PEACOCK_TPCH_SF40_DIR", "/home/info/peacock-datasets/testdata/tpch.sf40");
+}
+std::string golden_dir() {
+  return env_or("PEACOCK_TPCH_GOLDEN_DIR", "testdata/goldens/tpch.sf40");
+}
+
+bool file_exists(const std::string& p) {
+  std::ifstream f(p);
+  return f.good();
+}
+
+// ---------------------------------------------------------------------------
+// exact decimal comparison
+//
+// The golden is DuckDB's DECIMAL printed with full scale ("5252371252.6144"), never
+// through float formatting, so no precision is lost at the file boundary. We parse it
+// into an unscaled __int128 + a scale and compare VALUES, not representations: DuckDB
+// and cuDF each pick their own result scale by their own promotion rules (both exact),
+// so 1234.5600 and 1234.56 are the same answer and must compare equal. Rule: rescale the
+// coarser of the two up to the finer scale (exact, only ever multiplies by 10^k), then
+// compare the integers. No double is involved anywhere on this path.
+// ---------------------------------------------------------------------------
+struct Decimal {
+  __int128 unscaled = 0;
+  int scale = 0;  // digits after the point; value = unscaled / 10^scale
+};
+
+Decimal parse_decimal(const std::string& raw) {
+  std::string s;
+  for (char c : raw) {
+    if (!std::isspace(static_cast<unsigned char>(c))) s += c;
+  }
+  bool neg = !s.empty() && s[0] == '-';
+  if (neg || (!s.empty() && s[0] == '+')) s.erase(0, 1);
+  Decimal d;
+  bool seen_point = false;
+  for (char c : s) {
+    if (c == '.') {
+      seen_point = true;
+      continue;
+    }
+    if (c < '0' || c > '9') continue;
+    d.unscaled = d.unscaled * 10 + (c - '0');
+    if (seen_point) ++d.scale;
+  }
+  if (neg) d.unscaled = -d.unscaled;
+  return d;
+}
+
+__int128 pow10_i128(int n) {
+  __int128 r = 1;
+  for (int i = 0; i < n; ++i) r *= 10;
+  return r;
+}
+
+// true iff the two decimals denote the SAME exact value, regardless of scale
+bool decimal_values_equal(Decimal a, Decimal b) {
+  if (a.scale < b.scale) {
+    a.unscaled *= pow10_i128(b.scale - a.scale);
+  } else if (b.scale < a.scale) {
+    b.unscaled *= pow10_i128(a.scale - b.scale);
+  }
+  return a.unscaled == b.unscaled;
+}
+
+std::string to_string_i128(__int128 v) {
+  if (v == 0) return "0";
+  bool neg = v < 0;
+  unsigned __int128 u = neg ? static_cast<unsigned __int128>(-v) : static_cast<unsigned __int128>(v);
+  std::string s;
+  while (u) {
+    s += static_cast<char>('0' + static_cast<int>(u % 10));
+    u /= 10;
+  }
+  if (neg) s += '-';
+  return std::string(s.rbegin(), s.rend());
+}
+
+std::string decimal_to_string(Decimal d) {
+  std::string digits = to_string_i128(d.unscaled < 0 ? -d.unscaled : d.unscaled);
+  std::string sign = d.unscaled < 0 ? "-" : "";
+  if (d.scale == 0) return sign + digits;
+  while (static_cast<int>(digits.size()) <= d.scale) digits.insert(digits.begin(), '0');
+  digits.insert(digits.end() - d.scale, '.');
+  return sign + digits;
+}
+
+// read a single-value golden csv (one field, no header)
+std::string read_single_value_golden(const std::string& path) {
+  std::ifstream f(path);
+  std::string line;
+  std::getline(f, line);
+  return line;
+}
+
+// days since the unix epoch for a calendar date — cudf's timestamp_D is exactly this
+int32_t days_since_epoch(int y, unsigned m, unsigned d) {
+  using namespace std::chrono;
+  return static_cast<int32_t>(
+      sys_days{year{y} / month{m} / day{d}}.time_since_epoch().count());
+}
+
+// ---------------------------------------------------------------------------
+// fixture: skip loudly when the dataset is absent, and report GPU memory
+// ---------------------------------------------------------------------------
+class TpchSf40 : public ::testing::Test {
+ protected:
+  void SetUp() override {
+    const auto dir = data_dir();
+    if (!file_exists(dir + "/lineitem.parquet")) {
+      GTEST_SKIP() << "\n"
+                   << "*** SKIPPING TPC-H sf40 GPU tests — DATASET NOT PRESENT ***\n"
+                   << "    expected: " << dir << "/lineitem.parquet\n"
+                   << "    This test reads an EXISTING sf40 dataset in place; it never\n"
+                   << "    downloads or regenerates one. Point PEACOCK_TPCH_SF40_DIR at a\n"
+                   << "    generated tpch.sf40 to run it.\n"
+                   << "    NOTHING WAS VERIFIED by this test binary.\n";
+    }
+    cudaMemGetInfo(&free_before_, &total_);
+  }
+
+  void TearDown() override {
+    size_t free_after = 0, total = 0;
+    cudaMemGetInfo(&free_after, &total);
+    // peak is sampled, not tracked: report the high-water mark we observed during the
+    // query via note_peak(), which is what the CI cost estimate needs.
+    std::fprintf(stderr,
+                 "[gpu-mem] device total %.1f GiB; peak used by this test %.2f GiB\n",
+                 total_ / 1073741824.0, peak_used_ / 1073741824.0);
+  }
+
+  // call after the memory-heaviest step
+  void note_peak() {
+    size_t free_now = 0, total = 0;
+    cudaMemGetInfo(&free_now, &total);
+    size_t used = free_before_ > free_now ? free_before_ - free_now : 0;
+    if (used > peak_used_) peak_used_ = used;
+  }
+
+  size_t free_before_ = 0, total_ = 0, peak_used_ = 0;
+};
+
+}  // namespace
+
+// ===========================================================================
+// Q6  — revenue from a discounted-order filter
+//
+//   SELECT sum(l_extendedprice * l_discount)
+//   FROM lineitem
+//   WHERE l_shipdate >= DATE '1994-01-01' AND l_shipdate < DATE '1995-01-01'
+//     AND l_discount BETWEEN 0.05 AND 0.07
+//     AND l_quantity < 24
+//
+// operator chain: scan -> filter(3 predicates) -> project(mul) -> reduce(sum)
+//
+// REPRESENTATION (exact, no tolerance anywhere):
+//   l_quantity / l_extendedprice / l_discount are decimal128(15,2) in the parquet, which
+//   cuDF decodes to DECIMAL64 scale -2 (INT64 physical, precision 15). We cast to
+//   DECIMAL128 at the same scale purely for headroom, then stay fixed-point end to end:
+//   the predicate constants are decimal scalars, so the boundaries 0.05 / 0.07 / 24 have
+//   NO float representation error and cannot include or exclude a row by rounding.
+//   The product lands at scale -4 and the sum accumulates there.
+//   Headroom: worst-case product ~1e7 x 7 = 7e7 scale-4 units, ~1e8 qualifying rows =>
+//   ~1e16, against a DECIMAL128 ceiling of ~1.7e38. Cannot overflow.
+// ===========================================================================
+TEST_F(TpchSf40, Q6ExactDecimal) {
+  const auto lineitem_path = data_dir() + "/lineitem.parquet";
+  const auto golden_path = golden_dir() + "/q6.csv";
+  ASSERT_TRUE(file_exists(golden_path))
+      << "golden missing: " << golden_path
+      << " (regenerate with testdata/gen_query_goldens.sh --sf 40)";
+
+  const auto t0 = std::chrono::steady_clock::now();
+
+  // ---------------- PHASE 1: LOAD ----------------
+  // Columns only. No filter, no row-group selection, no num_rows: every predicate below
+  // is an operator in phase 2, so the reader hands us the full 240M rows of these 4
+  // columns and the GPU does the rest.
+  auto opts = cudf::io::parquet_reader_options::builder(
+                  cudf::io::source_info{std::vector<std::string>{lineitem_path}})
+                  .columns({"l_quantity", "l_extendedprice", "l_discount", "l_shipdate"})
+                  .build();
+  auto loaded = cudf::io::read_parquet(opts);
+  auto tbl = loaded.tbl->view();
+  const auto t_loaded = std::chrono::steady_clock::now();
+  note_peak();
+
+  ASSERT_EQ(tbl.num_columns(), 4);
+  std::fprintf(stderr, "[q6] loaded %ld rows x 4 cols\n", static_cast<long>(tbl.num_rows()));
+
+  auto quantity_raw = tbl.column(0);
+  auto extprice_raw = tbl.column(1);
+  auto discount_raw = tbl.column(2);
+  auto shipdate = tbl.column(3);
+
+  // Assert the decoded types rather than trusting the mapping — if a future cudf decodes
+  // these differently, the arithmetic below changes meaning and we want to know.
+  ASSERT_EQ(shipdate.type().id(), cudf::type_id::TIMESTAMP_DAYS);
+  for (auto c : {quantity_raw, extprice_raw, discount_raw}) {
+    ASSERT_TRUE(c.type().id() == cudf::type_id::DECIMAL64 ||
+                c.type().id() == cudf::type_id::DECIMAL128)
+        << "expected fixed-point money columns, got type id "
+        << static_cast<int>(c.type().id());
+    ASSERT_EQ(c.type().scale(), -2);
+  }
+
+  // widen to DECIMAL128 (same scale => exact, value-preserving) for accumulation headroom
+  const auto dec128_s2 = cudf::data_type{cudf::type_id::DECIMAL128, -2};
+  auto quantity = cudf::cast(quantity_raw, dec128_s2);
+  auto extprice = cudf::cast(extprice_raw, dec128_s2);
+  auto discount = cudf::cast(discount_raw, dec128_s2);
+
+  // ---------------- PHASE 2: EXECUTE ----------------
+  // filter: three predicates, AND-ed
+  auto lo_date = cudf::timestamp_scalar<cudf::timestamp_D>(
+      cudf::timestamp_D{cudf::duration_D{days_since_epoch(1994, 1, 1)}}, true);
+  auto hi_date = cudf::timestamp_scalar<cudf::timestamp_D>(
+      cudf::timestamp_D{cudf::duration_D{days_since_epoch(1995, 1, 1)}}, true);
+  // decimal scalars at scale -2: 0.05 -> 5, 0.07 -> 7, 24 -> 2400. Exact boundaries.
+  auto disc_lo = cudf::fixed_point_scalar<numeric::decimal128>(5, numeric::scale_type{-2});
+  auto disc_hi = cudf::fixed_point_scalar<numeric::decimal128>(7, numeric::scale_type{-2});
+  auto qty_hi = cudf::fixed_point_scalar<numeric::decimal128>(2400, numeric::scale_type{-2});
+
+  const auto boolean = cudf::data_type{cudf::type_id::BOOL8};
+  auto m1 = cudf::binary_operation(shipdate, lo_date, cudf::binary_operator::GREATER_EQUAL, boolean);
+  auto m2 = cudf::binary_operation(shipdate, hi_date, cudf::binary_operator::LESS, boolean);
+  auto m3 = cudf::binary_operation(discount->view(), disc_lo, cudf::binary_operator::GREATER_EQUAL, boolean);
+  auto m4 = cudf::binary_operation(discount->view(), disc_hi, cudf::binary_operator::LESS_EQUAL, boolean);
+  auto m5 = cudf::binary_operation(quantity->view(), qty_hi, cudf::binary_operator::LESS, boolean);
+
+  auto mask = cudf::binary_operation(m1->view(), m2->view(), cudf::binary_operator::LOGICAL_AND, boolean);
+  mask = cudf::binary_operation(mask->view(), m3->view(), cudf::binary_operator::LOGICAL_AND, boolean);
+  mask = cudf::binary_operation(mask->view(), m4->view(), cudf::binary_operator::LOGICAL_AND, boolean);
+  mask = cudf::binary_operation(mask->view(), m5->view(), cudf::binary_operator::LOGICAL_AND, boolean);
+  note_peak();
+
+  auto kept = cudf::apply_boolean_mask(
+      cudf::table_view{{extprice->view(), discount->view()}}, mask->view());
+  std::fprintf(stderr, "[q6] rows surviving filter: %ld\n",
+               static_cast<long>(kept->num_rows()));
+  ASSERT_GT(kept->num_rows(), 0) << "filter kept no rows — the predicates or the data are wrong";
+  note_peak();
+
+  // project: extendedprice * discount  (scale -2 * scale -2 -> scale -4)
+  auto revenue_col = cudf::binary_operation(kept->get_column(0).view(),
+                                            kept->get_column(1).view(),
+                                            cudf::binary_operator::MUL,
+                                            cudf::data_type{cudf::type_id::DECIMAL128, -4});
+  note_peak();
+
+  // reduce: exact fixed-point sum
+  auto sum_agg = cudf::make_sum_aggregation<cudf::reduce_aggregation>();
+  auto result = cudf::reduce(revenue_col->view(), *sum_agg,
+                             cudf::data_type{cudf::type_id::DECIMAL128, -4});
+  auto* fp = dynamic_cast<cudf::fixed_point_scalar<numeric::decimal128>*>(result.get());
+  ASSERT_NE(fp, nullptr) << "sum did not come back as a decimal128 scalar";
+  ASSERT_TRUE(fp->is_valid());
+
+  Decimal got;
+  got.unscaled = static_cast<__int128>(fp->value());
+  got.scale = -fp->type().scale();  // cudf scale is negative: -4 => 4 digits after point
+
+  const auto t_done = std::chrono::steady_clock::now();
+
+  // ---------------- COMPARE (exact, value-normalized) ----------------
+  const auto golden_raw = read_single_value_golden(golden_path);
+  ASSERT_FALSE(golden_raw.empty()) << "empty golden: " << golden_path;
+  const Decimal want = parse_decimal(golden_raw);
+
+  std::fprintf(stderr, "[q6] cudf  = %s (scale %d)\n", decimal_to_string(got).c_str(), got.scale);
+  std::fprintf(stderr, "[q6] duckdb= %s (scale %d)\n", decimal_to_string(want).c_str(), want.scale);
+
+  EXPECT_TRUE(decimal_values_equal(got, want))
+      << "Q6 mismatch (EXACT decimal comparison, no tolerance)\n"
+      << "  cudf   : " << decimal_to_string(got) << "\n"
+      << "  duckdb : " << decimal_to_string(want) << "\n"
+      << "  golden : " << golden_path;
+
+  const auto ms = [](auto a, auto b) {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(b - a).count();
+  };
+  std::fprintf(stderr, "[q6] load %ld ms, execute %ld ms, total %ld ms\n",
+               ms(t0, t_loaded), ms(t_loaded, t_done), ms(t0, t_done));
+}
+
+// ===========================================================================
+// Q1 — pricing summary report
+//
+//   SELECT l_returnflag, l_linestatus,
+//          sum(l_quantity), sum(l_extendedprice),
+//          sum(l_extendedprice*(1-l_discount)),
+//          sum(l_extendedprice*(1-l_discount)*(1+l_tax)),
+//          avg(l_quantity), avg(l_extendedprice), avg(l_discount), count(*)
+//   FROM lineitem WHERE l_shipdate <= DATE '1998-09-02'
+//   GROUP BY l_returnflag, l_linestatus ORDER BY l_returnflag, l_linestatus
+//
+// operator chain: scan -> filter -> project(2 derived cols) -> groupby(8 aggs) -> sort
+//
+// REPRESENTATION IS PER COLUMN — a blanket tolerance would hide a real error in the
+// columns that CAN be exact:
+//   sum_qty, sum_base_price, sum_disc_price, sum_charge : DECIMAL128, compared EXACTLY
+//                       (scales -2, -2, -4, -6; DuckDB picks its own scales, and the
+//                        comparison normalizes scale before comparing values)
+//   count_order       : INT64, compared EXACTLY
+//   avg_qty, avg_price, avg_disc : DOUBLE on BOTH sides, RELATIVE TOLERANCE 1e-9.
+//                       Forced, not chosen: DuckDB's AVG over a DECIMAL returns DOUBLE,
+//                       and cuDF's MEAN likewise produces a floating result, so the two
+//                       sums are accumulated in different orders over ~236M values. 1e-9
+//                       is ~4 orders of magnitude above the ~1e-13 relative drift double
+//                       accumulation actually produces at this size, and ~7 orders below
+//                       the smallest error that would indicate a real bug (a wrong row
+//                       set moves an average by percent, not by 1e-9).
+// ===========================================================================
+namespace {
+
+// one golden row = the raw CSV fields, split on commas (no quoted fields in these goldens)
+std::vector<std::string> split_csv(const std::string& line) {
+  std::vector<std::string> out;
+  std::string cur;
+  for (char c : line) {
+    if (c == ',') {
+      out.push_back(cur);
+      cur.clear();
+    } else {
+      cur += c;
+    }
+  }
+  out.push_back(cur);
+  return out;
+}
+
+std::vector<std::vector<std::string>> read_csv_golden(const std::string& path) {
+  std::vector<std::vector<std::string>> rows;
+  std::ifstream f(path);
+  std::string line;
+  while (std::getline(f, line)) {
+    if (!line.empty() && line.back() == '\r') line.pop_back();
+    if (line.empty()) continue;
+    rows.push_back(split_csv(line));
+  }
+  return rows;
+}
+
+// pull one element back to the host. cudf::get_element returns a scalar, which keeps the
+// exact fixed-point representation — no round-trip through double for the decimal columns.
+Decimal decimal_at(cudf::column_view const& col, cudf::size_type i) {
+  auto s = cudf::get_element(col, i);
+  auto* fp = dynamic_cast<cudf::fixed_point_scalar<numeric::decimal128>*>(s.get());
+  EXPECT_NE(fp, nullptr) << "expected a decimal128 column";
+  if (!fp) return Decimal{};
+  Decimal d;
+  d.unscaled = static_cast<__int128>(fp->value());
+  d.scale = -fp->type().scale();
+  return d;
+}
+
+double double_at(cudf::column_view const& col, cudf::size_type i) {
+  auto s = cudf::get_element(col, i);
+  auto* n = dynamic_cast<cudf::numeric_scalar<double>*>(s.get());
+  EXPECT_NE(n, nullptr) << "expected a float64 column";
+  return n ? n->value() : 0.0;
+}
+
+// WIDTH MISMATCH BETWEEN THE ENGINES — read this before touching it.
+// cuDF's groupby COUNT returns INT32; DuckDB's count(*) is BIGINT. This is a silent
+// wrong-answer generator: when this helper assumed int64, the dynamic_cast returned
+// null and EVERY count read as 0 — while the four decimal sums were already matching
+// perfectly. It failed LOUDLY only because the counts are compared at all; a test that
+// checked sums alone would have been green with the counts entirely broken.
+// OVERFLOW HEADROOM IS THIN: at sf40 the largest group count is 116,640,476, within ~18x
+// of INT32_MAX (2,147,483,647). Around sf700 a TPC-H Q1 group would overflow int32
+// outright. Anyone running a materially larger scale factor must check what cuDF returns
+// here rather than assuming this still holds.
+// So: accept either width and compare the VALUE, never the representation.
+int64_t int64_at(cudf::column_view const& col, cudf::size_type i) {
+  auto s = cudf::get_element(col, i);
+  if (auto* n64 = dynamic_cast<cudf::numeric_scalar<int64_t>*>(s.get())) return n64->value();
+  if (auto* n32 = dynamic_cast<cudf::numeric_scalar<int32_t>*>(s.get())) return n32->value();
+  ADD_FAILURE() << "expected an integer column, got type id "
+                << static_cast<int>(col.type().id());
+  return 0;
+}
+
+std::string string_at(cudf::column_view const& col, cudf::size_type i) {
+  auto s = cudf::get_element(col, i);
+  auto* str = dynamic_cast<cudf::string_scalar*>(s.get());
+  EXPECT_NE(str, nullptr) << "expected a string column";
+  return str ? str->to_string() : std::string{};
+}
+
+}  // namespace
+
+TEST_F(TpchSf40, Q1GroupByAggregates) {
+  const auto lineitem_path = data_dir() + "/lineitem.parquet";
+  const auto golden_path = golden_dir() + "/q1.csv";
+  ASSERT_TRUE(file_exists(golden_path))
+      << "golden missing: " << golden_path
+      << " (regenerate with testdata/gen_query_goldens.sh --sf 40)";
+
+  const auto t0 = std::chrono::steady_clock::now();
+
+  // ---------------- PHASE 1: LOAD ----------------
+  // Columns only — no predicate pushdown, no row-group selection. The l_shipdate filter
+  // is an operator in phase 2, below.
+  auto opts = cudf::io::parquet_reader_options::builder(
+                  cudf::io::source_info{std::vector<std::string>{lineitem_path}})
+                  .columns({"l_returnflag", "l_linestatus", "l_quantity", "l_extendedprice",
+                            "l_discount", "l_tax", "l_shipdate"})
+                  .build();
+  auto loaded = cudf::io::read_parquet(opts);
+  auto tbl = loaded.tbl->view();
+  const auto t_loaded = std::chrono::steady_clock::now();
+  note_peak();
+  ASSERT_EQ(tbl.num_columns(), 7);
+  std::fprintf(stderr, "[q1] loaded %ld rows x 7 cols\n", static_cast<long>(tbl.num_rows()));
+
+  const auto dec128_s2 = cudf::data_type{cudf::type_id::DECIMAL128, -2};
+  auto returnflag = tbl.column(0);
+  auto linestatus = tbl.column(1);
+  auto quantity = cudf::cast(tbl.column(2), dec128_s2);
+  auto extprice = cudf::cast(tbl.column(3), dec128_s2);
+  auto discount = cudf::cast(tbl.column(4), dec128_s2);
+  auto tax = cudf::cast(tbl.column(5), dec128_s2);
+  auto shipdate = tbl.column(6);
+
+  // ---------------- PHASE 2: EXECUTE ----------------
+  // filter: l_shipdate <= 1998-09-02
+  auto cutoff = cudf::timestamp_scalar<cudf::timestamp_D>(
+      cudf::timestamp_D{cudf::duration_D{days_since_epoch(1998, 9, 2)}}, true);
+  const auto boolean = cudf::data_type{cudf::type_id::BOOL8};
+  auto mask = cudf::binary_operation(shipdate, cutoff, cudf::binary_operator::LESS_EQUAL, boolean);
+  auto kept = cudf::apply_boolean_mask(
+      cudf::table_view{{returnflag, linestatus, quantity->view(), extprice->view(),
+                        discount->view(), tax->view()}},
+      mask->view());
+  note_peak();
+  std::fprintf(stderr, "[q1] rows surviving filter: %ld\n",
+               static_cast<long>(kept->num_rows()));
+  ASSERT_GT(kept->num_rows(), 0);
+
+  auto k_flag = kept->get_column(0).view();
+  auto k_status = kept->get_column(1).view();
+  auto k_qty = kept->get_column(2).view();
+  auto k_price = kept->get_column(3).view();
+  auto k_disc = kept->get_column(4).view();
+  auto k_tax = kept->get_column(5).view();
+
+  // project: disc_price = extendedprice * (1 - discount)          scale -4
+  //          charge     = disc_price     * (1 + tax)              scale -6
+  // The literals 1 are DECIMAL scalars at scale -2 (value 100), so these stay exact.
+  auto one_s2 = cudf::fixed_point_scalar<numeric::decimal128>(100, numeric::scale_type{-2});
+  auto one_minus_disc = cudf::binary_operation(one_s2, k_disc, cudf::binary_operator::SUB, dec128_s2);
+  auto one_plus_tax = cudf::binary_operation(one_s2, k_tax, cudf::binary_operator::ADD, dec128_s2);
+  auto disc_price = cudf::binary_operation(k_price, one_minus_disc->view(),
+                                           cudf::binary_operator::MUL,
+                                           cudf::data_type{cudf::type_id::DECIMAL128, -4});
+  auto charge = cudf::binary_operation(disc_price->view(), one_plus_tax->view(),
+                                       cudf::binary_operator::MUL,
+                                       cudf::data_type{cudf::type_id::DECIMAL128, -6});
+  note_peak();
+
+  // AVG: DuckDB's AVG over DECIMAL returns DOUBLE, so the cudf side must also be double —
+  // this is the one place a floating representation is unavoidable, and the only place a
+  // tolerance is applied.
+  const auto f64 = cudf::data_type{cudf::type_id::FLOAT64};
+  auto qty_f = cudf::cast(k_qty, f64);
+  auto price_f = cudf::cast(k_price, f64);
+  auto disc_f = cudf::cast(k_disc, f64);
+
+  // groupby (l_returnflag, l_linestatus) -> 8 aggregates
+  cudf::groupby::groupby gb(cudf::table_view{{k_flag, k_status}});
+  std::vector<cudf::groupby::aggregation_request> reqs;
+  auto add = [&](cudf::column_view v, std::unique_ptr<cudf::groupby_aggregation> a) {
+    cudf::groupby::aggregation_request r;
+    r.values = v;
+    r.aggregations.push_back(std::move(a));
+    reqs.push_back(std::move(r));
+  };
+  add(k_qty, cudf::make_sum_aggregation<cudf::groupby_aggregation>());          // 0 sum_qty
+  add(k_price, cudf::make_sum_aggregation<cudf::groupby_aggregation>());        // 1 sum_base_price
+  add(disc_price->view(), cudf::make_sum_aggregation<cudf::groupby_aggregation>());  // 2
+  add(charge->view(), cudf::make_sum_aggregation<cudf::groupby_aggregation>());      // 3
+  add(qty_f->view(), cudf::make_mean_aggregation<cudf::groupby_aggregation>());      // 4 avg_qty
+  add(price_f->view(), cudf::make_mean_aggregation<cudf::groupby_aggregation>());    // 5 avg_price
+  add(disc_f->view(), cudf::make_mean_aggregation<cudf::groupby_aggregation>());     // 6 avg_disc
+  add(k_qty, cudf::make_count_aggregation<cudf::groupby_aggregation>());             // 7 count
+
+  auto [keys_tbl, agg_results] = gb.aggregate(reqs);
+  note_peak();
+
+  // sort: cudf's groupby does not promise a group order, so sort by the two group keys —
+  // the same ORDER BY the golden uses. The keys are unique per group (4 groups), so the
+  // ordering is TOTAL: no tie-breaking is involved and the rows cannot shift relative to
+  // the golden.
+  auto keys_view = keys_tbl->view();
+  std::vector<std::unique_ptr<cudf::column>> agg_cols;
+  for (auto& r : agg_results) agg_cols.push_back(std::move(r.results[0]));
+  std::vector<cudf::column_view> all_views{keys_view.column(0), keys_view.column(1)};
+  for (auto& c : agg_cols) all_views.push_back(c->view());
+
+  auto order = cudf::sorted_order(cudf::table_view{{keys_view.column(0), keys_view.column(1)}},
+                                  {cudf::order::ASCENDING, cudf::order::ASCENDING},
+                                  {cudf::null_order::AFTER, cudf::null_order::AFTER});
+  auto sorted = cudf::gather(cudf::table_view{all_views}, order->view());
+  const auto t_done = std::chrono::steady_clock::now();
+
+  // ---------------- COMPARE ----------------
+  const auto golden = read_csv_golden(golden_path);
+  ASSERT_EQ(static_cast<int>(golden.size()), sorted->num_rows())
+      << "row count differs from golden";
+  ASSERT_EQ(sorted->num_columns(), 10);
+
+  auto sv = sorted->view();
+  constexpr double kAvgRelTol = 1e-9;  // see the header comment for why 1e-9
+  double worst_rel = 0.0;
+
+  for (int r = 0; r < sorted->num_rows(); ++r) {
+    const auto& g = golden[r];
+    // 10 fields: 2 group keys + 8 aggregates
+    ASSERT_EQ(static_cast<int>(g.size()), 10) << "golden row " << r << " has wrong field count";
+    const std::string tag = "row " + std::to_string(r) + " (" + g[0] + "," + g[1] + ")";
+
+    EXPECT_EQ(string_at(sv.column(0), r), g[0]) << tag << " l_returnflag";
+    EXPECT_EQ(string_at(sv.column(1), r), g[1]) << tag << " l_linestatus";
+
+    // EXACT decimal columns
+    const char* dec_names[] = {"sum_qty", "sum_base_price", "sum_disc_price", "sum_charge"};
+    for (int c = 0; c < 4; ++c) {
+      const Decimal got = decimal_at(sv.column(2 + c), r);
+      const Decimal want = parse_decimal(g[2 + c]);
+      EXPECT_TRUE(decimal_values_equal(got, want))
+          << tag << " " << dec_names[c] << " EXACT mismatch\n"
+          << "  cudf   : " << decimal_to_string(got) << "\n"
+          << "  duckdb : " << decimal_to_string(want);
+    }
+
+    // TOLERANCED double columns (AVG only)
+    const char* avg_names[] = {"avg_qty", "avg_price", "avg_disc"};
+    for (int c = 0; c < 3; ++c) {
+      const double got = double_at(sv.column(6 + c), r);
+      const double want = std::strtod(g[6 + c].c_str(), nullptr);
+      const double rel = want != 0.0 ? std::abs(got - want) / std::abs(want) : std::abs(got);
+      if (rel > worst_rel) worst_rel = rel;
+      EXPECT_LE(rel, kAvgRelTol)
+          << tag << " " << avg_names[c] << " outside relative tolerance " << kAvgRelTol << "\n"
+          << "  cudf   : " << got << "\n"
+          << "  duckdb : " << want << "\n"
+          << "  rel err: " << rel;
+    }
+
+    // EXACT count
+    EXPECT_EQ(int64_at(sv.column(9), r), std::strtoll(g[9].c_str(), nullptr, 10))
+        << tag << " count_order";
+  }
+
+  std::fprintf(stderr, "[q1] worst AVG relative error %.3e (tolerance %.1e)\n",
+               worst_rel, kAvgRelTol);
+  const auto ms = [](auto a, auto b) {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(b - a).count();
+  };
+  std::fprintf(stderr, "[q1] load %ld ms, execute %ld ms, total %ld ms\n",
+               ms(t0, t_loaded), ms(t_loaded, t_done), ms(t0, t_done));
+}
+
+// Same entry point as the other gtest binaries here (the conda cudf ships no gtest_main).
+int main(int argc, char** argv) {
+  ::testing::InitGoogleTest(&argc, argv);
+  return RUN_ALL_TESTS();
+}

@@ -180,15 +180,42 @@ fi
 
 CPP_INSTALL_DIR="${REPO_DIR}/cpp/install"
 
-BINARIES=(
-  peacock_plan_tests
-  peacock_gpu_tests
-  peacock_cpu_tests
-)
-
+# The set of binaries to patch is DERIVED from what is actually shipped, not hardcoded.
+# It used to be a fixed list, and a new test binary (peacock_tpch_tests) was silently
+# missed: it shipped with the stock ELF interpreter and died with an instant SIGSEGV and
+# no output — a symptom that looks nothing like a packaging fault and costs an hour to
+# diagnose. Anything ELF+executable in the install bin dir (or matching peacock_* in a
+# build dir) gets patched, so a new target cannot be forgotten. verify_patched() below
+# then fails the script if any shipped executable slipped through anyway.
 LIBS=(
   libpeacock_gpu.so
 )
+
+# Which shipped executables actually need the newer glibc: the ones that link OUR stack
+# (libcudf / libpeacock_gpu / libarrow). Deriving the list from the directory alone is too
+# broad — cpp/install/bin also holds vendored HOST tools (flatc), and repointing those at
+# glibc-2.35 breaks them outright: flatc came back
+#   "error while loading shared libraries: libstdc++.so.6: cannot open shared object file"
+# because the new loader no longer finds the system C++ runtime. So the rule is
+# capability-based, not name-based: patch what links our libraries, leave everything else
+# on the system loader. A future test binary is covered whatever it is called.
+#
+# ABOUT flatc SPECIFICALLY, so nobody "fixes" the exclusion: the shipped flatc is
+# INDEPENDENTLY BROKEN on the GPU host and always has been. Built on the build host
+# against a newer toolchain, it needs GLIBC_2.33/2.34 and GLIBCXX_3.4.29; that host is
+# Ubuntu GLIBC 2.31. Patching it to our glibc-2.35 loader does not rescue it either (it
+# then fails to find libstdc++) — it only changes which error prints. This is latent, not
+# a live failure: codegen runs on the build host and nothing on the GPU host invokes
+# flatc. Excluding it here is correct; making it run would mean shipping a matching
+# libstdc++, which is a separate decision, not a patcher bug.
+needs_patch() {
+  local needed
+  needed="$(patchelf --print-needed "$1" 2>/dev/null || true)"
+  echo "$needed" | grep -qE '^(libcudf|libpeacock_gpu|libarrow)' && return 0
+  # rust test binaries link libpeacock_gpu at runtime via rpath, not always DT_NEEDED
+  case "$(basename "$1")" in peacock_*) return 0 ;; esac
+  return 1
+}
 
 patch_rpath() {
   local target="$1"
@@ -228,17 +255,18 @@ patch_dir() {
 
   echo "==> Patching binaries in ${dir} (${label})"
 
-  for bin in "${BINARIES[@]}"; do
-    target="${dir}/${bin}"
-    [ -d "${dir}/bin" ] && target="${dir}/bin/${bin}"
-    if [ -f "$target" ]; then
-      echo "--- Patching ${bin}"
-      patchelf --set-interpreter "$INTERP" "$target"
-      patch_rpath "$target"
-    else
-      echo "--- Skipping ${bin} (not found)"
-    fi
+  local target found=0
+  for target in "${dir}"/bin/* "${dir}"/peacock_*; do
+    [ -f "$target" ] && [ -x "$target" ] || continue
+    # ELF check: patchelf refuses non-ELF, so this doubles as the filter
+    patchelf --print-interpreter "$target" >/dev/null 2>&1 || continue
+    needs_patch "$target" || { echo "--- Leaving $(basename "$target") on the system loader (does not link our stack)"; continue; }
+    echo "--- Patching $(basename "$target")"
+    patchelf --set-interpreter "$INTERP" "$target"
+    patch_rpath "$target"
+    found=$((found + 1))
   done
+  [ "$found" -gt 0 ] || echo "--- No ELF executables found in ${dir}"
 
   for lib in "${LIBS[@]}"; do
     target="${dir}/${lib}"
@@ -298,10 +326,41 @@ patch_rust_dir() {
   done
 }
 
+# Belt and braces: patching is derived from the filesystem now, but an unpatched binary
+# fails at RUNTIME with a bare SIGSEGV that reads like a code bug, so prove the outcome
+# instead of trusting the loop. Every shipped executable must carry the patched
+# interpreter; name the ones that don't and fail here, where the cause is obvious.
+verify_patched() {
+  local unpatched=() f interp
+  for f in "${CPP_INSTALL_DIR}"/bin/* "${CPP_INSTALL_DIR}"/rust-tests/*; do
+    [ -f "$f" ] && [ -x "$f" ] || continue
+    interp="$(patchelf --print-interpreter "$f" 2>/dev/null || true)"
+    [ -n "$interp" ] || continue          # not an ELF executable
+    # Same predicate as patch_dir: a vendored host tool left on the system loader is
+    # correct, not a miss. Only binaries linking our stack must be patched.
+    needs_patch "$f" || continue
+    [ "$interp" = "$INTERP" ] || unpatched+=("$f (interp: $interp)")
+  done
+  if [ ${#unpatched[@]} -gt 0 ]; then
+    echo ""
+    echo "ERROR: shipped executables are NOT patched for glibc ${GLIBC_VERSION:-2.35}:" >&2
+    printf '  %s\n' "${unpatched[@]}" >&2
+    echo "They would die at startup with a bare SIGSEGV and no output." >&2
+    return 1
+  fi
+  echo "==> Verified: every shipped executable uses ${INTERP}"
+}
+
 patch_dir "$CPP_BUILD_DIR" "build"
 patch_dir "$CPP_INSTALL_DIR" "install"
 patch_rust_dir "${CPP_INSTALL_DIR}/rust-tests"
+verify_patched
 
 echo ""
 echo "==> Done. Run tests with:"
 echo "    LD_LIBRARY_PATH=${PREFIX}/lib:\$LD_LIBRARY_PATH ${CPP_BUILD_DIR}/peacock_plan_tests"
+echo ""
+echo "    TRAP: apply that LD_LIBRARY_PATH PER-COMMAND (env LD_LIBRARY_PATH=... ./binary)."
+echo "    EXPORTING it into your shell makes the HOST's own coreutils load the patched"
+echo "    glibc and segfault — readelf/mkdir/grep/tail all die with the SAME signature as"
+echo "    an unpatched test binary, which sends you diagnosing the wrong thing entirely."

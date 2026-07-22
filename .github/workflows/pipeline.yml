@@ -302,6 +302,41 @@ jobs:
             echo "==> peacock_plan_tests (C++)"
             $REMOTE_DIR/cpp/install/bin/peacock_plan_tests || rc=1
 
+            # Bare-cudf TPC-H queries vs committed DuckDB goldens, over the LARGE sf40
+            # dataset. That dataset lives at /home/info/peacock-datasets — deliberately
+            # OUTSIDE \$REMOTE_DIR, which the cleanup step rm -rf's. It is read in place:
+            # this step never writes to, regenerates, or deletes it.
+            # Goldens ride along in the testdata/goldens rsync above.
+            #
+            # SKIP SEMANTICS ARE SPLIT ON PURPOSE. The binary skips (exit 0) when the
+            # dataset is absent — right for a dev box that legitimately has no sf40. In
+            # CI it is NOT right: on this host sf40 is a permanent precondition of the
+            # test existing at all, so its absence is a real failure, and a skip that
+            # exits 0 renders GREEN having verified nothing. So CI asserts the
+            # precondition itself, and separately fails if the binary ran 0 tests.
+            echo "==> peacock_tpch_tests (bare-cudf TPC-H vs DuckDB goldens, sf40)"
+            TPCH_SF40=/home/info/peacock-datasets/testdata/tpch.sf40
+            if [ ! -f "\$TPCH_SF40/lineitem.parquet" ]; then
+              echo "::error::tpch.sf40 missing on the GPU host (\$TPCH_SF40/lineitem.parquet)."
+              echo "         It is a permanent precondition of peacock_tpch_tests, not a transient skip."
+              rc=1
+            else
+              tpch_log=\$(mktemp)
+              PEACOCK_TPCH_SF40_DIR=\$TPCH_SF40 \
+              PEACOCK_TPCH_GOLDEN_DIR=$REMOTE_DIR/testdata/goldens/tpch.sf40 \
+                $REMOTE_DIR/cpp/install/bin/peacock_tpch_tests 2>&1 | tee "\$tpch_log"
+              # PIPESTATUS, not \$? — the pipe through tee would otherwise report tee's
+              # exit status and a failing test would look green.
+              [ "\${PIPESTATUS[0]}" -eq 0 ] || rc=1
+              # A run that executed NOTHING must not pass. gtest prints "[  PASSED  ] N
+              # tests"; N==0 means every test skipped, which exits 0 and would be green.
+              if grep -qE "\[  PASSED  \] 0 tests" "\$tpch_log"; then
+                echo "::error::peacock_tpch_tests ran 0 tests (all skipped) — nothing was verified"
+                rc=1
+              fi
+              rm -f "\$tpch_log"
+            fi
+
             echo "==> rust GPU integration tests"
             for t in $REMOTE_DIR/cpp/install/rust-tests/*; do
               [ -x "\$t" ] || continue
