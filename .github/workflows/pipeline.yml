@@ -538,6 +538,9 @@ jobs:
           # NEW DEPENDENCY: the check now reads parquet FOOTERS over ranged GETs to verify
           # schema/embedding-dims/row-counts, so it needs pyarrow (it previously needed only
           # aws + python3). Same import-or-pip self-heal as the Tier A step.
-          python3 -c "import pyarrow" 2>/dev/null || pip install --quiet pyarrow
+          # numpy is belt-and-braces: dataset_checks.py imports it lazily (inside the
+          # embedding-stats helpers only), so a footer-only run does NOT need it — but a
+          # future top-level numpy use here must not turn this job red again.
+          python3 -c "import pyarrow, numpy" 2>/dev/null || pip install --quiet pyarrow numpy
           python3 scripts/check_s3_datasets.py \
             --endpoint https://storage.eu-north1.nebius.cloud:443

@@ -8,8 +8,13 @@ Designed to be TRACTABLE AT ANY SCALE FACTOR (sf200 = lineitem 1.2B rows):
     (whole-column reads overflow pyarrow's int32 list offsets at ~32M*96 values).
 Every check records whether it was EXHAUSTIVE or SAMPLED so the output can't overstate.
 """
-import numpy as np
 import pyarrow.parquet as pq
+
+# NOTE: numpy is imported LAZILY, inside the two embedding-stats helpers that need it.
+# Metadata-only consumers (check_s3_datasets.py does pure parquet-footer work) must be
+# able to import this module with pyarrow alone — a top-level numpy import made the
+# Tier B CI job fail on a runner that installs only pyarrow. Keep it that way: do not
+# add a module-scope numpy/scipy/pandas import here.
 
 # =====================================================================
 # DATASET EXPECTATIONS — THE SINGLE SOURCE OF TRUTH.
@@ -261,6 +266,7 @@ def check_columns(parquet, expected_present, label, appended_last=None):
 def load_vecs_sampled(parquet, col, dim, k=12):
     """Concatenate a SAMPLE of row groups' vectors into an (m, dim) array — bounded even
     at sf200 (never the whole column)."""
+    import numpy as np
     pf = pq.ParquetFile(parquet)
     ng = pf.num_row_groups
     chunks = []
@@ -272,6 +278,7 @@ def load_vecs_sampled(parquet, col, dim, k=12):
 
 def stream_vector_stats(parquet, col, dim):
     """Streamed over ALL row groups: norm range, NaN/Inf, per-dim mean/variance. O(1) mem."""
+    import numpy as np
     pf = pq.ParquetFile(parquet)
     S = np.zeros(dim, dtype=np.float64)
     S2 = np.zeros(dim, dtype=np.float64)

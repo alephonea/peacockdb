@@ -32,19 +32,6 @@ TABLES = dc.TPCDS_TABLES
 FACTS = dc.TPCDS_FACT_SORT_KEYS
 
 
-# 7 fact tables: (lead date_sk, then item_sk, then transaction key) — must match the
-# ORDER BY in generate_testdata.sh.
-FACTS = {
-    "catalog_sales":   ["cs_sold_date_sk", "cs_item_sk", "cs_order_number"],
-    "catalog_returns": ["cr_returned_date_sk", "cr_item_sk", "cr_order_number"],
-    "store_sales":     ["ss_sold_date_sk", "ss_item_sk", "ss_ticket_number"],
-    "store_returns":   ["sr_returned_date_sk", "sr_item_sk", "sr_ticket_number"],
-    "web_sales":       ["ws_sold_date_sk", "ws_item_sk", "ws_order_number"],
-    "web_returns":     ["wr_returned_date_sk", "wr_item_sk", "wr_order_number"],
-    "inventory":       ["inv_date_sk", "inv_item_sk", "inv_warehouse_sk"],
-}
-
-
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--sf", type=int, default=1)
