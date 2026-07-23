@@ -84,8 +84,48 @@ over 32M×96. Do not read the 27 ms as pure norm-compute; amortized per-probe it
   vs 559–1631 ms DuckDB), because cuVS brute-force on the H200 parallelizes the
   distance computation that DuckDB does inline on CPU.
 
+## Multi-GPU scaling — 1× A100 vs 2× A100 (same hardware, same pooled code)
+
+A **same-hardware, same-code** comparison: the identical q6/q1 multi-GPU plan run over
+one A100 (G=1: one row-group partition, one worker) vs two A100s (G=2), on verda (2×
+A100-SXM4-80GB, NVLink, libcudf 26.02). Both legs use the SAME per-device RMM **pool**
+allocator, so the G=1-vs-G=2 ratio isolates *parallelism* from allocator choice. Both
+verified against the same committed DuckDB goldens; execute-only, all-device-synced,
+2nd-min of 6. (The H200 column above is a **different GPU** and is not a speedup
+baseline.)
+
+| Query | 1× A100 execute (ms) | 2× A100 execute (ms) | speedup |
+|---|--:|--:|--:|
+| q6 — filter → reduce | 37.4 | 20.0 | **1.87×** |
+| q1 — group-by + 8 aggregates | 627.6 | 295.9 | **2.12×** |
+
+Merge plans are matched to the partial's shape: **q1** gathers real partial *tables*
+across the link (`pack → peer-copy → unpack → concat → merge-groupby`); **q6**'s
+partial is a single decimal per GPU, so it is summed on the **host** by exact
+`__int128` addition (all partials share scale −4 → bit-identical to the golden).
+
+**The RMM pool is what makes this scale — and it changed the story.** Without it, every
+transient column went through the default resource's synchronous, driver-serialized
+`cudaMalloc`/`cudaFree`, which the two workers could not overlap. That fixed per-op cost
+dominated the cheap query (q6 was **0.70×** — *slower* on 2 GPUs) and inflated the
+single-GPU baseline of the expensive one (q1 measured a misleading **5.09×**, an
+artifact of an allocation-bound G=1, not real parallelism). Installing a per-device
+pool (reserved once off free VRAM; allocations become pointer bumps, no per-op
+`cudaMalloc`) collapses that overhead on *both* legs: q6's G=1 dropped 66→37 ms and
+q1's 2280→628 ms. With the allocator no longer the bottleneck, the honest picture
+emerges — **q6 1.87× and q1 2.12×**, both near the ~2× ceiling for 2 GPUs, q1 slightly
+above because its heavier per-partition compute hides the residual merge + dispatch +
+boundary-sync cost that q6 (only ~20 ms) still partly shows. Those fixed costs are
+constant in G, so the ratio keeps improving toward 4/8/16 GPUs.
+
 ## Reproduce
 
 - DuckDB: `benchmarks/duckdb_minimal.sh --s3-direct --dir <path> --duckdb /usr/local/bin/duckdb`
   (imports sf40 from S3 into native storage, warms, verifies against goldens, times 2nd-min of 6).
-- cuDF: build the GPU test binaries and run with `PEACOCK_BENCHMARK=1` on a host with the sf40 dataset present.
+- cuDF (H200, single-GPU): build the GPU test binaries and run with `PEACOCK_BENCHMARK=1` on a host with the sf40 dataset present.
+- cuDF multi-GPU (both legs are the SAME binary, `peacock_multi_gpu_tpch_tests`, with
+  `PEACOCK_BENCHMARK=1` — the fair same-code/same-pooled-allocator comparison):
+  the 2× A100 number is a plain run on a 2-GPU host; the 1× A100 (G=1) number is that
+  same binary under `CUDA_VISIBLE_DEVICES=0` (one row-group partition, one worker).
+  Benchmark ONE query per process (e.g. `--gtest_filter='*Q6*'`) — see the note in
+  test_multi_gpu_tpch.cpp on why multiple query benchmarks in one process are flaky today.

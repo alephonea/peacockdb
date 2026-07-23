@@ -79,102 +79,24 @@
 #include <rmm/cuda_stream.hpp>
 #include <rmm/device_uvector.hpp>
 
+#include "multi_gpu.hpp"  // GpuWorker + MG_CUDA_TRY, shared by all multi-GPU test files
+
 #include <cuda_runtime.h>
 #include <gtest/gtest.h>
 
 #include <algorithm>
-#include <condition_variable>
 #include <cstdint>
-#include <functional>
-#include <future>
 #include <memory>
-#include <mutex>
-#include <queue>
 #include <random>
 #include <stdexcept>
 #include <string>
-#include <thread>
 #include <vector>
 
 namespace {
 
-// A CUDA check usable INSIDE worker tasks: it THROWS rather than using gtest's ASSERT_ (whose
-// `return;` cannot leave a value-returning lambda, and whose fatal-failure semantics do not
-// propagate cleanly off the main thread). The packaged_task captures the exception; the main
-// thread rethrows it at future.get() and gtest reports it as a normal test failure.
-#define CUDA_CHECK(call)                                                                 \
-  do {                                                                                   \
-    cudaError_t _s = (call);                                                             \
-    if (_s != cudaSuccess)                                                               \
-      throw std::runtime_error(std::string("CUDA error at " __FILE__ ":") +             \
-                               std::to_string(__LINE__) + " -> " #call " -> " +          \
-                               cudaGetErrorString(_s));                                  \
-  } while (0)
-
-// ---------------------------------------------------------------------------
-// GpuWorker — one persistent thread pinned to a GPU. It sets its device ONCE and then owns
-// every allocation/compute/free submitted to it, so a device object's whole lifetime stays on
-// the device that was current when it was created. submit() returns a std::future carrying the
-// task's result (or any exception it threw). Members are declared so the thread starts LAST,
-// after the queue/mutex/cv it touches are constructed.
-// ---------------------------------------------------------------------------
-class GpuWorker {
- public:
-  explicit GpuWorker(int device) : device_(device), worker_([this] { run(); }) {}
-
-  ~GpuWorker() {
-    {
-      std::lock_guard<std::mutex> lk(mu_);
-      stop_ = true;
-    }
-    cv_.notify_all();
-    worker_.join();
-  }
-
-  GpuWorker(const GpuWorker&)            = delete;
-  GpuWorker& operator=(const GpuWorker&) = delete;
-
-  // Submit f() to this GPU's thread; get a future for its result. Any exception f throws is
-  // delivered through the future.
-  template <typename F>
-  auto submit(F f) -> std::future<decltype(f())> {
-    using R  = decltype(f());
-    auto job = std::make_shared<std::packaged_task<R()>>(std::move(f));
-    auto fut = job->get_future();
-    {
-      std::lock_guard<std::mutex> lk(mu_);
-      queue_.emplace([job] { (*job)(); });
-    }
-    cv_.notify_one();
-    return fut;
-  }
-
-  int device() const { return device_; }
-
- private:
-  void run() {
-    // Bind this thread to its GPU for the entire run — the whole point of the class.
-    if (cudaSetDevice(device_) != cudaSuccess) cudaGetLastError();
-    for (;;) {
-      std::function<void()> job;
-      {
-        std::unique_lock<std::mutex> lk(mu_);
-        cv_.wait(lk, [this] { return stop_ || !queue_.empty(); });
-        if (stop_ && queue_.empty()) return;
-        job = std::move(queue_.front());
-        queue_.pop();
-      }
-      job();  // exceptions captured by the packaged_task, surfaced at future.get()
-    }
-  }
-
-  int                                device_;
-  std::mutex                         mu_;
-  std::condition_variable            cv_;
-  std::queue<std::function<void()>>  queue_;
-  bool                               stop_ = false;
-  std::thread                        worker_;  // MUST be last (starts after the rest exist)
-};
+// GpuWorker and the throwing CUDA check now come from the shared test library (multi_gpu.hpp),
+// so this synthetic PoC no longer carries its own copy. MG_CUDA_TRY is that library's macro.
+using peacock_mgpu::GpuWorker;
 
 constexpr int   kHalf   = 2500;   // points per partition (before filtering) -> 5000 total
 constexpr int   kDim    = 16;     // dimensionality of each point
@@ -215,9 +137,9 @@ KnnCheck self_knn_identity(const float* data, int64_t rows, int dim) {
 
   std::vector<int64_t> nn(rows);
   std::vector<float>   dist(rows);
-  CUDA_CHECK(cudaMemcpy(nn.data(), neighbors.data_handle(), rows * sizeof(int64_t),
+  MG_CUDA_TRY(cudaMemcpy(nn.data(), neighbors.data_handle(), rows * sizeof(int64_t),
                         cudaMemcpyDeviceToHost));
-  CUDA_CHECK(cudaMemcpy(dist.data(), distances.data_handle(), rows * sizeof(float),
+  MG_CUDA_TRY(cudaMemcpy(dist.data(), distances.data_handle(), rows * sizeof(float),
                         cudaMemcpyDeviceToHost));
 
   KnnCheck out{0, 0.0f};
@@ -238,7 +160,7 @@ cudf::table make_points_table(std::vector<std::vector<float>> const& host_cols,
     auto c = cudf::make_numeric_column(cudf::data_type{cudf::type_id::FLOAT32},
                                        static_cast<cudf::size_type>(hc.size()),
                                        cudf::mask_state::UNALLOCATED, stream);
-    CUDA_CHECK(cudaMemcpyAsync(c->mutable_view().data<float>(), hc.data(),
+    MG_CUDA_TRY(cudaMemcpyAsync(c->mutable_view().data<float>(), hc.data(),
                                hc.size() * sizeof(float), cudaMemcpyHostToDevice,
                                stream.value()));
     cols.push_back(std::move(c));
@@ -290,9 +212,9 @@ Full exchange_and_combine(cudf::column_view const& local, int this_dev, Local co
   rmm::device_uvector<float> remote(rcount, stream.view());
   // Explicit src/dst device ids: this worker (this_dev current) reads the peer's device memory
   // by pointer. Rides P2P when peer access is enabled, host-stages otherwise.
-  CUDA_CHECK(cudaMemcpyPeerAsync(remote.data(), this_dev, peer.ptr, peer_dev,
+  MG_CUDA_TRY(cudaMemcpyPeerAsync(remote.data(), this_dev, peer.ptr, peer_dev,
                                  rcount * sizeof(float), stream.value()));
-  CUDA_CHECK(cudaStreamSynchronize(stream.value()));  // this worker's copy done before concat
+  MG_CUDA_TRY(cudaStreamSynchronize(stream.value()));  // this worker's copy done before concat
 
   cudf::column_view remote_view(cudf::data_type{cudf::type_id::FLOAT32},
                                 static_cast<cudf::size_type>(rcount), remote.data(), nullptr, 0);

@@ -194,18 +194,36 @@ set_target_properties(peacock_tpchv_tests PROPERTIES CXX_STANDARD 20 CXX_STANDAR
 add_test(NAME peacock_tpchv_tests COMMAND peacock_tpchv_tests)
 set_tests_properties(peacock_tpchv_tests PROPERTIES LABELS "gpu")
 
+# ---------------------------------------------------------------------------
+# Multi-GPU test scaffolding + tests. ALL of this is TEST-ONLY and DELIBERATELY NOT hooked into
+# CI: no add_test(), and nothing here is added to install(TARGETS ...), so neither ctest nor the
+# "run every shipped binary" CI glob (which enumerates install/bin) picks any of it up. The
+# binaries are built for compile coverage and run by hand on a >=2-GPU host; each GTEST_SKIPs
+# itself when fewer than two GPUs are visible. Multi-GPU CI runner support is a later task.
+# ---------------------------------------------------------------------------
+
+# Shared scaffolding as a TEST-ONLY static library: the worker-per-GPU pool, the row-group
+# partitioner, and the cross-GPU peer/gather helpers. Linked into every multi-GPU test binary
+# so there is exactly one copy. Not installed, not in CI.
+add_library(multi_gpu_testlib STATIC tests/gpu/multi_gpu.cpp)
+target_include_directories(multi_gpu_testlib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tests/gpu)
+target_link_libraries(multi_gpu_testlib PUBLIC cudf::cudf)
+set_target_properties(multi_gpu_testlib PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON
+                                                   POSITION_INDEPENDENT_CODE ON)
+
 # Basic two-GPU PoC — cuDF + cuVS on BOTH devices, with a bidirectional cudaMemcpyPeer exchange
 # in the middle (see the header of test_basic_multi_gpu.cpp). Needs two visible GPUs to run.
-#
-# DELIBERATELY NOT hooked into CI: no add_test() and NOT added to install(TARGETS ...), so
-# neither ctest nor the "run every shipped binary" CI glob (which enumerates install/bin) picks
-# it up. It is still built here for compile coverage; run it by hand on a >=2-GPU host. Multi-GPU
-# CI runner support is a separate, later task. (As a backstop it also GTEST_SKIPs itself when
-# fewer than two devices are visible.)
 add_executable(peacock_multi_gpu_tests tests/gpu/test_basic_multi_gpu.cpp)
 target_include_directories(peacock_multi_gpu_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(peacock_multi_gpu_tests PRIVATE cudf::cudf cuvs::cuvs GTest::gtest)
+target_link_libraries(peacock_multi_gpu_tests PRIVATE multi_gpu_testlib cudf::cudf cuvs::cuvs GTest::gtest)
 set_target_properties(peacock_multi_gpu_tests PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+
+# Multi-GPU TPC-H query plans (M1: q6 + q1). SAME queries as test_tpch.cpp, checked against the
+# SAME committed DuckDB goldens via the shared helper in tpch_golden.hpp. No cuVS needed.
+add_executable(peacock_multi_gpu_tpch_tests tests/gpu/test_multi_gpu_tpch.cpp)
+target_include_directories(peacock_multi_gpu_tpch_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(peacock_multi_gpu_tpch_tests PRIVATE multi_gpu_testlib cudf::cudf GTest::gtest)
+set_target_properties(peacock_multi_gpu_tpch_tests PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 
 # ---------------------------------------------------------------------------
 # Install
