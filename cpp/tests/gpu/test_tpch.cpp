@@ -125,52 +125,60 @@ TEST_F(TpchSf40, Q6ExactDecimal) {
 
   // widen to DECIMAL128 (same scale => exact, value-preserving) for accumulation headroom
   const auto dec128_s2 = cudf::data_type{cudf::type_id::DECIMAL128, -2};
-  auto quantity = cudf::cast(quantity_raw, dec128_s2);
-  auto extprice = cudf::cast(extprice_raw, dec128_s2);
-  auto discount = cudf::cast(discount_raw, dec128_s2);
 
   // ---------------- PHASE 2: EXECUTE ----------------
-  // filter: three predicates, AND-ed
-  auto lo_date = cudf::timestamp_scalar<cudf::timestamp_D>(
-      cudf::timestamp_D{cudf::duration_D{days_since_epoch(1994, 1, 1)}}, true);
-  auto hi_date = cudf::timestamp_scalar<cudf::timestamp_D>(
-      cudf::timestamp_D{cudf::duration_D{days_since_epoch(1995, 1, 1)}}, true);
-  // decimal scalars at scale -2: 0.05 -> 5, 0.07 -> 7, 24 -> 2400. Exact boundaries.
-  auto disc_lo = cudf::fixed_point_scalar<numeric::decimal128>(5, numeric::scale_type{-2});
-  auto disc_hi = cudf::fixed_point_scalar<numeric::decimal128>(7, numeric::scale_type{-2});
-  auto qty_hi = cudf::fixed_point_scalar<numeric::decimal128>(2400, numeric::scale_type{-2});
+  // Every operator from the resident input columns to the final reduction scalar, wrapped in
+  // a closure so the test verifies it ONCE and the execute-time benchmark (benchmark_execute
+  // in tpch_golden.hpp) times the SAME code. The widening casts are operators too and live
+  // inside the closure, so the timed region covers them.
+  auto execute = [&]() -> std::unique_ptr<cudf::scalar> {
+    auto quantity = cudf::cast(quantity_raw, dec128_s2);
+    auto extprice = cudf::cast(extprice_raw, dec128_s2);
+    auto discount = cudf::cast(discount_raw, dec128_s2);
 
-  const auto boolean = cudf::data_type{cudf::type_id::BOOL8};
-  auto m1 = cudf::binary_operation(shipdate, lo_date, cudf::binary_operator::GREATER_EQUAL, boolean);
-  auto m2 = cudf::binary_operation(shipdate, hi_date, cudf::binary_operator::LESS, boolean);
-  auto m3 = cudf::binary_operation(discount->view(), disc_lo, cudf::binary_operator::GREATER_EQUAL, boolean);
-  auto m4 = cudf::binary_operation(discount->view(), disc_hi, cudf::binary_operator::LESS_EQUAL, boolean);
-  auto m5 = cudf::binary_operation(quantity->view(), qty_hi, cudf::binary_operator::LESS, boolean);
+    // filter: three predicates, AND-ed
+    auto lo_date = cudf::timestamp_scalar<cudf::timestamp_D>(
+        cudf::timestamp_D{cudf::duration_D{days_since_epoch(1994, 1, 1)}}, true);
+    auto hi_date = cudf::timestamp_scalar<cudf::timestamp_D>(
+        cudf::timestamp_D{cudf::duration_D{days_since_epoch(1995, 1, 1)}}, true);
+    // decimal scalars at scale -2: 0.05 -> 5, 0.07 -> 7, 24 -> 2400. Exact boundaries.
+    auto disc_lo = cudf::fixed_point_scalar<numeric::decimal128>(5, numeric::scale_type{-2});
+    auto disc_hi = cudf::fixed_point_scalar<numeric::decimal128>(7, numeric::scale_type{-2});
+    auto qty_hi = cudf::fixed_point_scalar<numeric::decimal128>(2400, numeric::scale_type{-2});
 
-  auto mask = cudf::binary_operation(m1->view(), m2->view(), cudf::binary_operator::LOGICAL_AND, boolean);
-  mask = cudf::binary_operation(mask->view(), m3->view(), cudf::binary_operator::LOGICAL_AND, boolean);
-  mask = cudf::binary_operation(mask->view(), m4->view(), cudf::binary_operator::LOGICAL_AND, boolean);
-  mask = cudf::binary_operation(mask->view(), m5->view(), cudf::binary_operator::LOGICAL_AND, boolean);
+    const auto boolean = cudf::data_type{cudf::type_id::BOOL8};
+    auto m1 = cudf::binary_operation(shipdate, lo_date, cudf::binary_operator::GREATER_EQUAL, boolean);
+    auto m2 = cudf::binary_operation(shipdate, hi_date, cudf::binary_operator::LESS, boolean);
+    auto m3 = cudf::binary_operation(discount->view(), disc_lo, cudf::binary_operator::GREATER_EQUAL, boolean);
+    auto m4 = cudf::binary_operation(discount->view(), disc_hi, cudf::binary_operator::LESS_EQUAL, boolean);
+    auto m5 = cudf::binary_operation(quantity->view(), qty_hi, cudf::binary_operator::LESS, boolean);
+
+    auto mask = cudf::binary_operation(m1->view(), m2->view(), cudf::binary_operator::LOGICAL_AND, boolean);
+    mask = cudf::binary_operation(mask->view(), m3->view(), cudf::binary_operator::LOGICAL_AND, boolean);
+    mask = cudf::binary_operation(mask->view(), m4->view(), cudf::binary_operator::LOGICAL_AND, boolean);
+    mask = cudf::binary_operation(mask->view(), m5->view(), cudf::binary_operator::LOGICAL_AND, boolean);
+
+    note_peak();
+    auto kept = cudf::apply_boolean_mask(
+        cudf::table_view{{extprice->view(), discount->view()}}, mask->view());
+    EXPECT_GT(kept->num_rows(), 0) << "filter kept no rows — the predicates or the data are wrong";
+    note_peak();
+
+    // project: extendedprice * discount  (scale -2 * scale -2 -> scale -4)
+    auto revenue_col = cudf::binary_operation(kept->get_column(0).view(),
+                                              kept->get_column(1).view(),
+                                              cudf::binary_operator::MUL,
+                                              cudf::data_type{cudf::type_id::DECIMAL128, -4});
+    note_peak();
+    // reduce: exact fixed-point sum
+    auto sum_agg = cudf::make_sum_aggregation<cudf::reduce_aggregation>();
+    return cudf::reduce(revenue_col->view(), *sum_agg,
+                        cudf::data_type{cudf::type_id::DECIMAL128, -4});
+  };
+
+  // verify ONCE against the golden (this call is also the benchmark's implicit warm-up)
+  auto result = execute();
   note_peak();
-
-  auto kept = cudf::apply_boolean_mask(
-      cudf::table_view{{extprice->view(), discount->view()}}, mask->view());
-  std::fprintf(stderr, "[q6] rows surviving filter: %ld\n",
-               static_cast<long>(kept->num_rows()));
-  ASSERT_GT(kept->num_rows(), 0) << "filter kept no rows — the predicates or the data are wrong";
-  note_peak();
-
-  // project: extendedprice * discount  (scale -2 * scale -2 -> scale -4)
-  auto revenue_col = cudf::binary_operation(kept->get_column(0).view(),
-                                            kept->get_column(1).view(),
-                                            cudf::binary_operator::MUL,
-                                            cudf::data_type{cudf::type_id::DECIMAL128, -4});
-  note_peak();
-
-  // reduce: exact fixed-point sum
-  auto sum_agg = cudf::make_sum_aggregation<cudf::reduce_aggregation>();
-  auto result = cudf::reduce(revenue_col->view(), *sum_agg,
-                             cudf::data_type{cudf::type_id::DECIMAL128, -4});
   auto* fp = dynamic_cast<cudf::fixed_point_scalar<numeric::decimal128>*>(result.get());
   ASSERT_NE(fp, nullptr) << "sum did not come back as a decimal128 scalar";
   ASSERT_TRUE(fp->is_valid());
@@ -200,6 +208,11 @@ TEST_F(TpchSf40, Q6ExactDecimal) {
   };
   std::fprintf(stderr, "[q6] load %ld ms, execute %ld ms, total %ld ms\n",
                ms(t0, t_loaded), ms(t_loaded, t_done), ms(t0, t_done));
+
+  // EXECUTE-TIME BENCHMARK (no-op unless PEACOCK_BENCHMARK is set): times the SAME execute()
+  // closure the assertions above just verified. Load is excluded — it already happened once.
+  benchmark_execute("q6", execute,
+                    std::chrono::duration<double, std::milli>(t_loaded - t0).count());
 }
 
 // ===========================================================================
@@ -258,91 +271,95 @@ TEST_F(TpchSf40, Q1GroupByAggregates) {
   const auto dec128_s2 = cudf::data_type{cudf::type_id::DECIMAL128, -2};
   auto returnflag = tbl.column(0);
   auto linestatus = tbl.column(1);
-  auto quantity = cudf::cast(tbl.column(2), dec128_s2);
-  auto extprice = cudf::cast(tbl.column(3), dec128_s2);
-  auto discount = cudf::cast(tbl.column(4), dec128_s2);
-  auto tax = cudf::cast(tbl.column(5), dec128_s2);
   auto shipdate = tbl.column(6);
 
   // ---------------- PHASE 2: EXECUTE ----------------
-  // filter: l_shipdate <= 1998-09-02
-  auto cutoff = cudf::timestamp_scalar<cudf::timestamp_D>(
-      cudf::timestamp_D{cudf::duration_D{days_since_epoch(1998, 9, 2)}}, true);
-  const auto boolean = cudf::data_type{cudf::type_id::BOOL8};
-  auto mask = cudf::binary_operation(shipdate, cutoff, cudf::binary_operator::LESS_EQUAL, boolean);
-  auto kept = cudf::apply_boolean_mask(
-      cudf::table_view{{returnflag, linestatus, quantity->view(), extprice->view(),
-                        discount->view(), tax->view()}},
-      mask->view());
-  note_peak();
-  std::fprintf(stderr, "[q1] rows surviving filter: %ld\n",
-               static_cast<long>(kept->num_rows()));
-  ASSERT_GT(kept->num_rows(), 0);
+  // Wrapped in a closure so the test verifies it once and the execute-time benchmark times
+  // the SAME code (benchmark_execute in tpch_golden.hpp). The money-column casts are
+  // operators and live inside, so the timed region covers them.
+  auto execute = [&]() -> std::unique_ptr<cudf::table> {
+    auto quantity = cudf::cast(tbl.column(2), dec128_s2);
+    auto extprice = cudf::cast(tbl.column(3), dec128_s2);
+    auto discount = cudf::cast(tbl.column(4), dec128_s2);
+    auto tax = cudf::cast(tbl.column(5), dec128_s2);
 
-  auto k_flag = kept->get_column(0).view();
-  auto k_status = kept->get_column(1).view();
-  auto k_qty = kept->get_column(2).view();
-  auto k_price = kept->get_column(3).view();
-  auto k_disc = kept->get_column(4).view();
-  auto k_tax = kept->get_column(5).view();
+    // filter: l_shipdate <= 1998-09-02
+    auto cutoff = cudf::timestamp_scalar<cudf::timestamp_D>(
+        cudf::timestamp_D{cudf::duration_D{days_since_epoch(1998, 9, 2)}}, true);
+    const auto boolean = cudf::data_type{cudf::type_id::BOOL8};
+    auto mask = cudf::binary_operation(shipdate, cutoff, cudf::binary_operator::LESS_EQUAL, boolean);
+    auto kept = cudf::apply_boolean_mask(
+        cudf::table_view{{returnflag, linestatus, quantity->view(), extprice->view(),
+                          discount->view(), tax->view()}},
+        mask->view());
+    EXPECT_GT(kept->num_rows(), 0);
+    note_peak();
 
-  // project: disc_price = extendedprice * (1 - discount)          scale -4
-  //          charge     = disc_price     * (1 + tax)              scale -6
-  // The literals 1 are DECIMAL scalars at scale -2 (value 100), so these stay exact.
-  auto one_s2 = cudf::fixed_point_scalar<numeric::decimal128>(100, numeric::scale_type{-2});
-  auto one_minus_disc = cudf::binary_operation(one_s2, k_disc, cudf::binary_operator::SUB, dec128_s2);
-  auto one_plus_tax = cudf::binary_operation(one_s2, k_tax, cudf::binary_operator::ADD, dec128_s2);
-  auto disc_price = cudf::binary_operation(k_price, one_minus_disc->view(),
-                                           cudf::binary_operator::MUL,
-                                           cudf::data_type{cudf::type_id::DECIMAL128, -4});
-  auto charge = cudf::binary_operation(disc_price->view(), one_plus_tax->view(),
-                                       cudf::binary_operator::MUL,
-                                       cudf::data_type{cudf::type_id::DECIMAL128, -6});
-  note_peak();
+    auto k_flag = kept->get_column(0).view();
+    auto k_status = kept->get_column(1).view();
+    auto k_qty = kept->get_column(2).view();
+    auto k_price = kept->get_column(3).view();
+    auto k_disc = kept->get_column(4).view();
+    auto k_tax = kept->get_column(5).view();
 
-  // AVG: DuckDB's AVG over DECIMAL returns DOUBLE, so the cudf side must also be double —
-  // this is the one place a floating representation is unavoidable, and the only place a
-  // tolerance is applied.
-  const auto f64 = cudf::data_type{cudf::type_id::FLOAT64};
-  auto qty_f = cudf::cast(k_qty, f64);
-  auto price_f = cudf::cast(k_price, f64);
-  auto disc_f = cudf::cast(k_disc, f64);
+    // project: disc_price = extendedprice * (1 - discount)          scale -4
+    //          charge     = disc_price     * (1 + tax)              scale -6
+    // The literals 1 are DECIMAL scalars at scale -2 (value 100), so these stay exact.
+    auto one_s2 = cudf::fixed_point_scalar<numeric::decimal128>(100, numeric::scale_type{-2});
+    auto one_minus_disc = cudf::binary_operation(one_s2, k_disc, cudf::binary_operator::SUB, dec128_s2);
+    auto one_plus_tax = cudf::binary_operation(one_s2, k_tax, cudf::binary_operator::ADD, dec128_s2);
+    auto disc_price = cudf::binary_operation(k_price, one_minus_disc->view(),
+                                             cudf::binary_operator::MUL,
+                                             cudf::data_type{cudf::type_id::DECIMAL128, -4});
+    auto charge = cudf::binary_operation(disc_price->view(), one_plus_tax->view(),
+                                         cudf::binary_operator::MUL,
+                                         cudf::data_type{cudf::type_id::DECIMAL128, -6});
 
-  // groupby (l_returnflag, l_linestatus) -> 8 aggregates
-  cudf::groupby::groupby gb(cudf::table_view{{k_flag, k_status}});
-  std::vector<cudf::groupby::aggregation_request> reqs;
-  auto add = [&](cudf::column_view v, std::unique_ptr<cudf::groupby_aggregation> a) {
-    cudf::groupby::aggregation_request r;
-    r.values = v;
-    r.aggregations.push_back(std::move(a));
-    reqs.push_back(std::move(r));
+    // AVG: DuckDB's AVG over DECIMAL returns DOUBLE, so the cudf side must also be double —
+    // this is the one place a floating representation is unavoidable, and the only place a
+    // tolerance is applied.
+    const auto f64 = cudf::data_type{cudf::type_id::FLOAT64};
+    auto qty_f = cudf::cast(k_qty, f64);
+    auto price_f = cudf::cast(k_price, f64);
+    auto disc_f = cudf::cast(k_disc, f64);
+
+    // groupby (l_returnflag, l_linestatus) -> 8 aggregates
+    cudf::groupby::groupby gb(cudf::table_view{{k_flag, k_status}});
+    std::vector<cudf::groupby::aggregation_request> reqs;
+    auto add = [&](cudf::column_view v, std::unique_ptr<cudf::groupby_aggregation> a) {
+      cudf::groupby::aggregation_request r;
+      r.values = v;
+      r.aggregations.push_back(std::move(a));
+      reqs.push_back(std::move(r));
+    };
+    add(k_qty, cudf::make_sum_aggregation<cudf::groupby_aggregation>());          // 0 sum_qty
+    add(k_price, cudf::make_sum_aggregation<cudf::groupby_aggregation>());        // 1 sum_base_price
+    add(disc_price->view(), cudf::make_sum_aggregation<cudf::groupby_aggregation>());  // 2
+    add(charge->view(), cudf::make_sum_aggregation<cudf::groupby_aggregation>());      // 3
+    add(qty_f->view(), cudf::make_mean_aggregation<cudf::groupby_aggregation>());      // 4 avg_qty
+    add(price_f->view(), cudf::make_mean_aggregation<cudf::groupby_aggregation>());    // 5 avg_price
+    add(disc_f->view(), cudf::make_mean_aggregation<cudf::groupby_aggregation>());     // 6 avg_disc
+    add(k_qty, cudf::make_count_aggregation<cudf::groupby_aggregation>());             // 7 count
+
+    auto [keys_tbl, agg_results] = gb.aggregate(reqs);
+    note_peak();
+
+    // sort by the two group keys — the same ORDER BY the golden uses. The keys are unique
+    // per group (4 groups), so the ordering is TOTAL: no tie-breaking, rows cannot shift.
+    auto keys_view = keys_tbl->view();
+    std::vector<std::unique_ptr<cudf::column>> agg_cols;
+    for (auto& r : agg_results) agg_cols.push_back(std::move(r.results[0]));
+    std::vector<cudf::column_view> all_views{keys_view.column(0), keys_view.column(1)};
+    for (auto& c : agg_cols) all_views.push_back(c->view());
+
+    auto order = cudf::sorted_order(cudf::table_view{{keys_view.column(0), keys_view.column(1)}},
+                                    {cudf::order::ASCENDING, cudf::order::ASCENDING},
+                                    {cudf::null_order::AFTER, cudf::null_order::AFTER});
+    return cudf::gather(cudf::table_view{all_views}, order->view());
   };
-  add(k_qty, cudf::make_sum_aggregation<cudf::groupby_aggregation>());          // 0 sum_qty
-  add(k_price, cudf::make_sum_aggregation<cudf::groupby_aggregation>());        // 1 sum_base_price
-  add(disc_price->view(), cudf::make_sum_aggregation<cudf::groupby_aggregation>());  // 2
-  add(charge->view(), cudf::make_sum_aggregation<cudf::groupby_aggregation>());      // 3
-  add(qty_f->view(), cudf::make_mean_aggregation<cudf::groupby_aggregation>());      // 4 avg_qty
-  add(price_f->view(), cudf::make_mean_aggregation<cudf::groupby_aggregation>());    // 5 avg_price
-  add(disc_f->view(), cudf::make_mean_aggregation<cudf::groupby_aggregation>());     // 6 avg_disc
-  add(k_qty, cudf::make_count_aggregation<cudf::groupby_aggregation>());             // 7 count
 
-  auto [keys_tbl, agg_results] = gb.aggregate(reqs);
+  auto sorted = execute();
   note_peak();
-
-  // sort: cudf's groupby does not promise a group order, so sort by the two group keys —
-  // the same ORDER BY the golden uses. The keys are unique per group (4 groups), so the
-  // ordering is TOTAL: no tie-breaking is involved and the rows cannot shift relative to
-  // the golden.
-  auto keys_view = keys_tbl->view();
-  std::vector<std::unique_ptr<cudf::column>> agg_cols;
-  for (auto& r : agg_results) agg_cols.push_back(std::move(r.results[0]));
-  std::vector<cudf::column_view> all_views{keys_view.column(0), keys_view.column(1)};
-  for (auto& c : agg_cols) all_views.push_back(c->view());
-
-  auto order = cudf::sorted_order(cudf::table_view{{keys_view.column(0), keys_view.column(1)}},
-                                  {cudf::order::ASCENDING, cudf::order::ASCENDING},
-                                  {cudf::null_order::AFTER, cudf::null_order::AFTER});
-  auto sorted = cudf::gather(cudf::table_view{all_views}, order->view());
   const auto t_done = std::chrono::steady_clock::now();
 
   // ---------------- COMPARE ----------------
@@ -372,6 +389,9 @@ TEST_F(TpchSf40, Q1GroupByAggregates) {
   };
   std::fprintf(stderr, "[q1] load %ld ms, execute %ld ms, total %ld ms\n",
                ms(t0, t_loaded), ms(t_loaded, t_done), ms(t0, t_done));
+
+  benchmark_execute("q1", execute,
+                    std::chrono::duration<double, std::milli>(t_loaded - t0).count());
 }
 
 // ===========================================================================
@@ -429,32 +449,6 @@ TEST_F(TpchSf40, Q3JoinsGroupByTopN) {
   const auto dec128_s2 = cudf::data_type{cudf::type_id::DECIMAL128, -2};
   const auto dec128_s4 = cudf::data_type{cudf::type_id::DECIMAL128, -4};
 
-  // filter customer: c_mktsegment = 'BUILDING'
-  auto seg = cudf::string_scalar(std::string("BUILDING"));
-  auto cust_mask = cudf::binary_operation(cust_in.tbl->view().column(1), seg,
-                                          cudf::binary_operator::EQUAL, boolean);
-  auto cust_f = cudf::apply_boolean_mask(
-      cudf::table_view{{cust_in.tbl->view().column(0)}}, cust_mask->view());
-
-  // filter orders: o_orderdate < 1995-03-15
-  auto d1995 = cudf::timestamp_scalar<cudf::timestamp_D>(
-      cudf::timestamp_D{cudf::duration_D{days_since_epoch(1995, 3, 15)}}, true);
-  auto ord_mask = cudf::binary_operation(ord_in.tbl->view().column(2), d1995,
-                                         cudf::binary_operator::LESS, boolean);
-  auto ord_f = cudf::apply_boolean_mask(ord_in.tbl->view(), ord_mask->view());
-
-  // filter lineitem: l_shipdate > 1995-03-15
-  auto line_mask = cudf::binary_operation(line_in.tbl->view().column(3), d1995,
-                                          cudf::binary_operator::GREATER, boolean);
-  auto line_f = cudf::apply_boolean_mask(line_in.tbl->view(), line_mask->view());
-  note_peak();
-  std::fprintf(stderr, "[q3] after filters: customer %ld, orders %ld, lineitem %ld\n",
-               static_cast<long>(cust_f->num_rows()), static_cast<long>(ord_f->num_rows()),
-               static_cast<long>(line_f->num_rows()));
-  ASSERT_GT(cust_f->num_rows(), 0);
-  ASSERT_GT(ord_f->num_rows(), 0);
-  ASSERT_GT(line_f->num_rows(), 0);
-
   // helper: build a column_view over a join gather map
   // cudf::inner_join returns a PAIR OF unique_ptr<device_uvector<size_type>> gather maps,
   // not tables: the join tells you which row indices pair up, and you gather the columns
@@ -464,67 +458,91 @@ TEST_F(TpchSf40, Q3JoinsGroupByTopN) {
                              static_cast<cudf::size_type>(m->size()), m->data(), nullptr, 0);
   };
 
-  // join 1: customer.c_custkey = orders.o_custkey
-  auto [c_map, o_map] = cudf::inner_join(cudf::table_view{{cust_f->get_column(0).view()}},
-                                         cudf::table_view{{ord_f->get_column(1).view()}});
-  // only orders columns are needed downstream (c_custkey is consumed by the join)
-  auto co = cudf::gather(cudf::table_view{{ord_f->get_column(0).view(),    // o_orderkey
-                                           ord_f->get_column(2).view(),    // o_orderdate
-                                           ord_f->get_column(3).view()}},  // o_shippriority
-                         map_view(o_map));
+  // Everything from the three resident input tables to the fully sorted result, wrapped in a
+  // closure so the test verifies it once and the benchmark times the SAME code. The LIMIT 10
+  // is a zero-copy cudf::slice with no kernel work, so it is applied outside the closure in
+  // the verify path — timing it would add nothing.
+  auto execute = [&]() -> std::unique_ptr<cudf::table> {
+    // filter customer: c_mktsegment = 'BUILDING'
+    auto seg = cudf::string_scalar(std::string("BUILDING"));
+    auto cust_mask = cudf::binary_operation(cust_in.tbl->view().column(1), seg,
+                                            cudf::binary_operator::EQUAL, boolean);
+    auto cust_f = cudf::apply_boolean_mask(
+        cudf::table_view{{cust_in.tbl->view().column(0)}}, cust_mask->view());
+
+    // filter orders: o_orderdate < 1995-03-15
+    auto d1995 = cudf::timestamp_scalar<cudf::timestamp_D>(
+        cudf::timestamp_D{cudf::duration_D{days_since_epoch(1995, 3, 15)}}, true);
+    auto ord_mask = cudf::binary_operation(ord_in.tbl->view().column(2), d1995,
+                                           cudf::binary_operator::LESS, boolean);
+    auto ord_f = cudf::apply_boolean_mask(ord_in.tbl->view(), ord_mask->view());
+
+    // filter lineitem: l_shipdate > 1995-03-15
+    auto line_mask = cudf::binary_operation(line_in.tbl->view().column(3), d1995,
+                                            cudf::binary_operator::GREATER, boolean);
+    auto line_f = cudf::apply_boolean_mask(line_in.tbl->view(), line_mask->view());
+    EXPECT_GT(cust_f->num_rows(), 0);
+    EXPECT_GT(ord_f->num_rows(), 0);
+    EXPECT_GT(line_f->num_rows(), 0);
+
+    // join 1: customer.c_custkey = orders.o_custkey
+    auto [c_map, o_map] = cudf::inner_join(cudf::table_view{{cust_f->get_column(0).view()}},
+                                           cudf::table_view{{ord_f->get_column(1).view()}});
+    // only orders columns are needed downstream (c_custkey is consumed by the join)
+    auto co = cudf::gather(cudf::table_view{{ord_f->get_column(0).view(),    // o_orderkey
+                                             ord_f->get_column(2).view(),    // o_orderdate
+                                             ord_f->get_column(3).view()}},  // o_shippriority
+                           map_view(o_map));
+
+    // join 2: (customer|X|orders).o_orderkey = lineitem.l_orderkey
+    auto [co_map, l_map] = cudf::inner_join(cudf::table_view{{co->get_column(0).view()}},
+                                            cudf::table_view{{line_f->get_column(0).view()}});
+    auto co_side = cudf::gather(cudf::table_view{{co->get_column(0).view(),    // o_orderkey
+                                                  co->get_column(1).view(),    // o_orderdate
+                                                  co->get_column(2).view()}},  // o_shippriority
+                                map_view(co_map));
+    auto l_side = cudf::gather(cudf::table_view{{line_f->get_column(1).view(),    // extendedprice
+                                                 line_f->get_column(2).view()}},  // discount
+                               map_view(l_map));
+    note_peak();
+    EXPECT_GT(co_side->num_rows(), 0) << "join produced no rows";
+
+    // project: revenue = l_extendedprice * (1 - l_discount), exact decimal
+    auto price = cudf::cast(l_side->get_column(0).view(), dec128_s2);
+    auto disc = cudf::cast(l_side->get_column(1).view(), dec128_s2);
+    auto one_s2 = cudf::fixed_point_scalar<numeric::decimal128>(100, numeric::scale_type{-2});
+    auto one_minus_disc = cudf::binary_operation(one_s2, disc->view(), cudf::binary_operator::SUB, dec128_s2);
+    auto revenue = cudf::binary_operation(price->view(), one_minus_disc->view(),
+                                          cudf::binary_operator::MUL, dec128_s4);
+
+    // groupby (l_orderkey, o_orderdate, o_shippriority) -> sum(revenue)
+    cudf::groupby::groupby gb(cudf::table_view{{co_side->get_column(0).view(),
+                                                co_side->get_column(1).view(),
+                                                co_side->get_column(2).view()}});
+    std::vector<cudf::groupby::aggregation_request> reqs;
+    {
+      cudf::groupby::aggregation_request r;
+      r.values = revenue->view();
+      r.aggregations.push_back(cudf::make_sum_aggregation<cudf::groupby_aggregation>());
+      reqs.push_back(std::move(r));
+    }
+    auto [gkeys, gaggs] = gb.aggregate(reqs);
+
+    // sort: revenue DESC, o_orderdate ASC, l_orderkey ASC (total order — see header)
+    auto gk = gkeys->view();
+    auto rev_col = std::move(gaggs[0].results[0]);
+    auto order = cudf::sorted_order(
+        cudf::table_view{{rev_col->view(), gk.column(1), gk.column(0)}},
+        {cudf::order::DESCENDING, cudf::order::ASCENDING, cudf::order::ASCENDING},
+        {cudf::null_order::AFTER, cudf::null_order::AFTER, cudf::null_order::AFTER});
+    return cudf::gather(
+        cudf::table_view{{gk.column(0), rev_col->view(), gk.column(1), gk.column(2)}},
+        order->view());
+  };
+
+  auto sorted = execute();
   note_peak();
-  std::fprintf(stderr, "[q3] customer|X|orders -> %ld rows\n", static_cast<long>(co->num_rows()));
-
-  // join 2: (customer|X|orders).o_orderkey = lineitem.l_orderkey
-  auto [co_map, l_map] = cudf::inner_join(cudf::table_view{{co->get_column(0).view()}},
-                                          cudf::table_view{{line_f->get_column(0).view()}});
-  auto co_side = cudf::gather(cudf::table_view{{co->get_column(0).view(),    // o_orderkey
-                                                co->get_column(1).view(),    // o_orderdate
-                                                co->get_column(2).view()}},  // o_shippriority
-                              map_view(co_map));
-  auto l_side = cudf::gather(cudf::table_view{{line_f->get_column(1).view(),    // extendedprice
-                                               line_f->get_column(2).view()}},  // discount
-                             map_view(l_map));
-  note_peak();
-  std::fprintf(stderr, "[q3] |X|lineitem -> %ld rows\n", static_cast<long>(co_side->num_rows()));
-  ASSERT_GT(co_side->num_rows(), 0) << "join produced no rows";
-
-  // project: revenue = l_extendedprice * (1 - l_discount), exact decimal
-  auto price = cudf::cast(l_side->get_column(0).view(), dec128_s2);
-  auto disc = cudf::cast(l_side->get_column(1).view(), dec128_s2);
-  auto one_s2 = cudf::fixed_point_scalar<numeric::decimal128>(100, numeric::scale_type{-2});
-  auto one_minus_disc = cudf::binary_operation(one_s2, disc->view(), cudf::binary_operator::SUB, dec128_s2);
-  auto revenue = cudf::binary_operation(price->view(), one_minus_disc->view(),
-                                        cudf::binary_operator::MUL, dec128_s4);
-  note_peak();
-
-  // groupby (l_orderkey, o_orderdate, o_shippriority) -> sum(revenue)
-  cudf::groupby::groupby gb(cudf::table_view{{co_side->get_column(0).view(),
-                                              co_side->get_column(1).view(),
-                                              co_side->get_column(2).view()}});
-  std::vector<cudf::groupby::aggregation_request> reqs;
-  {
-    cudf::groupby::aggregation_request r;
-    r.values = revenue->view();
-    r.aggregations.push_back(cudf::make_sum_aggregation<cudf::groupby_aggregation>());
-    reqs.push_back(std::move(r));
-  }
-  auto [gkeys, gaggs] = gb.aggregate(reqs);
-  note_peak();
-  std::fprintf(stderr, "[q3] groups: %ld\n", static_cast<long>(gkeys->num_rows()));
-
-  // sort: revenue DESC, o_orderdate ASC, l_orderkey ASC (total order — see header)
-  auto gk = gkeys->view();
-  auto rev_col = std::move(gaggs[0].results[0]);
-  auto order = cudf::sorted_order(
-      cudf::table_view{{rev_col->view(), gk.column(1), gk.column(0)}},
-      {cudf::order::DESCENDING, cudf::order::ASCENDING, cudf::order::ASCENDING},
-      {cudf::null_order::AFTER, cudf::null_order::AFTER, cudf::null_order::AFTER});
-  auto sorted = cudf::gather(
-      cudf::table_view{{gk.column(0), rev_col->view(), gk.column(1), gk.column(2)}},
-      order->view());
-
-  // limit 10
+  // limit 10 (zero-copy view into the sorted result)
   auto top = cudf::slice(sorted->view(), {0, 10})[0];
   const auto t_done = std::chrono::steady_clock::now();
 
@@ -546,6 +564,9 @@ TEST_F(TpchSf40, Q3JoinsGroupByTopN) {
   };
   std::fprintf(stderr, "[q3] load %ld ms, execute %ld ms, total %ld ms\n",
                ms(t0, t_loaded), ms(t_loaded, t_done), ms(t0, t_done));
+
+  benchmark_execute("q3", execute,
+                    std::chrono::duration<double, std::milli>(t_loaded - t0).count());
 }
 
 // ===========================================================================
@@ -645,6 +666,9 @@ TEST_F(TpchSf40, Q8SevenTableJoin) {
 
   auto nation_v = nation_in.tbl->view();
 
+  // Everything from the seven resident input tables to the fully sorted result, wrapped in a
+  // closure so the test verifies it once and the benchmark times the SAME code.
+  auto execute = [&]() -> std::unique_ptr<cudf::table> {
   // --- subtree A ---
   // A1: region where r_name='AMERICA', then nation n1 on n_regionkey
   auto america = cudf::string_scalar(std::string("AMERICA"));
@@ -716,7 +740,7 @@ TEST_F(TpchSf40, Q8SevenTableJoin) {
                               map_view(oa_map));
   note_peak();
   std::fprintf(stderr, "[q8] C A|X|B on orderkey -> %ld\n", static_cast<long>(lp_side->num_rows()));
-  ASSERT_GT(lp_side->num_rows(), 0) << "seven-table join produced no rows";
+  EXPECT_GT(lp_side->num_rows(), 0) << "seven-table join produced no rows";
 
   // --- D: supplier, then nation n2 (the SECOND use of the same nation table) ---
   auto [s_map2, sp_map] = cudf::inner_join(cudf::table_view{{lp_side->get_column(0).view()}},  // l_suppkey
@@ -788,9 +812,13 @@ TEST_F(TpchSf40, Q8SevenTableJoin) {
   // sort by o_year (one row per year; the key is unique so the order is total)
   auto order = cudf::sorted_order(cudf::table_view{{ykeys->view().column(0)}},
                                   {cudf::order::ASCENDING}, {cudf::null_order::AFTER});
-  auto sorted = cudf::gather(cudf::table_view{{ykeys->view().column(0), brazil_sum->view(),
-                                               total_sum->view(), mkt_share->view()}},
-                             order->view());
+  return cudf::gather(cudf::table_view{{ykeys->view().column(0), brazil_sum->view(),
+                                        total_sum->view(), mkt_share->view()}},
+                      order->view());
+  };  // end execute
+
+  auto sorted = execute();
+  note_peak();
   const auto t_done = std::chrono::steady_clock::now();
 
   // ---------------- COMPARE ----------------
@@ -813,6 +841,9 @@ TEST_F(TpchSf40, Q8SevenTableJoin) {
   };
   std::fprintf(stderr, "[q8] load %ld ms, execute %ld ms, total %ld ms\n",
                ms(t0, t_loaded), ms(t_loaded, t_done), ms(t0, t_done));
+
+  benchmark_execute("q8", execute,
+                    std::chrono::duration<double, std::milli>(t_loaded - t0).count());
 }
 
 // Same entry point as the other gtest binaries here (the conda cudf ships no gtest_main).

@@ -19,6 +19,8 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <iterator>
@@ -189,6 +191,106 @@ class TpchSf40 : public ::testing::Test {
 
   size_t free_before_ = 0, total_ = 0, peak_used_ = 0;
 };
+
+
+// ---------------------------------------------------------------------------
+// EXECUTE-TIME BENCHMARK  (task: cuDF execute-only walltime, for comparison against the
+// DuckDB VM numbers)
+//
+// SINGLE SOURCE OF OPERATORS: this times the SAME `execute` closure the enclosing test
+// verifies against its golden. The test calls execute() once and compares; the benchmark
+// calls it `runs` times and reports the second-smallest. There is no second copy of any
+// query plan — a benchmark that timed different code than we verified would be worthless.
+//
+// TIMED REGION: t0 at closure entry (the input cudf::tables are already resident in VRAM
+// from the enclosing test's one-time load); execute() runs every operator; then a FULL
+// DEVICE SYNC before t1. cuDF is async on a stream, so timing without the sync would measure
+// kernel LAUNCH, not execution — an absurdly small, wrong number. cudaDeviceSynchronize()
+// (not a single-stream sync) is deliberate: the vector queries drive both the default cuDF
+// stream and a raft handle stream, and this drains every stream in one call.
+// EXCLUDED from the region: the parquet load, the golden comparison, and any device->host
+// copy — none of those happen inside execute().
+//
+// SECOND-SMALLEST OF 6: run 1 pays RMM pool growth + kernel first-touch/JIT; 2nd-min
+// discards that warm-up without letting a single slow outlier dominate — identical protocol
+// to benchmarks/duckdb_minimal.sh, for symmetry.
+//
+// RAII / VRAM: each iteration's `result` and every intermediate inside execute() free at the
+// closure's scope end, so device memory does not grow across the 6 runs. A cheap leak guard
+// samples free memory before and after the loop and warns on material growth.
+//
+// PEAK VRAM IS NOT MEASURED HERE — deliberately. It is measured by the fixture's note_peak()
+// (cudaMemGetInfo high-water, sampled DURING execute at the heavy-allocation points) and
+// printed once per test by TearDown. That is the transient peak — the moment the widest
+// intermediates are all live. An earlier version of this helper sampled cudaMemGetInfo AFTER
+// execute() returned, which measured STEADY-STATE resident memory (inputs + result, with the
+// transients already freed) — a different and much smaller number that wrongly contradicted
+// the note_peak peaks. So peak reporting stays with note_peak, one definition, and this
+// helper reports timing only.
+//
+// Guarded by PEACOCK_BENCHMARK: unset, this is a no-op and the tests run exactly as before.
+inline bool benchmark_enabled() {
+  const char* v = std::getenv("PEACOCK_BENCHMARK");
+  return v && *v && std::string(v) != "0";
+}
+
+// execute: a callable returning any owning cuDF result (unique_ptr<table> or <scalar>); its
+// return value is held until the sync so the produced data is real, then freed.
+// load_ms / setup_ms: printed beside the execute time (setup_ms < 0 => omitted, for the
+// plain queries that have no index-build phase).
+template <typename F>
+inline void benchmark_execute(const char* qtag, F&& execute, double load_ms,
+                              double setup_ms = -1.0) {
+  if (!benchmark_enabled()) return;
+  const int runs = std::max(2, std::atoi(env_or("PEACOCK_BENCHMARK_RUNS", "6").c_str()));
+
+  size_t total = 0, free_before = 0;
+  cudaDeviceSynchronize();
+  cudaMemGetInfo(&free_before, &total);
+
+  std::vector<double> ms;
+  ms.reserve(runs);
+  for (int i = 0; i < runs; ++i) {
+    cudaDeviceSynchronize();  // drain the prior iteration so its work never bleeds into t0
+    const auto t0 = std::chrono::steady_clock::now();
+    auto result = execute();
+    cudaDeviceSynchronize();  // THE load-bearing sync — without it we time launch, not run
+    const auto t1 = std::chrono::steady_clock::now();
+    ms.push_back(std::chrono::duration<double, std::milli>(t1 - t0).count());
+    (void)result;  // freed here — RAII returns the intermediates to the pool
+  }
+
+  // leak guard (not a peak): free memory should return to roughly where it started once the
+  // last result frees. A persistent drop means an intermediate is escaping the closure scope.
+  cudaDeviceSynchronize();
+  size_t free_after = 0;
+  cudaMemGetInfo(&free_after, &total);
+  if (free_before > free_after + (256UL << 20)) {  // >256 MiB not returned
+    std::fprintf(stderr,
+                 "[bench] %s WARNING: %.2f GiB of device memory not returned after the runs "
+                 "— an intermediate may be leaking across iterations\n",
+                 qtag, (free_before - free_after) / 1073741824.0);
+  }
+
+  std::sort(ms.begin(), ms.end());
+  const double second_min = ms.size() > 1 ? ms[1] : ms[0];
+
+  // machine-readable line the driver greps; all runs included for transparency. Peak VRAM is
+  // the fixture's note_peak line, not here — see the comment above.
+  std::string all;
+  for (size_t i = 0; i < ms.size(); ++i) {
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%s%.3f", i ? "," : "", ms[i]);
+    all += buf;
+  }
+  if (setup_ms >= 0.0) {
+    std::fprintf(stderr, "[bench] %s execute_ms=%.3f load_ms=%.3f setup_ms=%.3f runs=%d all=[%s]\n",
+                 qtag, second_min, load_ms, setup_ms, runs, all.c_str());
+  } else {
+    std::fprintf(stderr, "[bench] %s execute_ms=%.3f load_ms=%.3f runs=%d all=[%s]\n", qtag,
+                 second_min, load_ms, runs, all.c_str());
+  }
+}
 
 
 

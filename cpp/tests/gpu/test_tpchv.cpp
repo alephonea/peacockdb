@@ -235,10 +235,14 @@ EmbeddingMatrix load_embedding_column(const std::string& path, const std::string
 // independent of everything the joins and aggregations do afterwards. A final result can
 // coincidentally match while the search returned the wrong neighbours; the count cannot.
 // ===========================================================================
+// vector_range_hits is the SEARCH — top-K, host copy, saturation guard, range filter. It is
+// the timed operator, so it reads NO golden file: the count corroboration is a separate step
+// (expect_hit_count below) run only in the verify path, never inside the benchmark's timed
+// region. Both the verify and the benchmark call THIS function for the search itself, so the
+// timed code and the verified code are identical.
 template <typename Index>
 std::vector<int32_t> vector_range_hits(raft::resources& handle, Index const& index,
                                        VecProbe const& probe, int dim, int64_t K,
-                                       const std::string& count_golden,
                                        const char* tag) {
   auto d_q = raft::make_device_matrix<float, int64_t>(handle, 1, dim);
   raft::copy(d_q.data_handle(), probe.q.data(), dim, raft::resource::get_cuda_stream(handle));
@@ -270,19 +274,24 @@ std::vector<int32_t> vector_range_hits(raft::resources& handle, Index const& ind
   }
   std::fprintf(stderr, "[%s] %s: D=%.17g -> %zu rows under D (furthest returned %.9g)\n", tag,
                probe.id.c_str(), probe.D, hits.size(), h_di[K - 1]);
+  return hits;
+}
 
+// COUNT CORROBORATION — verify path only (reads a golden file, so kept out of the timed
+// region). Pins the row SET the distance predicate selects against DuckDB's own count over
+// the same parquet, before any join can mask a discrepancy.
+inline void expect_hit_count(size_t got, const std::string& count_golden, const char* tag,
+                             const std::string& id) {
   EXPECT_TRUE(file_exists(count_golden)) << "missing " << count_golden;
   if (file_exists(count_golden)) {
     const int64_t want =
         std::strtoll(read_single_value_golden(count_golden).c_str(), nullptr, 10);
-    EXPECT_EQ(static_cast<int64_t>(hits.size()), want)
-        << tag << "/" << probe.id << ": cuVS found " << hits.size()
-        << " rows under D but DuckDB found " << want
-        << ". A one-row difference here means cuVS and DuckDB landed on opposite sides of "
-        << "the distance boundary — a real numerical divergence, NOT something to absorb "
-        << "with a tolerance.";
+    EXPECT_EQ(static_cast<int64_t>(got), want)
+        << tag << "/" << id << ": cuVS found " << got << " rows under D but DuckDB found "
+        << want << ". A one-row difference here means cuVS and DuckDB landed on opposite "
+        << "sides of the distance boundary — a real numerical divergence, NOT something to "
+        << "absorb with a tolerance.";
   }
-  return hits;
 }
 
 // host hit list -> an owning device int32 column, ready to be joined against a row index
@@ -330,6 +339,31 @@ cudf::timestamp_scalar<cudf::timestamp_D> date_scalar(int y, unsigned mo, unsign
 // (307/3237/40413 image, ~400/4000/40000 text) with generous headroom.
 int64_t search_k() {
   return std::strtoll(env_or("PEACOCK_TPCHV_K", "131072").c_str(), nullptr, 10);
+}
+
+// build a cuVS L2Sqrt brute-force index over a resident row-major float matrix. This is the
+// SETUP phase for a vector query — timed separately from load (parquet->VRAM) and execute
+// (the per-query operators), because it is a one-time O(n) preprocess (norms) amortised
+// across probes, the GPU equivalent of a hash-table build. L2SqrtExpanded == DuckDB's
+// array_distance; see the distance-space note on vector_range_hits.
+inline auto build_bf_index(raft::resources& handle, const float* data, int64_t rows, int dim) {
+  auto dataset = raft::make_device_matrix_view<const float, int64_t>(data, rows, dim);
+  cuvs::neighbors::brute_force::index_params ip;
+  ip.metric = cuvs::distance::DistanceType::L2SqrtExpanded;
+  return cuvs::neighbors::brute_force::build(handle, ip, dataset);
+}
+
+// THE VECTOR OPERATOR, for the execute closure: search part under D, then gather the
+// surviving p_partkey values. Single source — the verify path and the benchmark both reach
+// the search through here. The count corroboration is separate (expect_hit_count), run once
+// in the verify path so no golden file is read inside the timed region.
+template <typename Index>
+std::unique_ptr<cudf::table> parts_under_d(raft::resources& handle, Index const& index,
+                                           cudf::column_view partkey, VecProbe const& probe,
+                                           int dim, int64_t K, const char* tag) {
+  auto hits = vector_range_hits(handle, index, probe, dim, K, tag);
+  auto d_hits = to_device_hits(hits);
+  return cudf::gather(cudf::table_view{{partkey}}, d_hits.view());
 }
 
 }  // namespace
@@ -407,14 +441,16 @@ TEST_F(TpchSf40, Q11VectorBruteForce) {
   const auto dec128_s2 = cudf::data_type{cudf::type_id::DECIMAL128, -2};
   const auto dec128_s4 = cudf::data_type{cudf::type_id::DECIMAL128, -4};
 
-  auto dataset = raft::make_device_matrix_view<const float, int64_t>(emb.buf.data(), emb.rows, 96);
-  cuvs::neighbors::brute_force::index_params ip;
-  // L2SqrtExpanded == DuckDB's array_distance. See the header comment on distance space.
-  ip.metric = cuvs::distance::DistanceType::L2SqrtExpanded;
-  auto bf_index = cuvs::neighbors::brute_force::build(handle, ip, dataset);
+  // SETUP: cuVS index build, timed separately (reported as index-build in the benchmark).
+  const auto t_index0 = std::chrono::steady_clock::now();
+  auto bf_index = build_bf_index(handle, emb.buf.data(), emb.rows, 96);
+  cudaDeviceSynchronize();
+  const auto t_index1 = std::chrono::steady_clock::now();
+  const double index_ms =
+      std::chrono::duration<double, std::milli>(t_index1 - t_index0).count();
   note_peak();
-  std::fprintf(stderr, "[q11v] cuVS brute-force index built over %ld x 96 vectors\n",
-               static_cast<long>(n_ps));
+  std::fprintf(stderr, "[q11v] cuVS brute-force index built over %ld x 96 vectors (%.1f ms)\n",
+               static_cast<long>(n_ps), index_ms);
 
   // --- the GERMANY join, built ONCE and used twice (threshold + filtered groups) ---
   auto germany = cudf::string_scalar(std::string("GERMANY"));
@@ -464,63 +500,81 @@ TEST_F(TpchSf40, Q11VectorBruteForce) {
   const auto t_setup = std::chrono::steady_clock::now();
 
   // --- per-probe: cuVS search -> range filter -> intersect with the German rows ---
+  // Each probe's execute is the PER-PROBE operator chain: search -> range filter -> intersect
+  // with the (shared, probe-independent) German rows -> groupby -> HAVING -> sort. The
+  // GERMAN join and the index build above are done ONCE and reused across all 3 probes, so
+  // they are setup, not per-probe execute — see the benchmark note.
+  const int64_t K = search_k();
+  ASSERT_LE(K, n_ps);
   for (auto const& probe : probes) {
-    const int64_t K = search_k();
-    ASSERT_LE(K, n_ps);
-    auto hits = vector_range_hits(handle, bf_index, probe, 96, K,
-                                  golden_dir() + "/duckdb_psimage_" + probe.id + ".count.csv",
-                                  "q11v");
+    // EXECUTE closure — the test verifies its output once and the benchmark times the SAME
+    // code. The cuVS search (with its host copy + range filter, intrinsic to building a range
+    // query on top of cuVS's top-K) is inside; the golden reads are not.
+    auto execute = [&]() -> std::unique_ptr<cudf::table> {
+      auto hits = vector_range_hits(handle, bf_index, probe, 96, K, "q11v");
+
+      // intersect the vector hits with the German rows: de column 3 is each German row's
+      // ORIGINAL partsupp index, so the intersection is an inner join against the hit list.
+      auto d_hits = to_device_hits(hits);
+      auto [de_map, hit_map] = cudf::inner_join(
+          cudf::table_view{{de->get_column(3).view()}}, cudf::table_view{{d_hits.view()}});
+      auto sel = cudf::gather(cudf::table_view{{de->get_column(0).view(), de_value->view()}},
+                              map_view(de_map));
+
+      cudf::groupby::groupby gb(cudf::table_view{{sel->get_column(0).view()}});
+      std::vector<cudf::groupby::aggregation_request> reqs;
+      {
+        cudf::groupby::aggregation_request r;
+        r.values = sel->get_column(1).view();
+        r.aggregations.push_back(cudf::make_sum_aggregation<cudf::groupby_aggregation>());
+        reqs.push_back(std::move(r));
+      }
+      auto [gk, ga] = gb.aggregate(reqs);
+      auto values = std::move(ga[0].results[0]);
+
+      // HAVING value > total/500000  (0.000002 exactly, in decimal — no float literal)
+      auto thresh = cudf::fixed_point_scalar<numeric::decimal128>(
+          total_unscaled / 500000, numeric::scale_type{-4});
+      auto keep = cudf::binary_operation(values->view(), thresh,
+                                         cudf::binary_operator::GREATER, boolean);
+      auto kept = cudf::apply_boolean_mask(
+          cudf::table_view{{gk->view().column(0), values->view()}}, keep->view());
+
+      // ORDER BY value DESC, ps_partkey  (partkey breaks value ties -> total order)
+      auto order = cudf::sorted_order(
+          cudf::table_view{{kept->get_column(1).view(), kept->get_column(0).view()}},
+          {cudf::order::DESCENDING, cudf::order::ASCENDING},
+          {cudf::null_order::AFTER, cudf::null_order::AFTER});
+      return cudf::gather(
+          cudf::table_view{{kept->get_column(0).view(), kept->get_column(1).view()}},
+          order->view());
+    };
+
+    // CORROBORATION #1 (verify path only): the row count under D vs DuckDB's own count.
+    auto count_hits = vector_range_hits(handle, bf_index, probe, 96, K, "q11v");
+    expect_hit_count(count_hits.size(),
+                     golden_dir() + "/duckdb_psimage_" + probe.id + ".count.csv", "q11v",
+                     probe.id);
+
+    // verify ONCE against the golden
+    auto sorted = execute();
     note_peak();
-
-    // --- intersect the vector hits with the German rows, then group ---
-    // de column 3 holds each German row's ORIGINAL partsupp index, so the intersection is
-    // an inner join of that index against the hit list.
-    auto d_hits = to_device_hits(hits);
-    auto [de_map, hit_map] = cudf::inner_join(
-        cudf::table_view{{de->get_column(3).view()}}, cudf::table_view{{d_hits.view()}});
-    auto sel = cudf::gather(cudf::table_view{{de->get_column(0).view(), de_value->view()}},
-                            map_view(de_map));
-    std::fprintf(stderr, "[q11v] %s: german AND under-D rows: %ld\n", probe.id.c_str(),
-                 static_cast<long>(sel->num_rows()));
-
-    cudf::groupby::groupby gb(cudf::table_view{{sel->get_column(0).view()}});
-    std::vector<cudf::groupby::aggregation_request> reqs;
-    {
-      cudf::groupby::aggregation_request r;
-      r.values = sel->get_column(1).view();
-      r.aggregations.push_back(cudf::make_sum_aggregation<cudf::groupby_aggregation>());
-      reqs.push_back(std::move(r));
-    }
-    auto [gk, ga] = gb.aggregate(reqs);
-    auto values = std::move(ga[0].results[0]);
-
-    // HAVING value > total/500000  (0.000002 exactly, in decimal — no float literal)
-    auto thresh = cudf::fixed_point_scalar<numeric::decimal128>(
-        total_unscaled / 500000, numeric::scale_type{-4});
-    auto keep = cudf::binary_operation(values->view(), thresh,
-                                       cudf::binary_operator::GREATER, boolean);
-    auto kept = cudf::apply_boolean_mask(
-        cudf::table_view{{gk->view().column(0), values->view()}}, keep->view());
-
-    // ORDER BY value DESC, ps_partkey  (partkey breaks value ties -> total order)
-    auto order = cudf::sorted_order(
-        cudf::table_view{{kept->get_column(1).view(), kept->get_column(0).view()}},
-        {cudf::order::DESCENDING, cudf::order::ASCENDING},
-        {cudf::null_order::AFTER, cudf::null_order::AFTER});
-    auto sorted = cudf::gather(
-        cudf::table_view{{kept->get_column(0).view(), kept->get_column(1).view()}},
-        order->view());
-
     // CORROBORATION #2: the final grouped result, exact on both columns
     const std::vector<ColSpec> spec = {
         {"ps_partkey", Cmp::ExactInt},
         {"value", Cmp::ExactDecimal},
     };
     const auto golden = read_csv_golden(golden_dir() + "/duckdb_q11v_" + probe.id + ".csv");
-    compare_table_to_golden(sorted->view(), golden, spec,
-                            ("q11v/" + probe.id).c_str());
+    compare_table_to_golden(sorted->view(), golden, spec, ("q11v/" + probe.id).c_str());
     std::fprintf(stderr, "[q11v] %s: %ld result rows matched\n", probe.id.c_str(),
                  static_cast<long>(sorted->num_rows()));
+
+    // BENCHMARK this probe's execute (search + operators). index-build is amortised across
+    // the 3 probes, so for the DuckDB comparison the per-probe cuDF cost is
+    // execute + index_ms/3 (DuckDB has no index and computes distances inline every query).
+    benchmark_execute(("q11v/" + probe.id).c_str(), execute,
+                      std::chrono::duration<double, std::milli>(t_loaded - t0).count(),
+                      index_ms);
   }
 
   const auto t_done = std::chrono::steady_clock::now();
@@ -551,39 +605,6 @@ TEST_F(TpchSf40, Q11VectorBruteForce) {
 // pushed into the reader and no part row is skipped before it — which is the constraint
 // the whole exercise is about.
 // ===========================================================================
-namespace {
-
-struct PartProbeResult {
-  std::unique_ptr<cudf::table> partkeys;  // one column: the p_partkey values under D
-  int64_t n_part;
-  size_t n_hits;
-};
-
-PartProbeResult select_parts_by_text_embedding(raft::resources& handle, VecProbe const& probe,
-                                               const char* tag) {
-  const auto part_path = data_dir() + "/part.parquet";
-  auto part_in = read_cols(part_path, {"p_partkey"});
-  auto emb = load_embedding_column(part_path, "p_text_embedding", 100,
-                                   raft::resource::get_cuda_stream(handle));
-  // UNDER the ceiling at sf40 -> exactly one read. See load_embedding_column's comment.
-  EXPECT_EQ(emb.batches, 1) << "p_text_embedding at sf40 must load in a single read";
-  EXPECT_EQ(emb.rows, static_cast<int64_t>(part_in.tbl->num_rows()));
-
-  auto dataset = raft::make_device_matrix_view<const float, int64_t>(emb.buf.data(), emb.rows, 100);
-  cuvs::neighbors::brute_force::index_params ip;
-  ip.metric = cuvs::distance::DistanceType::L2SqrtExpanded;  // == DuckDB array_distance
-  auto index = cuvs::neighbors::brute_force::build(handle, ip, dataset);
-
-  auto hits = vector_range_hits(handle, index, probe, 100, search_k(),
-                                golden_dir() + "/duckdb_ptext_" + probe.id + ".count.csv", tag);
-  // The hit list is a list of PART ROW INDICES; gather turns it into the p_partkey values
-  // the joins downstream actually need.
-  auto d_hits = to_device_hits(hits);
-  auto keys = cudf::gather(cudf::table_view{{part_in.tbl->view().column(0)}}, d_hits.view());
-  return PartProbeResult{std::move(keys), emb.rows, hits.size()};
-}
-
-}  // namespace
 
 // ===========================================================================
 // TPC-H+V q12v — shipping-mode SLA counts inside a vector neighbourhood.
@@ -647,118 +668,139 @@ TEST_F(TpchSf40, Q12VectorShipModeCounts) {
   auto line_in = read_cols(data_dir() + "/lineitem.parquet",
                            {"l_orderkey", "l_partkey", "l_shipmode", "l_commitdate",
                             "l_receiptdate", "l_shipdate"});
+  const auto part_path = data_dir() + "/part.parquet";
+  auto part_in = read_cols(part_path, {"p_partkey"});
   raft::resources handle;
-  auto sel_parts = select_parts_by_text_embedding(handle, probe, "q12v");
+  auto emb = load_embedding_column(part_path, "p_text_embedding", 100,
+                                   raft::resource::get_cuda_stream(handle));
+  EXPECT_EQ(emb.batches, 1) << "p_text_embedding at sf40 must load in a single read";
+  EXPECT_EQ(emb.rows, static_cast<int64_t>(part_in.tbl->num_rows()));
   const auto t_loaded = std::chrono::steady_clock::now();
   note_peak();
-  std::fprintf(stderr, "[q12v] loaded orders %ld, lineitem %ld, part %ld (%zu under D)\n",
+
+  // SETUP: cuVS index build, timed separately from load and execute.
+  const int64_t K = search_k();
+  ASSERT_LE(K, emb.rows);
+  const auto t_index0 = std::chrono::steady_clock::now();
+  auto index = build_bf_index(handle, emb.buf.data(), emb.rows, 100);
+  cudaDeviceSynchronize();
+  const double index_ms =
+      std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t_index0).count();
+  std::fprintf(stderr, "[q12v] loaded orders %ld, lineitem %ld, part %ld; index built %.1f ms\n",
                static_cast<long>(ord_in.tbl->num_rows()),
                static_cast<long>(line_in.tbl->num_rows()),
-               static_cast<long>(sel_parts.n_part), sel_parts.n_hits);
-  ASSERT_GT(sel_parts.partkeys->num_rows(), 0) << "no part rows under D — test would be vacuous";
+               static_cast<long>(part_in.tbl->num_rows()), index_ms);
 
   // ---------------- PHASE 2: EXECUTE ----------------
   const auto boolean = cudf::data_type{cudf::type_id::BOOL8};
   const auto int32 = cudf::data_type{cudf::type_id::INT32};
   auto lv = line_in.tbl->view();
+  auto pk = part_in.tbl->view().column(0);
 
-  // l_shipmode IN ('MAIL','SHIP')
-  auto mail = cudf::string_scalar(std::string("MAIL"));
-  auto ship = cudf::string_scalar(std::string("SHIP"));
-  auto is_mail = cudf::binary_operation(lv.column(2), mail, cudf::binary_operator::EQUAL, boolean);
-  auto is_ship = cudf::binary_operation(lv.column(2), ship, cudf::binary_operator::EQUAL, boolean);
-  auto mode_ok = cudf::binary_operation(is_mail->view(), is_ship->view(),
-                                        cudf::binary_operator::LOGICAL_OR, boolean);
+  // Wrapped in a closure so the test verifies it once and the benchmark times the SAME code.
+  // The vector search (parts_under_d) is the FIRST operator inside — it is an operator, so it
+  // is timed as part of execute; only the index build above is setup.
+  auto execute = [&]() -> std::unique_ptr<cudf::table> {
+    auto sel_partkeys = parts_under_d(handle, index, pk, probe, 100, K, "q12v");
 
-  // THE COLUMN-TO-COLUMN COMPARISONS: both operands are TIMESTAMP_DAYS columns, not
-  // scalars. Nothing is cast; the types stay what the reader produced.
-  auto commit_lt_receipt = cudf::binary_operation(lv.column(3), lv.column(4),
-                                                  cudf::binary_operator::LESS, boolean);
-  auto ship_lt_commit = cudf::binary_operation(lv.column(5), lv.column(3),
-                                               cudf::binary_operator::LESS, boolean);
+    // l_shipmode IN ('MAIL','SHIP')
+    auto mail = cudf::string_scalar(std::string("MAIL"));
+    auto ship = cudf::string_scalar(std::string("SHIP"));
+    auto is_mail = cudf::binary_operation(lv.column(2), mail, cudf::binary_operator::EQUAL, boolean);
+    auto is_ship = cudf::binary_operation(lv.column(2), ship, cudf::binary_operator::EQUAL, boolean);
+    auto mode_ok = cudf::binary_operation(is_mail->view(), is_ship->view(),
+                                          cudf::binary_operator::LOGICAL_OR, boolean);
 
-  auto d1994 = date_scalar(1994, 1, 1);
-  auto d1995 = date_scalar(1995, 1, 1);
-  auto recv_ge = cudf::binary_operation(lv.column(4), d1994,
-                                        cudf::binary_operator::GREATER_EQUAL, boolean);
-  auto recv_lt = cudf::binary_operation(lv.column(4), d1995, cudf::binary_operator::LESS, boolean);
+    // THE COLUMN-TO-COLUMN COMPARISONS: both operands are TIMESTAMP_DAYS columns, not
+    // scalars. Nothing is cast; the types stay what the reader produced.
+    auto commit_lt_receipt = cudf::binary_operation(lv.column(3), lv.column(4),
+                                                    cudf::binary_operator::LESS, boolean);
+    auto ship_lt_commit = cudf::binary_operation(lv.column(5), lv.column(3),
+                                                 cudf::binary_operator::LESS, boolean);
 
-  auto m1 = cudf::binary_operation(mode_ok->view(), commit_lt_receipt->view(),
-                                   cudf::binary_operator::LOGICAL_AND, boolean);
-  auto m2 = cudf::binary_operation(m1->view(), ship_lt_commit->view(),
-                                   cudf::binary_operator::LOGICAL_AND, boolean);
-  auto m3 = cudf::binary_operation(m2->view(), recv_ge->view(),
-                                   cudf::binary_operator::LOGICAL_AND, boolean);
-  auto line_mask = cudf::binary_operation(m3->view(), recv_lt->view(),
-                                          cudf::binary_operator::LOGICAL_AND, boolean);
-  auto line_f = cudf::apply_boolean_mask(
-      cudf::table_view{{lv.column(0), lv.column(1), lv.column(2)}}, line_mask->view());
-  note_peak();
-  std::fprintf(stderr, "[q12v] lineitem after local filters: %ld\n",
-               static_cast<long>(line_f->num_rows()));
-  ASSERT_GT(line_f->num_rows(), 0);
+    auto d1994 = date_scalar(1994, 1, 1);
+    auto d1995 = date_scalar(1995, 1, 1);
+    auto recv_ge = cudf::binary_operation(lv.column(4), d1994,
+                                          cudf::binary_operator::GREATER_EQUAL, boolean);
+    auto recv_lt = cudf::binary_operation(lv.column(4), d1995, cudf::binary_operator::LESS, boolean);
 
-  // join 1: lineitem.l_partkey = (parts under D).p_partkey
-  auto [l_map, p_map] = cudf::inner_join(
-      cudf::table_view{{line_f->get_column(1).view()}},
-      cudf::table_view{{sel_parts.partkeys->get_column(0).view()}});
-  auto lp = cudf::gather(cudf::table_view{{line_f->get_column(0).view(),    // l_orderkey
-                                           line_f->get_column(2).view()}},  // l_shipmode
-                         map_view(l_map));
-  note_peak();
-  std::fprintf(stderr, "[q12v] lineitem |X| part -> %ld rows\n", static_cast<long>(lp->num_rows()));
-  ASSERT_GT(lp->num_rows(), 0) << "vector predicate and filters left no rows to join";
+    auto m1 = cudf::binary_operation(mode_ok->view(), commit_lt_receipt->view(),
+                                     cudf::binary_operator::LOGICAL_AND, boolean);
+    auto m2 = cudf::binary_operation(m1->view(), ship_lt_commit->view(),
+                                     cudf::binary_operator::LOGICAL_AND, boolean);
+    auto m3 = cudf::binary_operation(m2->view(), recv_ge->view(),
+                                     cudf::binary_operator::LOGICAL_AND, boolean);
+    auto line_mask = cudf::binary_operation(m3->view(), recv_lt->view(),
+                                            cudf::binary_operator::LOGICAL_AND, boolean);
+    auto line_f = cudf::apply_boolean_mask(
+        cudf::table_view{{lv.column(0), lv.column(1), lv.column(2)}}, line_mask->view());
+    EXPECT_GT(line_f->num_rows(), 0);
 
-  // join 2: |X| orders on orderkey
-  auto [lp_map, o_map] = cudf::inner_join(cudf::table_view{{lp->get_column(0).view()}},
-                                          cudf::table_view{{ord_in.tbl->view().column(0)}});
-  auto mode_col = cudf::gather(cudf::table_view{{lp->get_column(1).view()}}, map_view(lp_map));
-  auto prio_col = cudf::gather(cudf::table_view{{ord_in.tbl->view().column(1)}}, map_view(o_map));
-  note_peak();
-  std::fprintf(stderr, "[q12v] |X| orders -> %ld rows\n", static_cast<long>(mode_col->num_rows()));
-  ASSERT_GT(mode_col->num_rows(), 0);
+    // join 1: lineitem.l_partkey = (parts under D).p_partkey
+    auto [l_map, p_map] = cudf::inner_join(
+        cudf::table_view{{line_f->get_column(1).view()}},
+        cudf::table_view{{sel_partkeys->get_column(0).view()}});
+    auto lp = cudf::gather(cudf::table_view{{line_f->get_column(0).view(),    // l_orderkey
+                                             line_f->get_column(2).view()}},  // l_shipmode
+                           map_view(l_map));
+    EXPECT_GT(lp->num_rows(), 0) << "vector predicate and filters left no rows to join";
 
-  // the two CASE expressions, as boolean masks cast to counters
-  auto urgent = cudf::string_scalar(std::string("1-URGENT"));
-  auto high = cudf::string_scalar(std::string("2-HIGH"));
-  auto is_urgent = cudf::binary_operation(prio_col->get_column(0).view(), urgent,
+    // join 2: |X| orders on orderkey
+    auto [lp_map, o_map] = cudf::inner_join(cudf::table_view{{lp->get_column(0).view()}},
+                                            cudf::table_view{{ord_in.tbl->view().column(0)}});
+    auto mode_col = cudf::gather(cudf::table_view{{lp->get_column(1).view()}}, map_view(lp_map));
+    auto prio_col = cudf::gather(cudf::table_view{{ord_in.tbl->view().column(1)}}, map_view(o_map));
+
+    // the two CASE expressions, as boolean masks cast to counters
+    auto urgent = cudf::string_scalar(std::string("1-URGENT"));
+    auto high = cudf::string_scalar(std::string("2-HIGH"));
+    auto is_urgent = cudf::binary_operation(prio_col->get_column(0).view(), urgent,
+                                            cudf::binary_operator::EQUAL, boolean);
+    auto is_high = cudf::binary_operation(prio_col->get_column(0).view(), high,
                                           cudf::binary_operator::EQUAL, boolean);
-  auto is_high = cudf::binary_operation(prio_col->get_column(0).view(), high,
-                                        cudf::binary_operator::EQUAL, boolean);
-  auto is_hi = cudf::binary_operation(is_urgent->view(), is_high->view(),
-                                      cudf::binary_operator::LOGICAL_OR, boolean);
-  // low is the exact complement: DuckDB writes it as <> AND <>, which is NOT is_hi by De
-  // Morgan. o_orderpriority is NOT NULL in TPC-H so the two forms agree; computing it as
-  // a negation rather than restating the comparisons keeps them from drifting apart.
-  auto is_lo = cudf::unary_operation(is_hi->view(), cudf::unary_operator::NOT);
-  auto hi_i = cudf::cast(is_hi->view(), int32);
-  auto lo_i = cudf::cast(is_lo->view(), int32);
+    auto is_hi = cudf::binary_operation(is_urgent->view(), is_high->view(),
+                                        cudf::binary_operator::LOGICAL_OR, boolean);
+    // low is the exact complement: DuckDB writes it as <> AND <>, which is NOT is_hi by De
+    // Morgan. o_orderpriority is NOT NULL in TPC-H so the two forms agree; computing it as
+    // a negation rather than restating the comparisons keeps them from drifting apart.
+    auto is_lo = cudf::unary_operation(is_hi->view(), cudf::unary_operator::NOT);
+    auto hi_i = cudf::cast(is_hi->view(), int32);
+    auto lo_i = cudf::cast(is_lo->view(), int32);
 
-  // groupby l_shipmode -> sum(hi), sum(lo)
-  cudf::groupby::groupby gb(cudf::table_view{{mode_col->get_column(0).view()}});
-  std::vector<cudf::groupby::aggregation_request> reqs;
-  {
-    cudf::groupby::aggregation_request r;
-    r.values = hi_i->view();
-    r.aggregations.push_back(cudf::make_sum_aggregation<cudf::groupby_aggregation>());
-    reqs.push_back(std::move(r));
-  }
-  {
-    cudf::groupby::aggregation_request r;
-    r.values = lo_i->view();
-    r.aggregations.push_back(cudf::make_sum_aggregation<cudf::groupby_aggregation>());
-    reqs.push_back(std::move(r));
-  }
-  auto [gk, ga] = gb.aggregate(reqs);
-  auto hi_sum = std::move(ga[0].results[0]);
-  auto lo_sum = std::move(ga[1].results[0]);
+    // groupby l_shipmode -> sum(hi), sum(lo)
+    cudf::groupby::groupby gb(cudf::table_view{{mode_col->get_column(0).view()}});
+    std::vector<cudf::groupby::aggregation_request> reqs;
+    {
+      cudf::groupby::aggregation_request r;
+      r.values = hi_i->view();
+      r.aggregations.push_back(cudf::make_sum_aggregation<cudf::groupby_aggregation>());
+      reqs.push_back(std::move(r));
+    }
+    {
+      cudf::groupby::aggregation_request r;
+      r.values = lo_i->view();
+      r.aggregations.push_back(cudf::make_sum_aggregation<cudf::groupby_aggregation>());
+      reqs.push_back(std::move(r));
+    }
+    auto [gk, ga] = gb.aggregate(reqs);
+    auto hi_sum = std::move(ga[0].results[0]);
+    auto lo_sum = std::move(ga[1].results[0]);
+
+    // ORDER BY l_shipmode — the group key, unique per row, so this is a TOTAL order
+    auto order = cudf::sorted_order(cudf::table_view{{gk->view().column(0)}},
+                                    {cudf::order::ASCENDING}, {cudf::null_order::AFTER});
+    return cudf::gather(
+        cudf::table_view{{gk->view().column(0), hi_sum->view(), lo_sum->view()}}, order->view());
+  };
+
+  // count corroboration (verify path only), and vacuity guard
+  auto count_hits = vector_range_hits(handle, index, probe, 100, K, "q12v");
+  expect_hit_count(count_hits.size(),
+                   golden_dir() + "/duckdb_ptext_" + probe.id + ".count.csv", "q12v", probe.id);
+  ASSERT_GT(count_hits.size(), 0u) << "no part rows under D — test would be vacuous";
+
+  auto sorted = execute();
   note_peak();
-
-  // ORDER BY l_shipmode — the group key, unique per row, so this is a TOTAL order
-  auto order = cudf::sorted_order(cudf::table_view{{gk->view().column(0)}},
-                                  {cudf::order::ASCENDING}, {cudf::null_order::AFTER});
-  auto sorted = cudf::gather(
-      cudf::table_view{{gk->view().column(0), hi_sum->view(), lo_sum->view()}}, order->view());
   const auto t_done = std::chrono::steady_clock::now();
 
   // ---------------- COMPARE (exact throughout) ----------------
@@ -777,6 +819,9 @@ TEST_F(TpchSf40, Q12VectorShipModeCounts) {
   };
   std::fprintf(stderr, "[q12v] load %ld ms, execute %ld ms, total %ld ms\n", ms(t0, t_loaded),
                ms(t_loaded, t_done), ms(t0, t_done));
+
+  benchmark_execute("q12v", execute,
+                    std::chrono::duration<double, std::milli>(t_loaded - t0).count(), index_ms);
 }
 
 // ===========================================================================
@@ -847,16 +892,29 @@ TEST_F(TpchSf40, Q10VectorCustomerTopN) {
                            {"l_orderkey", "l_partkey", "l_extendedprice", "l_discount",
                             "l_returnflag"});
   auto nat_in = read_cols(data_dir() + "/nation.parquet", {"n_nationkey", "n_name"});
+  const auto part_path = data_dir() + "/part.parquet";
+  auto part_in = read_cols(part_path, {"p_partkey"});
   raft::resources handle;
-  auto sel_parts = select_parts_by_text_embedding(handle, probe, "q10v");
+  auto emb = load_embedding_column(part_path, "p_text_embedding", 100,
+                                   raft::resource::get_cuda_stream(handle));
+  EXPECT_EQ(emb.batches, 1) << "p_text_embedding at sf40 must load in a single read";
+  EXPECT_EQ(emb.rows, static_cast<int64_t>(part_in.tbl->num_rows()));
   const auto t_loaded = std::chrono::steady_clock::now();
   note_peak();
-  std::fprintf(stderr, "[q10v] loaded customer %ld, orders %ld, lineitem %ld, part %ld (%zu under D)\n",
+
+  // SETUP: cuVS index build, timed separately.
+  const int64_t K = search_k();
+  ASSERT_LE(K, emb.rows);
+  const auto t_index0 = std::chrono::steady_clock::now();
+  auto index = build_bf_index(handle, emb.buf.data(), emb.rows, 100);
+  cudaDeviceSynchronize();
+  const double index_ms =
+      std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t_index0).count();
+  std::fprintf(stderr, "[q10v] loaded customer %ld, orders %ld, lineitem %ld, part %ld; index %.1f ms\n",
                static_cast<long>(cust_in.tbl->num_rows()),
                static_cast<long>(ord_in.tbl->num_rows()),
                static_cast<long>(line_in.tbl->num_rows()),
-               static_cast<long>(sel_parts.n_part), sel_parts.n_hits);
-  ASSERT_GT(sel_parts.partkeys->num_rows(), 0) << "no part rows under D — test would be vacuous";
+               static_cast<long>(part_in.tbl->num_rows()), index_ms);
 
   // ---------------- PHASE 2: EXECUTE ----------------
   const auto boolean = cudf::data_type{cudf::type_id::BOOL8};
@@ -865,131 +923,136 @@ TEST_F(TpchSf40, Q10VectorCustomerTopN) {
   auto cv = cust_in.tbl->view();
   auto ov = ord_in.tbl->view();
   auto lv = line_in.tbl->view();
+  auto pk = part_in.tbl->view().column(0);
 
-  // filter lineitem: l_returnflag = 'R'
-  auto flag_r = cudf::string_scalar(std::string("R"));
-  auto line_mask = cudf::binary_operation(lv.column(4), flag_r,
-                                          cudf::binary_operator::EQUAL, boolean);
-  auto line_f = cudf::apply_boolean_mask(
-      cudf::table_view{{lv.column(0), lv.column(1), lv.column(2), lv.column(3)}},
-      line_mask->view());
+  // Wrapped in a closure so the test verifies it once and the benchmark times the SAME code.
+  // The LIMIT 20 is a zero-copy slice, applied outside the closure in the verify path.
+  auto execute = [&]() -> std::unique_ptr<cudf::table> {
+    auto sel_partkeys = parts_under_d(handle, index, pk, probe, 100, K, "q10v");
+
+    // filter lineitem: l_returnflag = 'R'
+    auto flag_r = cudf::string_scalar(std::string("R"));
+    auto line_mask = cudf::binary_operation(lv.column(4), flag_r,
+                                            cudf::binary_operator::EQUAL, boolean);
+    auto line_f = cudf::apply_boolean_mask(
+        cudf::table_view{{lv.column(0), lv.column(1), lv.column(2), lv.column(3)}},
+        line_mask->view());
+    note_peak();
+
+    // filter orders: the 1993-10-01 .. 1994-01-01 quarter
+    auto d_lo = date_scalar(1993, 10, 1);
+    auto d_hi = date_scalar(1994, 1, 1);
+    auto o_ge = cudf::binary_operation(ov.column(2), d_lo,
+                                       cudf::binary_operator::GREATER_EQUAL, boolean);
+    auto o_lt = cudf::binary_operation(ov.column(2), d_hi, cudf::binary_operator::LESS, boolean);
+    auto ord_mask = cudf::binary_operation(o_ge->view(), o_lt->view(),
+                                           cudf::binary_operator::LOGICAL_AND, boolean);
+    auto ord_f = cudf::apply_boolean_mask(cudf::table_view{{ov.column(0), ov.column(1)}},
+                                          ord_mask->view());
+    EXPECT_GT(line_f->num_rows(), 0);
+    EXPECT_GT(ord_f->num_rows(), 0);
+
+    // join 1: lineitem.l_partkey = (parts under D).p_partkey
+    auto [l_map, p_map] = cudf::inner_join(
+        cudf::table_view{{line_f->get_column(1).view()}},
+        cudf::table_view{{sel_partkeys->get_column(0).view()}});
+    auto lp = cudf::gather(cudf::table_view{{line_f->get_column(0).view(),    // l_orderkey
+                                             line_f->get_column(2).view(),    // l_extendedprice
+                                             line_f->get_column(3).view()}},  // l_discount
+                           map_view(l_map));
+    note_peak();
+
+    // join 2: |X| orders on orderkey
+    auto [lp_map, o_map] = cudf::inner_join(cudf::table_view{{lp->get_column(0).view()}},
+                                            cudf::table_view{{ord_f->get_column(0).view()}});
+    auto lo_l = cudf::gather(cudf::table_view{{lp->get_column(1).view(), lp->get_column(2).view()}},
+                             map_view(lp_map));
+    auto lo_o = cudf::gather(cudf::table_view{{ord_f->get_column(1).view()}},  // o_custkey
+                             map_view(o_map));
+    EXPECT_GT(lo_o->num_rows(), 0) << "vector predicate and filters left no rows to join";
+
+    // join 3: |X| customer on custkey
+    auto [c_map, lo_map] = cudf::inner_join(cudf::table_view{{cv.column(0)}},
+                                            cudf::table_view{{lo_o->get_column(0).view()}});
+    auto cust_side = cudf::gather(cudf::table_view{{cv.column(0),    // c_custkey
+                                                    cv.column(1),    // c_name
+                                                    cv.column(5),    // c_acctbal
+                                                    cv.column(4),    // c_phone
+                                                    cv.column(2),    // c_address
+                                                    cv.column(6),    // c_comment
+                                                    cv.column(3)}},  // c_nationkey
+                                  map_view(c_map));
+    auto val_side = cudf::gather(
+        cudf::table_view{{lo_l->get_column(0).view(), lo_l->get_column(1).view()}},
+        map_view(lo_map));
+
+    // join 4: |X| nation on nationkey
+    auto [cn_map, n_map] = cudf::inner_join(cudf::table_view{{cust_side->get_column(6).view()}},
+                                            cudf::table_view{{nat_in.tbl->view().column(0)}});
+    auto cust_j = cudf::gather(cudf::table_view{{cust_side->get_column(0).view(),
+                                                 cust_side->get_column(1).view(),
+                                                 cust_side->get_column(2).view(),
+                                                 cust_side->get_column(3).view(),
+                                                 cust_side->get_column(4).view(),
+                                                 cust_side->get_column(5).view()}},
+                               map_view(cn_map));
+    auto val_j = cudf::gather(
+        cudf::table_view{{val_side->get_column(0).view(), val_side->get_column(1).view()}},
+        map_view(cn_map));
+    auto nat_j = cudf::gather(cudf::table_view{{nat_in.tbl->view().column(1)}}, map_view(n_map));
+    note_peak();
+    EXPECT_GT(cust_j->num_rows(), 0);
+
+    // revenue = l_extendedprice * (1 - l_discount), exact decimal (scale -2 * -2 -> -4)
+    auto price = cudf::cast(val_j->get_column(0).view(), dec128_s2);
+    auto disc = cudf::cast(val_j->get_column(1).view(), dec128_s2);
+    auto one_s2 = cudf::fixed_point_scalar<numeric::decimal128>(100, numeric::scale_type{-2});
+    auto one_minus_disc =
+        cudf::binary_operation(one_s2, disc->view(), cudf::binary_operator::SUB, dec128_s2);
+    auto revenue = cudf::binary_operation(price->view(), one_minus_disc->view(),
+                                          cudf::binary_operator::MUL, dec128_s4);
+
+    // groupby on all SEVEN key columns, in DuckDB's GROUP BY order
+    cudf::groupby::groupby gb(cudf::table_view{{cust_j->get_column(0).view(),   // c_custkey
+                                                cust_j->get_column(1).view(),   // c_name
+                                                cust_j->get_column(2).view(),   // c_acctbal
+                                                cust_j->get_column(3).view(),   // c_phone
+                                                nat_j->get_column(0).view(),    // n_name
+                                                cust_j->get_column(4).view(),   // c_address
+                                                cust_j->get_column(5).view()}});// c_comment
+    std::vector<cudf::groupby::aggregation_request> reqs;
+    {
+      cudf::groupby::aggregation_request r;
+      r.values = revenue->view();
+      r.aggregations.push_back(cudf::make_sum_aggregation<cudf::groupby_aggregation>());
+      reqs.push_back(std::move(r));
+    }
+    auto [gk, ga] = gb.aggregate(reqs);
+    auto rev_col = std::move(ga[0].results[0]);
+    EXPECT_GE(gk->num_rows(), 20) << "fewer than 20 groups — LIMIT 20 would not be exercised";
+
+    // ORDER BY revenue DESC, c_custkey ASC  (total order — see the header)
+    auto gkv = gk->view();
+    auto order = cudf::sorted_order(cudf::table_view{{rev_col->view(), gkv.column(0)}},
+                                    {cudf::order::DESCENDING, cudf::order::ASCENDING},
+                                    {cudf::null_order::AFTER, cudf::null_order::AFTER});
+    // output column order matches the golden: custkey, name, revenue, acctbal, nation,
+    // address, phone, comment
+    return cudf::gather(cudf::table_view{{gkv.column(0), gkv.column(1), rev_col->view(),
+                                          gkv.column(2), gkv.column(4), gkv.column(5),
+                                          gkv.column(3), gkv.column(6)}},
+                        order->view());
+  };
+
+  // count corroboration (verify path only), and vacuity guard
+  auto count_hits = vector_range_hits(handle, index, probe, 100, K, "q10v");
+  expect_hit_count(count_hits.size(),
+                   golden_dir() + "/duckdb_ptext_" + probe.id + ".count.csv", "q10v", probe.id);
+  ASSERT_GT(count_hits.size(), 0u) << "no part rows under D — test would be vacuous";
+
+  auto sorted = execute();
   note_peak();
-
-  // filter orders: the 1993-10-01 .. 1994-01-01 quarter
-  auto d_lo = date_scalar(1993, 10, 1);
-  auto d_hi = date_scalar(1994, 1, 1);
-  auto o_ge = cudf::binary_operation(ov.column(2), d_lo,
-                                     cudf::binary_operator::GREATER_EQUAL, boolean);
-  auto o_lt = cudf::binary_operation(ov.column(2), d_hi, cudf::binary_operator::LESS, boolean);
-  auto ord_mask = cudf::binary_operation(o_ge->view(), o_lt->view(),
-                                         cudf::binary_operator::LOGICAL_AND, boolean);
-  auto ord_f = cudf::apply_boolean_mask(cudf::table_view{{ov.column(0), ov.column(1)}},
-                                        ord_mask->view());
-  note_peak();
-  std::fprintf(stderr, "[q10v] after local filters: lineitem %ld, orders %ld\n",
-               static_cast<long>(line_f->num_rows()), static_cast<long>(ord_f->num_rows()));
-  ASSERT_GT(line_f->num_rows(), 0);
-  ASSERT_GT(ord_f->num_rows(), 0);
-
-  // join 1: lineitem.l_partkey = (parts under D).p_partkey
-  auto [l_map, p_map] = cudf::inner_join(
-      cudf::table_view{{line_f->get_column(1).view()}},
-      cudf::table_view{{sel_parts.partkeys->get_column(0).view()}});
-  auto lp = cudf::gather(cudf::table_view{{line_f->get_column(0).view(),    // l_orderkey
-                                           line_f->get_column(2).view(),    // l_extendedprice
-                                           line_f->get_column(3).view()}},  // l_discount
-                         map_view(l_map));
-  note_peak();
-  std::fprintf(stderr, "[q10v] lineitem |X| part -> %ld rows\n", static_cast<long>(lp->num_rows()));
-
-  // join 2: |X| orders on orderkey
-  auto [lp_map, o_map] = cudf::inner_join(cudf::table_view{{lp->get_column(0).view()}},
-                                          cudf::table_view{{ord_f->get_column(0).view()}});
-  auto lo_l = cudf::gather(cudf::table_view{{lp->get_column(1).view(), lp->get_column(2).view()}},
-                           map_view(lp_map));
-  auto lo_o = cudf::gather(cudf::table_view{{ord_f->get_column(1).view()}},  // o_custkey
-                           map_view(o_map));
-  note_peak();
-  std::fprintf(stderr, "[q10v] |X| orders -> %ld rows\n", static_cast<long>(lo_o->num_rows()));
-  ASSERT_GT(lo_o->num_rows(), 0) << "vector predicate and filters left no rows to join";
-
-  // join 3: |X| customer on custkey
-  auto [c_map, lo_map] = cudf::inner_join(cudf::table_view{{cv.column(0)}},
-                                          cudf::table_view{{lo_o->get_column(0).view()}});
-  auto cust_side = cudf::gather(cudf::table_view{{cv.column(0),    // c_custkey
-                                                  cv.column(1),    // c_name
-                                                  cv.column(5),    // c_acctbal
-                                                  cv.column(4),    // c_phone
-                                                  cv.column(2),    // c_address
-                                                  cv.column(6),    // c_comment
-                                                  cv.column(3)}},  // c_nationkey
-                                map_view(c_map));
-  auto val_side = cudf::gather(
-      cudf::table_view{{lo_l->get_column(0).view(), lo_l->get_column(1).view()}},
-      map_view(lo_map));
-  note_peak();
-
-  // join 4: |X| nation on nationkey
-  auto [cn_map, n_map] = cudf::inner_join(cudf::table_view{{cust_side->get_column(6).view()}},
-                                          cudf::table_view{{nat_in.tbl->view().column(0)}});
-  auto cust_j = cudf::gather(cudf::table_view{{cust_side->get_column(0).view(),
-                                               cust_side->get_column(1).view(),
-                                               cust_side->get_column(2).view(),
-                                               cust_side->get_column(3).view(),
-                                               cust_side->get_column(4).view(),
-                                               cust_side->get_column(5).view()}},
-                             map_view(cn_map));
-  auto val_j = cudf::gather(
-      cudf::table_view{{val_side->get_column(0).view(), val_side->get_column(1).view()}},
-      map_view(cn_map));
-  auto nat_j = cudf::gather(cudf::table_view{{nat_in.tbl->view().column(1)}}, map_view(n_map));
-  note_peak();
-  std::fprintf(stderr, "[q10v] |X| customer |X| nation -> %ld rows\n",
-               static_cast<long>(cust_j->num_rows()));
-  ASSERT_GT(cust_j->num_rows(), 0);
-
-  // revenue = l_extendedprice * (1 - l_discount), exact decimal (scale -2 * -2 -> -4)
-  auto price = cudf::cast(val_j->get_column(0).view(), dec128_s2);
-  auto disc = cudf::cast(val_j->get_column(1).view(), dec128_s2);
-  auto one_s2 = cudf::fixed_point_scalar<numeric::decimal128>(100, numeric::scale_type{-2});
-  auto one_minus_disc =
-      cudf::binary_operation(one_s2, disc->view(), cudf::binary_operator::SUB, dec128_s2);
-  auto revenue = cudf::binary_operation(price->view(), one_minus_disc->view(),
-                                        cudf::binary_operator::MUL, dec128_s4);
-
-  // groupby on all SEVEN key columns, in DuckDB's GROUP BY order
-  cudf::groupby::groupby gb(cudf::table_view{{cust_j->get_column(0).view(),   // c_custkey
-                                              cust_j->get_column(1).view(),   // c_name
-                                              cust_j->get_column(2).view(),   // c_acctbal
-                                              cust_j->get_column(3).view(),   // c_phone
-                                              nat_j->get_column(0).view(),    // n_name
-                                              cust_j->get_column(4).view(),   // c_address
-                                              cust_j->get_column(5).view()}});// c_comment
-  std::vector<cudf::groupby::aggregation_request> reqs;
-  {
-    cudf::groupby::aggregation_request r;
-    r.values = revenue->view();
-    r.aggregations.push_back(cudf::make_sum_aggregation<cudf::groupby_aggregation>());
-    reqs.push_back(std::move(r));
-  }
-  auto [gk, ga] = gb.aggregate(reqs);
-  auto rev_col = std::move(ga[0].results[0]);
-  note_peak();
-  std::fprintf(stderr, "[q10v] groups: %ld\n", static_cast<long>(gk->num_rows()));
-  ASSERT_GE(gk->num_rows(), 20) << "fewer than 20 groups — LIMIT 20 would not be exercised";
-
-  // ORDER BY revenue DESC, c_custkey ASC  (total order — see the header)
-  auto gkv = gk->view();
-  auto order = cudf::sorted_order(cudf::table_view{{rev_col->view(), gkv.column(0)}},
-                                  {cudf::order::DESCENDING, cudf::order::ASCENDING},
-                                  {cudf::null_order::AFTER, cudf::null_order::AFTER});
-  // output column order matches the golden: custkey, name, revenue, acctbal, nation,
-  // address, phone, comment
-  auto sorted = cudf::gather(cudf::table_view{{gkv.column(0), gkv.column(1), rev_col->view(),
-                                               gkv.column(2), gkv.column(4), gkv.column(5),
-                                               gkv.column(3), gkv.column(6)}},
-                             order->view());
-  auto top = cudf::slice(sorted->view(), {0, 20})[0];
+  auto top = cudf::slice(sorted->view(), {0, 20})[0];  // LIMIT 20 (zero-copy view)
   const auto t_done = std::chrono::steady_clock::now();
 
   // ---------------- COMPARE (exact throughout) ----------------
@@ -1009,6 +1072,9 @@ TEST_F(TpchSf40, Q10VectorCustomerTopN) {
   };
   std::fprintf(stderr, "[q10v] load %ld ms, execute %ld ms, total %ld ms\n", ms(t0, t_loaded),
                ms(t_loaded, t_done), ms(t0, t_done));
+
+  benchmark_execute("q10v", execute,
+                    std::chrono::duration<double, std::milli>(t_loaded - t0).count(), index_ms);
 }
 
 // ===========================================================================
@@ -1067,7 +1133,8 @@ TEST_F(TpchSf40, Q9VectorCompositeJoin) {
   const auto t0 = std::chrono::steady_clock::now();
 
   // ---------------- PHASE 1: LOAD ----------------
-  auto part_name_in = read_cols(data_dir() + "/part.parquet", {"p_partkey", "p_name"});
+  const auto part_path = data_dir() + "/part.parquet";
+  auto part_name_in = read_cols(part_path, {"p_partkey", "p_name"});
   auto sup_in = read_cols(data_dir() + "/supplier.parquet", {"s_suppkey", "s_nationkey"});
   auto line_in = read_cols(data_dir() + "/lineitem.parquet",
                            {"l_orderkey", "l_partkey", "l_suppkey", "l_extendedprice",
@@ -1077,172 +1144,182 @@ TEST_F(TpchSf40, Q9VectorCompositeJoin) {
   auto ord_in = read_cols(data_dir() + "/orders.parquet", {"o_orderkey", "o_orderdate"});
   auto nat_in = read_cols(data_dir() + "/nation.parquet", {"n_nationkey", "n_name"});
   raft::resources handle;
-  auto sel_parts = select_parts_by_text_embedding(handle, probe, "q9v");
+  auto emb = load_embedding_column(part_path, "p_text_embedding", 100,
+                                   raft::resource::get_cuda_stream(handle));
+  EXPECT_EQ(emb.batches, 1) << "p_text_embedding at sf40 must load in a single read";
+  EXPECT_EQ(emb.rows, static_cast<int64_t>(part_name_in.tbl->num_rows()));
   const auto t_loaded = std::chrono::steady_clock::now();
   note_peak();
+
+  // SETUP: cuVS index build, timed separately.
+  const int64_t K = search_k();
+  ASSERT_LE(K, emb.rows);
+  const auto t_index0 = std::chrono::steady_clock::now();
+  auto index = build_bf_index(handle, emb.buf.data(), emb.rows, 100);
+  cudaDeviceSynchronize();
+  const double index_ms =
+      std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t_index0).count();
   std::fprintf(stderr,
-               "[q9v] loaded part %ld, supplier %ld, lineitem %ld, partsupp %ld, orders %ld"
-               " (%zu parts under D)\n",
+               "[q9v] loaded part %ld, supplier %ld, lineitem %ld, partsupp %ld, orders %ld;"
+               " index %.1f ms\n",
                static_cast<long>(part_name_in.tbl->num_rows()),
                static_cast<long>(sup_in.tbl->num_rows()),
                static_cast<long>(line_in.tbl->num_rows()),
                static_cast<long>(ps_in.tbl->num_rows()),
-               static_cast<long>(ord_in.tbl->num_rows()), sel_parts.n_hits);
-  ASSERT_GT(sel_parts.partkeys->num_rows(), 0) << "no part rows under D — test would be vacuous";
+               static_cast<long>(ord_in.tbl->num_rows()), index_ms);
 
   // ---------------- PHASE 2: EXECUTE ----------------
   const auto boolean = cudf::data_type{cudf::type_id::BOOL8};
   const auto dec128_s2 = cudf::data_type{cudf::type_id::DECIMAL128, -2};
   const auto dec128_s4 = cudf::data_type{cudf::type_id::DECIMAL128, -4};
   auto lv = line_in.tbl->view();
+  auto pk = part_name_in.tbl->view().column(0);
+  auto pname = part_name_in.tbl->view().column(1);
 
-  // p_name LIKE '%green%' — a SUBSTRING match over the whole part table, then intersected
-  // with the vector hits. Both predicates are on part, so which runs first is arbitrary;
-  // running contains() over 8M short strings is cheap next to the 8M x 100 distance scan
-  // that already happened.
-  auto green = cudf::string_scalar(std::string("green"));
-  auto green_mask = cudf::strings::contains(
-      cudf::strings_column_view(part_name_in.tbl->view().column(1)), green);
-  auto green_parts = cudf::apply_boolean_mask(
-      cudf::table_view{{part_name_in.tbl->view().column(0)}}, green_mask->view());
+  // Wrapped in a closure so the test verifies it once and the benchmark times the SAME code.
+  auto execute = [&]() -> std::unique_ptr<cudf::table> {
+    auto sel_partkeys = parts_under_d(handle, index, pk, probe, 100, K, "q9v");
+
+    // p_name LIKE '%green%' — a SUBSTRING match over the whole part table, then intersected
+    // with the vector hits. Both predicates are on part; running contains() over 8M short
+    // strings is cheap next to the 8M x 100 distance scan the search already did.
+    auto green = cudf::string_scalar(std::string("green"));
+    auto green_mask = cudf::strings::contains(cudf::strings_column_view(pname), green);
+    auto green_parts = cudf::apply_boolean_mask(cudf::table_view{{pk}}, green_mask->view());
+    EXPECT_GT(green_parts->num_rows(), 0);
+
+    auto [g_map, v_map] = cudf::inner_join(
+        cudf::table_view{{green_parts->get_column(0).view()}},
+        cudf::table_view{{sel_partkeys->get_column(0).view()}});
+    auto part_sel = cudf::gather(cudf::table_view{{green_parts->get_column(0).view()}},
+                                 map_view(g_map));
+    EXPECT_GT(part_sel->num_rows(), 0) << "the two part predicates have no overlap";
+
+    // join 1: part |X| lineitem on partkey — the decisive reduction, 240M -> ~63k
+    auto [ps_map, l_map] = cudf::inner_join(cudf::table_view{{part_sel->get_column(0).view()}},
+                                            cudf::table_view{{lv.column(1)}});
+    auto li = cudf::gather(cudf::table_view{{lv.column(0),    // l_orderkey
+                                             lv.column(1),    // l_partkey
+                                             lv.column(2),    // l_suppkey
+                                             lv.column(3),    // l_extendedprice
+                                             lv.column(4),    // l_discount
+                                             lv.column(5)}},  // l_quantity
+                           map_view(l_map));
+    note_peak();
+    EXPECT_GT(li->num_rows(), 0);
+
+    // join 2: THE COMPOSITE JOIN. Two key columns on each side, matched positionally:
+    // (l_partkey, l_suppkey) against (ps_partkey, ps_suppkey). Joining on partkey alone
+    // would multiply every lineitem row by the four suppliers that stock the part and
+    // silently charge it the wrong supplycost — the row count would grow 4x, which is why
+    // the assertion below pins it against the left input rather than merely checking >0.
+    auto [li_map, psx_map] = cudf::inner_join(
+        cudf::table_view{{li->get_column(1).view(), li->get_column(2).view()}},
+        cudf::table_view{{ps_in.tbl->view().column(0), ps_in.tbl->view().column(1)}});
+    auto li_j = cudf::gather(cudf::table_view{{li->get_column(0).view(),    // l_orderkey
+                                               li->get_column(2).view(),    // l_suppkey
+                                               li->get_column(3).view(),    // l_extendedprice
+                                               li->get_column(4).view(),    // l_discount
+                                               li->get_column(5).view()}},  // l_quantity
+                             map_view(li_map));
+    auto cost_j = cudf::gather(cudf::table_view{{ps_in.tbl->view().column(2)}},  // ps_supplycost
+                               map_view(psx_map));
+    note_peak();
+    // (partkey, suppkey) is UNIQUE in partsupp, so the composite join must be row-preserving
+    // on the lineitem side: every lineitem row has exactly one matching partsupp row.
+    // A single-key join here would return ~4x this. That is the whole point of the test.
+    EXPECT_EQ(li_j->num_rows(), li->num_rows())
+        << "composite join changed the lineitem row count — (ps_partkey, ps_suppkey) is "
+           "unique in partsupp, so an inner join on both keys must preserve it exactly. "
+           "A larger count means the join matched on fewer keys than it was given.";
+
+    // join 3: |X| orders on orderkey (for o_orderdate)
+    auto [lo_map, o_map] = cudf::inner_join(cudf::table_view{{li_j->get_column(0).view()}},
+                                            cudf::table_view{{ord_in.tbl->view().column(0)}});
+    auto li_o = cudf::gather(cudf::table_view{{li_j->get_column(1).view(),   // l_suppkey
+                                               li_j->get_column(2).view(),   // l_extendedprice
+                                               li_j->get_column(3).view(),   // l_discount
+                                               li_j->get_column(4).view()}}, // l_quantity
+                             map_view(lo_map));
+    auto cost_o = cudf::gather(cudf::table_view{{cost_j->get_column(0).view()}}, map_view(lo_map));
+    auto date_o = cudf::gather(cudf::table_view{{ord_in.tbl->view().column(1)}}, map_view(o_map));
+    note_peak();
+    EXPECT_GT(li_o->num_rows(), 0);
+
+    // join 4: |X| supplier on suppkey, then |X| nation on nationkey
+    auto [ls_map, s_map] = cudf::inner_join(cudf::table_view{{li_o->get_column(0).view()}},
+                                            cudf::table_view{{sup_in.tbl->view().column(0)}});
+    auto vals_s = cudf::gather(cudf::table_view{{li_o->get_column(1).view(),
+                                                 li_o->get_column(2).view(),
+                                                 li_o->get_column(3).view()}},
+                               map_view(ls_map));
+    auto cost_s = cudf::gather(cudf::table_view{{cost_o->get_column(0).view()}}, map_view(ls_map));
+    auto date_s = cudf::gather(cudf::table_view{{date_o->get_column(0).view()}}, map_view(ls_map));
+    auto natkey_s = cudf::gather(cudf::table_view{{sup_in.tbl->view().column(1)}}, map_view(s_map));
+
+    auto [sn_map, n_map] = cudf::inner_join(cudf::table_view{{natkey_s->get_column(0).view()}},
+                                            cudf::table_view{{nat_in.tbl->view().column(0)}});
+    auto vals_n = cudf::gather(cudf::table_view{{vals_s->get_column(0).view(),
+                                                 vals_s->get_column(1).view(),
+                                                 vals_s->get_column(2).view()}},
+                               map_view(sn_map));
+    auto cost_n = cudf::gather(cudf::table_view{{cost_s->get_column(0).view()}}, map_view(sn_map));
+    auto date_n = cudf::gather(cudf::table_view{{date_s->get_column(0).view()}}, map_view(sn_map));
+    auto name_n = cudf::gather(cudf::table_view{{nat_in.tbl->view().column(1)}}, map_view(n_map));
+    note_peak();
+    EXPECT_GT(vals_n->num_rows(), 0);
+
+    // o_year — extract_datetime_component, not the 25.02-only extract_year (deleted in
+    // 26.02). Returns INT16.
+    auto o_year = cudf::datetime::extract_datetime_component(
+        date_n->get_column(0).view(), cudf::datetime::datetime_component::YEAR);
+
+    // amount = l_extendedprice*(1-l_discount) - ps_supplycost*l_quantity, all exact decimal:
+    // both products are (scale -2) x (scale -2) -> scale -4, and the difference stays at -4.
+    auto price = cudf::cast(vals_n->get_column(0).view(), dec128_s2);
+    auto disc = cudf::cast(vals_n->get_column(1).view(), dec128_s2);
+    auto qty = cudf::cast(vals_n->get_column(2).view(), dec128_s2);
+    auto cost = cudf::cast(cost_n->get_column(0).view(), dec128_s2);
+    auto one_s2 = cudf::fixed_point_scalar<numeric::decimal128>(100, numeric::scale_type{-2});
+    auto one_minus_disc =
+        cudf::binary_operation(one_s2, disc->view(), cudf::binary_operator::SUB, dec128_s2);
+    auto gross = cudf::binary_operation(price->view(), one_minus_disc->view(),
+                                        cudf::binary_operator::MUL, dec128_s4);
+    auto outlay =
+        cudf::binary_operation(cost->view(), qty->view(), cudf::binary_operator::MUL, dec128_s4);
+    auto amount = cudf::binary_operation(gross->view(), outlay->view(),
+                                         cudf::binary_operator::SUB, dec128_s4);
+
+    // groupby (n_name, o_year) -> sum(amount)
+    cudf::groupby::groupby gb(
+        cudf::table_view{{name_n->get_column(0).view(), o_year->view()}});
+    std::vector<cudf::groupby::aggregation_request> reqs;
+    {
+      cudf::groupby::aggregation_request r;
+      r.values = amount->view();
+      r.aggregations.push_back(cudf::make_sum_aggregation<cudf::groupby_aggregation>());
+      reqs.push_back(std::move(r));
+    }
+    auto [gk, ga] = gb.aggregate(reqs);
+    auto profit = std::move(ga[0].results[0]);
+
+    // ORDER BY nation ASC, o_year DESC — together the group key, so this is a TOTAL order
+    auto gkv = gk->view();
+    auto order = cudf::sorted_order(cudf::table_view{{gkv.column(0), gkv.column(1)}},
+                                    {cudf::order::ASCENDING, cudf::order::DESCENDING},
+                                    {cudf::null_order::AFTER, cudf::null_order::AFTER});
+    return cudf::gather(
+        cudf::table_view{{gkv.column(0), gkv.column(1), profit->view()}}, order->view());
+  };
+
+  // count corroboration (verify path only), and vacuity guard
+  auto count_hits = vector_range_hits(handle, index, probe, 100, K, "q9v");
+  expect_hit_count(count_hits.size(),
+                   golden_dir() + "/duckdb_ptext_" + probe.id + ".count.csv", "q9v", probe.id);
+  ASSERT_GT(count_hits.size(), 0u) << "no part rows under D — test would be vacuous";
+
+  auto sorted = execute();
   note_peak();
-  std::fprintf(stderr, "[q9v] parts matching '%%green%%': %ld\n",
-               static_cast<long>(green_parts->num_rows()));
-  ASSERT_GT(green_parts->num_rows(), 0);
-
-  auto [g_map, v_map] = cudf::inner_join(
-      cudf::table_view{{green_parts->get_column(0).view()}},
-      cudf::table_view{{sel_parts.partkeys->get_column(0).view()}});
-  auto part_sel = cudf::gather(cudf::table_view{{green_parts->get_column(0).view()}},
-                               map_view(g_map));
-  std::fprintf(stderr, "[q9v] parts under D AND '%%green%%': %ld\n",
-               static_cast<long>(part_sel->num_rows()));
-  ASSERT_GT(part_sel->num_rows(), 0) << "the two part predicates have no overlap";
-
-  // join 1: part |X| lineitem on partkey — the decisive reduction, 240M -> ~63k
-  auto [ps_map, l_map] = cudf::inner_join(cudf::table_view{{part_sel->get_column(0).view()}},
-                                          cudf::table_view{{lv.column(1)}});
-  auto li = cudf::gather(cudf::table_view{{lv.column(0),    // l_orderkey
-                                           lv.column(1),    // l_partkey
-                                           lv.column(2),    // l_suppkey
-                                           lv.column(3),    // l_extendedprice
-                                           lv.column(4),    // l_discount
-                                           lv.column(5)}},  // l_quantity
-                         map_view(l_map));
-  note_peak();
-  std::fprintf(stderr, "[q9v] part |X| lineitem -> %ld rows\n", static_cast<long>(li->num_rows()));
-  ASSERT_GT(li->num_rows(), 0);
-
-  // join 2: THE COMPOSITE JOIN. Two key columns on each side, matched positionally:
-  // (l_partkey, l_suppkey) against (ps_partkey, ps_suppkey). Joining on partkey alone would
-  // multiply every lineitem row by the four suppliers that stock the part and silently
-  // charge it the wrong supplycost — the row count would grow 4x, which is why the
-  // assertion below pins it against the left input rather than merely checking >0.
-  auto [li_map, psx_map] = cudf::inner_join(
-      cudf::table_view{{li->get_column(1).view(), li->get_column(2).view()}},
-      cudf::table_view{{ps_in.tbl->view().column(0), ps_in.tbl->view().column(1)}});
-  auto li_j = cudf::gather(cudf::table_view{{li->get_column(0).view(),    // l_orderkey
-                                             li->get_column(2).view(),    // l_suppkey
-                                             li->get_column(3).view(),    // l_extendedprice
-                                             li->get_column(4).view(),    // l_discount
-                                             li->get_column(5).view()}},  // l_quantity
-                           map_view(li_map));
-  auto cost_j = cudf::gather(cudf::table_view{{ps_in.tbl->view().column(2)}},  // ps_supplycost
-                             map_view(psx_map));
-  note_peak();
-  std::fprintf(stderr, "[q9v] |X| partsupp on (partkey,suppkey) -> %ld rows\n",
-               static_cast<long>(li_j->num_rows()));
-  // (partkey, suppkey) is UNIQUE in partsupp, so the composite join must be row-preserving
-  // on the lineitem side: every lineitem row has exactly one matching partsupp row.
-  // A single-key join here would return ~4x this. That is the whole point of the test.
-  ASSERT_EQ(li_j->num_rows(), li->num_rows())
-      << "composite join changed the lineitem row count — (ps_partkey, ps_suppkey) is "
-         "unique in partsupp, so an inner join on both keys must preserve it exactly. "
-         "A larger count means the join matched on fewer keys than it was given.";
-
-  // join 3: |X| orders on orderkey (for o_orderdate)
-  auto [lo_map, o_map] = cudf::inner_join(cudf::table_view{{li_j->get_column(0).view()}},
-                                          cudf::table_view{{ord_in.tbl->view().column(0)}});
-  auto li_o = cudf::gather(cudf::table_view{{li_j->get_column(1).view(),   // l_suppkey
-                                             li_j->get_column(2).view(),   // l_extendedprice
-                                             li_j->get_column(3).view(),   // l_discount
-                                             li_j->get_column(4).view()}}, // l_quantity
-                           map_view(lo_map));
-  auto cost_o = cudf::gather(cudf::table_view{{cost_j->get_column(0).view()}}, map_view(lo_map));
-  auto date_o = cudf::gather(cudf::table_view{{ord_in.tbl->view().column(1)}}, map_view(o_map));
-  note_peak();
-  std::fprintf(stderr, "[q9v] |X| orders -> %ld rows\n", static_cast<long>(li_o->num_rows()));
-  ASSERT_GT(li_o->num_rows(), 0);
-
-  // join 4: |X| supplier on suppkey, then |X| nation on nationkey
-  auto [ls_map, s_map] = cudf::inner_join(cudf::table_view{{li_o->get_column(0).view()}},
-                                          cudf::table_view{{sup_in.tbl->view().column(0)}});
-  auto vals_s = cudf::gather(cudf::table_view{{li_o->get_column(1).view(),
-                                               li_o->get_column(2).view(),
-                                               li_o->get_column(3).view()}},
-                             map_view(ls_map));
-  auto cost_s = cudf::gather(cudf::table_view{{cost_o->get_column(0).view()}}, map_view(ls_map));
-  auto date_s = cudf::gather(cudf::table_view{{date_o->get_column(0).view()}}, map_view(ls_map));
-  auto natkey_s = cudf::gather(cudf::table_view{{sup_in.tbl->view().column(1)}}, map_view(s_map));
-
-  auto [sn_map, n_map] = cudf::inner_join(cudf::table_view{{natkey_s->get_column(0).view()}},
-                                          cudf::table_view{{nat_in.tbl->view().column(0)}});
-  auto vals_n = cudf::gather(cudf::table_view{{vals_s->get_column(0).view(),
-                                               vals_s->get_column(1).view(),
-                                               vals_s->get_column(2).view()}},
-                             map_view(sn_map));
-  auto cost_n = cudf::gather(cudf::table_view{{cost_s->get_column(0).view()}}, map_view(sn_map));
-  auto date_n = cudf::gather(cudf::table_view{{date_s->get_column(0).view()}}, map_view(sn_map));
-  auto name_n = cudf::gather(cudf::table_view{{nat_in.tbl->view().column(1)}}, map_view(n_map));
-  note_peak();
-  std::fprintf(stderr, "[q9v] |X| supplier |X| nation -> %ld rows\n",
-               static_cast<long>(vals_n->num_rows()));
-  ASSERT_GT(vals_n->num_rows(), 0);
-
-  // o_year — extract_datetime_component, not the 25.02-only extract_year (deleted in
-  // 26.02). Returns INT16.
-  auto o_year = cudf::datetime::extract_datetime_component(
-      date_n->get_column(0).view(), cudf::datetime::datetime_component::YEAR);
-
-  // amount = l_extendedprice*(1-l_discount) - ps_supplycost*l_quantity, all exact decimal:
-  // both products are (scale -2) x (scale -2) -> scale -4, and the difference stays at -4.
-  auto price = cudf::cast(vals_n->get_column(0).view(), dec128_s2);
-  auto disc = cudf::cast(vals_n->get_column(1).view(), dec128_s2);
-  auto qty = cudf::cast(vals_n->get_column(2).view(), dec128_s2);
-  auto cost = cudf::cast(cost_n->get_column(0).view(), dec128_s2);
-  auto one_s2 = cudf::fixed_point_scalar<numeric::decimal128>(100, numeric::scale_type{-2});
-  auto one_minus_disc =
-      cudf::binary_operation(one_s2, disc->view(), cudf::binary_operator::SUB, dec128_s2);
-  auto gross = cudf::binary_operation(price->view(), one_minus_disc->view(),
-                                      cudf::binary_operator::MUL, dec128_s4);
-  auto outlay =
-      cudf::binary_operation(cost->view(), qty->view(), cudf::binary_operator::MUL, dec128_s4);
-  auto amount = cudf::binary_operation(gross->view(), outlay->view(),
-                                       cudf::binary_operator::SUB, dec128_s4);
-  note_peak();
-
-  // groupby (n_name, o_year) -> sum(amount)
-  cudf::groupby::groupby gb(
-      cudf::table_view{{name_n->get_column(0).view(), o_year->view()}});
-  std::vector<cudf::groupby::aggregation_request> reqs;
-  {
-    cudf::groupby::aggregation_request r;
-    r.values = amount->view();
-    r.aggregations.push_back(cudf::make_sum_aggregation<cudf::groupby_aggregation>());
-    reqs.push_back(std::move(r));
-  }
-  auto [gk, ga] = gb.aggregate(reqs);
-  auto profit = std::move(ga[0].results[0]);
-  note_peak();
-  std::fprintf(stderr, "[q9v] groups: %ld\n", static_cast<long>(gk->num_rows()));
-
-  // ORDER BY nation ASC, o_year DESC — together the group key, so this is a TOTAL order
-  auto gkv = gk->view();
-  auto order = cudf::sorted_order(cudf::table_view{{gkv.column(0), gkv.column(1)}},
-                                  {cudf::order::ASCENDING, cudf::order::DESCENDING},
-                                  {cudf::null_order::AFTER, cudf::null_order::AFTER});
-  auto sorted = cudf::gather(
-      cudf::table_view{{gkv.column(0), gkv.column(1), profit->view()}}, order->view());
   const auto t_done = std::chrono::steady_clock::now();
 
   // ---------------- COMPARE (exact throughout) ----------------
@@ -1261,6 +1338,9 @@ TEST_F(TpchSf40, Q9VectorCompositeJoin) {
   };
   std::fprintf(stderr, "[q9v] load %ld ms, execute %ld ms, total %ld ms\n", ms(t0, t_loaded),
                ms(t_loaded, t_done), ms(t0, t_done));
+
+  benchmark_execute("q9v", execute,
+                    std::chrono::duration<double, std::milli>(t_loaded - t0).count(), index_ms);
 }
 
 // Same entry point as the other gtest binaries here (the conda cudf ships no gtest_main).
