@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -191,45 +192,101 @@ class TpchSf40 : public ::testing::Test {
 
 
 
-// one golden row = the raw CSV fields, split on commas (no quoted fields in these goldens)
-std::vector<std::string> split_csv(const std::string& line) {
-  std::vector<std::string> out;
+// GOLDEN CSV READER — RFC4180 quoting, and it has to be.
+//
+// This used to split on ',' with a comment saying "no quoted fields in these goldens".
+// That was true until q10v, which selects c_comment and c_address: TPC-H comment text
+// contains commas, so DuckDB quotes those fields and doubles any embedded quote. A
+// comma-splitting reader turns one such row into 9 fields instead of 8 — which the
+// field-count guard in compare_table_to_golden would catch as a malformed golden,
+// blaming the generator for a defect in the reader.
+//
+// So: proper quoted-field parsing, and the file is consumed as a CHARACTER STREAM rather
+// than line by line, because a quoted field may legally contain a newline. Reading line
+// by line would split such a row in half and produce two malformed rows — the same class
+// of silent misparse, one level down. TPC-H text does not currently contain newlines;
+// this costs nothing and removes the assumption.
+//
+// Unquoted content parses byte-identically to the old splitter, so every existing golden
+// is unaffected.
+std::vector<std::vector<std::string>> read_csv_golden(const std::string& path) {
+  std::ifstream f(path, std::ios::binary);
+  std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+
+  std::vector<std::vector<std::string>> rows;
+  std::vector<std::string> row;
   std::string cur;
-  for (char c : line) {
-    if (c == ',') {
-      out.push_back(cur);
-      cur.clear();
-    } else {
+  bool in_quotes = false, row_started = false;
+
+  auto end_field = [&] { row.push_back(cur); cur.clear(); row_started = true; };
+  auto end_row = [&] {
+    end_field();
+    rows.push_back(row);
+    row.clear();
+    row_started = false;
+  };
+
+  for (size_t i = 0; i < text.size(); ++i) {
+    const char c = text[i];
+    if (in_quotes) {
+      if (c == '"') {
+        // "" inside a quoted field is one literal quote; a lone " closes the field
+        if (i + 1 < text.size() && text[i + 1] == '"') { cur += '"'; ++i; }
+        else in_quotes = false;
+      } else {
+        cur += c;
+      }
+    } else if (c == '"' && cur.empty()) {
+      // row_started here too, so a row that is a single empty quoted field ("") is a row
+      // with one empty field, not a blank line to skip
+      in_quotes = true;
+      row_started = true;
+    } else if (c == ',') {
+      end_field();
+    } else if (c == '\n') {
+      // a blank line is skipped entirely rather than becoming a one-empty-field row
+      if (row_started || !cur.empty()) end_row();
+    } else if (c != '\r') {
       cur += c;
     }
   }
-  out.push_back(cur);
-  return out;
-}
-
-std::vector<std::vector<std::string>> read_csv_golden(const std::string& path) {
-  std::vector<std::vector<std::string>> rows;
-  std::ifstream f(path);
-  std::string line;
-  while (std::getline(f, line)) {
-    if (!line.empty() && line.back() == '\r') line.pop_back();
-    if (line.empty()) continue;
-    rows.push_back(split_csv(line));
-  }
+  // last line without a trailing newline
+  if (row_started || !cur.empty()) end_row();
   return rows;
 }
 
 // pull one element back to the host. cudf::get_element returns a scalar, which keeps the
 // exact fixed-point representation — no round-trip through double for the decimal columns.
+//
+// WIDTH: cuDF picks the NARROWEST decimal type a column fits — decimal(15,2) comes back as
+// DECIMAL64, not DECIMAL128. Columns this suite builds itself (revenue, value) are forced
+// to DECIMAL128, but a decimal read straight from parquet and carried through as a key
+// (q10v's c_acctbal) stays DECIMAL64. A cast to decimal128 alone therefore returns null and
+// every such value reads as 0 — a silent zero, exactly the failure mode the count and int
+// accessors were already hardened against. So accept all three widths, same as int64_at
+// reads INT16/32/64. The unscaled value is widened to __int128 either way, so the
+// comparison downstream is identical.
 inline Decimal decimal_at(cudf::column_view const& col, cudf::size_type i) {
   auto s = cudf::get_element(col, i);
-  auto* fp = dynamic_cast<cudf::fixed_point_scalar<numeric::decimal128>*>(s.get());
-  EXPECT_NE(fp, nullptr) << "expected a decimal128 column";
-  if (!fp) return Decimal{};
   Decimal d;
-  d.unscaled = static_cast<__int128>(fp->value());
-  d.scale = -fp->type().scale();
-  return d;
+  if (auto* f128 = dynamic_cast<cudf::fixed_point_scalar<numeric::decimal128>*>(s.get())) {
+    d.unscaled = static_cast<__int128>(f128->value());
+    d.scale = -f128->type().scale();
+    return d;
+  }
+  if (auto* f64 = dynamic_cast<cudf::fixed_point_scalar<numeric::decimal64>*>(s.get())) {
+    d.unscaled = static_cast<__int128>(f64->value());
+    d.scale = -f64->type().scale();
+    return d;
+  }
+  if (auto* f32 = dynamic_cast<cudf::fixed_point_scalar<numeric::decimal32>*>(s.get())) {
+    d.unscaled = static_cast<__int128>(f32->value());
+    d.scale = -f32->type().scale();
+    return d;
+  }
+  ADD_FAILURE() << "expected a decimal column (32/64/128), got type id "
+                << static_cast<int>(col.type().id());
+  return Decimal{};
 }
 
 inline double double_at(cudf::column_view const& col, cudf::size_type i) {
