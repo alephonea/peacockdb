@@ -32,10 +32,14 @@
 #   benchmarks/duckdb_minimal.sh [--dir DIR] [--sf N] [--runs N] [--duckdb PATH]
 #                                [--bucket NAME] [--endpoint URL] [--region NAME]
 #                                [--threads N] [--skip-download] [--skip-verify]
-#                                [--force-import]
+#                                [--force-import] [--s3-direct]
 #
-#   --dir       where parquet and the .duckdb file live. Default /media/data/peacock-bench.
-#               NOTHING is hardcoded to a machine: point this at whatever the target box has.
+#   --s3-direct import each table straight from s3://BUCKET/ over DuckDB httpfs, with NO
+#               local parquet intermediate — for a host that fits the ~38 GB db but not
+#               parquet+db (39.5+38 GB). Lands only the db. Row-count verification reads
+#               from S3 too. The local download+import path is unchanged for other hosts.
+#   --dir       where parquet (local mode) and the .duckdb file live. Default
+#               /media/data/peacock-bench. NOTHING is hardcoded: point it at the target box.
 #   --sf        scale factor; selects the bucket (tpch-sf<N>) and the golden set.
 #   --threads   DuckDB threads for the TIMED runs. Default: DuckDB's own default (all
 #               cores) — this is a benchmark, not a determinism exercise. The VERIFY pass
@@ -57,6 +61,7 @@ THREADS=""
 SKIP_DOWNLOAD=0
 SKIP_VERIFY=0
 FORCE_IMPORT=0
+S3_DIRECT=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -71,6 +76,11 @@ while [ $# -gt 0 ]; do
     --skip-download) SKIP_DOWNLOAD=1; shift ;;
     --skip-verify) SKIP_VERIFY=1; shift ;;
     --force-import) FORCE_IMPORT=1; shift ;;
+    # S3-DIRECT: import straight from S3 via DuckDB httpfs, NO local parquet intermediate.
+    # For hosts where parquet (39.5 GB) + native db (~38 GB) does not fit but the db alone
+    # does (e.g. the 76 GB Nebius VM). Everything downstream — warm-up, residency, 6-run/
+    # 2nd-min, golden verify — is UNCHANGED; only the table SOURCE differs.
+    --s3-direct) S3_DIRECT=1; SKIP_DOWNLOAD=1; shift ;;
     -h|--help) sed -n '2,50p' "$0"; exit 0 ;;
     *) echo "error: unknown argument '$1' (try --help)" >&2; exit 2 ;;
   esac
@@ -95,7 +105,30 @@ gb()   { awk -v b="$1" 'BEGIN{printf "%.2f", b/1073741824}'; }
 command -v "$DUCKDB" >/dev/null 2>&1 || fail "duckdb not found ($DUCKDB); pass --duckdb PATH"
 command -v python3 >/dev/null 2>&1 || fail "python3 is required (query params, sizing)"
 [ -f "$PARAMS" ] || fail "missing $PARAMS — the vector queries resolve q and D from it"
-mkdir -p "$PARQUET_DIR" || fail "cannot create $PARQUET_DIR"
+[ "$S3_DIRECT" -eq 1 ] || mkdir -p "$PARQUET_DIR" || fail "cannot create $PARQUET_DIR"
+
+# --------------------------------------------------------------------------- table source
+# Where read_parquet reads each table from. LOCAL mode: the downloaded parquet on --dir.
+# S3-DIRECT mode: straight from the bucket over httpfs, no local copy.
+if [ "$S3_DIRECT" -eq 1 ]; then
+  src() { echo "read_parquet('s3://${BUCKET}/${1}.parquet')"; }
+else
+  src() { echo "read_parquet('${PARQUET_DIR}/${1}.parquet')"; }
+fi
+
+# httpfs + S3 secret prelude, prepended to EVERY duckdb invocation in s3-direct mode (each
+# -c is a fresh process, so the secret must be re-created each time). ENDPOINT here is the
+# BARE host — no scheme, no port — which is the form Nebius requires; derive it from the
+# --endpoint value by stripping https:// and any :port. URL_STYLE 'path' + credential_chain
+# (reads ~/.aws) is the exact combination proven to work against Nebius.
+S3_HOST="${ENDPOINT#http://}"; S3_HOST="${S3_HOST#https://}"; S3_HOST="${S3_HOST%%:*}"; S3_HOST="${S3_HOST%/}"
+if [ "$S3_DIRECT" -eq 1 ]; then
+  DUCK_S3="INSTALL httpfs; LOAD httpfs;
+    CREATE OR REPLACE SECRET neb (TYPE s3, PROVIDER credential_chain,
+      ENDPOINT '${S3_HOST}', REGION '${REGION}', URL_STYLE 'path', USE_SSL true);"
+else
+  DUCK_S3=""
+fi
 
 echo "=== duckdb_minimal.sh — TPC-H sf${SF} on native DuckDB storage ==="
 echo "target dir : $DIR"
@@ -110,7 +143,15 @@ echo
 # a spinning disk changes how the numbers should be read.
 DF_SRC="$(df --output=source "$DIR" 2>/dev/null | tail -1)"
 DEV_NAME="$(basename "$(readlink -f "$DF_SRC" 2>/dev/null || echo "$DF_SRC")")"
+# /sys/block/ has an entry per WHOLE device, not per partition: a partition like vda1 or
+# nvme0n1p3 keeps its stat under the PARENT (vda / nvme0n1). Ask lsblk for the parent first;
+# if that fails, fall back to the device's own stat, and only then give up. Without this the
+# per-run device-bytes-read measurement silently disappears on any partition-backed dir.
 STAT_FILE="/sys/block/${DEV_NAME}/stat"
+if [ ! -r "$STAT_FILE" ] && command -v lsblk >/dev/null 2>&1; then
+  PARENT="$(lsblk -no PKNAME "$DF_SRC" 2>/dev/null | awk 'NF{print; exit}')"
+  [ -n "$PARENT" ] && [ -r "/sys/block/${PARENT}/stat" ] && { STAT_FILE="/sys/block/${PARENT}/stat"; DEV_NAME="$PARENT"; }
+fi
 [ -r "$STAT_FILE" ] || STAT_FILE=""
 echo "filesystem : $DF_SRC  (block device: ${DEV_NAME})"
 if command -v lsblk >/dev/null 2>&1; then
@@ -141,9 +182,13 @@ echo
 # per-query numbers for the queries whose working set fits, which is the whole reason the
 # report is per query.
 echo "=== preflight ==="
+[ "$S3_DIRECT" -eq 1 ] && echo "mode       : S3-DIRECT (import straight from s3://${BUCKET}/, no local parquet)"
 REMOTE_BYTES=0
-if [ "$SKIP_DOWNLOAD" -eq 0 ]; then
-  command -v aws >/dev/null 2>&1 || fail "aws CLI not found and --skip-download not given"
+# List the bucket when we either download OR import straight from it — both need the remote
+# sizes: local mode to size the download, s3-direct to estimate the db and to verify row
+# counts against the real source.
+if [ "$SKIP_DOWNLOAD" -eq 0 ] || [ "$S3_DIRECT" -eq 1 ]; then
+  command -v aws >/dev/null 2>&1 || fail "aws CLI not found (needed to size/verify the bucket)"
   REMOTE_LIST="$(aws --endpoint-url "$ENDPOINT" --region "$REGION" s3 ls "s3://${BUCKET}/" 2>&1)" \
     || fail "cannot list s3://${BUCKET}/ — is the bucket right and are credentials configured?\n${REMOTE_LIST}"
   REMOTE_BYTES=$(printf '%s\n' "$REMOTE_LIST" | awk '/\.parquet$/{s+=$3} END{print s+0}')
@@ -151,17 +196,34 @@ if [ "$SKIP_DOWNLOAD" -eq 0 ]; then
   [ "${REMOTE_BYTES:-0}" -gt 0 ] || fail "s3://${BUCKET}/ lists no parquet files"
   echo "remote     : ${REMOTE_FILES} parquet, $(gb $REMOTE_BYTES) GiB in s3://${BUCKET}/"
 fi
-LOCAL_BYTES=$(find "$PARQUET_DIR" -maxdepth 1 -name '*.parquet' -printf '%s\n' 2>/dev/null | awk '{s+=$1} END{print s+0}')
-echo "local      : $(gb $LOCAL_BYTES) GiB of parquet already present"
+LOCAL_BYTES=0
+if [ "$S3_DIRECT" -eq 0 ]; then
+  LOCAL_BYTES=$(find "$PARQUET_DIR" -maxdepth 1 -name '*.parquet' -printf '%s\n' 2>/dev/null | awk '{s+=$1} END{print s+0}')
+  echo "local      : $(gb $LOCAL_BYTES) GiB of parquet already present"
+fi
 
 # The db ends up roughly the size of the parquet: the embedding columns are near-random
 # floats and compress in neither format, and they dominate the dataset.
 EST_DB=${REMOTE_BYTES:-0}
 [ "$EST_DB" -gt 0 ] || EST_DB=$LOCAL_BYTES
-NEED=$(( (REMOTE_BYTES > LOCAL_BYTES ? REMOTE_BYTES - LOCAL_BYTES : 0) + EST_DB ))
-NEED=$(( NEED + NEED / 10 ))   # 10% headroom for the import's temporaries
+# An existing db is already on disk and is reused/overwritten in place (skip-if-present, or
+# CREATE OR REPLACE into the same file), so it does NOT need to be found as NEW free space.
+# Without this credit a re-run fails preflight the moment the db exists: free has dropped by
+# the db size while NEED would still ask for the whole db again.
+EXISTING_DB=0; [ -f "$DB" ] && EXISTING_DB=$(stat -c %s "$DB" 2>/dev/null || echo 0)
+if [ "$S3_DIRECT" -eq 1 ]; then
+  # s3-direct lands ONLY the db on local disk — no parquet — so the disk need is the db alone.
+  NEED=$(( EST_DB + EST_DB / 10 - EXISTING_DB ))
+  note="db only; no local parquet"
+else
+  NEED=$(( (REMOTE_BYTES > LOCAL_BYTES ? REMOTE_BYTES - LOCAL_BYTES : 0) + EST_DB ))
+  NEED=$(( NEED + NEED / 10 - EXISTING_DB ))   # 10% headroom for the import's temporaries
+  note="remaining download + db + 10%"
+fi
+[ "$NEED" -lt 0 ] && NEED=0
+[ "$EXISTING_DB" -gt 0 ] && note="${note}; crediting existing $(gb $EXISTING_DB) GiB db"
 FREE=$(df -B1 --output=avail "$DIR" | tail -1)
-echo "disk       : $(gb $FREE) GiB free, need ~$(gb $NEED) GiB (remaining download + db + 10%)"
+echo "disk       : $(gb $FREE) GiB free, need ~$(gb $NEED) GiB (${note})"
 if [ "$FREE" -lt "$NEED" ]; then
   fail "insufficient disk in $DIR: $(gb $FREE) GiB free, ~$(gb $NEED) GiB required.
        Point --dir at a filesystem with room, or free $(gb $((NEED - FREE))) GiB."
@@ -204,17 +266,27 @@ fi
 # --------------------------------------------------------------------------- import
 # Skip-if-present, and the check is on CONTENT not existence: a db whose row counts do not
 # match the parquet is a half-finished import, which would otherwise be silently benchmarked.
+# Keep ONLY the "table,count" data rows. The s3-direct prelude (INSTALL/LOAD/CREATE SECRET)
+# emits its own result rows (a bare `true` from CREATE SECRET) under -csv, which would make
+# parquet_row_counts one line longer than db_row_counts and fail the diff on a database that
+# is actually correct. Filtering to rows that look like "<name>,<number>" makes the compare
+# immune to any prelude chatter on either side.
+_counts_only() { grep -E '^[a-z_]+,[0-9]+$'; }
+
 db_row_counts() {
   local sql=""
   for t in $TABLES; do sql="${sql}SELECT '${t}', count(*) FROM ${t};"; done
-  "$DUCKDB" "$DB" -csv -noheader -c "$sql" 2>/dev/null
+  "$DUCKDB" "$DB" -csv -noheader -c "$sql" 2>/dev/null | _counts_only
 }
+# Row counts of the SOURCE — local parquet, or S3 straight from the bucket in s3-direct mode.
+# In s3-direct this reads over httpfs (DUCK_S3 prelude), so a re-run still verifies the db
+# against the REAL source rather than falling through to a local path that does not exist.
 parquet_row_counts() {
   local sql=""
   for t in $TABLES; do
-    sql="${sql}SELECT '${t}', count(*) FROM read_parquet('${PARQUET_DIR}/${t}.parquet');"
+    sql="${sql}SELECT '${t}', count(*) FROM $(src "$t");"
   done
-  "$DUCKDB" :memory: -csv -noheader -c "$sql" 2>/dev/null
+  "$DUCKDB" :memory: -csv -noheader -c "${DUCK_S3} ${sql}" 2>/dev/null | _counts_only
 }
 
 IMPORT_SECS=0
@@ -254,23 +326,24 @@ IMPORT_MEM_MB=$(( (MEM_AVAIL_KB / 1024) * 6 / 10 ))
 DUCK_SAFE="SET memory_limit='${IMPORT_MEM_MB}MB'; SET temp_directory='${DUCK_TMP}';"
 
 if [ "$NEED_IMPORT" -eq 1 ]; then
-  echo "=== import parquet -> native DuckDB storage ==="
+  echo "=== import $([ "$S3_DIRECT" -eq 1 ] && echo 's3://'"$BUCKET"' (httpfs)' || echo 'parquet') -> native DuckDB storage ==="
   echo "memory_limit=${IMPORT_MEM_MB}MB (60% of $(gb $MEM_AVAIL) GiB available), spill dir=${DUCK_TMP}"
   [ "$FORCE_IMPORT" -eq 1 ] && rm -f "$DB" "${DB}.wal"
   t0=$(date +%s)
   for t in $TABLES; do
     printf '  %-10s ' "$t"
     ts=$(date +%s)
-    # DUCK_SAFE FIRST, same -c invocation as the CREATE, so the bound is in force while the
-    # table is built — this is exactly the line whose absence crashed the box.
-    "$DUCKDB" "$DB" -c "${DUCK_SAFE} CREATE OR REPLACE TABLE ${t} AS SELECT * FROM read_parquet('${PARQUET_DIR}/${t}.parquet');" \
+    # DUCK_S3 (httpfs secret, empty in local mode) then DUCK_SAFE, in the SAME -c invocation
+    # as the CREATE, so the memory bound is in force while the table is built — this is
+    # exactly the line whose absence crashed the box. src() reads local parquet or s3://.
+    "$DUCKDB" "$DB" -c "${DUCK_S3} ${DUCK_SAFE} CREATE OR REPLACE TABLE ${t} AS SELECT * FROM $(src "$t");" \
       >/dev/null || fail "import of ${t} failed (memory_limit=${IMPORT_MEM_MB}MB, temp=${DUCK_TMP})"
     echo "$(( $(date +%s) - ts )) s"
   done
   # CHECKPOINT forces everything out of the WAL into the db file, so the file we are about
   # to warm actually contains the data. Without it a fresh import can leave a large WAL and
   # the residency numbers below would describe the wrong file. It can spike memory too, so it
-  # gets the same bound.
+  # gets the same bound. (No DUCK_S3 needed — this touches only the local db.)
   "$DUCKDB" "$DB" -c "${DUCK_SAFE} CHECKPOINT;" >/dev/null || fail "checkpoint failed"
   IMPORT_SECS=$(( $(date +%s) - t0 ))
   echo "import wall time: ${IMPORT_SECS} s"
@@ -351,12 +424,17 @@ if command -v vmtouch >/dev/null 2>&1; then
   case "$RESIDENT_PAGES" in ''|*[!0-9]*) RESIDENT_PAGES=0 ;; esac
   RESIDENT_BYTES=$((RESIDENT_PAGES * PAGE_SIZE))
 else
-  # FALLBACK, no vmtouch: measure how far the kernel's Cached figure moved. Coarser (it
-  # counts anything else cached meanwhile) and it cannot attribute residency to THIS file,
-  # so it is an upper bound — but the per-query device-read below is the number that matters.
-  WARM_METHOD="bounded dd read + cache-delta (vmtouch not installed)"
+  # FALLBACK, no vmtouch: report ABSOLUTE residency, not the cache-delta. The dd above just
+  # read the whole warm-target into the page cache, so immediately after it the db's pages
+  # ARE cached (there is no memory pressure here to evict them). The kernel's Cached figure
+  # therefore includes them; capping Cached at the db size gives a sound lower bound on how
+  # much of the db is resident. (The naive delta C1-C0 is WRONG for an already-warm file: if
+  # the file was cached before the dd, the delta is ~0 while residency is ~100% — which is
+  # exactly what a freshly-imported db looks like. The per-query device-read below is still
+  # the authoritative warm/cold signal.)
+  WARM_METHOD="bounded dd read + absolute-Cached (vmtouch not installed)"
   C1=$(awk '/^Cached:/{print $2*1024}' /proc/meminfo)
-  RESIDENT_BYTES=$(( C1 > C0 ? C1 - C0 : 0 ))
+  RESIDENT_BYTES=$(( C1 < WARM_TARGET ? C1 : WARM_TARGET ))
 fi
 RESIDENT_PCT=$(awk -v r="$RESIDENT_BYTES" -v t="$DB_BYTES" 'BEGIN{printf "%.1f", (t>0? 100.0*r/t : 0)}')
 echo "method     : $WARM_METHOD"
@@ -383,7 +461,16 @@ echo
 # including the DuckDB spill dir (DUCK_TMP is always set by the import prelude above)
 QUERIES="$(mktemp)"
 trap 'rm -f "$COL_SIZES" "$COL_SIZES".* "$QUERIES" 2>/dev/null; rm -rf "$DUCK_TMP" 2>/dev/null' EXIT
-emit() { printf '%s\t%s\t%s\n' "$1" "$2" "$3" >> "$QUERIES"; }
+# QUERIES is a tab-delimited, one-record-per-LINE file, but the SQL from tpch_query_sql.sh is
+# MULTI-LINE. Written verbatim, each SQL continuation line would become its own bogus record
+# (qid = a stray SQL fragment, empty golden) and the real query would run only its first line
+# -> "QUERY FAILED". SQL is whitespace-insensitive, so collapse every run of whitespace
+# (newlines included) to a single space before storing. One physical line per query, exact
+# same SQL semantics.
+emit() {
+  local sql; sql="$(printf '%s' "$3" | tr '\n' ' ' | tr -s ' ')"
+  printf '%s\t%s\t%s\n' "$1" "$2" "$sql" >> "$QUERIES"
+}
 emit q6 "duckdb_q6.csv" "$(sql_q6)"
 emit q1 "duckdb_q1.csv" "$(sql_q1)"
 emit q3 "duckdb_q3.csv" "$(sql_q3)"
