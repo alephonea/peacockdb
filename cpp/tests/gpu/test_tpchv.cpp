@@ -659,7 +659,7 @@ TEST_F(TpchSf40, Q12VectorShipModeCounts) {
 
   // ---------------- PHASE 2: EXECUTE ----------------
   const auto boolean = cudf::data_type{cudf::type_id::BOOL8};
-  const auto int32_t_ = cudf::data_type{cudf::type_id::INT32};
+  const auto int32 = cudf::data_type{cudf::type_id::INT32};
   auto lv = line_in.tbl->view();
 
   // l_shipmode IN ('MAIL','SHIP')
@@ -731,8 +731,8 @@ TEST_F(TpchSf40, Q12VectorShipModeCounts) {
   // Morgan. o_orderpriority is NOT NULL in TPC-H so the two forms agree; computing it as
   // a negation rather than restating the comparisons keeps them from drifting apart.
   auto is_lo = cudf::unary_operation(is_hi->view(), cudf::unary_operator::NOT);
-  auto hi_i = cudf::cast(is_hi->view(), int32_t_);
-  auto lo_i = cudf::cast(is_lo->view(), int32_t_);
+  auto hi_i = cudf::cast(is_hi->view(), int32);
+  auto lo_i = cudf::cast(is_lo->view(), int32);
 
   // groupby l_shipmode -> sum(hi), sum(lo)
   cudf::groupby::groupby gb(cudf::table_view{{mode_col->get_column(0).view()}});
