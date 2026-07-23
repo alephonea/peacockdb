@@ -194,6 +194,19 @@ set_target_properties(peacock_tpchv_tests PROPERTIES CXX_STANDARD 20 CXX_STANDAR
 add_test(NAME peacock_tpchv_tests COMMAND peacock_tpchv_tests)
 set_tests_properties(peacock_tpchv_tests PROPERTIES LABELS "gpu")
 
+# Basic two-GPU PoC — cuDF + cuVS on BOTH devices, with a bidirectional cudaMemcpyPeer exchange
+# in the middle (see the header of test_basic_multi_gpu.cpp). Needs two visible GPUs to run.
+#
+# DELIBERATELY NOT hooked into CI: no add_test() and NOT added to install(TARGETS ...), so
+# neither ctest nor the "run every shipped binary" CI glob (which enumerates install/bin) picks
+# it up. It is still built here for compile coverage; run it by hand on a >=2-GPU host. Multi-GPU
+# CI runner support is a separate, later task. (As a backstop it also GTEST_SKIPs itself when
+# fewer than two devices are visible.)
+add_executable(peacock_multi_gpu_tests tests/gpu/test_basic_multi_gpu.cpp)
+target_include_directories(peacock_multi_gpu_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(peacock_multi_gpu_tests PRIVATE cudf::cudf cuvs::cuvs GTest::gtest)
+set_target_properties(peacock_multi_gpu_tests PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+
 # ---------------------------------------------------------------------------
 # Install
 # ---------------------------------------------------------------------------
