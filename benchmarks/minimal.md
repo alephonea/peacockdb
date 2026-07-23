@@ -86,23 +86,57 @@ over 32M×96. Do not read the 27 ms as pure norm-compute; amortized per-probe it
 
 ## Multi-GPU scaling — 1× A100 vs 2× A100 (same hardware, same pooled code)
 
-A **same-hardware, same-code** comparison: the identical q6/q1 multi-GPU plan run over
-one A100 (G=1: one row-group partition, one worker) vs two A100s (G=2), on verda (2×
+A **same-hardware, same-code** comparison: the identical multi-GPU plan run over one
+A100 (G=1: one row-group partition, one worker) vs two A100s (G=2), on verda (2×
 A100-SXM4-80GB, NVLink, libcudf 26.02). Both legs use the SAME per-device RMM **pool**
 allocator, so the G=1-vs-G=2 ratio isolates *parallelism* from allocator choice. Both
 verified against the same committed DuckDB goldens; execute-only, all-device-synced,
-2nd-min of 6. (The H200 column above is a **different GPU** and is not a speedup
-baseline.)
+2nd-min of 6. All four numbers below come from **one process per leg** — the same
+`peacock_multi_gpu_tpch_tests` binary running q6→q1→q3→q8 back-to-back over a single
+process-wide shared `WorkerPool` (see below). (The H200 column above is a **different
+GPU** and is not a speedup baseline.)
 
 | Query | 1× A100 execute (ms) | 2× A100 execute (ms) | speedup |
 |---|--:|--:|--:|
-| q6 — filter → reduce | 37.4 | 20.0 | **1.87×** |
-| q1 — group-by + 8 aggregates | 627.6 | 295.9 | **2.12×** |
+| q6 — filter → reduce | 37.2 | 19.4 | **1.92×** |
+| q1 — group-by + 8 aggregates | 632.6 | 295.5 | **2.14×** |
+| q3 — 3-way join, group-by, top-N | 56.7 | 49.0 | **1.16×** |
+| q8 — 7-table bushy join, group-by | 64.7 | 40.1 | **1.61×** |
 
 Merge plans are matched to the partial's shape: **q1** gathers real partial *tables*
 across the link (`pack → peer-copy → unpack → concat → merge-groupby`); **q6**'s
 partial is a single decimal per GPU, so it is summed on the **host** by exact
 `__int128` addition (all partials share scale −4 → bit-identical to the golden).
+
+### Why q3 and q8 scale below the ~2× ceiling — and by different amounts
+
+q6 and q1 are near-ideal because each GPU's work is (almost) purely a function of its own
+lineitem partition. q3 and q8 add a **join tree** and a **group-by**, and the scaling is
+set by two costs that do **not** shrink with G:
+
+- **Broadcast redundancy.** Both plans replicate the small dimension tables on every GPU
+  and build the dimension side *locally* — so `customer⋈orders` (q3) and the whole
+  `region→nation→customer→orders`, `part`, `supplier→nation` subtree (q8) are rebuilt on
+  each GPU from full-table reads. That work is constant in G (every GPU does all of it),
+  so it is pure overhead against the parallel fact-side scan. It's the right trade at G=2
+  (broadcasting a tiny dim beats shuffling a large fact), but it caps the ratio.
+- **The group-by merge.** q3's group-by key is `l_orderkey` — **high cardinality**
+  (millions of distinct keys), so partial group-bys cannot simply be gathered and merged;
+  the plan pays a real **cross-GPU hash-shuffle** (`hash_partition` murmur3 →
+  `pack`/`cudaMemcpyPeerAsync`/`unpack` → concat) to co-locate each key before the final
+  group-by. That shuffle moves data across the link on the critical path and is why q3 is
+  only **1.16×**. q8's key is `o_year` — **two groups** — so it needs **no shuffle**: each
+  GPU emits a partial `sum(brazil_volume), sum(volume)` and GPU0 gathers G tiny partials
+  and merge-sums them. With no shuffle, q8's parallel fact-side collapse (the
+  `part='ECONOMY ANODIZED STEEL'`⋈lineitem step cuts 240M→a few hundred K *before* any
+  other join) dominates, giving **1.61×** despite the heavier join tree.
+
+So the ordering q1 (2.14×) > q8 (1.61×) > q3 (1.16×) is exactly the cardinality/shuffle
+story: no join & re-aggregatable (q1) → broadcast join, no shuffle (q8) → broadcast join
+**plus** a high-cardinality shuffle (q3). All four fixed costs (broadcast build, shuffle,
+merge, dispatch) are constant in G, so every ratio keeps climbing toward 4/8/16 GPUs; the
+shuffle in q3 is the one that also grows its *moved bytes* with data size, so q3 is the
+query that most wants a smarter partition (hash-partition the fact on load) at higher G.
 
 **The RMM pool is what makes this scale — and it changed the story.** Without it, every
 transient column went through the default resource's synchronous, driver-serialized
@@ -126,6 +160,8 @@ constant in G, so the ratio keeps improving toward 4/8/16 GPUs.
 - cuDF multi-GPU (both legs are the SAME binary, `peacock_multi_gpu_tpch_tests`, with
   `PEACOCK_BENCHMARK=1` — the fair same-code/same-pooled-allocator comparison):
   the 2× A100 number is a plain run on a 2-GPU host; the 1× A100 (G=1) number is that
-  same binary under `CUDA_VISIBLE_DEVICES=0` (one row-group partition, one worker).
-  Benchmark ONE query per process (e.g. `--gtest_filter='*Q6*'`) — see the note in
-  test_multi_gpu_tpch.cpp on why multiple query benchmarks in one process are flaky today.
+  same binary under `CUDA_VISIBLE_DEVICES=0` (one row-group partition, one worker). All
+  four queries benchmark reliably in a **single** process run (no `--gtest_filter`
+  needed): the process-wide shared `WorkerPool` removed the per-test-teardown state churn
+  that made multiple benchmarks-per-process flaky in M1 — the numbers above are one
+  q6→q1→q3→q8 run per leg.

@@ -31,16 +31,13 @@
 // The worker-per-GPU model (a device object's whole lifetime stays on its device's thread) and
 // all the scaffolding come from the shared test library multi_gpu.hpp / multi_gpu.cpp.
 //
-// BENCHMARK ONE QUERY PER PROCESS. Correctness (a single execute per test) is reliable running
-// the whole binary in one process. But running MULTIPLE query BENCHMARKS (PEACOCK_BENCHMARK,
-// which executes each plan 7x) in one process is currently FLAKY at G>=2: a cudf-26.02
-// process-global piece of state (its internal stream/scratch pool, device-0-biased) is churned
-// when one test's WorkerPool tears its per-device pools down, and the next test's multi-execute
-// benchmark then intermittently throws "invalid device ordinal" in a downstream scan. So to
-// benchmark, run each query in its OWN process, e.g.
-//     PEACOCK_BENCHMARK=1 ./peacock_multi_gpu_tpch_tests --gtest_filter='*Q6*'
-// The real fix is a PROCESS-WIDE shared WorkerPool (created once for the whole binary, reused
-// across every test, so there is no per-test teardown to pollute) — M2's first task.
+// SHARED PROCESS-WIDE WorkerPool. There is exactly ONE WorkerPool for the whole binary, owned by
+// MultiGpuEnvironment (a gtest Environment) and reused by every query test — no per-test pool
+// construction/teardown. This is what makes running all query BENCHMARKS (PEACOCK_BENCHMARK, 7
+// executes each) in ONE process reliable: in M1, per-test WorkerPool teardown churned a
+// cudf-26.02 process-global piece of state and the next test's benchmark intermittently threw
+// "invalid device ordinal". With a single pool held for the run, there is no teardown to
+// pollute, and the whole suite benchmarks cleanly in one process.
 
 #include <cudf/aggregation.hpp>
 #include <cudf/binaryop.hpp>
@@ -50,8 +47,14 @@
 #include <cudf/concatenate.hpp>
 #include <cudf/copying.hpp>
 #include <cudf/fixed_point/fixed_point.hpp>
+#include <cudf/datetime.hpp>
 #include <cudf/groupby.hpp>
 #include <cudf/io/parquet.hpp>
+#if __has_include(<cudf/join/join.hpp>)
+#  include <cudf/join/join.hpp>  // cudf >= 26.02
+#else
+#  include <cudf/join.hpp>
+#endif
 #include <cudf/reduction.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/sorting.hpp>
@@ -62,6 +65,7 @@
 #include <cudf/unary.hpp>
 
 #include <rmm/cuda_stream.hpp>
+#include <rmm/device_uvector.hpp>
 
 #include "multi_gpu.hpp"
 #include "tpch_golden.hpp"
@@ -77,7 +81,7 @@
 #include <vector>
 
 using namespace peacock_test;  // TpchSf40 fixture, ColSpec/compare_table_to_golden, Decimal, ...
-using namespace peacock_mgpu;  // WorkerPool, partition_row_groups, gather_to_gpu0, ...
+using namespace peacock_mgpu;  // WorkerPool, partition_row_groups, gather_here, ...
 
 namespace {
 
@@ -87,6 +91,18 @@ const cudf::data_type kDec4     = cudf::data_type{cudf::type_id::DECIMAL128, -4}
 const cudf::data_type kDec6     = cudf::data_type{cudf::type_id::DECIMAL128, -6};
 const cudf::data_type kFloat64  = cudf::data_type{cudf::type_id::FLOAT64};
 
+// wrap a cudf::inner_join gather map (device_uvector<size_type>) as a column_view for gather().
+cudf::column_view map_view(std::unique_ptr<rmm::device_uvector<cudf::size_type>> const& m) {
+  return cudf::column_view(cudf::data_type{cudf::type_id::INT32},
+                           static_cast<cudf::size_type>(m->size()), m->data(), nullptr, 0);
+}
+
+cudf::timestamp_scalar<cudf::timestamp_D> date_scalar(int y, unsigned mo, unsigned d,
+                                                      rmm::cuda_stream_view s) {
+  return cudf::timestamp_scalar<cudf::timestamp_D>(
+      cudf::timestamp_D{cudf::duration_D{days_since_epoch(y, mo, d)}}, true, s);
+}
+
 int gpu_count() {
   int n = 0;
   if (cudaGetDeviceCount(&n) != cudaSuccess) {
@@ -95,6 +111,35 @@ int gpu_count() {
   }
   return n;
 }
+
+// ONE shared WorkerPool for the whole test binary, owned by a gtest Environment (created once
+// while CUDA is alive, torn down once at the end — NOT a Meyers/static singleton, whose
+// destructor could run after the CUDA context is gone). Every query test reuses this pool and
+// its persistent per-GPU streams; there is no per-test WorkerPool construction/teardown, which
+// is what removes the per-test-teardown state churn that made multiple benchmarks-per-process
+// flaky in M1. The pool grabs ~85% VRAM ONCE for the whole run.
+WorkerPool* g_shared_pool = nullptr;
+
+class MultiGpuEnvironment : public ::testing::Environment {
+ public:
+  void SetUp() override {
+    const int n = gpu_count();
+    if (n >= 1) {
+      pool_        = std::make_unique<WorkerPool>(n);
+      g_shared_pool = pool_.get();
+    }
+  }
+  void TearDown() override {
+    g_shared_pool = nullptr;
+    pool_.reset();  // WorkerPool teardown here, once, with CUDA still alive
+  }
+
+ private:
+  std::unique_ptr<WorkerPool> pool_;
+};
+
+// Valid only after the >=1-GPU skip guard in each test (the Environment made the pool then).
+WorkerPool& shared_pool() { return *g_shared_pool; }
 
 // Execute-time benchmark for a multi-GPU plan: same 2nd-min-of-6 protocol as test_tpch.cpp,
 // but the boundary sync drains EVERY device (the plan's work is spread across all of them),
@@ -169,7 +214,7 @@ TEST_F(TpchSf40, Q6MultiGpu) {
 
   const int num_rg = parquet_num_row_groups(lineitem_path);
   const auto spans = partition_row_groups(num_rg, G);
-  WorkerPool pool(G);
+  auto& pool = shared_pool();  // one pool for the whole binary (see MultiGpuEnvironment)
 
   // ---- LOAD: each worker reads ONLY its row-group span (columns only, no predicate). Kept
   //      resident across benchmark iterations. ----
@@ -283,7 +328,7 @@ TEST_F(TpchSf40, Q1MultiGpu) {
 
   const int num_rg = parquet_num_row_groups(lineitem_path);
   const auto spans = partition_row_groups(num_rg, G);
-  WorkerPool pool(G);
+  auto& pool = shared_pool();  // one pool for the whole binary (see MultiGpuEnvironment)
 
   // ---- LOAD (per-worker row-group span). ----
   const auto t_load0 = std::chrono::steady_clock::now();
@@ -400,7 +445,7 @@ TEST_F(TpchSf40, Q1MultiGpu) {
           std::vector<cudf::table_view> views;
           views.reserve(G);
           for (int g = 0; g < G; ++g) {
-            gathered.push_back(gather_to_gpu0(handles[g], s));
+            gathered.push_back(gather_here(handles[g], s));
             views.push_back(gathered[g].view);
           }
           auto merged_in = cudf::concatenate(views, s);  // [keys | psums | pcount] * G
@@ -483,9 +528,494 @@ TEST_F(TpchSf40, Q1MultiGpu) {
   release_partitions(pool, parts);  // free pool-allocated partitions on their workers
 }
 
+// ===========================================================================
+// Q3 — 3-way join + high-cardinality group-by, via BROADCAST joins and a HASH-SHUFFLE.
+// Same query as test_tpch.cpp Q3JoinsGroupByTopN, same golden.
+//
+// PLAN & CARDINALITIES (sf40):
+//   - lineitem (240M, the fact) is ROW-GROUP-PARTITIONED across the GPUs (columns only).
+//   - customer (6M) and orders (60M) are the dimension side; both are BROADCAST (read whole on
+//     every GPU) and their join is built LOCALLY on each GPU — customer filters to BUILDING
+//     (~1.2M) and orders to o_orderdate<1995-03-15 (~30M), and customer|X|orders on custkey is
+//     ~6M rows keyed by orderkey. That ~6M build is redundant per GPU but tiny next to lineitem;
+//     broadcasting it avoids shuffling a large join. (Reading full orders per GPU is the
+//     broadcast cost; at higher G one would build customer|X|orders once and broadcast the 6M
+//     result instead — noted, not needed at G=2.)
+//   - Each GPU joins its lineitem partition against the local customer|X|orders on orderkey and
+//     computes revenue -> per-GPU pre-aggregation rows (orderkey, orderdate, shippriority, revenue).
+//   - The GROUP-BY key is l_orderkey: HIGH cardinality (~millions of distinct keys). The M1
+//     gather-all-partials-to-GPU0 merge does NOT scale there. Instead HASH-SHUFFLE (murmur3) the
+//     pre-agg rows by orderkey so every orderkey lives entirely on one GPU; each GPU then does a
+//     COMPLETE local group-by (no cross-GPU partial merge), takes its local top-10, and the final
+//     merge is a trivial gather of G×10 rows + a global top-10. Revenue is exact decimal (−4)
+//     throughout, so it matches the golden bit-for-bit.
+// ===========================================================================
+TEST_F(TpchSf40, Q3MultiGpu) {
+  const int G = gpu_count();
+  if (G < 1) GTEST_SKIP() << "no visible GPU (found " << G << ")";
+  const auto golden_path = golden_dir() + "/duckdb_q3.csv";
+  ASSERT_TRUE(file_exists(golden_path)) << "golden missing: " << golden_path;
+
+  const auto line_path = data_dir() + "/lineitem.parquet";
+  const auto cust_path = data_dir() + "/customer.parquet";
+  const auto ord_path  = data_dir() + "/orders.parquet";
+  const int  num_rg    = parquet_num_row_groups(line_path);
+  const auto spans     = partition_row_groups(num_rg, G);
+  auto&      pool      = shared_pool();
+
+  // ---- LOAD: lineitem partitioned; customer + orders BROADCAST (whole) on every worker. ----
+  const auto t_load0 = std::chrono::steady_clock::now();
+  std::vector<cudf::io::table_with_metadata> line(G), cust(G), ord(G);
+  {
+    std::vector<std::future<void>> fs;
+    for (int g = 0; g < G; ++g)
+      fs.push_back(pool[g].submit([&, g] {
+        auto s   = pool.stream(g);
+        line[g]  = read_row_group_span(line_path,
+            {"l_orderkey", "l_extendedprice", "l_discount", "l_shipdate"}, spans[g], s);
+        cust[g]  = read_full_table(cust_path, {"c_custkey", "c_mktsegment"}, s);
+        ord[g]   = read_full_table(ord_path, {"o_orderkey", "o_custkey", "o_orderdate",
+                                              "o_shippriority"}, s);
+        s.synchronize();
+      }));
+    for (auto& f : fs) f.get();
+  }
+  const double load_ms =
+      std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t_load0).count();
+
+  auto execute = [&]() -> std::unique_ptr<cudf::table> {
+    // Phase 1: per-GPU build customer|X|orders, join lineitem, revenue -> preagg on each worker.
+    std::vector<std::unique_ptr<cudf::table>> preagg(G);
+    {
+      std::vector<std::future<void>> fs;
+      for (int g = 0; g < G; ++g)
+        fs.push_back(pool[g].submit([&, g] {
+          auto s  = pool.stream(g);
+          auto lv = line[g].tbl->view();  // orderkey, extprice, discount, shipdate
+          auto cv = cust[g].tbl->view();  // c_custkey, c_mktsegment
+          auto ov = ord[g].tbl->view();   // o_orderkey, o_custkey, o_orderdate, o_shippriority
+          auto d1995 = date_scalar(1995, 3, 15, s);
+
+          // customer where c_mktsegment='BUILDING' -> c_custkey
+          auto seg    = cudf::string_scalar(std::string("BUILDING"), true, s);
+          auto cmask  = cudf::binary_operation(cv.column(1), seg, cudf::binary_operator::EQUAL, kBool, s);
+          auto cust_f = cudf::apply_boolean_mask(cudf::table_view{{cv.column(0)}}, cmask->view(), s);
+          // orders where o_orderdate < 1995-03-15
+          auto omask  = cudf::binary_operation(ov.column(2), d1995, cudf::binary_operator::LESS, kBool, s);
+          auto ord_f  = cudf::apply_boolean_mask(ov, omask->view(), s);
+          // customer |X| orders on custkey -> dim(orderkey, orderdate, shippriority)
+          auto [c_map, o_map] = cudf::inner_join(cudf::table_view{{cust_f->get_column(0).view()}},
+                                                 cudf::table_view{{ord_f->get_column(1).view()}},
+                                                 cudf::null_equality::EQUAL, s);
+          auto dim = cudf::gather(cudf::table_view{{ord_f->get_column(0).view(),
+                                                    ord_f->get_column(2).view(),
+                                                    ord_f->get_column(3).view()}},
+                                  map_view(o_map), cudf::out_of_bounds_policy::DONT_CHECK, s);
+          // lineitem where l_shipdate > 1995-03-15 -> orderkey, extprice, discount
+          auto lmask  = cudf::binary_operation(lv.column(3), d1995, cudf::binary_operator::GREATER, kBool, s);
+          auto line_f = cudf::apply_boolean_mask(
+              cudf::table_view{{lv.column(0), lv.column(1), lv.column(2)}}, lmask->view(), s);
+          // lineitem |X| dim on orderkey
+          auto [l_map, d_map] = cudf::inner_join(cudf::table_view{{line_f->get_column(0).view()}},
+                                                 cudf::table_view{{dim->get_column(0).view()}},
+                                                 cudf::null_equality::EQUAL, s);
+          auto lj = cudf::gather(cudf::table_view{{line_f->get_column(1).view(),
+                                                   line_f->get_column(2).view()}},
+                                 map_view(l_map), cudf::out_of_bounds_policy::DONT_CHECK, s);
+          auto dj = cudf::gather(dim->view(), map_view(d_map),
+                                 cudf::out_of_bounds_policy::DONT_CHECK, s);  // orderkey,date,prio
+          // revenue = extprice*(1-discount), exact decimal (-2 * -2 -> -4)
+          auto price = cudf::cast(lj->get_column(0).view(), kDec2, s);
+          auto disc  = cudf::cast(lj->get_column(1).view(), kDec2, s);
+          auto one   = cudf::fixed_point_scalar<numeric::decimal128>(100, numeric::scale_type{-2}, true, s);
+          auto omd   = cudf::binary_operation(one, disc->view(), cudf::binary_operator::SUB, kDec2, s);
+          auto rev   = cudf::binary_operation(price->view(), omd->view(), cudf::binary_operator::MUL, kDec4, s);
+          // preagg = (orderkey, orderdate, shippriority, revenue)
+          std::vector<std::unique_ptr<cudf::column>> cols;
+          cols.push_back(std::make_unique<cudf::column>(dj->get_column(0).view(), s));
+          cols.push_back(std::make_unique<cudf::column>(dj->get_column(1).view(), s));
+          cols.push_back(std::make_unique<cudf::column>(dj->get_column(2).view(), s));
+          cols.push_back(std::move(rev));
+          preagg[g] = std::make_unique<cudf::table>(std::move(cols));
+          s.synchronize();
+        }));
+      for (auto& f : fs) f.get();
+    }
+
+    // Phase 2: HASH-SHUFFLE the pre-agg rows by orderkey (col 0) so each orderkey lands on one GPU.
+    std::vector<cudf::table_view> preagg_views;
+    preagg_views.reserve(G);
+    for (int g = 0; g < G; ++g) preagg_views.push_back(preagg[g]->view());
+    auto shuffled = hash_shuffle(pool, preagg_views, {0});
+    {  // preagg is fully consumed by the shuffle; release it on its workers
+      std::vector<std::future<void>> fs;
+      for (int g = 0; g < G; ++g) fs.push_back(pool[g].submit([&, g] { preagg[g].reset(); }));
+      for (auto& f : fs) f.get();
+    }
+
+    // Phase 3: each GPU does a COMPLETE local group-by (orderkey,orderdate,shippriority)->sum(rev),
+    // takes its local top-10 (revenue DESC, orderdate, orderkey), packs it for the final gather.
+    std::vector<cudf::packed_columns> local_top(G);
+    std::vector<PackedPartial>        tops(G);
+    {
+      std::vector<std::future<void>> fs;
+      for (int p = 0; p < G; ++p)
+        fs.push_back(pool[p].submit([&, p] {
+          auto s  = pool.stream(p);
+          auto sv = shuffled[p]->view();  // orderkey, orderdate, shippriority, revenue
+          cudf::groupby::groupby gb(cudf::table_view{{sv.column(0), sv.column(1), sv.column(2)}});
+          std::vector<cudf::groupby::aggregation_request> reqs;
+          {
+            cudf::groupby::aggregation_request r;
+            r.values = sv.column(3);
+            r.aggregations.push_back(cudf::make_sum_aggregation<cudf::groupby_aggregation>());
+            reqs.push_back(std::move(r));
+          }
+          auto [keys, aggs] = gb.aggregate(reqs, s);
+          auto kv  = keys->view();
+          auto rev = std::move(aggs[0].results[0]);
+          // order by revenue DESC, orderdate ASC, orderkey ASC (total order)
+          auto order = cudf::sorted_order(
+              cudf::table_view{{rev->view(), kv.column(1), kv.column(0)}},
+              {cudf::order::DESCENDING, cudf::order::ASCENDING, cudf::order::ASCENDING},
+              {cudf::null_order::AFTER, cudf::null_order::AFTER, cudf::null_order::AFTER}, s);
+          // output cols in golden order: orderkey, revenue, orderdate, shippriority
+          auto sorted = cudf::gather(
+              cudf::table_view{{kv.column(0), rev->view(), kv.column(1), kv.column(2)}},
+              order->view(), cudf::out_of_bounds_policy::DONT_CHECK, s);
+          const cudf::size_type n = std::min<cudf::size_type>(10, sorted->num_rows());
+          auto top      = cudf::slice(sorted->view(), {0, n})[0];
+          local_top[p]  = cudf::pack(top, s);
+          tops[p]       = describe_packed(p, local_top[p]);
+          s.synchronize();
+        }));
+      for (auto& f : fs) f.get();
+    }
+
+    // Phase 4: gather the G local top-10s to GPU0, concat, global top-10.
+    auto result = pool[0]
+        .submit([&]() -> std::unique_ptr<cudf::table> {
+          auto s = pool.stream(0);
+          std::vector<GatheredTable> gts;
+          gts.reserve(G);
+          std::vector<cudf::table_view> views;
+          views.reserve(G);
+          for (int p = 0; p < G; ++p) {
+            gts.push_back(gather_here(tops[p], s));
+            views.push_back(gts.back().view);
+          }
+          auto merged = cudf::concatenate(views, s);
+          auto mv     = merged->view();  // orderkey, revenue, orderdate, shippriority
+          auto order  = cudf::sorted_order(
+              cudf::table_view{{mv.column(1), mv.column(2), mv.column(0)}},
+              {cudf::order::DESCENDING, cudf::order::ASCENDING, cudf::order::ASCENDING},
+              {cudf::null_order::AFTER, cudf::null_order::AFTER, cudf::null_order::AFTER}, s);
+          auto sorted = cudf::gather(mv, order->view(), cudf::out_of_bounds_policy::DONT_CHECK, s);
+          const cudf::size_type n = std::min<cudf::size_type>(10, sorted->num_rows());
+          auto top = std::make_unique<cudf::table>(cudf::slice(sorted->view(), {0, n})[0], s);
+          s.synchronize();
+          return top;
+        })
+        .get();
+
+    {  // release the per-GPU packed tops on their workers
+      std::vector<std::future<void>> fs;
+      for (int p = 0; p < G; ++p)
+        fs.push_back(pool[p].submit([&, p] { local_top[p] = cudf::packed_columns{}; }));
+      for (auto& f : fs) f.get();
+    }
+    (void)shuffled;  // freed at closure end (each shuffled[p] on its own GPU p)
+    return result;
+  };
+
+  auto result = execute();
+  const std::vector<ColSpec> spec = {
+      {"l_orderkey", Cmp::ExactInt},   {"revenue", Cmp::ExactDecimal},
+      {"o_orderdate", Cmp::ExactDate}, {"o_shippriority", Cmp::ExactInt},
+  };
+  const auto golden = read_csv_golden(golden_path);
+  ASSERT_EQ(static_cast<int>(golden.size()), 10) << "golden should hold 10 rows";
+  compare_table_to_golden(result->view(), golden, spec, "q3-mgpu");
+  std::fprintf(stderr, "[q3-mgpu] %d GPUs, %d row groups, hash-shuffle by orderkey\n", G, num_rg);
+
+  benchmark_mgpu("q3-mgpu", execute, G, load_ms);
+  release_partitions(pool, line);
+  release_partitions(pool, cust);
+  release_partitions(pool, ord);
+}
+
+// ===========================================================================
+// Q8 — 7 tables, bushy join order, LOW-cardinality group-by. Same query as test_tpch.cpp Q8,
+// same golden.
+//
+// PLAN & CARDINALITIES (sf40):
+//   - lineitem (240M) is the fact — ROW-GROUP-PARTITIONED across the GPUs.
+//   - part/supplier/orders/customer/nation/region are all SMALL and BROADCAST (read whole on
+//     every GPU). The whole dimension subtree (region=AMERICA -> nation n1 -> customer ->
+//     orders(1995-96), and part=ECONOMY-ANODIZED-STEEL, and supplier -> nation n2) is built
+//     LOCALLY on each GPU from those broadcast tables — identical on every GPU, cheap next to
+//     lineitem, and it lets every lineitem partition join a fully-local dim side with no shuffle.
+//   - The single step that keeps this query small is part |X| lineitem: p_type='ECONOMY ANODIZED
+//     STEEL' keeps ~1/150 of part, so joining it onto lineitem FIRST collapses the 240M fact to a
+//     few hundred K rows BEFORE any other join. That collapse happens independently inside each
+//     partition (part_f is broadcast), so partitioning loses nothing.
+//   - GROUP-BY key is o_year: only 1995 and 1996 — LOW cardinality. So NO shuffle: each GPU
+//     emits a partial group-by (o_year -> partial sum(brazil_volume), partial sum(volume)), the G
+//     partials are gathered to GPU0 (M1 pack->peer-copy->unpack->concat) and merged with a final
+//     sum-group-by. Both sums are EXACT decimal(-4) so they re-aggregate bit-for-bit; mkt_share is
+//     recomputed as sum(brazil)/sum(total) in float64 on GPU0 (DuckDB returns DOUBLE for the
+//     decimal/decimal division — matching semantics, tolerant 1e-9), NEVER by averaging partial
+//     ratios.
+// ===========================================================================
+TEST_F(TpchSf40, Q8MultiGpu) {
+  const int G = gpu_count();
+  if (G < 1) GTEST_SKIP() << "no visible GPU (found " << G << ")";
+  const auto golden_path = golden_dir() + "/duckdb_q8.csv";
+  ASSERT_TRUE(file_exists(golden_path)) << "golden missing: " << golden_path;
+
+  const auto line_path = data_dir() + "/lineitem.parquet";
+  const int  num_rg    = parquet_num_row_groups(line_path);
+  const auto spans     = partition_row_groups(num_rg, G);
+  auto&      pool      = shared_pool();
+
+  // ---- LOAD: lineitem partitioned; all six dimension tables BROADCAST on every worker. ----
+  const auto t_load0 = std::chrono::steady_clock::now();
+  std::vector<cudf::io::table_with_metadata> line(G), part(G), supp(G), ord(G), cust(G),
+      nation(G), region(G);
+  {
+    std::vector<std::future<void>> fs;
+    for (int g = 0; g < G; ++g)
+      fs.push_back(pool[g].submit([&, g] {
+        auto s    = pool.stream(g);
+        line[g]   = read_row_group_span(line_path,
+            {"l_orderkey", "l_partkey", "l_suppkey", "l_extendedprice", "l_discount"}, spans[g], s);
+        part[g]   = read_full_table(data_dir() + "/part.parquet", {"p_partkey", "p_type"}, s);
+        supp[g]   = read_full_table(data_dir() + "/supplier.parquet", {"s_suppkey", "s_nationkey"}, s);
+        ord[g]    = read_full_table(data_dir() + "/orders.parquet",
+                                    {"o_orderkey", "o_custkey", "o_orderdate"}, s);
+        cust[g]   = read_full_table(data_dir() + "/customer.parquet", {"c_custkey", "c_nationkey"}, s);
+        nation[g] = read_full_table(data_dir() + "/nation.parquet",
+                                    {"n_nationkey", "n_name", "n_regionkey"}, s);
+        region[g] = read_full_table(data_dir() + "/region.parquet", {"r_regionkey", "r_name"}, s);
+        s.synchronize();
+      }));
+    for (auto& f : fs) f.get();
+  }
+  const double load_ms =
+      std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t_load0).count();
+
+  // Per-GPU partial: build the broadcast dim subtree, join the local lineitem partition through it,
+  // group by o_year -> (o_year, partial sum(brazil_volume), partial sum(volume)). All exact decimal.
+  auto local_partial = [&](int g, rmm::cuda_stream_view s) -> std::unique_ptr<cudf::table> {
+    auto lv = line[g].tbl->view();     // orderkey, partkey, suppkey, extprice, discount
+    auto pv = part[g].tbl->view();     // p_partkey, p_type
+    auto sv = supp[g].tbl->view();     // s_suppkey, s_nationkey
+    auto ov = ord[g].tbl->view();      // o_orderkey, o_custkey, o_orderdate
+    auto cv = cust[g].tbl->view();     // c_custkey, c_nationkey
+    auto nv = nation[g].tbl->view();   // n_nationkey, n_name, n_regionkey
+    auto rv = region[g].tbl->view();   // r_regionkey, r_name
+
+    // A1: region='AMERICA' -> nation n1 on regionkey -> n_nationkey
+    auto america = cudf::string_scalar(std::string("AMERICA"), true, s);
+    auto rmask   = cudf::binary_operation(rv.column(1), america, cudf::binary_operator::EQUAL, kBool, s);
+    auto region_f = cudf::apply_boolean_mask(cudf::table_view{{rv.column(0)}}, rmask->view(), s);
+    auto [n1_map, r_map] = cudf::inner_join(cudf::table_view{{nv.column(2)}},
+                                            cudf::table_view{{region_f->get_column(0).view()}},
+                                            cudf::null_equality::EQUAL, s);
+    auto n1 = cudf::gather(cudf::table_view{{nv.column(0)}}, map_view(n1_map),
+                           cudf::out_of_bounds_policy::DONT_CHECK, s);  // n_nationkey (in AMERICA)
+    // A2: customer on c_nationkey -> c_custkey
+    auto [c_map, n1b_map] = cudf::inner_join(cudf::table_view{{cv.column(1)}},
+                                             cudf::table_view{{n1->get_column(0).view()}},
+                                             cudf::null_equality::EQUAL, s);
+    auto cust_am = cudf::gather(cudf::table_view{{cv.column(0)}}, map_view(c_map),
+                               cudf::out_of_bounds_policy::DONT_CHECK, s);  // c_custkey
+    // A3: orders in 1995-96 on o_custkey -> (o_orderkey, o_orderdate)
+    auto d95 = date_scalar(1995, 1, 1, s);
+    auto d96 = date_scalar(1996, 12, 31, s);
+    auto om1 = cudf::binary_operation(ov.column(2), d95, cudf::binary_operator::GREATER_EQUAL, kBool, s);
+    auto om2 = cudf::binary_operation(ov.column(2), d96, cudf::binary_operator::LESS_EQUAL, kBool, s);
+    auto omask = cudf::binary_operation(om1->view(), om2->view(), cudf::binary_operator::LOGICAL_AND, kBool, s);
+    auto ord_f = cudf::apply_boolean_mask(ov, omask->view(), s);
+    auto [o_map, ca_map] = cudf::inner_join(cudf::table_view{{ord_f->get_column(1).view()}},
+                                            cudf::table_view{{cust_am->get_column(0).view()}},
+                                            cudf::null_equality::EQUAL, s);
+    auto orders_am = cudf::gather(cudf::table_view{{ord_f->get_column(0).view(),
+                                                    ord_f->get_column(2).view()}},
+                                  map_view(o_map), cudf::out_of_bounds_policy::DONT_CHECK, s);  // orderkey, orderdate
+
+    // B: part='ECONOMY ANODIZED STEEL' -> part_f, then part_f |X| lineitem (collapses the fact)
+    auto ptype = cudf::string_scalar(std::string("ECONOMY ANODIZED STEEL"), true, s);
+    auto pmask = cudf::binary_operation(pv.column(1), ptype, cudf::binary_operator::EQUAL, kBool, s);
+    auto part_f = cudf::apply_boolean_mask(cudf::table_view{{pv.column(0)}}, pmask->view(), s);
+    auto [l_map, p_map] = cudf::inner_join(cudf::table_view{{lv.column(1)}},  // l_partkey
+                                           cudf::table_view{{part_f->get_column(0).view()}},
+                                           cudf::null_equality::EQUAL, s);
+    auto line_p = cudf::gather(cudf::table_view{{lv.column(0), lv.column(2), lv.column(3), lv.column(4)}},
+                               map_view(l_map), cudf::out_of_bounds_policy::DONT_CHECK, s);
+    //             line_p: l_orderkey, l_suppkey, l_extendedprice, l_discount
+
+    // C: line_p |X| orders_am on orderkey
+    auto [lp_map, oa_map] = cudf::inner_join(cudf::table_view{{line_p->get_column(0).view()}},
+                                             cudf::table_view{{orders_am->get_column(0).view()}},
+                                             cudf::null_equality::EQUAL, s);
+    auto lp_side = cudf::gather(cudf::table_view{{line_p->get_column(1).view(),   // l_suppkey
+                                                  line_p->get_column(2).view(),   // extprice
+                                                  line_p->get_column(3).view()}}, // discount
+                                map_view(lp_map), cudf::out_of_bounds_policy::DONT_CHECK, s);
+    auto oa_side = cudf::gather(cudf::table_view{{orders_am->get_column(1).view()}},  // o_orderdate
+                                map_view(oa_map), cudf::out_of_bounds_policy::DONT_CHECK, s);
+
+    // D: |X| supplier on suppkey -> reach s_nationkey; carry price/discount and date
+    auto [s_map2, sp_map] = cudf::inner_join(cudf::table_view{{lp_side->get_column(0).view()}},  // l_suppkey
+                                             cudf::table_view{{sv.column(0)}},                    // s_suppkey
+                                             cudf::null_equality::EQUAL, s);
+    auto d_price = cudf::gather(cudf::table_view{{lp_side->get_column(1).view(),
+                                                  lp_side->get_column(2).view()}},
+                                map_view(s_map2), cudf::out_of_bounds_policy::DONT_CHECK, s);
+    auto d_date  = cudf::gather(cudf::table_view{{oa_side->get_column(0).view()}}, map_view(s_map2),
+                                cudf::out_of_bounds_policy::DONT_CHECK, s);
+    auto d_snation = cudf::gather(cudf::table_view{{sv.column(1)}}, map_view(sp_map),  // s_nationkey
+                                  cudf::out_of_bounds_policy::DONT_CHECK, s);
+    // E: |X| nation n2 on nationkey -> n_name (the SECOND use of the same nation table)
+    auto [sn_map, n2_map] = cudf::inner_join(cudf::table_view{{d_snation->get_column(0).view()}},
+                                             cudf::table_view{{nv.column(0)}},
+                                             cudf::null_equality::EQUAL, s);
+    auto e_price = cudf::gather(cudf::table_view{{d_price->get_column(0).view(),
+                                                  d_price->get_column(1).view()}},
+                                map_view(sn_map), cudf::out_of_bounds_policy::DONT_CHECK, s);
+    auto e_date  = cudf::gather(cudf::table_view{{d_date->get_column(0).view()}}, map_view(sn_map),
+                                cudf::out_of_bounds_policy::DONT_CHECK, s);
+    auto e_nname = cudf::gather(cudf::table_view{{nv.column(1)}}, map_view(n2_map),  // n_name
+                                cudf::out_of_bounds_policy::DONT_CHECK, s);
+
+    // project: volume = extprice*(1-discount) (exact dec-4), o_year, brazil-only volume
+    auto price = cudf::cast(e_price->get_column(0).view(), kDec2, s);
+    auto disc  = cudf::cast(e_price->get_column(1).view(), kDec2, s);
+    auto one_s2 = cudf::fixed_point_scalar<numeric::decimal128>(100, numeric::scale_type{-2}, true, s);
+    auto omd    = cudf::binary_operation(one_s2, disc->view(), cudf::binary_operator::SUB, kDec2, s);
+    auto volume = cudf::binary_operation(price->view(), omd->view(), cudf::binary_operator::MUL, kDec4, s);
+    auto o_year = cudf::datetime::extract_datetime_component(
+        e_date->get_column(0).view(), cudf::datetime::datetime_component::YEAR);
+    auto brazil = cudf::string_scalar(std::string("BRAZIL"), true, s);
+    auto is_brazil = cudf::binary_operation(e_nname->get_column(0).view(), brazil,
+                                            cudf::binary_operator::EQUAL, kBool, s);
+    auto zero_s4 = cudf::fixed_point_scalar<numeric::decimal128>(0, numeric::scale_type{-4}, true, s);
+    auto brazil_volume = cudf::copy_if_else(volume->view(), zero_s4, is_brazil->view(), s);
+
+    // local partial group-by o_year -> sum(brazil_volume), sum(volume)
+    cudf::groupby::groupby gb(cudf::table_view{{o_year->view()}});
+    std::vector<cudf::groupby::aggregation_request> reqs;
+    auto add = [&](cudf::column_view v) {
+      cudf::groupby::aggregation_request r;
+      r.values = v;
+      r.aggregations.push_back(cudf::make_sum_aggregation<cudf::groupby_aggregation>());
+      reqs.push_back(std::move(r));
+    };
+    add(brazil_volume->view());
+    add(volume->view());
+    auto [ykeys, yaggs] = gb.aggregate(reqs, s);
+
+    std::vector<std::unique_ptr<cudf::column>> out;
+    auto kcols = ykeys->release();
+    out.push_back(std::move(kcols[0]));           // o_year
+    out.push_back(std::move(yaggs[0].results[0]));  // partial sum(brazil_volume)
+    out.push_back(std::move(yaggs[1].results[0]));  // partial sum(volume)
+    return std::make_unique<cudf::table>(std::move(out));
+  };
+
+  auto execute = [&]() -> std::unique_ptr<cudf::table> {
+    // Phase 1: each worker builds its partial (o_year, brazil_psum, total_psum) and packs it.
+    std::vector<std::unique_ptr<cudf::table>> partial(G);
+    std::vector<cudf::packed_columns>         packed(G);
+    std::vector<std::future<PackedPartial>>   pf;
+    for (int g = 0; g < G; ++g)
+      pf.push_back(pool[g].submit([&, g]() -> PackedPartial {
+        auto s     = pool.stream(g);
+        partial[g] = local_partial(g, s);
+        packed[g]  = cudf::pack(partial[g]->view(), s);
+        s.synchronize();
+        return describe_packed(g, packed[g]);
+      }));
+    std::vector<PackedPartial> handles(G);
+    for (int g = 0; g < G; ++g) handles[g] = pf[g].get();
+
+    // Phase 2: GPU0 gathers the G partials, concatenates, merge-group-by o_year (SUM the partial
+    // sums — exact), recomputes mkt_share in float64, sorts by o_year.
+    auto result = pool[0]
+        .submit([&]() -> std::unique_ptr<cudf::table> {
+          auto s = pool.stream(0);
+          std::vector<GatheredTable> gathered;
+          gathered.reserve(G);
+          std::vector<cudf::table_view> views;
+          views.reserve(G);
+          for (int g = 0; g < G; ++g) {
+            gathered.push_back(gather_here(handles[g], s));
+            views.push_back(gathered[g].view);
+          }
+          auto merged = cudf::concatenate(views, s);  // [o_year | brazil_psum | total_psum] * G
+          auto mv     = merged->view();
+          cudf::groupby::groupby gb(cudf::table_view{{mv.column(0)}});
+          std::vector<cudf::groupby::aggregation_request> reqs;
+          for (int c = 1; c <= 2; ++c) {
+            cudf::groupby::aggregation_request r;
+            r.values = mv.column(c);
+            r.aggregations.push_back(cudf::make_sum_aggregation<cudf::groupby_aggregation>());
+            reqs.push_back(std::move(r));
+          }
+          auto [keys, aggs] = gb.aggregate(reqs, s);
+          auto brazil_sum = std::move(aggs[0].results[0]);  // dec -4, exact
+          auto total_sum  = std::move(aggs[1].results[0]);  // dec -4, exact
+          auto brazil_f = cudf::cast(brazil_sum->view(), kFloat64, s);
+          auto total_f  = cudf::cast(total_sum->view(), kFloat64, s);
+          auto mkt_share = cudf::binary_operation(brazil_f->view(), total_f->view(),
+                                                  cudf::binary_operator::DIV, kFloat64, s);
+          auto kv    = keys->view();
+          auto order = cudf::sorted_order(cudf::table_view{{kv.column(0)}}, {cudf::order::ASCENDING},
+                                          {cudf::null_order::AFTER}, s);
+          auto sorted = cudf::gather(
+              cudf::table_view{{kv.column(0), brazil_sum->view(), total_sum->view(), mkt_share->view()}},
+              order->view(), cudf::out_of_bounds_policy::DONT_CHECK, s);
+          s.synchronize();
+          return sorted;
+        })
+        .get();
+
+    std::vector<std::future<void>> rf;
+    for (int g = 0; g < G; ++g)
+      rf.push_back(pool[g].submit([&, g] {
+        packed[g]  = cudf::packed_columns{};
+        partial[g] = nullptr;
+      }));
+    for (auto& f : rf) f.get();
+    return result;
+  };
+
+  auto result = execute();
+  constexpr double kShareRelTol = 1e-9;
+  const std::vector<ColSpec> spec = {
+      {"o_year", Cmp::ExactInt},          {"brazil_volume", Cmp::ExactDecimal},
+      {"total_volume", Cmp::ExactDecimal},{"mkt_share", Cmp::TolerantDouble, kShareRelTol},
+  };
+  const auto golden = read_csv_golden(golden_path);
+  const double worst = compare_table_to_golden(result->view(), golden, spec, "q8-mgpu");
+  std::fprintf(stderr, "[q8-mgpu] %d GPUs, %d row groups; worst mkt_share rel err %.3e (tol %.1e)\n",
+               G, num_rg, worst, kShareRelTol);
+
+  benchmark_mgpu("q8-mgpu", execute, G, load_ms);
+  release_partitions(pool, line);
+  release_partitions(pool, part);
+  release_partitions(pool, supp);
+  release_partitions(pool, ord);
+  release_partitions(pool, cust);
+  release_partitions(pool, nation);
+  release_partitions(pool, region);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);
+  ::testing::AddGlobalTestEnvironment(new MultiGpuEnvironment);  // one shared WorkerPool
   return RUN_ALL_TESTS();
 }

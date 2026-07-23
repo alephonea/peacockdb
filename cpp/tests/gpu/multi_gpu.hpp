@@ -12,8 +12,10 @@
 //                      row-group boundaries; each worker reads only its span. DATA
 //                      DISTRIBUTION, not predicate pushdown — predicates still run as operators.
 //   * broadcast read — load a whole (small) table on the calling GPU, for broadcast joins.
-//   * cross-GPU gather — move a (small) cuDF table from a worker's GPU to GPU0 via
-//                      pack -> peer-copy the contiguous buffer -> unpack, for the final merge.
+//   * cross-GPU gather — move a (small) cuDF table from a worker's GPU to the CURRENT GPU via
+//                      pack -> peer-copy the contiguous buffer -> unpack, for a final merge.
+//   * hash-shuffle — all-to-all MURMUR3 repartition of large tables by a key, so every row with
+//                      a given key ends up on one GPU (for a high-cardinality group-by/join).
 //
 // Non-template definitions live in multi_gpu.cpp; only the GpuWorker template and small
 // structs/inline accessors are here.
@@ -222,16 +224,34 @@ struct PackedPartial {
 // packed_columns is owned where you want it kept alive).
 PackedPartial describe_packed(int device, cudf::packed_columns const& p);
 
-// A table reconstructed on GPU0: the owning device buffer plus the view into it. The view is
-// valid only while `buffer` is alive.
+// A table reconstructed on the CURRENT GPU: the owning device buffer plus the view into it. The
+// view is valid only while `buffer` is alive.
 struct GatheredTable {
-  rmm::device_buffer buffer;  // on GPU0
+  rmm::device_buffer buffer;  // on the current device
   cudf::table_view   view;    // points into `buffer`
 };
 
-// On GPU0 (must be the current device / GPU0 worker): peer-copy a packed partial's buffer in
-// and unpack it. Same-device partials (device 0) are copied too — a device-to-device copy on
-// one GPU is cheap and keeps the code uniform.
-GatheredTable gather_to_gpu0(PackedPartial const& p, rmm::cuda_stream_view stream);
+// On the CURRENT device (the calling worker's GPU): peer-copy a packed partial's buffer in and
+// unpack it. A same-device partial is copied too — a device-to-device copy on one GPU is cheap
+// and keeps the code uniform.
+GatheredTable gather_here(PackedPartial const& p, rmm::cuda_stream_view stream);
+
+// ---------------------------------------------------------------------------
+// hash_shuffle — all-to-all cross-GPU repartition by a key (MURMUR3).
+//
+// `locals[g]` is a table resident on GPU g (same schema on every GPU). This repartitions ALL
+// rows so that every row (from any GPU) whose key hashes to bucket p lands on GPU p. Returns G
+// owning tables; result[p] is resident on GPU p and MUST be consumed and freed on worker p.
+//
+// Every worker hashes with the SAME function and seed, so a given key maps to the same bucket on
+// every GPU — that is what makes the repartition consistent (all rows for a key converge on one
+// GPU). Mechanism: each worker cudf::hash_partition's its local table into G contiguous buckets,
+// packs each bucket, and the all-to-all peer exchange delivers bucket p from every worker to
+// worker p, which concatenates them. This is the genuine repartition a high-cardinality group-by
+// needs — after it, each GPU owns a DISJOINT key range and can group locally with no cross-GPU
+// partial merge. (For a low-cardinality group-by, prefer the gather_here partial-merge instead.)
+std::vector<std::unique_ptr<cudf::table>> hash_shuffle(
+    WorkerPool& pool, std::vector<cudf::table_view> const& locals,
+    std::vector<cudf::size_type> const& key_cols);
 
 }  // namespace peacock_mgpu

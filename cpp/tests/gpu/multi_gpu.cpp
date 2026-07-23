@@ -4,7 +4,12 @@
 
 #include "multi_gpu.hpp"
 
+#include <cudf/concatenate.hpp>
+#include <cudf/copying.hpp>
+#include <cudf/hashing.hpp>
 #include <cudf/io/parquet_metadata.hpp>
+#include <cudf/partitioning.hpp>
+#include <cudf/table/table.hpp>
 
 #include <rmm/aligned.hpp>
 
@@ -134,7 +139,7 @@ PackedPartial describe_packed(int device, cudf::packed_columns const& p) {
                        static_cast<const uint8_t*>(p.gpu_data->data()), p.gpu_data->size()};
 }
 
-GatheredTable gather_to_gpu0(PackedPartial const& p, rmm::cuda_stream_view stream) {
+GatheredTable gather_here(PackedPartial const& p, rmm::cuda_stream_view stream) {
   rmm::device_buffer buf(p.gpu_data_size, stream);
   int cur = 0;
   MG_CUDA_TRY(cudaGetDevice(&cur));
@@ -143,6 +148,75 @@ GatheredTable gather_to_gpu0(PackedPartial const& p, rmm::cuda_stream_view strea
   MG_CUDA_TRY(cudaStreamSynchronize(stream.value()));
   cudf::table_view view = cudf::unpack(p.metadata, static_cast<const uint8_t*>(buf.data()));
   return GatheredTable{std::move(buf), view};
+}
+
+std::vector<std::unique_ptr<cudf::table>> hash_shuffle(
+    WorkerPool& pool, std::vector<cudf::table_view> const& locals,
+    std::vector<cudf::size_type> const& key_cols) {
+  const int G = pool.size();
+
+  // Phase 1: each worker g hash_partitions its local table into G contiguous buckets and packs
+  // each bucket. parted[g] (the reordered table) and packed[g][p] (bucket p's serialized bytes)
+  // stay alive on worker g until the exchange has copied them.
+  std::vector<std::unique_ptr<cudf::table>>       parted(G);
+  std::vector<std::vector<cudf::packed_columns>>  packed(G);
+  std::vector<std::vector<PackedPartial>>         handles(G, std::vector<PackedPartial>(G));
+  {
+    std::vector<std::future<void>> fs;
+    for (int g = 0; g < G; ++g)
+      fs.push_back(pool[g].submit([&, g] {
+        auto s   = pool.stream(g);
+        auto res = cudf::hash_partition(locals[g], key_cols, G, cudf::hash_id::HASH_MURMUR3,
+                                        cudf::DEFAULT_HASH_SEED, s);
+        parted[g]          = std::move(res.first);
+        auto const& starts = res.second;  // size G: start row of each bucket
+        auto full          = parted[g]->view();
+        const cudf::size_type nrows = full.num_rows();
+        packed[g].resize(G);
+        for (int p = 0; p < G; ++p) {
+          const cudf::size_type start = starts[p];
+          const cudf::size_type end   = (p + 1 < G) ? starts[p + 1] : nrows;
+          auto bucket   = cudf::slice(full, {start, end})[0];  // zero-copy view of bucket p
+          packed[g][p]  = cudf::pack(bucket, s);
+          handles[g][p] = describe_packed(g, packed[g][p]);
+        }
+        s.synchronize();  // buckets fully materialized before any peer reads them
+      }));
+    for (auto& f : fs) f.get();
+  }
+
+  // Phase 2: each worker p pulls bucket p from every worker g and concatenates -> result[p].
+  std::vector<std::unique_ptr<cudf::table>> result(G);
+  {
+    std::vector<std::future<void>> fs;
+    for (int p = 0; p < G; ++p)
+      fs.push_back(pool[p].submit([&, p] {
+        auto s = pool.stream(p);
+        std::vector<GatheredTable> gathered;
+        gathered.reserve(G);
+        std::vector<cudf::table_view> views;
+        views.reserve(G);
+        for (int g = 0; g < G; ++g) {
+          gathered.push_back(gather_here(handles[g][p], s));
+          views.push_back(gathered[g].view);
+        }
+        result[p] = cudf::concatenate(views, s);
+        s.synchronize();  // result[p] owns its data before `gathered` buffers free here
+      }));
+    for (auto& f : fs) f.get();
+  }
+
+  // Phase 3: release the packed source tables on their producing workers (after the exchange).
+  {
+    std::vector<std::future<void>> fs;
+    for (int g = 0; g < G; ++g)
+      fs.push_back(pool[g].submit([&, g] {
+        packed[g].clear();
+        parted[g].reset();
+      }));
+    for (auto& f : fs) f.get();
+  }
+  return result;
 }
 
 }  // namespace peacock_mgpu
