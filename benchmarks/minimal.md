@@ -152,6 +152,56 @@ above because its heavier per-partition compute hides the residual merge + dispa
 boundary-sync cost that q6 (only ~20 ms) still partly shows. Those fixed costs are
 constant in G, so the ratio keeps improving toward 4/8/16 GPUs.
 
+## Multi-GPU TPC-H+V — sharded cuVS search, 1× A100 vs 2× A100 (same pooled code)
+
+The four vector queries with the cuVS brute-force SEARCH **sharded across the GPUs**: the
+embedding table (partsupp.ps_image_embedding for q11v, part.p_text_embedding for the three
+text queries) is split on whole parquet row-group boundaries, each GPU builds a cuVS
+brute_force index over its shard and searches the probe for the per-shard top-K, and the
+G·K candidates are merged to the EXACT global result (a globally-top-K point is top-K in its
+own shard, so the union contains the true top-K; `nth_element` gives the global K-th distance
+for the saturation guard and a linear scan gives the rows under D — no full sort). The
+relational tail that each query wraps around the hit list runs on GPU0, unchanged from the
+single-GPU plan. Both legs verified against the same committed DuckDB goldens (byte-for-byte,
+count-corroborated); execute-only, all-device-synced, 2nd-min of 6; both pooled. cuVS was
+confirmed to allocate from the per-device RMM pool (free VRAM unchanged across a search).
+
+| Query | 1× A100 execute (ms) | 2× A100 execute (ms) | speedup | index-build (ms, G=1→G=2) |
+|---|--:|--:|--:|--:|
+| q11v / img_000 | 20.6 | 16.0 | **1.29×** | 31.7 → 28.5 |
+| q11v / img_017 | 21.7 | 16.6 | **1.31×** | (shared) |
+| q11v / img_034 | 21.9 | 16.6 | **1.32×** | (shared) |
+| q12v / txt_000 | 52.5 | 53.4 | **0.98×** | 2.3 → 1.2 |
+| q10v / txt_017 | 35.6 | 36.5 | **0.97×** | 2.3 → 1.2 |
+| q9v / txt_034 | 78.6 | 80.0 | **0.98×** | 2.3 → 1.2 |
+
+**Which part dominates decides the factor — and it splits the queries cleanly in two.**
+
+- **q11v scales (~1.3×)** because its execute IS almost entirely the search: the GERMANY
+  dimension join (partsupp⋈supplier⋈nation) is probe-independent and built ONCE in setup, so
+  the timed per-probe execute is search + host-merge + a small group-by. Sharding halves the
+  distance scan (the parallel part) and the ~16 ms G=2 result reflects it. It is **not** 2×
+  because the parallel part is only a fraction: the per-shard top-K extraction at the (very
+  conservative) K=131072 is requested in FULL from every shard — mandatory for exactness — so
+  that cost does not shrink with G, and the host merge (O(G·K)) and cross-GPU dispatch are
+  constant-or-growing. Distance-scan parallelism buys the 1.3×; those fixed costs cap it.
+- **q9v/q10v/q12v are flat (~1×)** because their execute is dominated by the RELATIONAL TAIL,
+  not the search. Each joins the ~10⁵-row hit list back through the **240M-row lineitem** (plus
+  orders/customer/partsupp), and that tail runs on GPU0 identically at G=1 and G=2. The search
+  is only ~10–20 ms of a 35–80 ms execute, so halving it is invisible in the total and the
+  small G=2 dispatch/merge overhead makes the ratio a hair below 1. The search leg itself still
+  parallelizes (same mechanism as q11v) — it just isn't the bottleneck of these queries.
+
+**The honest read:** sharding the search is EXACT (all four match the goldens at G=1 and G=2,
+saturation guard active, cuVS drawing from the pool) and it lifts a real barrier — the int32
+cuDF list-child ceiling that forces partsupp's 32M×96 embedding to chunk-load single-GPU is
+gone once each shard's child is under 2³¹ (16M×96 at G=2, in one read). But at this K and with
+the relational tail unparallelized, the win shows only where the search dominates (q11v). To
+scale the *whole* query one would (a) parallelize the relational tail too (partition lineitem
+as in M1/M2 and broadcast the small hit list), and/or (b) cut the per-shard K toward the true
+hit count so the top-K extraction and O(G·K) merge shrink. Both are follow-on work; M3's remit
+was the exact sharded search, and the search parallelism is real where it is not swamped.
+
 ## Reproduce
 
 - DuckDB: `benchmarks/duckdb_minimal.sh --s3-direct --dir <path> --duckdb /usr/local/bin/duckdb`
@@ -165,3 +215,7 @@ constant in G, so the ratio keeps improving toward 4/8/16 GPUs.
   needed): the process-wide shared `WorkerPool` removed the per-test-teardown state churn
   that made multiple benchmarks-per-process flaky in M1 — the numbers above are one
   q6→q1→q3→q8 run per leg.
+- cuDF multi-GPU TPC-H+V (`peacock_multi_gpu_tpchv_tests`, same `PEACOCK_BENCHMARK=1` and
+  `CUDA_VISIBLE_DEVICES=0`-vs-2-GPU protocol): needs cuVS, the sf40 embedding parquets, and
+  the committed `query_params.jsonl` (`PEACOCK_TPCH_VEC_PARAMS`). All four vector queries also
+  benchmark reliably in one process per leg under the shared pool (cuVS included).

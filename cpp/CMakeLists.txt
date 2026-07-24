@@ -207,7 +207,9 @@ set_tests_properties(peacock_tpchv_tests PROPERTIES LABELS "gpu")
 # so there is exactly one copy. Not installed, not in CI.
 add_library(multi_gpu_testlib STATIC tests/gpu/multi_gpu.cpp)
 target_include_directories(multi_gpu_testlib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tests/gpu)
-target_link_libraries(multi_gpu_testlib PUBLIC cudf::cudf)
+# GTest is PUBLIC: multi_gpu.hpp now hosts the shared MultiGpuEnvironment (a ::testing::Environment)
+# and benchmark_mgpu, used by both multi-GPU test binaries.
+target_link_libraries(multi_gpu_testlib PUBLIC cudf::cudf GTest::gtest)
 set_target_properties(multi_gpu_testlib PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON
                                                    POSITION_INDEPENDENT_CODE ON)
 
@@ -224,6 +226,16 @@ add_executable(peacock_multi_gpu_tpch_tests tests/gpu/test_multi_gpu_tpch.cpp)
 target_include_directories(peacock_multi_gpu_tpch_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(peacock_multi_gpu_tpch_tests PRIVATE multi_gpu_testlib cudf::cudf GTest::gtest)
 set_target_properties(peacock_multi_gpu_tpch_tests PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+
+# Multi-GPU TPC-H+V vector query plans (M3: q9v/q10v/q11v/q12v). SAME queries as test_tpchv.cpp,
+# checked against the SAME committed DuckDB goldens, with the cuVS brute-force SEARCH sharded
+# across all visible GPUs. cuVS is REQUIRED; cudf must be linked BEFORE cuvs so the rmm symbols
+# libcuvs references (e.g. rmm::logger::~logger) resolve — same order note as peacock_tpchv_tests.
+# TEST-ONLY: no add_test, not installed, not in CI.
+add_executable(peacock_multi_gpu_tpchv_tests tests/gpu/test_multi_gpu_tpchv.cpp)
+target_include_directories(peacock_multi_gpu_tpchv_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(peacock_multi_gpu_tpchv_tests PRIVATE multi_gpu_testlib cudf::cudf cuvs::cuvs GTest::gtest)
+set_target_properties(peacock_multi_gpu_tpchv_tests PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 
 # ---------------------------------------------------------------------------
 # Install

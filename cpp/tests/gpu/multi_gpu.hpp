@@ -34,10 +34,17 @@
 #include <rmm/mr/pool_memory_resource.hpp>
 
 #include <cuda_runtime.h>
+#include <gtest/gtest.h>
 
+#include "tpch_golden.hpp"  // peacock_test::benchmark_enabled / env_or (test-only lib)
+
+#include <algorithm>
+#include <chrono>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <functional>
 #include <future>
 #include <memory>
@@ -253,5 +260,99 @@ GatheredTable gather_here(PackedPartial const& p, rmm::cuda_stream_view stream);
 std::vector<std::unique_ptr<cudf::table>> hash_shuffle(
     WorkerPool& pool, std::vector<cudf::table_view> const& locals,
     std::vector<cudf::size_type> const& key_cols);
+
+// ---------------------------------------------------------------------------
+// PROCESS-WIDE SHARED WorkerPool + shared test scaffolding.
+//
+// Factored out of test_multi_gpu_tpch.cpp so BOTH multi-GPU test binaries (the TPC-H one and
+// the TPC-H+V one) share ONE implementation. There is exactly ONE WorkerPool per binary, owned
+// by a gtest ::testing::Environment (created once while CUDA is alive, torn down once at the
+// end — NOT a Meyers/static singleton, whose destructor could run after the CUDA context is
+// gone). Every query test reuses this pool and its persistent per-GPU streams; no per-test
+// WorkerPool construction/teardown — which is what removed the per-test-teardown cudf-global
+// state churn that made multiple benchmarks-per-process flaky in M1. Each binary's main() still
+// calls ::testing::AddGlobalTestEnvironment(new MultiGpuEnvironment) itself (separate processes).
+// ---------------------------------------------------------------------------
+
+// Number of visible GPUs (0 if CUDA is unavailable — the tests self-skip). Never hardcoded.
+inline int gpu_count() {
+  int n = 0;
+  if (cudaGetDeviceCount(&n) != cudaSuccess) {
+    cudaGetLastError();
+    n = 0;
+  }
+  return n;
+}
+
+// The one shared pool, valid only after the >=1-GPU skip guard in each test (the Environment
+// creates it then). An inline variable so the single definition is shared across TUs.
+inline WorkerPool* g_shared_pool = nullptr;
+inline WorkerPool& shared_pool() { return *g_shared_pool; }
+
+class MultiGpuEnvironment : public ::testing::Environment {
+ public:
+  void SetUp() override {
+    const int n = gpu_count();
+    if (n >= 1) {
+      pool_         = std::make_unique<WorkerPool>(n);
+      g_shared_pool = pool_.get();
+    }
+  }
+  void TearDown() override {
+    g_shared_pool = nullptr;
+    pool_.reset();  // WorkerPool teardown here, once, with CUDA still alive
+  }
+
+ private:
+  std::unique_ptr<WorkerPool> pool_;
+};
+
+// Execute-time benchmark for a multi-GPU plan: 2nd-min-of-6 (same protocol as test_tpch.cpp),
+// but the boundary sync drains EVERY device (the plan's work is spread across all of them), not
+// just the current one. No-op unless PEACOCK_BENCHMARK is set.
+template <typename F>
+void benchmark_mgpu(const char* tag, F&& execute, int num_gpus, double load_ms) {
+  if (!peacock_test::benchmark_enabled()) return;
+  const int runs =
+      std::max(2, std::atoi(peacock_test::env_or("PEACOCK_BENCHMARK_RUNS", "6").c_str()));
+  auto sync_all = [num_gpus] {
+    for (int g = 0; g < num_gpus; ++g) {
+      cudaSetDevice(g);
+      cudaDeviceSynchronize();
+    }
+    cudaSetDevice(0);
+  };
+  std::vector<double> ms;
+  ms.reserve(runs);
+  for (int i = 0; i < runs; ++i) {
+    sync_all();
+    const auto t0 = std::chrono::steady_clock::now();
+    auto result   = execute();
+    sync_all();  // include the cross-GPU merge and every device's work in the timed region
+    const auto t1 = std::chrono::steady_clock::now();
+    ms.push_back(std::chrono::duration<double, std::milli>(t1 - t0).count());
+    (void)result;
+  }
+  std::sort(ms.begin(), ms.end());
+  const double second_min = ms.size() > 1 ? ms[1] : ms[0];
+  std::string all;
+  for (size_t i = 0; i < ms.size(); ++i) {
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%s%.3f", i ? "," : "", ms[i]);
+    all += buf;
+  }
+  std::fprintf(stderr, "[bench] %s execute_ms=%.3f load_ms=%.3f gpus=%d runs=%d all=[%s]\n", tag,
+               second_min, load_ms, num_gpus, runs, all.c_str());
+}
+
+// Free each worker's loaded partition ON its owning worker (device current), so pool-allocated
+// columns are destroyed on the right thread/device before the WorkerPool tears its pools down.
+inline void release_partitions(WorkerPool& pool,
+                               std::vector<cudf::io::table_with_metadata>& parts) {
+  std::vector<std::future<void>> fs;
+  for (int g = 0; g < pool.size(); ++g)
+    fs.push_back(pool[g].submit([&, g] { parts[g] = cudf::io::table_with_metadata{}; }));
+  for (auto& f : fs) f.get();
+}
 
 }  // namespace peacock_mgpu
