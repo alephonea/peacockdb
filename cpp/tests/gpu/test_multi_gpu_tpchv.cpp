@@ -87,10 +87,13 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <fstream>
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace peacock_test;   // TpchSf40 fixture, ColSpec/compare_table_to_golden, Decimal, ...
@@ -154,6 +157,76 @@ std::string vec_params_path() {
 int64_t search_k() {
   return std::strtoll(env_or("PEACOCK_TPCHV_K", "131072").c_str(), nullptr, 10);
 }
+
+// ===========================================================================
+// STAGE PROFILER (measurement only; env-gated by PEACOCK_PROFILE) — a per-stage ms breakdown +
+// per-stage row counts for the EXECUTE path, to settle where the serial GPU0 remainder goes.
+// When `on` is false EVERY method is a no-op, so the committed correctness/benchmark path is
+// byte-for-byte unchanged (the ticks are threaded through execute but cost nothing off-profile).
+// Isolating a stage requires an all-device sync at its boundary; those syncs SERIALIZE work that
+// may otherwise overlap, so the summed breakdown is an UPPER bound and differs from the clean
+// benchmark total — the report prints the sum and the caller compares it to the 2nd-min benchmark.
+// tick() accumulates one ms sample per stage per iteration; report() takes the 2nd-min per stage.
+// ===========================================================================
+inline bool profile_enabled() {
+  const char* v = std::getenv("PEACOCK_PROFILE");
+  return v && *v && std::string(v) != "0";
+}
+
+struct StageProfiler {
+  bool on = false;
+  int num_gpus = 1;
+  std::vector<std::string> order;                        // stage names, first-seen order
+  std::map<std::string, std::vector<double>> times;      // stage -> per-iteration ms samples
+  std::vector<std::pair<std::string, long>> rows;        // stage row counts, insertion order
+  std::chrono::steady_clock::time_point last;
+
+  void sync_all() {
+    for (int g = 0; g < num_gpus; ++g) {
+      cudaSetDevice(g);
+      cudaDeviceSynchronize();
+    }
+    cudaSetDevice(0);
+  }
+  void begin() {
+    if (!on) return;
+    sync_all();
+    last = std::chrono::steady_clock::now();
+  }
+  void tick(const char* name) {
+    if (!on) return;
+    sync_all();
+    auto now = std::chrono::steady_clock::now();
+    double ms = std::chrono::duration<double, std::milli>(now - last).count();
+    if (times.find(name) == times.end())
+      order.push_back(name);
+    times[name].push_back(ms);
+    last = now;
+  }
+  void rowcount(const char* name, long n) {
+    if (!on) return;
+    for (auto& pr : rows)
+      if (pr.first == name) { pr.second = n; return; }
+    rows.emplace_back(name, n);
+  }
+  void report(const char* tag, int G) {
+    if (!on) return;
+    const size_t iters = times.empty() ? 0 : times.begin()->second.size();
+    std::fprintf(stderr, "[profile] %s G=%d — per-stage 2nd-min ms (%zu iters):\n", tag, G, iters);
+    double total = 0;
+    for (auto const& name : order) {
+      auto v = times[name];
+      std::sort(v.begin(), v.end());
+      const double m = v.size() > 1 ? v[1] : (v.empty() ? 0.0 : v[0]);
+      total += m;
+      std::fprintf(stderr, "[profile]   %-18s %9.3f ms\n", name.c_str(), m);
+    }
+    std::fprintf(stderr, "[profile]   %-18s %9.3f ms  (sum; boundary syncs remove overlap)\n",
+                 "= stage-sum", total);
+    for (auto const& pr : rows)
+      std::fprintf(stderr, "[profile]   rows %-13s %ld\n", pr.first.c_str(), pr.second);
+  }
+};
 
 // ===========================================================================
 // SHARD EMBEDDING LOADER — read ONLY a row-group span's embedding column into a resident
@@ -359,7 +432,8 @@ void release_searchers(WorkerPool& pool, std::vector<ShardSearcher>& sh) {
 // row indices (into the table's natural parquet order) of the rows under D — the same set the
 // single-GPU vector_range_hits returns. The GLOBAL saturation guard is load-bearing.
 std::vector<int32_t> sharded_range_hits(WorkerPool& pool, std::vector<ShardSearcher>& sh,
-                                        VecProbe const& probe, int64_t K, const char* tag) {
+                                        VecProbe const& probe, int64_t K, const char* tag,
+                                        StageProfiler* prof = nullptr) {
   const int G = pool.size();
   std::vector<std::vector<int64_t>> idx(G);
   std::vector<std::vector<float>> dist(G);
@@ -370,6 +444,7 @@ std::vector<int32_t> sharded_range_hits(WorkerPool& pool, std::vector<ShardSearc
     fs.push_back(pool[g].submit([&, g] { sh[g].search(probe, K, idx[g], dist[g]); }));
   }
   for (auto& f : fs) f.get();
+  if (prof) prof->tick("1_search");  // per-shard cuVS distance scan (parallel; wall = max worker)
 
   // merge: (distance, GLOBAL row index) candidates from every shard.
   struct Cand {
@@ -405,6 +480,10 @@ std::vector<int32_t> sharded_range_hits(WorkerPool& pool, std::vector<ShardSearc
   std::vector<int32_t> hits;
   for (auto const& c : cands)
     if (static_cast<double>(c.d) < probe.D) hits.push_back(c.gi);
+  if (prof) {
+    prof->tick("2_search_merge");  // gather G*K cands + nth_element K-th guard + range-filter <D
+    prof->rowcount("hits_under_D", static_cast<long>(hits.size()));
+  }
   std::fprintf(stderr, "[%s] %s: D=%.17g -> %zu rows under D (global K-th %.9g)\n", tag,
                probe.id.c_str(), probe.D, hits.size(), kth);
   return hits;
@@ -492,7 +571,8 @@ std::unique_ptr<cudf::table> semijoin_gather(
     WorkerPool& pool, std::vector<cudf::io::table_with_metadata>& shards,
     cudf::table_view hit_keys,  // single-column key table resident on GPU0
     std::function<std::unique_ptr<cudf::table>(cudf::table_view, cudf::column_view,
-                                               rmm::cuda_stream_view)> const& project) {
+                                               rmm::cuda_stream_view)> const& project,
+    StageProfiler* prof = nullptr) {
   const int G = pool.size();
   // Broadcast the hit-key column: pack once on GPU0, each worker peer-copies it in (gather_here).
   auto packed_keys = cudf::pack(hit_keys, cudf::get_default_stream());
@@ -514,6 +594,7 @@ std::unique_ptr<cudf::table> semijoin_gather(
     }));
   std::vector<PackedPartial> handles(G);
   for (int g = 0; g < G; ++g) handles[g] = pf[g].get();
+  if (prof) prof->tick("3_tail_scan");  // broadcast keys + per-GPU lineitem filter+semijoin
 
   auto out = pool[0]
                  .submit([&]() -> std::unique_ptr<cudf::table> {
@@ -531,6 +612,10 @@ std::unique_ptr<cudf::table> semijoin_gather(
                    return merged;
                  })
                  .get();
+  if (prof) {
+    prof->tick("4_gather_survivors");  // gather_here + concatenate the survivors to GPU0
+    prof->rowcount("survivors_total", static_cast<long>(out->num_rows()));
+  }
 
   std::vector<std::future<void>> rf;
   for (int g = 0; g < G; ++g)
@@ -632,8 +717,10 @@ TEST_F(TpchSf40, Q11VectorBruteForceMultiGpu) {
 
   // --- per-probe execute: SHARDED search -> range filter -> intersect German rows -> groupby ---
   for (auto const& probe : probes) {
+    StageProfiler prof;
     auto execute = [&]() -> std::unique_ptr<cudf::table> {
-      auto hits = sharded_range_hits(pool, searchers, probe, K, "q11v-mgpu");
+      prof.begin();
+      auto hits = sharded_range_hits(pool, searchers, probe, K, "q11v-mgpu", &prof);
       auto d_hits = to_device_hits(hits);
       auto [de_map, hit_map] = cudf::inner_join(cudf::table_view{{de->get_column(3).view()}},
                                                 cudf::table_view{{d_hits.view()}});
@@ -661,9 +748,12 @@ TEST_F(TpchSf40, Q11VectorBruteForceMultiGpu) {
           cudf::table_view{{kept->get_column(1).view(), kept->get_column(0).view()}},
           {cudf::order::DESCENDING, cudf::order::ASCENDING},
           {cudf::null_order::AFTER, cudf::null_order::AFTER});
-      return cudf::gather(
+      auto res = cudf::gather(
           cudf::table_view{{kept->get_column(0).view(), kept->get_column(1).view()}},
           order->view());
+      prof.tick("5_intersect_groupby");  // q11's trivial tail: intersect precomputed German rows + groupby
+      prof.rowcount("groups", static_cast<long>(gk->num_rows()));
+      return res;
     };
 
     auto count_hits = sharded_range_hits(pool, searchers, probe, K, "q11v-mgpu");
@@ -679,6 +769,12 @@ TEST_F(TpchSf40, Q11VectorBruteForceMultiGpu) {
                  static_cast<long>(sorted->num_rows()));
 
     benchmark_mgpu(("q11v-mgpu/" + probe.id).c_str(), execute, G, index_ms);
+    if (profile_enabled()) {
+      prof.on = true;
+      prof.num_gpus = G;
+      for (int i = 0; i < 6; ++i) { auto r = execute(); (void)r; }
+      prof.report(("q11v-mgpu/" + probe.id).c_str(), G);
+    }
   }
 
   // POOL-DRAW PROOF (q11v only): a search must not reduce free VRAM on any worker — that would
@@ -784,13 +880,15 @@ TEST_F(TpchSf40, Q12VectorShipModeCountsMultiGpu) {
         map_view(l_map), cudf::out_of_bounds_policy::DONT_CHECK, s);  // (l_orderkey, l_shipmode)
   };
 
+  StageProfiler prof;  // no-op unless PEACOCK_PROFILE; ticks below cost nothing off-profile
   auto execute = [&]() -> std::unique_ptr<cudf::table> {
+    prof.begin();
     // 1) sharded search -> global hit row indices; 2) materialize the hit part KEYS on GPU0 and
     // copy to host (to broadcast); 3) parallel lineitem filter+semijoin -> gather survivors to GPU0.
-    auto hits = sharded_range_hits(pool, searchers, probe, K, "q12v-mgpu");
+    auto hits = sharded_range_hits(pool, searchers, probe, K, "q12v-mgpu", &prof);
     auto d_hits = to_device_hits(hits);
     auto sel = cudf::gather(cudf::table_view{{pk}}, d_hits.view());  // the hit part keys, on GPU0
-    auto lp = semijoin_gather(pool, line_shards, sel->view(), project);  // (l_orderkey, l_shipmode)
+    auto lp = semijoin_gather(pool, line_shards, sel->view(), project, &prof);  // (orderkey, shipmode)
     EXPECT_GT(lp->num_rows(), 0) << "vector predicate and filters left no rows to join";
 
     // 4) FINISH on GPU0 (survivor set is tiny): join broadcast orders, count by priority, group.
@@ -798,6 +896,8 @@ TEST_F(TpchSf40, Q12VectorShipModeCountsMultiGpu) {
                                             cudf::table_view{{ord_in.tbl->view().column(0)}});
     auto mode_col = cudf::gather(cudf::table_view{{lp->get_column(1).view()}}, map_view(lp_map));
     auto prio_col = cudf::gather(cudf::table_view{{ord_in.tbl->view().column(1)}}, map_view(o_map));
+    prof.tick("5_dim_orders");
+    prof.rowcount("after_orders", static_cast<long>(mode_col->num_rows()));
 
     auto urgent = cudf::string_scalar(std::string("1-URGENT"));
     auto high = cudf::string_scalar(std::string("2-HIGH"));
@@ -830,8 +930,11 @@ TEST_F(TpchSf40, Q12VectorShipModeCountsMultiGpu) {
     auto lo_sum = std::move(ga[1].results[0]);
     auto order = cudf::sorted_order(cudf::table_view{{gk->view().column(0)}},
                                     {cudf::order::ASCENDING}, {cudf::null_order::AFTER});
-    return cudf::gather(
+    auto res = cudf::gather(
         cudf::table_view{{gk->view().column(0), hi_sum->view(), lo_sum->view()}}, order->view());
+    prof.tick("6_groupby_sort");
+    prof.rowcount("groups", static_cast<long>(gk->num_rows()));
+    return res;
   };
 
   auto count_hits = sharded_range_hits(pool, searchers, probe, K, "q12v-mgpu");
@@ -853,6 +956,12 @@ TEST_F(TpchSf40, Q12VectorShipModeCountsMultiGpu) {
                static_cast<long>(sorted->num_rows()));
 
   benchmark_mgpu("q12v-mgpu", execute, G, index_ms);
+  if (profile_enabled()) {
+    prof.on = true;
+    prof.num_gpus = G;
+    for (int i = 0; i < 6; ++i) { auto r = execute(); (void)r; }
+    prof.report("q12v-mgpu", G);
+  }
   release_searchers(pool, searchers);
   release_partitions(pool, line_shards);
 }
@@ -920,11 +1029,13 @@ TEST_F(TpchSf40, Q10VectorCustomerTopNMultiGpu) {
                         map_view(l_map), cudf::out_of_bounds_policy::DONT_CHECK, s);
   };
 
+  StageProfiler prof;
   auto execute = [&]() -> std::unique_ptr<cudf::table> {
-    auto hits = sharded_range_hits(pool, searchers, probe, K, "q10v-mgpu");
+    prof.begin();
+    auto hits = sharded_range_hits(pool, searchers, probe, K, "q10v-mgpu", &prof);
     auto d_hits = to_device_hits(hits);
     auto sel = cudf::gather(cudf::table_view{{pk}}, d_hits.view());  // the hit part keys, on GPU0
-    auto lp = semijoin_gather(pool, line_shards, sel->view(), project);  // (orderkey, extprice, disc)
+    auto lp = semijoin_gather(pool, line_shards, sel->view(), project, &prof);  // (orderkey,price,disc)
 
     // orders filtered to the 1993-10..1994-01 quarter (GPU0) — a residual GPU0 scan (reported).
     auto d_lo = date_scalar(1993, 10, 1);
@@ -945,6 +1056,8 @@ TEST_F(TpchSf40, Q10VectorCustomerTopNMultiGpu) {
                              map_view(lp_map));
     auto lo_o = cudf::gather(cudf::table_view{{ord_f->get_column(1).view()}}, map_view(o_map));
     EXPECT_GT(lo_o->num_rows(), 0) << "vector predicate and filters left no rows to join";
+    prof.tick("5_dim_orders");
+    prof.rowcount("after_orders", static_cast<long>(lo_o->num_rows()));
 
     auto [c_map, lo_map] = cudf::inner_join(cudf::table_view{{cv.column(0)}},
                                             cudf::table_view{{lo_o->get_column(0).view()}});
@@ -970,6 +1083,8 @@ TEST_F(TpchSf40, Q10VectorCustomerTopNMultiGpu) {
         map_view(cn_map));
     auto nat_j = cudf::gather(cudf::table_view{{nat_in.tbl->view().column(1)}}, map_view(n_map));
     EXPECT_GT(cust_j->num_rows(), 0);
+    prof.tick("5b_dim_customer_nation");
+    prof.rowcount("after_customer", static_cast<long>(cust_j->num_rows()));
 
     auto price = cudf::cast(val_j->get_column(0).view(), dec128_s2);
     auto disc = cudf::cast(val_j->get_column(1).view(), dec128_s2);
@@ -1001,10 +1116,13 @@ TEST_F(TpchSf40, Q10VectorCustomerTopNMultiGpu) {
     auto order = cudf::sorted_order(cudf::table_view{{rev_col->view(), gkv.column(0)}},
                                     {cudf::order::DESCENDING, cudf::order::ASCENDING},
                                     {cudf::null_order::AFTER, cudf::null_order::AFTER});
-    return cudf::gather(cudf::table_view{{gkv.column(0), gkv.column(1), rev_col->view(),
-                                          gkv.column(2), gkv.column(4), gkv.column(5),
-                                          gkv.column(3), gkv.column(6)}},
-                        order->view());
+    auto res = cudf::gather(cudf::table_view{{gkv.column(0), gkv.column(1), rev_col->view(),
+                                              gkv.column(2), gkv.column(4), gkv.column(5),
+                                              gkv.column(3), gkv.column(6)}},
+                            order->view());
+    prof.tick("6_groupby_sort");
+    prof.rowcount("groups", static_cast<long>(gk->num_rows()));
+    return res;
   };
 
   auto count_hits = sharded_range_hits(pool, searchers, probe, K, "q10v-mgpu");
@@ -1027,6 +1145,12 @@ TEST_F(TpchSf40, Q10VectorCustomerTopNMultiGpu) {
   std::fprintf(stderr, "[q10v-mgpu] 20 result rows matched\n");
 
   benchmark_mgpu("q10v-mgpu", execute, G, index_ms);
+  if (profile_enabled()) {
+    prof.on = true;
+    prof.num_gpus = G;
+    for (int i = 0; i < 6; ++i) { auto r = execute(); (void)r; }
+    prof.report("q10v-mgpu", G);
+  }
   release_searchers(pool, searchers);
   release_partitions(pool, line_shards);
 }
@@ -1090,8 +1214,10 @@ TEST_F(TpchSf40, Q9VectorCompositeJoinMultiGpu) {
                         map_view(l_map), cudf::out_of_bounds_policy::DONT_CHECK, s);
   };
 
+  StageProfiler prof;
   auto execute = [&]() -> std::unique_ptr<cudf::table> {
-    auto hits = sharded_range_hits(pool, searchers, probe, K, "q9v-mgpu");
+    prof.begin();
+    auto hits = sharded_range_hits(pool, searchers, probe, K, "q9v-mgpu", &prof);
     auto d_hits = to_device_hits(hits);
     auto sel_partkeys = cudf::gather(cudf::table_view{{pk}}, d_hits.view());
 
@@ -1106,9 +1232,11 @@ TEST_F(TpchSf40, Q9VectorCompositeJoinMultiGpu) {
     auto part_sel = cudf::gather(cudf::table_view{{green_parts->get_column(0).view()}},
                                  map_view(g_map));
     EXPECT_GT(part_sel->num_rows(), 0) << "the two part predicates have no overlap";
+    prof.tick("2b_green_intersect");  // GPU0: p_name LIKE %green% over 8M ∩ under-D keys
+    prof.rowcount("green_and_underD_keys", static_cast<long>(part_sel->num_rows()));
 
     // parallel lineitem semi-join -> survivors gathered to GPU0 (== single-GPU part⋈lineitem `li`)
-    auto li = semijoin_gather(pool, line_shards, part_sel->view(), project);
+    auto li = semijoin_gather(pool, line_shards, part_sel->view(), project, &prof);
     EXPECT_GT(li->num_rows(), 0);
 
     auto [li_map, psx_map] = cudf::inner_join(
@@ -1122,6 +1250,8 @@ TEST_F(TpchSf40, Q9VectorCompositeJoinMultiGpu) {
     EXPECT_EQ(li_j->num_rows(), li->num_rows())
         << "composite join changed the lineitem row count — (ps_partkey, ps_suppkey) is unique in "
            "partsupp, so an inner join on both keys must preserve it exactly.";
+    prof.tick("5_dim_partsupp");  // GPU0: composite (partkey,suppkey) join vs 32M-row partsupp
+    prof.rowcount("after_partsupp", static_cast<long>(li_j->num_rows()));
 
     auto [lo_map, o_map] = cudf::inner_join(cudf::table_view{{li_j->get_column(0).view()}},
                                             cudf::table_view{{ord_in.tbl->view().column(0)}});
@@ -1131,6 +1261,8 @@ TEST_F(TpchSf40, Q9VectorCompositeJoinMultiGpu) {
     auto cost_o = cudf::gather(cudf::table_view{{cost_j->get_column(0).view()}}, map_view(lo_map));
     auto date_o = cudf::gather(cudf::table_view{{ord_in.tbl->view().column(1)}}, map_view(o_map));
     EXPECT_GT(li_o->num_rows(), 0);
+    prof.tick("5b_dim_orders");  // GPU0: join vs 60M-row orders
+    prof.rowcount("after_orders", static_cast<long>(li_o->num_rows()));
 
     auto [ls_map, s_map] = cudf::inner_join(cudf::table_view{{li_o->get_column(0).view()}},
                                             cudf::table_view{{sup_in.tbl->view().column(0)}});
@@ -1151,6 +1283,8 @@ TEST_F(TpchSf40, Q9VectorCompositeJoinMultiGpu) {
     auto date_n = cudf::gather(cudf::table_view{{date_s->get_column(0).view()}}, map_view(sn_map));
     auto name_n = cudf::gather(cudf::table_view{{nat_in.tbl->view().column(1)}}, map_view(n_map));
     EXPECT_GT(vals_n->num_rows(), 0);
+    prof.tick("5c_dim_supp_nation");  // GPU0: supplier + nation joins (small dims)
+    prof.rowcount("group_in", static_cast<long>(vals_n->num_rows()));
 
     auto o_year = cudf::datetime::extract_datetime_component(
         date_n->get_column(0).view(), cudf::datetime::datetime_component::YEAR);
@@ -1182,8 +1316,11 @@ TEST_F(TpchSf40, Q9VectorCompositeJoinMultiGpu) {
     auto order = cudf::sorted_order(cudf::table_view{{gkv.column(0), gkv.column(1)}},
                                     {cudf::order::ASCENDING, cudf::order::DESCENDING},
                                     {cudf::null_order::AFTER, cudf::null_order::AFTER});
-    return cudf::gather(cudf::table_view{{gkv.column(0), gkv.column(1), profit->view()}},
-                        order->view());
+    auto res = cudf::gather(cudf::table_view{{gkv.column(0), gkv.column(1), profit->view()}},
+                            order->view());
+    prof.tick("6_groupby_sort");
+    prof.rowcount("groups", static_cast<long>(gk->num_rows()));
+    return res;
   };
 
   auto count_hits = sharded_range_hits(pool, searchers, probe, K, "q9v-mgpu");
@@ -1203,6 +1340,12 @@ TEST_F(TpchSf40, Q9VectorCompositeJoinMultiGpu) {
   std::fprintf(stderr, "[q9v-mgpu] %ld result rows matched\n", static_cast<long>(sorted->num_rows()));
 
   benchmark_mgpu("q9v-mgpu", execute, G, index_ms);
+  if (profile_enabled()) {
+    prof.on = true;
+    prof.num_gpus = G;
+    for (int i = 0; i < 6; ++i) { auto r = execute(); (void)r; }
+    prof.report("q9v-mgpu", G);
+  }
   release_searchers(pool, searchers);
   release_partitions(pool, line_shards);
 }
