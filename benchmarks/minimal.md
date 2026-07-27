@@ -154,63 +154,71 @@ constant in G, so the ratio keeps improving toward 4/8/16 GPUs.
 
 ## Multi-GPU TPC-H+V — sharded cuVS search, 1× A100 vs 2× A100 (same pooled code)
 
-The four vector queries with BOTH the cuVS brute-force SEARCH and the RELATIONAL TAIL sharded
-across the GPUs. **Search** (M3): the embedding table (partsupp.ps_image_embedding for q11v,
-part.p_text_embedding for the text queries) is split on whole parquet row-group boundaries, each
-GPU builds a cuVS brute_force index over its shard and searches the probe for the per-shard
-top-K, and the G·K candidates merge to the EXACT global result (a globally-top-K point is top-K
-in its own shard, so the union contains the true top-K; `nth_element` gives the global K-th for
-the saturation guard, a linear scan gives the rows under D — no full sort). **Tail** (M4): the
-search yields a small hit-key set (~10⁵ part/partsupp keys under D); that key column is broadcast
-to every GPU (packed on GPU0, peer-copied in), the **240M-row lineitem is partitioned** across
-the GPUs, and each GPU applies the query's lineitem-local filters + a SEMI-JOIN against the hit
-keys — collapsing 240M to a tiny survivor set in parallel — which is gathered to GPU0 where the
-remaining (small) dim joins + group-by finish. Both legs verified against the same committed
-DuckDB goldens (byte-for-byte, count-corroborated); execute-only, all-device-synced, 2nd-min of
-6; both pooled. cuVS was confirmed to allocate from the per-device RMM pool (free VRAM unchanged
-across a search).
+The four vector queries with the cuVS brute-force SEARCH, the 240M-row lineitem SEMI-JOIN, and the
+big DIM-table joins all sharded across the GPUs. **Search** (M3): the embedding table
+(partsupp.ps_image_embedding for q11v, part.p_text_embedding for the text queries) is split on
+whole parquet row-group boundaries, each GPU builds a cuVS brute_force index over its shard and
+searches the probe for the per-shard top-K. The **merge** (M5 Lever A) collects only the rows
+under D from each shard's list and guards by count — Σ per-shard #(<D) must be < K, EXACTLY the
+old global-K-th-≥-D guard (global K-th ≥ D ⟺ fewer than K points < D globally ⟺ Σ < K) — so the
+host work is O(hits), not O(G·K), and no longer grows with G. **Tail** (M4 + M5 Lever B): the
+search yields a small hit-key set (~10⁵ keys under D) broadcast to every GPU; the 240M-row
+lineitem is partitioned and each GPU semi-joins its shard against the keys, collapsing 240M to a
+tiny survivor set in parallel; then the **big dim tables that join AFTER the collapse are
+themselves partitioned** — orders (q12v, q9v) and partsupp (q9v) — via the same broadcast-small /
+partition-big / gather pattern (their join keys are unique and the row-group spans disjoint, so a
+key matches at most one row on one shard → no double-count). Both legs verified against the same
+committed DuckDB goldens (byte-for-byte, count-corroborated); execute-only, all-device-synced,
+2nd-min of 6; both pooled. cuVS allocates from the per-device RMM pool (free VRAM unchanged across
+a search).
 
 | Query | 1× A100 execute (ms) | 2× A100 execute (ms) | speedup | index-build (ms, G=1→G=2) |
 |---|--:|--:|--:|--:|
-| q11v / img_000 | 21.0 | 18.0 | **1.17×** | 46.0 → 42.2 |
-| q11v / img_017 | 21.8 | 19.1 | **1.15×** | (shared) |
-| q11v / img_034 | 21.9 | 19.0 | **1.16×** | (shared) |
-| q12v / txt_000 | 55.0 | 43.1 | **1.28×** | 2.2 → 1.2 |
-| q10v / txt_017 | 39.0 | 40.2 | **0.97×** | 2.2 → 1.2 |
-| q9v / txt_034 | 81.4 | 62.5 | **1.30×** | 2.2 → 1.2 |
+| q11v / img_000 | 20.3 | 13.2 | **1.54×** | 46.0 → 42.8 |
+| q11v / img_017 | 21.1 | 14.2 | **1.49×** | (shared) |
+| q11v / img_034 | 21.3 | 14.3 | **1.49×** | (shared) |
+| q12v / txt_000 | 54.9 | 32.8 | **1.68×** | 2.3 → 1.2 |
+| q10v / txt_017 | 38.3 | 35.5 | **1.08×** | 2.3 → 1.2 |
+| q9v / txt_034 | 82.1 | 47.7 | **1.72×** | 2.3 → 1.2 |
 
-(One coherent run per leg on the current 2×A100 box. q11v's structure is unchanged from M3 — it
-is search-dominated, see below — and re-measures ~1.15× here vs ~1.3× in the M3 write-up; that
-gap is run-to-run/host variance on the G=2 leg, not a code change.)
+(One coherent run per leg on the 2×A100 box. Scoped from an env-gated per-stage profiler
+(`PEACOCK_PROFILE=1`) whose stage-sum matches the clean benchmark within <1 ms.)
 
-**With the lineitem scan now parallel, the factor is set by what remains on GPU0.**
+**Every query improved over M4** (q11v 1.16→1.49×, q12v 1.28→1.68×, q9v 1.30→1.72×, q10v
+0.97→1.08×). Two changes drove it, each targeting a stage the profiler measured:
 
-- **q12v (1.28×) and q9v (1.30×)** were ~1× in M3 (tail all on GPU0) and now scale, because their
-  execute WAS dominated by the 240M-row lineitem work — q12v's shipmode+3-date filter over the
-  full fact, q9v's part⋈lineitem (the decisive 240M→~63k reduction). Partitioning that scan is
-  the win. They fall short of 2× because of the residual GPU0-only steps after the gather: q12v
-  still joins broadcast orders (60M) on GPU0; q9v still does the composite (ps_partkey,ps_suppkey)
-  join against the **32M-row partsupp** and the orders join on GPU0 — those scans are constant in
-  G and cap the ratio (the honest broadcast/residual-scan cost, not massaged).
-- **q10v stays ~1×** because its bottleneck was never the lineitem scan: after `l_returnflag='R'`
-  the fact is already cut, and its execute is dominated by GPU0-resident work the tail-parallelism
-  does not touch — the 60M orders filter+join, the wide **7-column group-by with a 72-char string
-  key** over the broadcast 6M-row customer table. The lineitem portion is too small a fraction for
-  its parallelization to beat the added cross-GPU broadcast+gather+dispatch overhead, so G=2 lands
-  a hair under 1. To move q10v one must also partition the orders scan and the customer join —
-  follow-on work; here it is the named residual, reported rather than massaged.
-- **q11v (~1.15×)** is unchanged: search-dominated (its GERMANY dim join is probe-independent,
-  built once in setup), so the sharded distance scan is the whole story. It is not 2× because the
-  per-shard top-K at the conservative K=131072 is requested in FULL from every shard (mandatory
-  for exactness) and the O(G·K) host merge + dispatch are constant-or-growing in G.
+- **Lever A — the O(hits) merge.** The old merge ran `nth_element` over the G·K host candidates
+  (262 k at K=131072, G=2) to keep ~40 k hits; it cost ~1 ms at G=1 but ~5 ms at G=2 and GREW with
+  G. Replacing it with a per-shard under-D scan + count guard drops it to ~0.6 ms at G=2, flat in
+  G. This is q11v's whole story — it is search-dominated (its GERMANY dim join is probe-independent,
+  built once in setup), so removing the growing merge lifted it 1.16→1.49×. K stays at 131072; the
+  count is the exact backstop, no correctness margin traded.
+- **Lever B — partition the big dim tables.** After the lineitem collapse the survivor set is tiny,
+  but q12v then joins **orders (60M)** and q9v the **composite (ps_partkey,ps_suppkey) join vs
+  partsupp (32M)** plus **orders (60M)** — constant-in-G GPU0 scans that were 63–70% of the serial
+  remainder. Partitioning them (broadcast the ~10⁵-row survivors, join each shard, gather) made
+  those scans parallel: q12v's orders join 11.2→6.4 ms, q9v's partsupp 10.6→6.2 and orders
+  12.5→7.1 ms. That is what took q12v to 1.68× and q9v to 1.72×.
 
-**The honest read:** M4 makes q12v/q9v scale by parallelizing their dominant 240M lineitem scan,
-on top of M3's exact sharded search (all four still match the goldens at G=1 and G=2, saturation
-guard active, cuVS pool-drawn) — and sharding the embedding also lifts the int32 cuDF list-child
-ceiling that forces partsupp's 32M×96 embedding to chunk-load single-GPU (each 16M×96 shard fits
-one read at G=2). The remaining sub-2× gaps are all named residual GPU0 scans (partsupp for q9v,
-orders for q12v/q10v, the wide customer group-by for q10v); parallelizing those tables the same
-way is the next lever.
+**q10v is the honest laggard at 1.08×** — and the profiler explains why. Its dim tables are small
+(orders 3.4 + customer/nation 3.0 ms), so partitioning them is not worth it; its cost is the
+lineitem tail, which after `l_returnflag='R'` still materializes a ~59M-row intermediate that
+barely halves across GPUs (tail-scan scales only 1.09×). We evaluated the obvious fix — reorder to
+semi-join the hit keys FIRST so the shard work parallelizes (tail-scan then scales 1.95×) — and
+**reverted it**: semi-join-first probes the full 240M lineitem instead of the 59M post-filter,
+which costs MORE per GPU, so it is ~4 ms SLOWER at G=2 (39.7 vs 35.5 ms) even though its
+G=1-vs-G=2 *ratio* looks better (that ratio is inflated by a slower G=1). We keep returnflag-first
+for the better G=2 wall-clock; q10v is genuinely bound by touching a large lineitem subset either
+way, and its Lever-A merge fix still cut it from M4's ~40 ms to 35.5 ms. Named residual, not
+massaged.
+
+**The honest read:** M5 removes the two hotspots the profiler named — the G-growing search-merge
+(Lever A, every query) and the constant-in-G dim scans (Lever B, q9v/q12v) — lifting three of four
+queries to 1.5–1.7× (from ~1–1.3×), on top of M3's exact sharded search and M4's parallel lineitem
+(all four still match the goldens at G=1 and G=2, saturation guard active, cuVS pool-drawn). The
+remaining gap to 2× is fixed per-GPU overhead (search + cross-GPU broadcast/gather/dispatch,
+constant in G) plus q10v's irreducible large-lineitem-subset tail; both shrink as a fraction toward
+4/8/16 GPUs.
 
 ## Reproduce
 

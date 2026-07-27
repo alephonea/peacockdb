@@ -446,46 +446,35 @@ std::vector<int32_t> sharded_range_hits(WorkerPool& pool, std::vector<ShardSearc
   for (auto& f : fs) f.get();
   if (prof) prof->tick("1_search");  // per-shard cuVS distance scan (parallel; wall = max worker)
 
-  // merge: (distance, GLOBAL row index) candidates from every shard.
-  struct Cand {
-    float d;
-    int32_t gi;
-  };
-  std::vector<Cand> cands;
-  cands.reserve(static_cast<size_t>(G) * K);
+  // MERGE — O(actual hits), not O(G*K) (Lever A). Each shard returned its K closest neighbours;
+  // collect only those under D from every shard's list. No global nth_element, no G*K candidate
+  // vector: the host work is O(#hits), and the merge no longer grows with G.
+  //
+  // SATURATION GUARD, by COUNT — Σ_g c_g must be < K, where c_g = #{d < D within shard g's top-K}
+  // (and Σ_g c_g == hits.size(), since every under-D neighbour is counted once). This is EXACTLY
+  // the old "global K-th distance >= D" guard: global K-th >= D  <=>  fewer than K points are < D
+  // globally  <=>  Σ c_g < K. If a shard SATURATED (all K of its returned neighbours are < D) it
+  // alone contributes K, so hits.size() >= K and we FAIL — correct, because such a shard may hide
+  // under-D points beyond its K. If hits.size() < K, every shard has c_g < K, so each shard's
+  // top-K captured ALL its under-D points and the union is the EXACT global set. K stays at its
+  // default (PEACOCK_TPCHV_K); the count is the backstop — no correctness margin traded.
+  std::vector<int32_t> hits;
   for (int g = 0; g < G; ++g)
     for (size_t i = 0; i < idx[g].size(); ++i)
-      cands.push_back(Cand{dist[g][i], static_cast<int32_t>(sh[g].global_offset + idx[g][i])});
+      if (static_cast<double>(dist[g][i]) < probe.D)
+        hits.push_back(static_cast<int32_t>(sh[g].global_offset + idx[g][i]));
 
-  if (static_cast<int64_t>(cands.size()) < K) {
-    ADD_FAILURE() << tag << "/" << probe.id << ": only " << cands.size()
-                  << " candidates merged (< K=" << K << ") — data too small for K.";
-    return {};
-  }
-  // Only two facts are needed from the G*K candidates — the global K-th distance (for the guard)
-  // and the set with distance < D (for the tail, order-irrelevant). A full sort is wasteful and
-  // its O(G*K*log) SERIAL cost grows with G; nth_element gives the K-th in O(G*K) and the hits are
-  // a single linear scan. (Each shard's list is already distance-sorted, but nth_element over the
-  // union is simplest and the merge is no longer the bottleneck.)
-  std::nth_element(cands.begin(), cands.begin() + (K - 1), cands.end(),
-                   [](Cand const& a, Cand const& b) { return a.d < b.d; });
-  const double kth = static_cast<double>(cands[K - 1].d);
+  EXPECT_LT(static_cast<int64_t>(hits.size()), K)
+      << tag << "/" << probe.id << ": top-K SATURATED — " << hits.size()
+      << " points fall under D across the per-shard top-K lists (>= K=" << K
+      << "), so a shard's top-K may have truncated the range. Raise K.";
 
-  // GLOBAL SATURATION GUARD — the K-th smallest distance across ALL shards must be >= D, else more
-  // than K rows globally fall under D and the union of per-shard top-K missed some: TRUNCATED.
-  EXPECT_GE(kth, probe.D) << tag << "/" << probe.id << ": GLOBAL top-K SATURATED (K=" << K
-                          << " per shard, global K-th distance " << kth << " < D=" << probe.D
-                          << ") — the range answer would be silently truncated. Raise K.";
-
-  std::vector<int32_t> hits;
-  for (auto const& c : cands)
-    if (static_cast<double>(c.d) < probe.D) hits.push_back(c.gi);
   if (prof) {
-    prof->tick("2_search_merge");  // gather G*K cands + nth_element K-th guard + range-filter <D
+    prof->tick("2_search_merge");  // per-shard <D scan + count guard (O(hits), not O(G*K))
     prof->rowcount("hits_under_D", static_cast<long>(hits.size()));
   }
-  std::fprintf(stderr, "[%s] %s: D=%.17g -> %zu rows under D (global K-th %.9g)\n", tag,
-               probe.id.c_str(), probe.D, hits.size(), kth);
+  std::fprintf(stderr, "[%s] %s: D=%.17g -> %zu rows under D\n", tag, probe.id.c_str(), probe.D,
+               hits.size());
   return hits;
 }
 
@@ -567,34 +556,42 @@ cudf::timestamp_scalar<cudf::timestamp_D> date_scalar(int y, unsigned mo, unsign
 // needed. That makes the parallelized part the expensive 240M lineitem scan/filter/semi-join; the
 // small tail after it stays on GPU0 (a residual, reported).
 // ===========================================================================
-std::unique_ptr<cudf::table> semijoin_gather(
-    WorkerPool& pool, std::vector<cudf::io::table_with_metadata>& shards,
-    cudf::table_view hit_keys,  // single-column key table resident on GPU0
-    std::function<std::unique_ptr<cudf::table>(cudf::table_view, cudf::column_view,
-                                               rmm::cuda_stream_view)> const& project,
-    StageProfiler* prof = nullptr) {
+// GENERAL FORM (Lever B): broadcast a small intermediate to every GPU, run `join_fn` against each
+// GPU's row-group shard of a big table, gather the small results back to GPU0. `bcast` is the small
+// side resident on GPU0 (the hit keys for lineitem; the ~1e5-row survivor set for the dim joins);
+// `shards` is the big table partitioned by disjoint row-group spans. Correctness for the dim joins:
+// the join key (part/partsupp/orders key) is UNIQUE and the spans are disjoint, so each probe key
+// matches at most one row on exactly one shard — gathering matches across shards is the full join,
+// no double-count. `scan_label`/`gather_label` name the profiler stages (each call site distinct).
+std::unique_ptr<cudf::table> broadcast_join_gather(
+    WorkerPool& pool, std::vector<cudf::io::table_with_metadata>& shards, cudf::table_view bcast,
+    std::function<std::unique_ptr<cudf::table>(cudf::table_view, cudf::table_view,
+                                               rmm::cuda_stream_view)> const& join_fn,
+    StageProfiler* prof = nullptr, const char* scan_label = nullptr,
+    const char* gather_label = nullptr) {
   const int G = pool.size();
-  // Broadcast the hit-key column: pack once on GPU0, each worker peer-copies it in (gather_here).
-  auto packed_keys = cudf::pack(hit_keys, cudf::get_default_stream());
+  // Broadcast the small side: pack once on GPU0, each worker peer-copies it in (gather_here,
+  // native dtypes preserved).
+  auto packed_bcast = cudf::pack(bcast, cudf::get_default_stream());
   cudf::get_default_stream().synchronize();
-  const PackedPartial keys_handle = describe_packed(0, packed_keys);
+  const PackedPartial bcast_handle = describe_packed(0, packed_bcast);
 
-  std::vector<std::unique_ptr<cudf::table>> surv(G);
+  std::vector<std::unique_ptr<cudf::table>> res(G);
   std::vector<cudf::packed_columns> packed(G);
 
   std::vector<std::future<PackedPartial>> pf;
   for (int g = 0; g < G; ++g)
     pf.push_back(pool[g].submit([&, g]() -> PackedPartial {
-      auto s   = pool.stream(g);
-      auto kt  = gather_here(keys_handle, s);  // the broadcast key column, now on device g
-      surv[g]  = project(shards[g].tbl->view(), kt.view.column(0), s);
-      packed[g] = cudf::pack(surv[g]->view(), s);
+      auto s    = pool.stream(g);
+      auto bt   = gather_here(bcast_handle, s);  // broadcast intermediate, now on device g
+      res[g]    = join_fn(shards[g].tbl->view(), bt.view, s);
+      packed[g] = cudf::pack(res[g]->view(), s);
       s.synchronize();
       return describe_packed(g, packed[g]);
     }));
   std::vector<PackedPartial> handles(G);
   for (int g = 0; g < G; ++g) handles[g] = pf[g].get();
-  if (prof) prof->tick("3_tail_scan");  // broadcast keys + per-GPU lineitem filter+semijoin
+  if (prof && scan_label) prof->tick(scan_label);
 
   auto out = pool[0]
                  .submit([&]() -> std::unique_ptr<cudf::table> {
@@ -612,24 +609,21 @@ std::unique_ptr<cudf::table> semijoin_gather(
                    return merged;
                  })
                  .get();
-  if (prof) {
-    prof->tick("4_gather_survivors");  // gather_here + concatenate the survivors to GPU0
-    prof->rowcount("survivors_total", static_cast<long>(out->num_rows()));
-  }
+  if (prof && gather_label) prof->tick(gather_label);
 
   std::vector<std::future<void>> rf;
   for (int g = 0; g < G; ++g)
     rf.push_back(pool[g].submit([&, g] {
       packed[g] = cudf::packed_columns{};
-      surv[g].reset();
+      res[g].reset();
     }));
   for (auto& f : rf) f.get();
   return out;
 }
 
-// Load lineitem's row-group shards resident on each worker (once, in the LOAD phase), so the
+// Load a table's row-group shards resident on each worker (once, in the LOAD phase), so the
 // per-probe execute only does compute over them — same discipline as M1/M2.
-std::vector<cudf::io::table_with_metadata> load_lineitem_shards(
+std::vector<cudf::io::table_with_metadata> load_table_shards(
     WorkerPool& pool, std::string const& path, std::vector<std::string> const& cols) {
   const int G = pool.size();
   const int nrg = parquet_num_row_groups(path);
@@ -824,9 +818,10 @@ TEST_F(TpchSf40, Q12VectorShipModeCountsMultiGpu) {
   const auto int32   = cudf::data_type{cudf::type_id::INT32};
 
   // ---------------- LOAD ----------------
-  // orders + part-key on GPU0 (the post-search dim tables); the embedding SHARDED for the search;
-  // and lineitem PARTITIONED across the GPUs (M4: the 240M-row scan is now parallel, not GPU0-only).
-  auto ord_in = read_cols(data_dir() + "/orders.parquet", {"o_orderkey", "o_orderpriority"});
+  // part-key on GPU0; embedding SHARDED for the search; lineitem AND orders PARTITIONED across the
+  // GPUs (M4 lineitem + M5 Lever B orders — the 60M orders join was 63% of q12v's serial remainder).
+  auto ord_shards = load_table_shards(pool, data_dir() + "/orders.parquet",
+                                      {"o_orderkey", "o_orderpriority"});
   const auto part_path = data_dir() + "/part.parquet";
   auto part_in = read_cols(part_path, {"p_partkey"});
   const int64_t n_part = part_in.tbl->num_rows();
@@ -835,7 +830,7 @@ TEST_F(TpchSf40, Q12VectorShipModeCountsMultiGpu) {
   double index_ms = 0.0;
   auto searchers = build_sharded_index(pool, part_path, "p_text_embedding", 100, K, n_part,
                                        index_ms, "q12v-mgpu");
-  auto line_shards = load_lineitem_shards(
+  auto line_shards = load_table_shards(
       pool, data_dir() + "/lineitem.parquet",
       {"l_orderkey", "l_partkey", "l_shipmode", "l_commitdate", "l_receiptdate", "l_shipdate"});
 
@@ -844,8 +839,9 @@ TEST_F(TpchSf40, Q12VectorShipModeCountsMultiGpu) {
   // Worker-side project: filter the lineitem shard (shipmode + 3 date predicates) and SEMI-JOIN it
   // against the broadcast part-hit keys, projecting (l_orderkey, l_shipmode). Every cudf op takes
   // the device-local stream. Shard cols: 0 orderkey,1 partkey,2 shipmode,3 commit,4 receipt,5 ship.
-  auto project = [](cudf::table_view lv, cudf::column_view hk,
+  auto project = [](cudf::table_view lv, cudf::table_view hkt,
                     rmm::cuda_stream_view s) -> std::unique_ptr<cudf::table> {
+    auto hk = hkt.column(0);  // broadcast single-column hit-key table
     const auto b = cudf::data_type{cudf::type_id::BOOL8};
     auto mail = cudf::string_scalar(std::string("MAIL"), true, s);
     auto ship = cudf::string_scalar(std::string("SHIP"), true, s);
@@ -880,6 +876,26 @@ TEST_F(TpchSf40, Q12VectorShipModeCountsMultiGpu) {
         map_view(l_map), cudf::out_of_bounds_policy::DONT_CHECK, s);  // (l_orderkey, l_shipmode)
   };
 
+  // Lever B join_fn: each GPU joins its ORDERS shard against the broadcast lineitem survivors on
+  // o_orderkey (unique -> 1 match per survivor, on one shard), producing (l_shipmode, o_orderpriority).
+  auto orders_join = [](cudf::table_view ordv /*o_orderkey,o_orderpriority*/,
+                        cudf::table_view lpv /*l_orderkey,l_shipmode*/,
+                        rmm::cuda_stream_view s) -> std::unique_ptr<cudf::table> {
+    auto [o_map, l_map] = cudf::inner_join(cudf::table_view{{ordv.column(0)}},
+                                           cudf::table_view{{lpv.column(0)}},
+                                           cudf::null_equality::EQUAL, s);
+    auto sm = cudf::gather(cudf::table_view{{lpv.column(1)}}, map_view(l_map),
+                           cudf::out_of_bounds_policy::DONT_CHECK, s);  // l_shipmode
+    auto pr = cudf::gather(cudf::table_view{{ordv.column(1)}}, map_view(o_map),
+                           cudf::out_of_bounds_policy::DONT_CHECK, s);  // o_orderpriority
+    std::vector<std::unique_ptr<cudf::column>> out;
+    auto smc = sm->release();
+    auto prc = pr->release();
+    out.push_back(std::move(smc[0]));
+    out.push_back(std::move(prc[0]));
+    return std::make_unique<cudf::table>(std::move(out));
+  };
+
   StageProfiler prof;  // no-op unless PEACOCK_PROFILE; ticks below cost nothing off-profile
   auto execute = [&]() -> std::unique_ptr<cudf::table> {
     prof.begin();
@@ -888,30 +904,30 @@ TEST_F(TpchSf40, Q12VectorShipModeCountsMultiGpu) {
     auto hits = sharded_range_hits(pool, searchers, probe, K, "q12v-mgpu", &prof);
     auto d_hits = to_device_hits(hits);
     auto sel = cudf::gather(cudf::table_view{{pk}}, d_hits.view());  // the hit part keys, on GPU0
-    auto lp = semijoin_gather(pool, line_shards, sel->view(), project, &prof);  // (orderkey, shipmode)
+    auto lp = broadcast_join_gather(pool, line_shards, sel->view(), project, &prof, "3_tail_scan",
+                                    "4_gather_survivors");  // (l_orderkey, l_shipmode)
+    prof.rowcount("survivors_total", static_cast<long>(lp->num_rows()));
     EXPECT_GT(lp->num_rows(), 0) << "vector predicate and filters left no rows to join";
 
-    // 4) FINISH on GPU0 (survivor set is tiny): join broadcast orders, count by priority, group.
-    auto [lp_map, o_map] = cudf::inner_join(cudf::table_view{{lp->get_column(0).view()}},
-                                            cudf::table_view{{ord_in.tbl->view().column(0)}});
-    auto mode_col = cudf::gather(cudf::table_view{{lp->get_column(1).view()}}, map_view(lp_map));
-    auto prio_col = cudf::gather(cudf::table_view{{ord_in.tbl->view().column(1)}}, map_view(o_map));
-    prof.tick("5_dim_orders");
-    prof.rowcount("after_orders", static_cast<long>(mode_col->num_rows()));
+    // 4) Lever B: join the PARTITIONED orders (each GPU joins its shard against the ~47-row survivor
+    // set) -> (l_shipmode, o_orderpriority); replaces the constant 11.2ms GPU0 orders join.
+    auto mp = broadcast_join_gather(pool, ord_shards, lp->view(), orders_join, &prof, "5_dim_orders",
+                                    "5_dim_orders_gather");
+    prof.rowcount("after_orders", static_cast<long>(mp->num_rows()));
+    auto mode = mp->view().column(0);  // l_shipmode
+    auto prio = mp->view().column(1);  // o_orderpriority
 
     auto urgent = cudf::string_scalar(std::string("1-URGENT"));
     auto high = cudf::string_scalar(std::string("2-HIGH"));
-    auto is_urgent = cudf::binary_operation(prio_col->get_column(0).view(), urgent,
-                                            cudf::binary_operator::EQUAL, boolean);
-    auto is_high = cudf::binary_operation(prio_col->get_column(0).view(), high,
-                                          cudf::binary_operator::EQUAL, boolean);
+    auto is_urgent = cudf::binary_operation(prio, urgent, cudf::binary_operator::EQUAL, boolean);
+    auto is_high = cudf::binary_operation(prio, high, cudf::binary_operator::EQUAL, boolean);
     auto is_hi = cudf::binary_operation(is_urgent->view(), is_high->view(),
                                         cudf::binary_operator::LOGICAL_OR, boolean);
     auto is_lo = cudf::unary_operation(is_hi->view(), cudf::unary_operator::NOT);
     auto hi_i = cudf::cast(is_hi->view(), int32);
     auto lo_i = cudf::cast(is_lo->view(), int32);
 
-    cudf::groupby::groupby gb(cudf::table_view{{mode_col->get_column(0).view()}});
+    cudf::groupby::groupby gb(cudf::table_view{{mode}});
     std::vector<cudf::groupby::aggregation_request> reqs;
     {
       cudf::groupby::aggregation_request r;
@@ -964,6 +980,7 @@ TEST_F(TpchSf40, Q12VectorShipModeCountsMultiGpu) {
   }
   release_searchers(pool, searchers);
   release_partitions(pool, line_shards);
+  release_partitions(pool, ord_shards);
 }
 
 // ===========================================================================
@@ -1004,7 +1021,7 @@ TEST_F(TpchSf40, Q10VectorCustomerTopNMultiGpu) {
   double index_ms = 0.0;
   auto searchers = build_sharded_index(pool, part_path, "p_text_embedding", 100, K, n_part,
                                        index_ms, "q10v-mgpu");
-  auto line_shards = load_lineitem_shards(
+  auto line_shards = load_table_shards(
       pool, data_dir() + "/lineitem.parquet",
       {"l_orderkey", "l_partkey", "l_extendedprice", "l_discount", "l_returnflag"});
 
@@ -1015,8 +1032,19 @@ TEST_F(TpchSf40, Q10VectorCustomerTopNMultiGpu) {
   // Worker-side project: filter the lineitem shard (l_returnflag='R') + SEMI-JOIN part-hit keys,
   // projecting (l_orderkey, l_extendedprice, l_discount). Shard cols: 0 orderkey,1 partkey,2
   // extprice,3 discount,4 returnflag.
-  auto project = [](cudf::table_view lv, cudf::column_view hk,
+  // Worker-side project: filter l_returnflag='R' then SEMI-JOIN the hit part keys, projecting
+  // (l_orderkey, l_extendedprice, l_discount). Shard cols: 0 orderkey,1 partkey,2 extprice,3
+  // discount,4 returnflag.
+  // NOTE (Lever C evaluated + REVERTED): the profiler showed this returnflag-first order's tail
+  // scales only 1.09x (it materializes a ~59M-row intermediate that barely halves). Reordering to
+  // semi-join FIRST does make the tail scale 1.95x — BUT the semi-join then probes the full 240M
+  // lineitem instead of the 59M post-filter, which costs MORE per-GPU: measured, semi-join-first is
+  // ~4ms SLOWER at G=2 (39.7 vs 35.5 ms) even though its G=1-vs-G=2 RATIO looks better (that ratio
+  // is inflated by a slower G=1). So we keep returnflag-first for the better G=2 wall-clock; q10v's
+  // ~1.08x is the honest residual — it is bound by touching a large lineitem subset either way.
+  auto project = [](cudf::table_view lv, cudf::table_view hkt,
                     rmm::cuda_stream_view s) -> std::unique_ptr<cudf::table> {
+    auto hk = hkt.column(0);  // broadcast single-column hit-key table
     const auto b = cudf::data_type{cudf::type_id::BOOL8};
     auto flag_r = cudf::string_scalar(std::string("R"), true, s);
     auto mask = cudf::binary_operation(lv.column(4), flag_r, cudf::binary_operator::EQUAL, b, s);
@@ -1035,7 +1063,9 @@ TEST_F(TpchSf40, Q10VectorCustomerTopNMultiGpu) {
     auto hits = sharded_range_hits(pool, searchers, probe, K, "q10v-mgpu", &prof);
     auto d_hits = to_device_hits(hits);
     auto sel = cudf::gather(cudf::table_view{{pk}}, d_hits.view());  // the hit part keys, on GPU0
-    auto lp = semijoin_gather(pool, line_shards, sel->view(), project, &prof);  // (orderkey,price,disc)
+    auto lp = broadcast_join_gather(pool, line_shards, sel->view(), project, &prof, "3_tail_scan",
+                                    "4_gather_survivors");  // (orderkey, extprice, discount)
+    prof.rowcount("survivors_total", static_cast<long>(lp->num_rows()));
 
     // orders filtered to the 1993-10..1994-01 quarter (GPU0) — a residual GPU0 scan (reported).
     auto d_lo = date_scalar(1993, 10, 1);
@@ -1179,15 +1209,12 @@ TEST_F(TpchSf40, Q9VectorCompositeJoinMultiGpu) {
   const auto dec128_s4 = cudf::data_type{cudf::type_id::DECIMAL128, -4};
 
   // ---------------- LOAD ----------------
-  // part(key+name), supplier/partsupp/orders/nation on GPU0; embedding SHARDED for the search;
-  // lineitem PARTITIONED across the GPUs (M4). partsupp (32M) stays on GPU0 — the composite join
-  // against it is a residual GPU0 scan (reported); lineitem is the dominant scan we parallelize.
+  // part(key+name), supplier + nation (small) on GPU0; embedding SHARDED for the search; lineitem
+  // (M4) AND partsupp+orders (M5 Lever B — they were 70% of q9v's serial remainder, 23ms) all
+  // PARTITIONED across the GPUs on row groups.
   const auto part_path = data_dir() + "/part.parquet";
   auto part_name_in = read_cols(part_path, {"p_partkey", "p_name"});
   auto sup_in = read_cols(data_dir() + "/supplier.parquet", {"s_suppkey", "s_nationkey"});
-  auto ps_in = read_cols(data_dir() + "/partsupp.parquet",
-                         {"ps_partkey", "ps_suppkey", "ps_supplycost"});
-  auto ord_in = read_cols(data_dir() + "/orders.parquet", {"o_orderkey", "o_orderdate"});
   auto nat_in = read_cols(data_dir() + "/nation.parquet", {"n_nationkey", "n_name"});
   const int64_t n_part = part_name_in.tbl->num_rows();
   const int64_t K = search_k();
@@ -1195,9 +1222,13 @@ TEST_F(TpchSf40, Q9VectorCompositeJoinMultiGpu) {
   double index_ms = 0.0;
   auto searchers = build_sharded_index(pool, part_path, "p_text_embedding", 100, K, n_part,
                                        index_ms, "q9v-mgpu");
-  auto line_shards = load_lineitem_shards(
+  auto line_shards = load_table_shards(
       pool, data_dir() + "/lineitem.parquet",
       {"l_orderkey", "l_partkey", "l_suppkey", "l_extendedprice", "l_discount", "l_quantity"});
+  auto ps_shards = load_table_shards(pool, data_dir() + "/partsupp.parquet",
+                                     {"ps_partkey", "ps_suppkey", "ps_supplycost"});
+  auto ord_shards = load_table_shards(pool, data_dir() + "/orders.parquet",
+                                      {"o_orderkey", "o_orderdate"});
 
   auto pk = part_name_in.tbl->view().column(0);
   auto pname = part_name_in.tbl->view().column(1);
@@ -1205,13 +1236,53 @@ TEST_F(TpchSf40, Q9VectorCompositeJoinMultiGpu) {
   // Worker-side project: SEMI-JOIN the lineitem shard against the broadcast hit keys (q9's hit set
   // is green ∩ under-D, intersected on GPU0 below), projecting all six lineitem columns the
   // composite join needs. Shard cols: 0 orderkey,1 partkey,2 suppkey,3 extprice,4 discount,5 qty.
-  auto project = [](cudf::table_view lv, cudf::column_view hk,
+  auto project = [](cudf::table_view lv, cudf::table_view hkt,
                     rmm::cuda_stream_view s) -> std::unique_ptr<cudf::table> {
+    auto hk = hkt.column(0);  // broadcast single-column hit-key table
     auto [l_map, h_map] = cudf::inner_join(cudf::table_view{{lv.column(1)}}, cudf::table_view{{hk}},
                                            cudf::null_equality::EQUAL, s);
     return cudf::gather(cudf::table_view{{lv.column(0), lv.column(1), lv.column(2), lv.column(3),
                                           lv.column(4), lv.column(5)}},
                         map_view(l_map), cudf::out_of_bounds_policy::DONT_CHECK, s);
+  };
+
+  // Lever B join_fn #1 — each GPU COMPOSITE-joins its partsupp shard against the broadcast lineitem
+  // survivors on (l_partkey,l_suppkey)==(ps_partkey,ps_suppkey) (unique -> 1 match on one shard),
+  // producing (l_orderkey, l_suppkey, extprice, discount, quantity, ps_supplycost).
+  auto ps_join = [](cudf::table_view psv /*ps_partkey,ps_suppkey,ps_supplycost*/,
+                    cudf::table_view liv /*orderkey,partkey,suppkey,extprice,discount,quantity*/,
+                    rmm::cuda_stream_view s) -> std::unique_ptr<cudf::table> {
+    auto [li_map, ps_map] = cudf::inner_join(
+        cudf::table_view{{liv.column(1), liv.column(2)}},
+        cudf::table_view{{psv.column(0), psv.column(1)}}, cudf::null_equality::EQUAL, s);
+    auto lic = cudf::gather(cudf::table_view{{liv.column(0), liv.column(2), liv.column(3),
+                                              liv.column(4), liv.column(5)}},
+                            map_view(li_map), cudf::out_of_bounds_policy::DONT_CHECK, s);
+    auto cost = cudf::gather(cudf::table_view{{psv.column(2)}}, map_view(ps_map),
+                             cudf::out_of_bounds_policy::DONT_CHECK, s);
+    std::vector<std::unique_ptr<cudf::column>> out;
+    for (auto& c : lic->release()) out.push_back(std::move(c));
+    out.push_back(std::move(cost->release()[0]));
+    return std::make_unique<cudf::table>(std::move(out));  // orderkey,suppkey,price,disc,qty,cost
+  };
+
+  // Lever B join_fn #2 — each GPU joins its orders shard against the broadcast (post-partsupp)
+  // survivors on o_orderkey (unique), producing (l_suppkey, price, disc, qty, cost, o_orderdate).
+  auto ord_join = [](cudf::table_view ordv /*o_orderkey,o_orderdate*/,
+                     cudf::table_view lpv /*orderkey,suppkey,price,disc,qty,cost*/,
+                     rmm::cuda_stream_view s) -> std::unique_ptr<cudf::table> {
+    auto [o_map, l_map] = cudf::inner_join(cudf::table_view{{ordv.column(0)}},
+                                           cudf::table_view{{lpv.column(0)}},
+                                           cudf::null_equality::EQUAL, s);
+    auto lpc = cudf::gather(cudf::table_view{{lpv.column(1), lpv.column(2), lpv.column(3),
+                                              lpv.column(4), lpv.column(5)}},
+                            map_view(l_map), cudf::out_of_bounds_policy::DONT_CHECK, s);
+    auto dt = cudf::gather(cudf::table_view{{ordv.column(1)}}, map_view(o_map),
+                           cudf::out_of_bounds_policy::DONT_CHECK, s);
+    std::vector<std::unique_ptr<cudf::column>> out;
+    for (auto& c : lpc->release()) out.push_back(std::move(c));
+    out.push_back(std::move(dt->release()[0]));
+    return std::make_unique<cudf::table>(std::move(out));  // suppkey,price,disc,qty,cost,orderdate
   };
 
   StageProfiler prof;
@@ -1236,41 +1307,33 @@ TEST_F(TpchSf40, Q9VectorCompositeJoinMultiGpu) {
     prof.rowcount("green_and_underD_keys", static_cast<long>(part_sel->num_rows()));
 
     // parallel lineitem semi-join -> survivors gathered to GPU0 (== single-GPU part⋈lineitem `li`)
-    auto li = semijoin_gather(pool, line_shards, part_sel->view(), project, &prof);
+    auto li = broadcast_join_gather(pool, line_shards, part_sel->view(), project, &prof,
+                                    "3_tail_scan", "4_gather_survivors");
+    prof.rowcount("survivors_total", static_cast<long>(li->num_rows()));
     EXPECT_GT(li->num_rows(), 0);
 
-    auto [li_map, psx_map] = cudf::inner_join(
-        cudf::table_view{{li->get_column(1).view(), li->get_column(2).view()}},
-        cudf::table_view{{ps_in.tbl->view().column(0), ps_in.tbl->view().column(1)}});
-    auto li_j = cudf::gather(cudf::table_view{{li->get_column(0).view(), li->get_column(2).view(),
-                                               li->get_column(3).view(), li->get_column(4).view(),
-                                               li->get_column(5).view()}},
-                             map_view(li_map));
-    auto cost_j = cudf::gather(cudf::table_view{{ps_in.tbl->view().column(2)}}, map_view(psx_map));
-    EXPECT_EQ(li_j->num_rows(), li->num_rows())
-        << "composite join changed the lineitem row count — (ps_partkey, ps_suppkey) is unique in "
-           "partsupp, so an inner join on both keys must preserve it exactly.";
-    prof.tick("5_dim_partsupp");  // GPU0: composite (partkey,suppkey) join vs 32M-row partsupp
-    prof.rowcount("after_partsupp", static_cast<long>(li_j->num_rows()));
+    // Lever B round 1: PARTITIONED composite join vs partsupp (replaces the 10.6ms GPU0 scan).
+    auto li_ps = broadcast_join_gather(pool, ps_shards, li->view(), ps_join, &prof, "5_dim_partsupp",
+                                       "5_dim_partsupp_gather");  // orderkey,suppkey,price,disc,qty,cost
+    EXPECT_EQ(li_ps->num_rows(), li->num_rows())
+        << "composite join changed the row count — (ps_partkey, ps_suppkey) is unique in partsupp, "
+           "so the partitioned inner join on both keys must preserve the survivor count exactly.";
+    prof.rowcount("after_partsupp", static_cast<long>(li_ps->num_rows()));
 
-    auto [lo_map, o_map] = cudf::inner_join(cudf::table_view{{li_j->get_column(0).view()}},
-                                            cudf::table_view{{ord_in.tbl->view().column(0)}});
-    auto li_o = cudf::gather(cudf::table_view{{li_j->get_column(1).view(), li_j->get_column(2).view(),
-                                               li_j->get_column(3).view(), li_j->get_column(4).view()}},
-                             map_view(lo_map));
-    auto cost_o = cudf::gather(cudf::table_view{{cost_j->get_column(0).view()}}, map_view(lo_map));
-    auto date_o = cudf::gather(cudf::table_view{{ord_in.tbl->view().column(1)}}, map_view(o_map));
-    EXPECT_GT(li_o->num_rows(), 0);
-    prof.tick("5b_dim_orders");  // GPU0: join vs 60M-row orders
-    prof.rowcount("after_orders", static_cast<long>(li_o->num_rows()));
+    // Lever B round 2: PARTITIONED orders join (replaces the 12.5ms GPU0 scan).
+    auto li_ord = broadcast_join_gather(pool, ord_shards, li_ps->view(), ord_join, &prof,
+                                        "5b_dim_orders", "5b_dim_orders_gather");  // suppkey,price,disc,qty,cost,orderdate
+    EXPECT_GT(li_ord->num_rows(), 0);
+    prof.rowcount("after_orders", static_cast<long>(li_ord->num_rows()));
 
-    auto [ls_map, s_map] = cudf::inner_join(cudf::table_view{{li_o->get_column(0).view()}},
+    // supplier + nation joins stay on GPU0 (small: 400k supplier, 25 nation).
+    auto lov = li_ord->view();  // 0 suppkey,1 price,2 disc,3 qty,4 cost,5 orderdate
+    auto [ls_map, s_map] = cudf::inner_join(cudf::table_view{{lov.column(0)}},
                                             cudf::table_view{{sup_in.tbl->view().column(0)}});
-    auto vals_s = cudf::gather(cudf::table_view{{li_o->get_column(1).view(), li_o->get_column(2).view(),
-                                                 li_o->get_column(3).view()}},
+    auto vals_s = cudf::gather(cudf::table_view{{lov.column(1), lov.column(2), lov.column(3)}},
                                map_view(ls_map));
-    auto cost_s = cudf::gather(cudf::table_view{{cost_o->get_column(0).view()}}, map_view(ls_map));
-    auto date_s = cudf::gather(cudf::table_view{{date_o->get_column(0).view()}}, map_view(ls_map));
+    auto cost_s = cudf::gather(cudf::table_view{{lov.column(4)}}, map_view(ls_map));
+    auto date_s = cudf::gather(cudf::table_view{{lov.column(5)}}, map_view(ls_map));
     auto natkey_s = cudf::gather(cudf::table_view{{sup_in.tbl->view().column(1)}}, map_view(s_map));
 
     auto [sn_map, n_map] = cudf::inner_join(cudf::table_view{{natkey_s->get_column(0).view()}},
@@ -1348,6 +1411,8 @@ TEST_F(TpchSf40, Q9VectorCompositeJoinMultiGpu) {
   }
   release_searchers(pool, searchers);
   release_partitions(pool, line_shards);
+  release_partitions(pool, ps_shards);
+  release_partitions(pool, ord_shards);
 }
 
 // Same entry point as the other multi-GPU binary; registers the ONE shared WorkerPool.
