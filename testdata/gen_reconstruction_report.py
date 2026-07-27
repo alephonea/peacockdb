@@ -3,10 +3,16 @@
 embedding fixtures encode, so a reviewer can eyeball fidelity WITHOUT the data.
 
 LOCAL-ONLY generation (needs the GloVe cache + the --embeddings external parquet). The
-HTML OUTPUT is committed (testdata/tpch-vec-queries/reconstruction_report.html);
-it contains only public TPC-H text + public-domain GloVe words + relational keys —
-NO raw DEEP1B content (image vectors are not invertible). Self-contained (inline
+HTML OUTPUT is committed, one per dataset, at
+    testdata/reports/tpch.sf<N>/reconstruction_report.html
+(mirroring the testdata/goldens/tpch.sf<N>/ shape — the report describes ONE dataset,
+so the path must carry the scale factor or a later --sf silently overwrites an earlier
+report). It contains only public TPC-H text + public-domain GloVe words + relational
+keys — NO raw DEEP1B content (image vectors are not invertible). Self-contained (inline
 CSS, no external assets) and DETERMINISTIC (fixed samples) so it doesn't churn.
+
+These reports are for humans reading the repo; they are deliberately NOT in any
+build-test.sh sync KIND, so they never ship to the test hosts.
 
   python3 testdata/gen_reconstruction_report.py [--sf 1]
 """
@@ -14,13 +20,7 @@ import numpy as np, pyarrow.parquet as pq, json, os, re, html, argparse
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CACHE = os.path.join(ROOT, "testdata/embeddings-cache")
-OUT = os.path.join(ROOT, "testdata/tpch-vec-queries/reconstruction_report.html")
 N_TEXT, N_IMG_PANEL, TOPW, TOPR = 20, 5, 5, 5
-
-def load_vecs(parquet, col):
-    ca = pq.read_table(parquet, columns=[col]).column(col).combine_chunks()
-    v = np.asarray(ca.values, dtype=np.float32); n = len(ca)
-    return v.reshape(n, v.size // n)
 
 def load_glove():
     words, vecs = [], []
@@ -52,13 +52,46 @@ def main():
     sf = ap.parse_args().sf
     TD = os.path.join(ROOT, f"testdata/tpch.sf{sf}")
     PART, PS = os.path.join(TD, "part.parquet"), os.path.join(TD, "partsupp.parquet")
+    # per-dataset output, so --sf 40 can never overwrite the sf1 report
+    out_dir = os.path.join(ROOT, f"testdata/reports/tpch.sf{sf}")
+    os.makedirs(out_dir, exist_ok=True)
+    OUT = os.path.join(out_dir, "reconstruction_report.html")
 
     W, G = load_glove()
     G = G / np.linalg.norm(G, axis=1, keepdims=True)   # L2-normalized -> cosine via dot product
 
+    def sample_by_key(parquet, key_cols, other_cols, n):
+        """Deterministic 'n smallest by key' WITHOUT reading the whole table: the key
+        columns alone are cheap, so find the n smallest there, then read only the row
+        group(s) holding them. Reading the full table (incl. the 100-float embedding)
+        would materialize >2^31 list values at sf40+ and overflow pyarrow's int32 offsets."""
+        pf = pq.ParquetFile(parquet)
+        keys = pq.read_table(parquet, columns=key_cols)          # narrow -> safe
+        order = np.lexsort(tuple(np.asarray(keys.column(c)) for c in reversed(key_cols)))
+        want = sorted(int(i) for i in order[:n])
+        # map global row indices -> row groups, read only those
+        bounds, acc = [], 0
+        for g in range(pf.num_row_groups):
+            nr = pf.metadata.row_group(g).num_rows
+            bounds.append((acc, acc + nr, g)); acc += nr
+        need = sorted({g for lo, hi, g in bounds for i in want if lo <= i < hi})
+        cols = key_cols + other_cols
+        tabs, offs = [], []
+        for g in need:
+            lo = next(l for l, h, gg in bounds if gg == g)
+            tabs.append(pf.read_row_group(g, columns=cols)); offs.append(lo)
+        out = {c: [] for c in cols}
+        for i in want:
+            for t, lo in zip(tabs, offs):
+                if lo <= i < lo + t.num_rows:
+                    for c in cols:
+                        out[c].append(t.column(c)[i - lo].as_py())
+                    break
+        return out
+
     # deterministic samples: first N by primary key
-    part = pq.read_table(PART, columns=["p_partkey", "p_name", "p_type", "p_text_embedding"]).sort_by("p_partkey").slice(0, N_TEXT).to_pydict()
-    pst = pq.read_table(PS, columns=["ps_partkey", "ps_suppkey", "ps_comment", "ps_text_embedding"]).sort_by([("ps_partkey", "ascending"), ("ps_suppkey", "ascending")]).slice(0, N_TEXT).to_pydict()
+    part = sample_by_key(PART, ["p_partkey"], ["p_name", "p_type", "p_text_embedding"], N_TEXT)
+    pst = sample_by_key(PS, ["ps_partkey", "ps_suppkey"], ["ps_comment", "ps_text_embedding"], N_TEXT)
 
     def text_rows(orig_list, emb_list):
         out = []
@@ -77,14 +110,27 @@ def main():
     q_text_rows = [(e["phrase"], e["matched_tokens"], nearest_words(np.asarray(e["q"], dtype=np.float32), G, W)) for e in q_text]
 
     # IMAGE panel: top-5 nearest partsupp rows per image query (relational only)
-    img_emb = load_vecs(PS, "ps_image_embedding")
-    keys = pq.read_table(PS, columns=["ps_partkey", "ps_suppkey"]).to_pydict()
+    # STREAM per row group, keeping a running top-K per query. Reading the whole
+    # ps_image_embedding column would materialize 32M x 96 (sf40) = 3.07B values and
+    # overflow pyarrow's int32 list offsets — the same wall the validator hit. This is
+    # exact (every row is scored) at bounded memory.
     q_img = [e for e in qp if e["modality"] == "image"][:N_IMG_PANEL]
-    img_panels = []
-    for e in q_img:
-        d = np.linalg.norm(img_emb - np.asarray(e["q"], dtype=np.float32), axis=1)
-        idx = np.argpartition(d, TOPR)[:TOPR]; idx = idx[np.argsort(d[idx])]
-        img_panels.append((e["id"], [(keys["ps_partkey"][i], keys["ps_suppkey"][i], float(d[i])) for i in idx]))
+    qvecs = [np.asarray(e["q"], dtype=np.float32) for e in q_img]
+    best = [[] for _ in q_img]          # list of (dist, partkey, suppkey)
+    pf = pq.ParquetFile(PS)
+    for g in range(pf.num_row_groups):
+        t = pf.read_row_group(g, columns=["ps_image_embedding", "ps_partkey", "ps_suppkey"])
+        a = t.column("ps_image_embedding").chunk(0)
+        V = np.asarray(a.values, dtype=np.float32).reshape(-1, 96)
+        pk = t.column("ps_partkey").to_numpy(); sk = t.column("ps_suppkey").to_numpy()
+        for qi, qv in enumerate(qvecs):
+            d = np.linalg.norm(V - qv, axis=1)
+            k = min(TOPR, len(d))
+            idx = np.argpartition(d, k - 1)[:k]
+            best[qi].extend((float(d[i]), int(pk[i]), int(sk[i])) for i in idx)
+            best[qi] = sorted(best[qi])[:TOPR]
+    img_panels = [(e["id"], [(pk, sk, dist) for dist, pk, sk in best[qi]])
+                  for qi, e in enumerate(q_img)]
 
     # --- render ---
     def trow(cells): return "<tr>" + "".join(f"<td>{c}</td>" for c in cells) + "</tr>"

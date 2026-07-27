@@ -74,6 +74,19 @@ jobs:
           testdata/generate_testdata.sh --bench tpch
           testdata/generate_testdata.sh --bench tpcds
 
+      # Tier A: structural validation of the freshly generated sf1 data. Runs in the
+      # rapids container (matrix leg). CI generates SYNTHETIC embeddings (no fetch), so
+      # the DEEP/GloVe embedding checks auto-skip on FLOAT[8]; the row-count / schema /
+      # sort-order / clustering checks always run. numpy+pyarrow ship in the rapids base
+      # image (cudf depends on pyarrow), but self-heal if a future image drops them
+      # rather than letting the validator fail to import.
+      - name: Validate sf1 datasets
+        run: |
+          python3 -c "import numpy, pyarrow" 2>/dev/null \
+            || pip install --quiet numpy pyarrow
+          python3 scripts/validate_tpch.py --sf 1
+          python3 scripts/validate_tpcds.py --sf 1
+
       # Build and run are split into two steps so a compile failure is visibly
       # distinct from a test failure, and build vs run time is legible (the
       # opt-level bump made the build phase much heavier). The two steps MUST
@@ -267,8 +280,12 @@ jobs:
 
       - name: Generate SF-1 testdata (skips if present)
         run: |
-          ssh gpu "cd $REMOTE_DIR && DUCKDB=/home/info/.local/bin/duckdb testdata/generate_testdata.sh --bench tpch"
-          ssh gpu "cd $REMOTE_DIR && DUCKDB=/home/info/.local/bin/duckdb testdata/generate_testdata.sh --bench tpcds"
+          # PEACOCK_NO_FETCH=1 is set EXPLICITLY because ssh does not inherit the runner's
+          # CI/GITHUB_ACTIONS vars — fetch_embeddings.sh's automation guard keys on the
+          # environment, and over ssh that environment is the GPU host's, not the runner's.
+          # Nothing here invokes fetch today; this keeps the guard honest if that changes.
+          ssh gpu "cd $REMOTE_DIR && PEACOCK_NO_FETCH=1 DUCKDB=/home/info/.local/bin/duckdb testdata/generate_testdata.sh --bench tpch"
+          ssh gpu "cd $REMOTE_DIR && PEACOCK_NO_FETCH=1 DUCKDB=/home/info/.local/bin/duckdb testdata/generate_testdata.sh --bench tpcds"
 
       - name: Run GPU tests
         run: |
@@ -493,3 +510,41 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deploy
         uses: actions/deploy-pages@v4
+
+  # Tier B: cheap S3 metadata check for the large datasets (tpch-sf40, tpch-sf200,
+  # tpcds-sf200). Pure list/head — no download, no disk — so it runs on the standard
+  # runner on every PR + master push. Separate job so an S3 blip doesn't block the CPU/GPU
+  # legs. Guards keep it honest without wedging master:
+  #   * FORK PRs have no secrets -> the job SKIPS itself (nothing to check with no creds).
+  #   * EMPTY bucket -> the script SKIPS that bucket (uploads take hours; empty != broken).
+  #   * objects present but missing/zero/size-mismatched -> the script FAILS.
+  s3-datasets:
+    name: S3 datasets metadata check
+    runs-on: ubuntu-latest
+    # No secrets on fork PRs -> skip rather than fail. Mirrors the GPU job's fork guard.
+    if: >-
+      github.event_name == 'push' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check dataset buckets
+        # Endpoint + region are not secret; every aws call must pass the endpoint or it
+        # hits real AWS. If the secrets are unset (should not happen given the guard),
+        # skip loudly rather than error on missing creds.
+        run: |
+          if [ -z "$AWS_ACCESS_KEY_ID" ]; then
+            echo "S3 credentials not present — skipping (fork PR or unconfigured)."
+            exit 0
+          fi
+          # NEW DEPENDENCY: the check now reads parquet FOOTERS over ranged GETs to verify
+          # schema/embedding-dims/row-counts, so it needs pyarrow (it previously needed only
+          # aws + python3). Same import-or-pip self-heal as the Tier A step.
+          # numpy is belt-and-braces: dataset_checks.py imports it lazily (inside the
+          # embedding-stats helpers only), so a footer-only run does NOT need it — but a
+          # future top-level numpy use here must not turn this job red again.
+          python3 -c "import pyarrow, numpy" 2>/dev/null || pip install --quiet pyarrow numpy
+          python3 scripts/check_s3_datasets.py \
+            --endpoint https://storage.eu-north1.nebius.cloud:443

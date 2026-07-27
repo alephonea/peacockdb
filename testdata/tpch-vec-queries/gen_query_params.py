@@ -13,7 +13,7 @@ Each line: {id, modality, dim, metric, k, selectivity, D, d_source, q, <provenan
       k-th distance) so the strict `< D` boundary is immune to FLOAT32<->DOUBLE
       rounding at an exact distance value. k is TIERED {10,100,1000} for selectivity
       variety; q is rounded to 6 dp and D is computed on that SAME rounded q, so
-      stored (q, D) reproduce count == k-1 exactly (verified by validate_embeddings.py).
+      stored (q, D) reproduce count == k-1 exactly (verified by scripts/validate_tpch.py).
   d_source = duckdb_recalib (DEEP1B groundtruth distances are unusable here: GT is
       IDs-only over the full 1B base, but we load only the first N; see NOTICE).
 
