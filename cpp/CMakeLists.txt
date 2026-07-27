@@ -205,7 +205,11 @@ set_tests_properties(peacock_tpchv_tests PROPERTIES LABELS "gpu")
 # Shared scaffolding as a TEST-ONLY static library: the worker-per-GPU pool, the row-group
 # partitioner, and the cross-GPU peer/gather helpers. Linked into every multi-GPU test binary
 # so there is exactly one copy. Not installed, not in CI.
-add_library(multi_gpu_testlib STATIC tests/gpu/multi_gpu.cpp)
+# EXCLUDE_FROM_ALL: these multi-GPU targets are TEST-ONLY and GPU-ONLY — never built or run in
+# CI (the CI `all` build runs in a CPU container that can't resolve the rmm headers this test lib
+# pulls in during C++20 dep-scan). They are built by hand on a GPU host via explicit
+# `cmake --build . --target <name>`, which EXCLUDE_FROM_ALL still permits. Not installed either.
+add_library(multi_gpu_testlib STATIC EXCLUDE_FROM_ALL tests/gpu/multi_gpu.cpp)
 target_include_directories(multi_gpu_testlib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tests/gpu)
 # GTest is PUBLIC: multi_gpu.hpp now hosts the shared MultiGpuEnvironment (a ::testing::Environment)
 # and benchmark_mgpu, used by both multi-GPU test binaries.
@@ -215,14 +219,14 @@ set_target_properties(multi_gpu_testlib PROPERTIES CXX_STANDARD 20 CXX_STANDARD_
 
 # Basic two-GPU PoC — cuDF + cuVS on BOTH devices, with a bidirectional cudaMemcpyPeer exchange
 # in the middle (see the header of test_basic_multi_gpu.cpp). Needs two visible GPUs to run.
-add_executable(peacock_multi_gpu_tests tests/gpu/test_basic_multi_gpu.cpp)
+add_executable(peacock_multi_gpu_tests EXCLUDE_FROM_ALL tests/gpu/test_basic_multi_gpu.cpp)
 target_include_directories(peacock_multi_gpu_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(peacock_multi_gpu_tests PRIVATE multi_gpu_testlib cudf::cudf cuvs::cuvs GTest::gtest)
 set_target_properties(peacock_multi_gpu_tests PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 
 # Multi-GPU TPC-H query plans (M1: q6 + q1). SAME queries as test_tpch.cpp, checked against the
 # SAME committed DuckDB goldens via the shared helper in tpch_golden.hpp. No cuVS needed.
-add_executable(peacock_multi_gpu_tpch_tests tests/gpu/test_multi_gpu_tpch.cpp)
+add_executable(peacock_multi_gpu_tpch_tests EXCLUDE_FROM_ALL tests/gpu/test_multi_gpu_tpch.cpp)
 target_include_directories(peacock_multi_gpu_tpch_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(peacock_multi_gpu_tpch_tests PRIVATE multi_gpu_testlib cudf::cudf GTest::gtest)
 set_target_properties(peacock_multi_gpu_tpch_tests PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
@@ -232,7 +236,7 @@ set_target_properties(peacock_multi_gpu_tpch_tests PROPERTIES CXX_STANDARD 20 CX
 # across all visible GPUs. cuVS is REQUIRED; cudf must be linked BEFORE cuvs so the rmm symbols
 # libcuvs references (e.g. rmm::logger::~logger) resolve — same order note as peacock_tpchv_tests.
 # TEST-ONLY: no add_test, not installed, not in CI.
-add_executable(peacock_multi_gpu_tpchv_tests tests/gpu/test_multi_gpu_tpchv.cpp)
+add_executable(peacock_multi_gpu_tpchv_tests EXCLUDE_FROM_ALL tests/gpu/test_multi_gpu_tpchv.cpp)
 target_include_directories(peacock_multi_gpu_tpchv_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(peacock_multi_gpu_tpchv_tests PRIVATE multi_gpu_testlib cudf::cudf cuvs::cuvs GTest::gtest)
 set_target_properties(peacock_multi_gpu_tpchv_tests PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
