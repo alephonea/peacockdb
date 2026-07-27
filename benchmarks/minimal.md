@@ -220,6 +220,51 @@ remaining gap to 2× is fixed per-GPU overhead (search + cross-GPU broadcast/gat
 constant in G) plus q10v's irreducible large-lineitem-subset tail; both shrink as a fraction toward
 4/8/16 GPUs.
 
+## 1× H200 vs A100 — the same multi-GPU plan at G=1 (per-GPU generational jump)
+
+The identical multi-GPU test binaries (`peacock_multi_gpu_{tpch,tpchv}_tests`, **libcudf 26.02**)
+run on a single **H200** (144 GiB HBM3e, CUDA 13, driver 580.126) in the **G=1** configuration —
+one row-group partition, one worker — verified against the same committed DuckDB goldens
+byte-for-byte (result rows q11v 0/7/127, q12v 2, q10v 20, q9v 175). Execute-only,
+all-device-synced, 2nd-min of 6. This box has **one** H200, so there is no G=1-vs-G=2 ratio here;
+the H200 column sits next to the A100 G=1/G=2 numbers only to show the per-GPU jump. Same code, same
+libcudf version, same protocol — **only the GPU differs**. (This is distinct from the H200 in the
+*Environments* table at the top: that is libcudf 25.02 on the original single-GPU test suite; this
+is the multi-GPU binary at G=1 on libcudf 26.02.)
+
+**TPC-H**
+
+| Query | 1× A100 (ms) | 2× A100 (ms) | **1× H200 (ms)** | H200 vs 1× A100 |
+|---|--:|--:|--:|--:|
+| q6 — filter → reduce | 37.2 | 19.4 | **19.5** | 1.91× |
+| q1 — group-by + 8 aggregates | 632.6 | 295.5 | **258.3** | 2.45× |
+| q3 — 3-way join, group-by, top-N | 56.7 | 49.0 | **32.1** | 1.76× |
+| q8 — 7-table bushy join, group-by | 64.7 | 40.1 | **39.8** | 1.63× |
+
+**TPC-H+V** (index-build column is the H200 G=1 value)
+
+| Query / probe | 1× A100 (ms) | 2× A100 (ms) | **1× H200 (ms)** | H200 vs 1× A100 | H200 index-build (ms) |
+|---|--:|--:|--:|--:|--:|
+| q11v / img_000 | 20.3 | 13.2 | **11.1** | 1.83× | 29.3 † |
+| q11v / img_017 | 21.1 | 14.2 | **11.5** | 1.83× | (shared) |
+| q11v / img_034 | 21.3 | 14.3 | **11.6** | 1.83× | (shared) |
+| q12v / txt_000 | 54.9 | 32.8 | **31.9** | 1.72× | 1.0 |
+| q10v / txt_017 | 38.3 | 35.5 | **21.4** | 1.79× | 1.0 |
+| q9v / txt_034 | 82.1 | 47.7 | **47.0** | 1.75× | 1.0 |
+
+† first-touch inflated (first cuVS/cuBLAS index built in the process, 32M×96 embedding);
+steady-state marginal build is ~1 ms like the text queries.
+
+**A single H200 matches or beats two A100s on every one of these queries.** It is clearly ahead on
+**q1, q3, q10v, q11v** (1× H200 G=1 is *faster* than the same plan on 2× A100) and level within noise
+on **q6, q8, q9v, q12v**. The reason is bandwidth, not parallelism: these queries are
+memory-bandwidth-bound (large fact scans, joins, group-bys, and the cuVS distance sweep), and the
+H200's ~4.8 TB/s HBM3e is ~2.4× the A100's ~2 TB/s — so the per-GPU **1.6–2.4×** is that bandwidth
+ratio showing through. The practical corollary: on this workload a GPU-generation step buys about as
+much as adding a second A100, with **none** of the cross-GPU exchange cost — and since these H200
+parts have **no NVLink** (PCIe only), a multi-H200 box would layer its (PCIe-bound) scaling on top of
+an already ~2× faster single-GPU baseline rather than recovering ground lost to a slower one.
+
 ## Reproduce
 
 - DuckDB: `benchmarks/duckdb_minimal.sh --s3-direct --dir <path> --duckdb /usr/local/bin/duckdb`
