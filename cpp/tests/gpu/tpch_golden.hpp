@@ -311,7 +311,7 @@ inline void benchmark_execute(const char* qtag, F&& execute, double load_ms,
 //
 // Unquoted content parses byte-identically to the old splitter, so every existing golden
 // is unaffected.
-std::vector<std::vector<std::string>> read_csv_golden(const std::string& path) {
+inline std::vector<std::vector<std::string>> read_csv_golden(const std::string& path) {
   std::ifstream f(path, std::ios::binary);
   std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
 
