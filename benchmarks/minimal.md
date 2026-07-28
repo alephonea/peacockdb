@@ -265,6 +265,63 @@ much as adding a second A100, with **none** of the cross-GPU exchange cost — a
 parts have **no NVLink** (PCIe only), a multi-H200 box would layer its (PCIe-bound) scaling on top of
 an already ~2× faster single-GPU baseline rather than recovering ground lost to a slower one.
 
+## Multi-GPU scaling to G=8 — 8× H100 (full NVLink/NVSwitch), G=1 vs G=8
+
+The first **single-node scaling past two GPUs**: the identical multi-GPU binaries
+(`peacock_multi_gpu_{tpch,tpchv}_tests`, **libcudf 26.02**, CUDA 13, driver 580.126) on an
+**HGX 8× H100 80 GB HBM3 SXM** box — **full NVLink all-to-all** (`nvidia-smi topo -m` = NV18
+between every pair, i.e. an NVSwitch fabric, not PCIe), 176 cores, 1.4 TB RAM. Same code, same
+pooled allocator, same protocol as every table above: execute-only, all-device-synced, 2nd-min of
+5. Both legs are one process per leg (q6→q1→q3→q8 back-to-back over the shared `WorkerPool`); the
+G=1 leg is `CUDA_VISIBLE_DEVICES=0`. Correctness verified byte-for-byte against the committed
+DuckDB goldens on all 8 GPUs (result rows q12v 2, q10v 20, q9v 175).
+
+**TPC-H**
+
+| Query | 1× H100 G=1 (ms) | 8× H100 G=8 (ms) | speedup |
+|---|--:|--:|--:|
+| q6 — filter → reduce | 21.8 | 3.7 | **5.82×** |
+| q1 — group-by + 8 aggregates | 269.5 | 32.6 | **8.27×** |
+| q3 — 3-way join, group-by, top-N | 33.3 | 17.6 | **1.89×** |
+| q8 — 7-table bushy join, group-by | 39.8 | 17.2 | **2.31×** |
+
+**TPC-H+V**
+
+| Query / probe | 1× H100 G=1 (ms) | 8× H100 G=8 (ms) | speedup |
+|---|--:|--:|--:|
+| q11v / img_000 | 11.9 | 4.8 | **2.47×** |
+| q11v / img_017 | 12.2 | 5.1 | **2.41×** |
+| q11v / img_034 | 12.5 | 5.3 | **2.38×** |
+| q12v / txt_000 | 32.8 | 10.2 | **3.21×** |
+| q10v / txt_017 | 22.6 | 12.2 | **1.85×** |
+| q9v / txt_034 | 47.9 | 14.2 | **3.36×** |
+
+The scaling ordering is exactly the cardinality/exchange story the 2× A100 section predicted, now
+extended to 8 GPUs:
+
+- **q1 is super-linear (8.27× on 8 GPUs).** Its partials are re-aggregatable (each GPU emits 8
+  aggregates over its lineitem partition; GPU0 gathers 8 tiny partials and merge-sums), so there is
+  no cross-GPU shuffle — and sharding the group-by working set 8 ways relieves the per-GPU memory
+  pressure that inflates the G=1 baseline, pushing the ratio just past ideal.
+- **q6 scales 5.82×, not 8×** because at G=8 it is only 3.7 ms: the constant per-query costs
+  (dispatch, the host `__int128` partial-sum, boundary sync) are now a visible fraction of a tiny
+  runtime — classic Amdahl tail on a query that barely has enough work to fill 8 H100s.
+- **q3 caps at 1.89×** — the high-cardinality `l_orderkey` **hash-shuffle** (murmur3 →
+  `cudaMemcpyPeerAsync` → concat) is on the critical path and its moved bytes grow with G; even over
+  NVSwitch it dominates. This is the query that most wants a load-time hash-partition of the fact.
+- **q8 (2.31×) and the vector tails (q9v 3.36×, q12v 3.21×)** are held below ideal by the
+  **broadcast-dim rebuild** (every GPU reconstructs the small dimension subtree — constant work in
+  G) and, for q10v (**1.85×**), the serial top-N tail — the same term that made q10v the weakest
+  scaler at 2× A100 (1.08×).
+
+**Takeaway:** on full NVLink, the re-aggregatable/no-shuffle queries (q1, q6) scale strongly to 8
+GPUs — q1 essentially perfectly — while the join/shuffle/top-N queries scale sub-linearly for
+reasons that are all *constant-in-G* fixed costs (broadcast rebuild, high-cardinality shuffle,
+serial tail), so every ratio still has headroom the analysis attributes to those specific stages.
+Contrast the no-NVLink 1× H200 section above (per-GPU bandwidth jump, no exchange) with this
+section (fixed per-GPU H100s, real cross-GPU exchange over NVSwitch): the two are the orthogonal
+axes — faster GPU vs more GPUs — and q1/q6 show the workload rewards both.
+
 ## Reproduce
 
 - DuckDB: `benchmarks/duckdb_minimal.sh --s3-direct --dir <path> --duckdb /usr/local/bin/duckdb`
@@ -282,3 +339,7 @@ an already ~2× faster single-GPU baseline rather than recovering ground lost to
   `CUDA_VISIBLE_DEVICES=0`-vs-2-GPU protocol): needs cuVS, the sf40 embedding parquets, and
   the committed `query_params.jsonl` (`PEACOCK_TPCH_VEC_PARAMS`). All four vector queries also
   benchmark reliably in one process per leg under the shared pool (cuVS included).
+- cuDF multi-GPU at G=8 (the 8× H100 section): the same two binaries with `PEACOCK_BENCHMARK=1`
+  `PEACOCK_BENCHMARK_RUNS=5` — G=8 is a plain run on the 8-GPU host (all devices visible), G=1 is
+  the same binary under `CUDA_VISIBLE_DEVICES=0`. One q6→q1→q3→q8 (and q11v→q12v→q10v→q9v) process
+  per leg; the WorkerPool sizes a per-device RMM pool off each H100's free VRAM automatically.
