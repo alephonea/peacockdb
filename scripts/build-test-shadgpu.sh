@@ -255,6 +255,11 @@ if [ "$RUN" -eq 1 ]; then
       # --test-threads=1: GPU/RMM context is process-wide, parallel tests OOM.
       "\$t" --nocapture --test-threads=1 '$PCK_TEST_FILTER' > "\$rlog" 2>&1
       status=\$?
+      # Zero-tests is only a FAULT when nothing was filtered out. With a filter set,
+      # every OTHER binary legitimately matches nothing and reports "0 passed" —
+      # flagging that would hand a human debugging one test a red "GPU test run
+      # FAILED" for a run that did exactly what they asked, which is how people learn
+      # to ignore the banner. The ran_any check below stays unconditional.
       rzero=0
       while IFS= read -r line; do
         printf '%s\n' "\$line"
@@ -265,7 +270,7 @@ if [ "$RUN" -eq 1 ]; then
         # been mistaken for an assertion failure.
         echo "!!! \$tname FAILED (exit \$status)"
         rc=1
-      elif [ "\$rzero" -eq 1 ]; then
+      elif [ "\$rzero" -eq 1 ] && [ -z '$PCK_TEST_FILTER' ]; then
         echo "!!! \$tname ran 0 tests (filter '$PCK_TEST_FILTER' matched nothing?) — nothing was verified"
         rc=1
       fi

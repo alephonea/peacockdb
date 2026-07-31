@@ -124,9 +124,24 @@ struct ExprContext {
 // semi/anti join's AST predicate can address its two conditional tables.
 using JoinFilterColMap = flatbuffers::Vector<const fb::JoinFilterColumn*>;
 
+// Explicit input channel, threaded through the call chain. This REPLACES a pair of
+// anonymous-namespace thread_locals: those were per-translation-unit, so splitting
+// execute_one from execute_node would have made execute_node read a permanently-null
+// copy and silently re-execute the whole subtree from parquet — correct answers,
+// exponential cost, invisible to every correctness test. A parameter cannot fail that
+// way, and it makes nesting natural (no RAII save/restore).
+//
+// `items == nullptr` means RECURSIVE mode: execute_node runs the child itself.
+// Non-null means SINGLE-NODE mode: children are already resident and are consumed
+// positionally, in the same post-order the caller pushed them.
+struct NodeInputs {
+  std::vector<TableResult>* items = nullptr;
+  size_t idx = 0;
+};
+
 // Forward declarations
-static TableResult execute_node(const fb::PlanNode* node);
-static TableResult run_op(const fb::PlanNode* node);
+static TableResult execute_node(const fb::PlanNode* node, NodeInputs* in);
+static TableResult run_op(const fb::PlanNode* node, NodeInputs* in);
 static cudf::ast::expression& build_expr(const fb::Expr* expr, ExprContext& ctx,
                                          const JoinFilterColMap* col_map = nullptr);
 static bool is_predicate_op(fb::BinaryOp op);
@@ -1146,8 +1161,8 @@ static TableResult execute_scan(
 // GpuFilter — apply boolean predicate
 // ============================================================================
 
-static TableResult execute_filter(const fb::GpuFilter* filter) {
-  auto input = execute_node(filter->input());
+static TableResult execute_filter(const fb::GpuFilter* filter, NodeInputs* in) {
+  auto input = execute_node(filter->input(), in);
 
   // AST fast path when the predicate has no LIKE / CASE / ScalarFunction nodes;
   // otherwise produce the bool mask via the column-producing evaluator.
@@ -1186,8 +1201,8 @@ static TableResult execute_filter(const fb::GpuFilter* filter) {
 // GpuProject — column selection / renaming
 // ============================================================================
 
-static TableResult execute_project(const fb::GpuProject* proj) {
-  auto input = execute_node(proj->input());
+static TableResult execute_project(const fb::GpuProject* proj, NodeInputs* in) {
+  auto input = execute_node(proj->input(), in);
 
   if (!proj->exprs() || proj->exprs()->size() == 0) {
     // Empty projection (DataFusion emits one feeding count(*) — it needs no
@@ -1351,8 +1366,8 @@ static std::unique_ptr<cudf::reduce_aggregation> make_reduce_agg(
   throw std::runtime_error("unsupported aggregate function: " + func_name);
 }
 
-static TableResult execute_aggregate(const fb::GpuAggregate* agg) {
-  auto input = execute_node(agg->input());
+static TableResult execute_aggregate(const fb::GpuAggregate* agg, NodeInputs* in) {
+  auto input = execute_node(agg->input(), in);
   auto tv = input.table->view();
 
   bool is_final = (agg->mode() == fb::AggregateMode_Final ||
@@ -2004,9 +2019,9 @@ static TableResult execute_aggregate(const fb::GpuAggregate* agg) {
 // GpuHashJoin — equi-join
 // ============================================================================
 
-static TableResult execute_hash_join(const fb::GpuHashJoin* join) {
-  auto left = execute_node(join->left());
-  auto right = execute_node(join->right());
+static TableResult execute_hash_join(const fb::GpuHashJoin* join, NodeInputs* in) {
+  auto left = execute_node(join->left(), in);
+  auto right = execute_node(join->right(), in);
 
   auto ltv = left.table->view();
   auto rtv = right.table->view();
@@ -2376,9 +2391,9 @@ static TableResult execute_hash_join(const fb::GpuHashJoin* join) {
 // GpuCrossJoin — cartesian product
 // ============================================================================
 
-static TableResult execute_cross_join(const fb::GpuCrossJoin* join) {
-  auto left = execute_node(join->left());
-  auto right = execute_node(join->right());
+static TableResult execute_cross_join(const fb::GpuCrossJoin* join, NodeInputs* in) {
+  auto left = execute_node(join->left(), in);
+  auto right = execute_node(join->right(), in);
 
   auto out = cudf::cross_join(left.table->view(), right.table->view());
   std::vector<std::string> names = std::move(left.column_names);
@@ -2390,15 +2405,15 @@ static TableResult execute_cross_join(const fb::GpuCrossJoin* join) {
 // GpuNestedLoopJoin — cross product filtered by a non-equi predicate
 // ============================================================================
 
-static TableResult execute_nested_loop_join(const fb::GpuNestedLoopJoin* join) {
+static TableResult execute_nested_loop_join(const fb::GpuNestedLoopJoin* join, NodeInputs* in) {
   auto jt = join->join_type();
   if (jt != fb::JoinType_Inner && jt != fb::JoinType_Left)
     throw std::runtime_error(
         "GpuNestedLoopJoin: only Inner/Left join types supported (got " +
         std::to_string(jt) + ")");
 
-  auto left = execute_node(join->left());
-  auto right = execute_node(join->right());
+  auto left = execute_node(join->left(), in);
+  auto right = execute_node(join->right(), in);
   auto ltv = left.table->view();
   auto rtv = right.table->view();
 
@@ -2528,8 +2543,8 @@ static TableResult execute_nested_loop_join(const fb::GpuNestedLoopJoin* join) {
 // GpuSort — sort by expressions
 // ============================================================================
 
-static TableResult execute_sort(const fb::GpuSort* sort) {
-  auto input = execute_node(sort->input());
+static TableResult execute_sort(const fb::GpuSort* sort, NodeInputs* in) {
+  auto input = execute_node(sort->input(), in);
   auto tv = input.table->view();
 
   if (!sort->exprs() || sort->exprs()->size() == 0)
@@ -2580,7 +2595,7 @@ static TableResult execute_sort(const fb::GpuSort* sort) {
 // Union (UNION ALL / interleave): concatenate the rows of all inputs
 // ============================================================================
 
-static TableResult execute_union(const fb::GpuUnion* u) {
+static TableResult execute_union(const fb::GpuUnion* u, NodeInputs* in) {
   if (!u->inputs() || u->inputs()->size() == 0)
     throw std::runtime_error("GpuUnion has no inputs");
 
@@ -2588,7 +2603,7 @@ static TableResult execute_union(const fb::GpuUnion* u) {
   std::vector<TableResult> inputs;
   inputs.reserve(u->inputs()->size());
   for (flatbuffers::uoffset_t i = 0; i < u->inputs()->size(); ++i) {
-    inputs.push_back(execute_node(u->inputs()->Get(i)));
+    inputs.push_back(execute_node(u->inputs()->Get(i), in));
   }
 
   // A single input needs no copy.
@@ -2636,8 +2651,8 @@ static TableResult execute_union(const fb::GpuUnion* u) {
 // Limit (LIMIT / OFFSET): slice rows [skip, skip + fetch)
 // ============================================================================
 
-static TableResult execute_limit(const fb::GpuLimit* limit) {
-  auto input = execute_node(limit->input());
+static TableResult execute_limit(const fb::GpuLimit* limit, NodeInputs* in) {
+  auto input = execute_node(limit->input(), in);
   auto tv = input.table->view();
   auto num_rows = tv.num_rows();
 
@@ -2677,8 +2692,8 @@ static std::unique_ptr<cudf::rolling_aggregation> make_rolling_agg(
   throw std::runtime_error("unsupported window function: " + func_name);
 }
 
-static TableResult execute_window(const fb::GpuWindow* win) {
-  auto input = execute_node(win->input());
+static TableResult execute_window(const fb::GpuWindow* win, NodeInputs* in) {
+  auto input = execute_node(win->input(), in);
   auto tv = input.table->view();
 
   // Output = all input columns (in order) followed by one column per window expr.
@@ -2765,8 +2780,8 @@ static TableResult execute_window(const fb::GpuWindow* win) {
 // Pass-through nodes (single-GPU: just execute input)
 // ============================================================================
 
-static TableResult execute_passthrough(const fb::PlanNode* input_node) {
-  return execute_node(input_node);
+static TableResult execute_passthrough(const fb::PlanNode* input_node, NodeInputs* in) {
+  return execute_node(input_node, in);
 }
 
 // ============================================================================
@@ -2794,19 +2809,10 @@ static const char* plan_node_kind_name(fb::PlanNodeKind k) {
   }
 }
 
-// When set (single-node `execute_one` mode), `execute_node` does NOT recurse:
-// each child reference resolves to the next pre-supplied input (in child order)
-// instead. This lets every `execute_*` op stay UNCHANGED — they still call
-// `execute_node(child)`, which transparently returns the already-resident input.
-// The walk is sequential (one node at a time per FFI call) so a thread_local is safe.
-namespace {
-thread_local std::vector<TableResult>* g_node_inputs = nullptr;
-thread_local size_t g_node_input_idx = 0;
-}  // namespace
 
 // Run one node's op (the dispatch switch). In recursive mode each op's
 // `execute_node(child)` recurses here; in single-node mode it returns inputs.
-static TableResult run_op(const fb::PlanNode* node) {
+static TableResult run_op(const fb::PlanNode* node, NodeInputs* in) {
   if (!node) throw std::runtime_error("null PlanNode");
 
   const char* kind = plan_node_kind_name(node->node_type());
@@ -2818,33 +2824,33 @@ static TableResult run_op(const fb::PlanNode* node) {
       case fb::PlanNodeKind_GpuScan:
         result = execute_scan(node->node_as_GpuScan()); break;
       case fb::PlanNodeKind_GpuFilter:
-        result = execute_filter(node->node_as_GpuFilter()); break;
+        result = execute_filter(node->node_as_GpuFilter(), in); break;
       case fb::PlanNodeKind_GpuProject:
-        result = execute_project(node->node_as_GpuProject()); break;
+        result = execute_project(node->node_as_GpuProject(), in); break;
       case fb::PlanNodeKind_GpuAggregate:
-        result = execute_aggregate(node->node_as_GpuAggregate()); break;
+        result = execute_aggregate(node->node_as_GpuAggregate(), in); break;
       case fb::PlanNodeKind_GpuHashJoin:
-        result = execute_hash_join(node->node_as_GpuHashJoin()); break;
+        result = execute_hash_join(node->node_as_GpuHashJoin(), in); break;
       case fb::PlanNodeKind_GpuCrossJoin:
-        result = execute_cross_join(node->node_as_GpuCrossJoin()); break;
+        result = execute_cross_join(node->node_as_GpuCrossJoin(), in); break;
       case fb::PlanNodeKind_GpuNestedLoopJoin:
-        result = execute_nested_loop_join(node->node_as_GpuNestedLoopJoin()); break;
+        result = execute_nested_loop_join(node->node_as_GpuNestedLoopJoin(), in); break;
       case fb::PlanNodeKind_GpuSort:
-        result = execute_sort(node->node_as_GpuSort()); break;
+        result = execute_sort(node->node_as_GpuSort(), in); break;
       case fb::PlanNodeKind_GpuCoalesceBatches:
-        result = execute_passthrough(node->node_as_GpuCoalesceBatches()->input()); break;
+        result = execute_passthrough(node->node_as_GpuCoalesceBatches()->input(), in); break;
       case fb::PlanNodeKind_GpuCoalescePartitions:
-        result = execute_passthrough(node->node_as_GpuCoalescePartitions()->input()); break;
+        result = execute_passthrough(node->node_as_GpuCoalescePartitions()->input(), in); break;
       case fb::PlanNodeKind_GpuRepartition:
-        result = execute_passthrough(node->node_as_GpuRepartition()->input()); break;
+        result = execute_passthrough(node->node_as_GpuRepartition()->input(), in); break;
       case fb::PlanNodeKind_GpuSortPreservingMerge:
-        result = execute_passthrough(node->node_as_GpuSortPreservingMerge()->input()); break;
+        result = execute_passthrough(node->node_as_GpuSortPreservingMerge()->input(), in); break;
       case fb::PlanNodeKind_GpuUnion:
-        result = execute_union(node->node_as_GpuUnion()); break;
+        result = execute_union(node->node_as_GpuUnion(), in); break;
       case fb::PlanNodeKind_GpuLimit:
-        result = execute_limit(node->node_as_GpuLimit()); break;
+        result = execute_limit(node->node_as_GpuLimit(), in); break;
       case fb::PlanNodeKind_GpuWindow:
-        result = execute_window(node->node_as_GpuWindow()); break;
+        result = execute_window(node->node_as_GpuWindow(), in); break;
       default:
         throw std::runtime_error(
             "unsupported PlanNodeKind: " + std::to_string(node->node_type()));
@@ -2866,26 +2872,40 @@ static TableResult run_op(const fb::PlanNode* node) {
 }
 
 // Recursive driver (production fast path) OR single-node child resolver.
-static TableResult execute_node(const fb::PlanNode* node) {
-  if (g_node_inputs) {
-    if (g_node_input_idx >= g_node_inputs->size()) {
+static TableResult execute_node(const fb::PlanNode* node, NodeInputs* in) {
+  if (in && in->items) {
+    if (in->idx >= in->items->size()) {
       throw std::runtime_error("execute_one: not enough input handles for node");
     }
-    return std::move((*g_node_inputs)[g_node_input_idx++]);
+    return std::move((*in->items)[in->idx++]);
   }
-  return run_op(node);
+  return run_op(node, in);
 }
 
 TableResult execute_one(const fb::PlanNode* node, std::vector<TableResult> inputs) {
-  g_node_inputs = &inputs;
-  g_node_input_idx = 0;
-  struct Restore {
-    ~Restore() {
-      g_node_inputs = nullptr;
-      g_node_input_idx = 0;
-    }
-  } restore;
-  return run_op(node);
+  const size_t provided = inputs.size();
+  NodeInputs in{&inputs, 0};
+  TableResult result = run_op(node, &in);
+
+  // INVARIANT: a node handed inputs must consume at least one of them.
+  //
+  // Zero consumption is the exact signature of the failure this explicit channel
+  // exists to prevent: execute_node not seeing the caller's inputs, falling through
+  // to run_op, and re-executing the entire child subtree from parquet. That produces
+  // CORRECT ANSWERS at exponential cost, so goldens, byte digests, round-trip and
+  // result comparison all pass — nothing else we have can see it. Asserting here
+  // makes every test that drives NodeSession a detector.
+  //
+  // Safe for every dispatch case: scans take no inputs (leaf, provided == 0), and
+  // every other op resolves its children unconditionally — filter/project/aggregate/
+  // sort/limit/window/passthrough once, the three joins twice, union once per child.
+  if (provided > 0 && in.idx == 0) {
+    throw std::runtime_error(
+        "execute_one: node was given " + std::to_string(provided) +
+        " input(s) but consumed none — the node's children were re-executed instead of "
+        "reused. This is the silent re-execution bug: correct results, exponential cost.");
+  }
+  return result;
 }
 
 uint64_t varlen_content_bytes(const cudf::table_view& table) {
@@ -2922,7 +2942,7 @@ TableResult execute_plan(const uint8_t* plan_bytes, uint64_t plan_len) {
   if (!root)
     throw std::runtime_error("GpuPlan has no root node");
 
-  return execute_node(root);
+  return execute_node(root, nullptr);
 }
 
 // ============================================================================

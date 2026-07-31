@@ -28,6 +28,41 @@ use sha2::{Digest, Sha256};
 use peacockdb_core::plan_serializer::serialize_plan_mode;
 
 /// `<dataset>.sf<sf>/<query>.<device>` -> sha256 of the serialized plan bytes.
+
+/// A FIXED-LENGTH path that stands in for the testdata root when building plans.
+///
+/// The serialized plan legitimately EMBEDS absolute parquet paths — the C++ side has
+/// to open those files, so they cannot be serialized away (operators/scan.rs). That
+/// makes the raw bytes depend on where the repo is checked out: this guard would
+/// false-red in CI (/home/runner/work/...) and on any dev box off /media/data, and a
+/// guard that cries wolf every run is a guard people learn to ignore.
+///
+/// Byte-substituting the path afterwards does NOT fix it: a FlatBuffer string is
+/// [uint32 len][bytes][pad], so a different root also changes the length prefix,
+/// every subsequent offset, and (when the delta is not a multiple of 4) the padding.
+/// Measured: an 8-path plan moved 192 bytes for a +24-char root. Normalizing that
+/// away means rewriting offsets, i.e. parsing the buffer — and the result would be a
+/// digest of something that is not a real buffer.
+///
+/// So instead we hold the path CONSTANT: point the plan build at a symlink whose path
+/// is the same on every machine. The bytes are then identical by construction, and the
+/// digest still describes a buffer that genuinely exists.
+fn canonical_root() -> std::path::PathBuf {
+    let link = std::path::PathBuf::from("/tmp/peacock-plan-bytes-root");
+    let real = common::testdata_root();
+    // Re-point every run: a stale link from another checkout would silently digest
+    // the wrong tree.
+    let _ = std::fs::remove_file(&link);
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&real, &link)
+        .unwrap_or_else(|e| panic!("cannot create {} -> {}: {e}", link.display(), real.display()));
+    link
+}
+
+fn canonical_data_dir(dataset: &str, sf: &str) -> std::path::PathBuf {
+    canonical_root().join(format!("{dataset}.sf{sf}"))
+}
+
 fn digest_path() -> std::path::PathBuf {
     common::testdata_root().join("goldens/plan_bytes.sha256")
 }
@@ -73,7 +108,7 @@ async fn serialized_plan_bytes_are_stable() {
     for (dataset, sf, query, device) in corpus() {
         let key = format!("{dataset}.sf{sf}/{query}.{device}");
         let (partitions, budget) = common::device_config(&device);
-        let data_dir = common::data_dir_for(&dataset, &sf);
+        let data_dir = canonical_data_dir(&dataset, &sf);
         let sql_path = common::queries_dir_for(&dataset).join(format!("{query}.sql"));
         let Ok(sql) = std::fs::read_to_string(&sql_path) else { continue };
 
@@ -123,7 +158,7 @@ async fn serialized_plan_bytes_are_stable() {
         let device = "tp8-mini";
         let (partitions, budget) = common::device_config(device);
         let ctx = peacockdb_core::create_context_with_tables_mode(
-            &common::data_dir_for("tpch", "1"),
+            &canonical_data_dir("tpch", "1"),
             partitions,
             budget,
             common::partition_mode(device),
@@ -170,8 +205,11 @@ async fn serialized_plan_bytes_are_stable() {
             "# REGENERATING THIS DEFEATS ITS PURPOSE. A red digest test means the serialized\n",
             "# bytes MOVED — find out WHY (the C++ side reads these bytes); do NOT regenerate\n",
             "# to make it pass. See tests/test_plan_bytes.rs for the full rationale.\n",
-            "# Baseline provenance: generated at 9cc44c9 (Inc2 head), BEFORE the Inc3\n",
-            "# serializer migration, so a green test proves bytes did not move across it.\n",
+            "# Plans are built via the FIXED symlink /tmp/peacock-plan-bytes-root, so the\n",
+            "# absolute parquet paths the wire format embeds are identical on every machine\n",
+            "# and these digests are portable. Path VALUES are therefore held constant, not\n",
+            "# normalized out; the round-trip oracle covers them. Regenerated at c4ddca8 —\n",
+            "# equal to the 9cc44c9 capture by the 131/131 0-drifted proof across Inc3.\n",
         );
         std::fs::write(&path, format!("{header}{rendered}")).unwrap();
         eprintln!("Updated plan-bytes digests: {} ({} entries)", path.display(), actual.len());
