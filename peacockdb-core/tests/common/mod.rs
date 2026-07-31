@@ -20,7 +20,8 @@ use datafusion::physical_plan::{DisplayFormatType, ExecutionPlan};
 use datafusion::physical_plan::aggregates::{AggregateExec, AggregateMode};
 
 use peacockdb_core::config::{MemoryLimit, TargetPartitions};
-use peacockdb_core::cpu_executor::{execute_node_by_node_instrumented_enforced, NodeMemoryStats};
+use peacockdb_core::cpu_executor::NodeMemoryStats;
+use peacockdb_core::executors::full_table_cpu_executor::execute_full_table_instrumented_enforced;
 use peacockdb_core::gpu_rule::{
     analyze_memory, row_width, GpuAggregateExec, GpuRepartitionExec, GpuScanExec,
 };
@@ -45,11 +46,13 @@ pub fn partition_mode(device: &str) -> PartitionMode {
 }
 
 // --- run configs encoded in the device label -------------------------------
-pub const TARGET_PARTITIONS: usize = 8; // plan tests
-pub const TEST_GPU_MEMORY_BUDGET: usize = 2 * 1024 * 1024 * 1024; // 2 GiB
-pub const FULL_BUDGET: usize = 2 * 1024 * 1024 * 1024;
+// All single-sourced from `config` — a tier's value must exist in exactly one place,
+// or retuning one silently desynchronizes the tests from the executors.
+pub const TARGET_PARTITIONS: usize = peacockdb_core::config::TARGET_PARTITIONS; // plan tests
+pub const TEST_GPU_MEMORY_BUDGET: usize = MemoryLimit::Mini.bytes();
+pub const FULL_BUDGET: usize = MemoryLimit::Mini.bytes();
 pub const BATCH_STRESS_BUDGET: usize = peacockdb_core::config::BATCH_STRESS_BUDGET;
-pub const GPU_BUDGET: usize = 2 * 1024 * 1024 * 1024;
+pub const GPU_BUDGET: usize = MemoryLimit::Mini.bytes();
 
 /// Max rendered size for a committed `.result.txt` golden. Above this the golden is
 /// NOT written (full-result text doesn't scale — e.g. tpch anti-join renders ~240
@@ -798,7 +801,7 @@ pub async fn assert_cpu_results_match_datafusion(
         execute_node_by_node(&plan, &mut backend).await.unwrap()
     } else {
         let mut stats: Vec<NodeMemoryStats> = vec![];
-        let actual = execute_node_by_node_instrumented_enforced(
+        let actual = execute_full_table_instrumented_enforced(
             plan.clone(),
             cpu_ctx.task_ctx(),
             budget,
@@ -842,7 +845,7 @@ async fn run_cpu_enforced(query: &str, dataset: &str, sf: &str, budget: usize) -
     let ctx = create_context_with_tables(&data_dir, TARGET_PARTITIONS, budget).await.unwrap();
     let plan = ctx.sql(&sql).await.unwrap().create_physical_plan().await.unwrap();
     let mut stats: Vec<NodeMemoryStats> = vec![];
-    execute_node_by_node_instrumented_enforced(plan, ctx.task_ctx(), budget, &mut stats)
+    execute_full_table_instrumented_enforced(plan, ctx.task_ctx(), budget, &mut stats)
         .await
         .map(|_| ())
         .map_err(|e| e.to_string())

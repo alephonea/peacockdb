@@ -4,7 +4,8 @@
 
 use std::path::PathBuf;
 
-use peacockdb_core::cpu_executor::{execute_node_by_node_instrumented, NodeMemoryStats};
+use peacockdb_core::cpu_executor::NodeMemoryStats;
+use peacockdb_core::executors::full_table_cpu_executor::execute_full_table_instrumented;
 use peacockdb_core::node_executor::{execute_node_by_node, CpuNodeExecutor};
 
 fn key(stats: &[NodeMemoryStats]) -> Vec<(usize, usize)> {
@@ -32,7 +33,7 @@ async fn cpu_node_executor_matches_recursive() {
     // Reference: existing recursive node-by-node executor.
     let mut ref_stats: Vec<NodeMemoryStats> = vec![];
     let ref_batches =
-        execute_node_by_node_instrumented(plan.clone(), ctx.task_ctx(), &mut ref_stats)
+        execute_full_table_instrumented(plan.clone(), ctx.task_ctx(), &mut ref_stats)
             .await
             .unwrap();
 

@@ -9,7 +9,8 @@ use datafusion::arrow::array::Int64Array;
 use datafusion::physical_plan::ExecutionPlan;
 
 use peacockdb_core::create_context_with_tables_mode;
-use peacockdb_core::cpu_executor::{execute_node_by_node_instrumented, NodeMemoryStats};
+use peacockdb_core::cpu_executor::NodeMemoryStats;
+use peacockdb_core::executors::full_table_cpu_executor::execute_full_table_instrumented;
 
 use common::{
     all_node_names, data_dir_for, device_config, fmt_plan, has_gpu_node, make_ctx,
@@ -77,10 +78,15 @@ async fn inc5_stddev_final_agg_at_tp8_node13_matches_datafusion() {
     // DataFusion oracle is float summation reassociation of the Welford M2 across the 8
     // partitions (~1 ULP; observed rel diff ~3e-14). Exact-string compare can't tolerate
     // it — stddev/var results are inherently approx (unlike Inc4's exact sum/count avg).
-    // gen=true: this IS the tp8-standard .result.txt generator, consumed by the
-    // golden_approx gpu_test! for shuffle_stddev at tp8-standard (Inc5-iii).
+    // gen=FALSE since the quarantine: this WAS the tp8-standard .result.txt generator
+    // for the golden_approx gpu_test! at shuffle_stddev/tp8-standard (Inc5-iii), but
+    // that consumer is commented out pending #103. Generating it now would write an
+    // ORPHAN golden — written, never read — which is precisely the silent failure the
+    // `gen_result_golden` gate exists to prevent (see tests/common/mod.rs, the
+    // "true-when-should-be-false" note). Flip back to true when #103 re-enables the
+    // gpu_test!. The already-committed .result.txt is deliberately left in place.
     common::assert_cpu_results_match_datafusion(
-        "tpch", "1", "shuffle-stddev", "tp8-standard", Some(1e-12), true, true,
+        "tpch", "1", "shuffle-stddev", "tp8-standard", Some(1e-12), true, false,
     )
     .await;
 }
@@ -100,7 +106,7 @@ async fn test_execution_strips_gpu_nodes() {
     assert!(has_gpu_node(&plan), "expected GPU nodes in plan, got: {:?}", all_node_names(&plan));
 
     let mut stats: Vec<NodeMemoryStats> = vec![];
-    execute_node_by_node_instrumented(plan, ctx.task_ctx(), &mut stats).await.unwrap();
+    execute_full_table_instrumented(plan, ctx.task_ctx(), &mut stats).await.unwrap();
 
     assert!(!stats.is_empty(), "no nodes were executed");
     let gpu_names: Vec<&str> =
@@ -140,7 +146,7 @@ async fn test_memory_boundary_preserved_tight_budget() {
 
     let mut stats: Vec<NodeMemoryStats> = vec![];
     let batches =
-        execute_node_by_node_instrumented(plan_tight, ctx_tight.task_ctx(), &mut stats).await.unwrap();
+        execute_full_table_instrumented(plan_tight, ctx_tight.task_ctx(), &mut stats).await.unwrap();
 
     let count = batches[0].column(0).as_any().downcast_ref::<Int64Array>().unwrap().value(0);
     assert_eq!(count, 150_000, "customer table must have 150 000 rows");
@@ -184,7 +190,7 @@ async fn test_instrumented_stats_are_populated() {
 
     let mut stats: Vec<NodeMemoryStats> = vec![];
     let batches =
-        execute_node_by_node_instrumented(plan, ctx.task_ctx(), &mut stats).await.unwrap();
+        execute_full_table_instrumented(plan, ctx.task_ctx(), &mut stats).await.unwrap();
 
     let final_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
     let root_stat = stats.last().unwrap();
