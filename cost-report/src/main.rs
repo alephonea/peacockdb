@@ -592,8 +592,16 @@ fn render_html(
          tr.green{background:#e9f7ee;}tr.red{background:#ffe0e0;}tr.grey{background:#f3f4f6;color:#57606a;}\
          .foot{margin-top:1.5rem;color:#57606a;font-size:.85rem;}\
          td.mode{text-align:center;white-space:nowrap;font-variant-numeric:normal;}\
+         /* The 4 mode headers are the widest thing in their columns by far — the \
+            data cells below them are a single glyph — so they, not the data, set \
+            those columns' min-content width and pushed the table into horizontal \
+            scrolling. Shrinking just these headers narrows all four columns. */\
+         th.modeh{font-size:.72rem;letter-spacing:-.01em;}\
+         /* Same reasoning for the features column: its width is set by the longest \
+            single chip (an unbreakable token), so the cell font is what controls it. */\
+         td.feat{font-size:.68rem;}\
          .chip{display:inline-block;background:#eef2f6;border:1px solid #d0d7de;border-radius:10px;\
-               padding:0 .45rem;font-size:.78rem;color:#38434f;margin:.05rem 0;}\
+               padding:0 .4rem;font-size:.95em;color:#38434f;margin:.05rem 0;}\
          .legend{margin-top:.6rem;color:#57606a;font-size:.85rem;}\
          .caveat{margin-top:.8rem;background:#fff8c5;border:1px solid #d4a72c;border-radius:6px;padding:.6rem .9rem;font-size:.9rem;}",
     );
@@ -648,8 +656,9 @@ fn render_html(
     for d in datasets {
         let _ = write!(
             s,
-            "<h2>{}</h2><table><tr><th>Query</th><th>full_table_cpu</th>\
-             <th>partitioned_cpu</th><th>full_table_gpu</th><th>partitioned_gpu</th>\
+            "<h2>{}</h2><table><tr><th>Query</th><th class=\"modeh\">full_table_cpu</th>\
+             <th class=\"modeh\">partitioned_cpu</th><th class=\"modeh\">full_table_gpu</th>\
+             <th class=\"modeh\">partitioned_gpu</th>\
              <th>PeacockDB Σout</th><th>DuckDB Σout</th><th>Ratio</th>\
              <th>Features</th><th>Tickets</th></tr>",
             d.label
@@ -663,7 +672,7 @@ fn render_html(
                 s,
                 "<tr class=\"{}\"><td>{}</td><td class=\"mode\">{}</td><td class=\"mode\">{}</td>\
                  <td class=\"mode\">{}</td><td class=\"mode\">{}</td><td class=\"num\">{}</td>\
-                 <td class=\"num\">{}</td><td class=\"num\">{}</td><td>{}</td><td>{}</td></tr>",
+                 <td class=\"num\">{}</td><td class=\"num\">{}</td><td class=\"feat\">{}</td><td>{}</td></tr>",
                 r.bucket(),
                 query_cell_html(&r.query, links.query_url(d.query_rel, &stem)),
                 r.ftc_cell(),

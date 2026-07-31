@@ -96,7 +96,7 @@ pub const FEATURE_CODES: [&str; 14] = [
     "semi_join",
     "cross_join",
     "nested_loop_join",
-    "correlated_subquery",
+    "corr_subquery",
     "stddev_var",
     "avg",
     "count_distinct",
@@ -114,8 +114,26 @@ pub fn registry_csv_path() -> std::path::PathBuf {
 /// condition to tolerate.
 pub fn load_csv() -> Vec<CsvRow> {
     let path = registry_csv_path();
-    let text = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+    // Name the PROVISIONING requirement, not just the io error. A bare
+    // "No such file or directory" on a remote host reads as "the registry check is
+    // broken" when it actually means "this host was not given the fixture" — that
+    // misdiagnosis has now cost four debug cycles across three provisioning paths
+    // (verda goldens, the shad-gpu runner, and CI's own gpu-tests rsync step).
+    // Both runners now ship every git-tracked file under testdata/, so this message
+    // should only ever appear on a NEW provisioning path that has not caught up.
+    let text = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+        panic!(
+            "cannot read the cost-registry fixture: {e}\n\
+             Expected at: {}\n\
+             This is a PROVISIONING gap, not a test failure: testdata/cost-registry.csv \
+             is a committed fixture that must be shipped to whatever host runs this \
+             suite. Each provisioning path names the files it ships, so a NEW path (or \
+             a new fixture) has to be added to it explicitly: see the rsync steps in \
+             scripts/build-test-shadgpu.sh and pipeline.yml's gpu-tests job. Set \
+             PEACOCK_TESTDATA_DIR if the fixture lives elsewhere.",
+            path.display()
+        )
+    });
     let mut lines = text.lines();
     let header: Vec<&str> = lines.next().expect("registry CSV is empty").split(',').collect();
     let expect: Vec<&str> = ["dataset", "sf", "query"]

@@ -297,10 +297,21 @@ jobs:
           # testdata/goldens carries the *.tp1-standard.cpu.txt H200/tp1 node-by-node
           # goldens (29 tpch + 78 tpcds) that test_gpu asserts against; without
           # them the node-by-node verify cannot run.
+          # cost-registry.csv is a committed fixture the registry test READS (it
+          # asserts the CSV against the suite's link-time inventory); without it the
+          # test dies on a missing file, which reads as a broken check rather than an
+          # unprovisioned host.
+          #
+          # NOTE this hand-maintained list is the standing trap — every new committed
+          # fixture must be remembered in EVERY provisioning path independently, and
+          # that has now bitten four times. A sweep of git-tracked testdata files
+          # would end the class; kept as a named entry here only to keep this push
+          # small and low-risk. See the follow-up.
           rsync -a testdata/tpch-queries testdata/tpcds-queries testdata/tpch.minimal \
             testdata/goldens \
             testdata/tpch-vec-queries \
             testdata/generate_testdata.sh \
+            testdata/cost-registry.csv \
             gpu:$REMOTE_DIR/testdata/
           # Ship the updated setup-glibc.sh so its patch_rust_dir step is
           # present on the host (not just the older /home/info/ copy).
