@@ -739,7 +739,10 @@ fn render_html(
          <strong>~</strong> skip (runs, result NOT validated) · \
          <strong>✗</strong> disabled (deliberately off — see Tickets) · \
          <strong>—</strong> n/a (mode does not apply to this query). \
-         <em>full_table_cpu</em> shows both target-partition counts in one cell. The \
+         Mode columns are abbreviated to keep the table within one screen: \
+         <em>ft_cpu</em> = full_table_cpu, <em>p_cpu</em> = partitioned_cpu, \
+         <em>ft_gpu</em> = full_table_gpu, <em>p_gpu</em> = partitioned_gpu. \
+         <em>ft_cpu</em> shows both target-partition counts in one cell. The \
          <em>all_at_once</em> GPU path has no column: it executes a whole plan in one shot with no \
          per-node breakdown, so a per-query cell would be meaningless.</p>",
     );
@@ -747,9 +750,13 @@ fn render_html(
     for d in datasets {
         let _ = write!(
             s,
-            "<h2>{}</h2><table><tr><th>Query</th><th class=\"modeh\">full_table_cpu</th>\
-             <th class=\"modeh\">partitioned_cpu</th><th class=\"modeh\">full_table_gpu</th>\
-             <th class=\"modeh\">partitioned_gpu</th>\
+            // Short header labels (ft_cpu/p_cpu/ft_gpu/p_gpu) are DISPLAY TEXT ONLY —
+            // CSV column names and all code paths keep the long forms. These four
+            // headers set their columns' min-content width (the cells below are one
+            // glyph), so the long names put the table back into horizontal scroll.
+            "<h2>{}</h2><table><tr><th>Query</th><th class=\"modeh\">ft_cpu</th>\
+             <th class=\"modeh\">p_cpu</th><th class=\"modeh\">ft_gpu</th>\
+             <th class=\"modeh\">p_gpu</th>\
              <th>PeacockDB Σout</th><th>DuckDB Σout</th><th>Ratio</th>\
              <th>Features</th><th>Tickets</th></tr>",
             d.label
@@ -828,9 +835,9 @@ fn render_markdown(datasets: &[Dataset], pages_url: &str, published: bool, links
             // comments, and <sub> shrinks text — `class`/`style` are stripped by its
             // sanitizer, so <sub> is the mechanism, not CSS.
             "<details><summary>{} — {}/{} operational</summary>\n\n\
-             <table>\n<tr><th>Query</th><th><sub>full_table_cpu</sub></th>\
-             <th><sub>partitioned_cpu</sub></th><th><sub>full_table_gpu</sub></th>\
-             <th><sub>partitioned_gpu</sub></th><th>PeacockDB Σout</th>\
+             <table>\n<tr><th>Query</th><th><sub>ft_cpu</sub></th>\
+             <th><sub>p_cpu</sub></th><th><sub>ft_gpu</sub></th>\
+             <th><sub>p_gpu</sub></th><th>PeacockDB Σout</th>\
              <th>DuckDB Σout</th><th>Ratio</th><th><sub>Features</sub></th>\
              <th>Tickets</th></tr>\n",
             d.label,
