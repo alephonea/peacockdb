@@ -96,6 +96,11 @@ jobs:
         run: |
           cargo test --no-run -p peacockdb-core --test test_plan_serialiser --test test_query_plan --test test_cpu_executor
           cargo test --no-run -p peacockdb-ffi --test test_ffi
+          # Separate line because of --features rust-only: cargo's fingerprint
+          # includes the feature set, so this cannot share the invocation above.
+          # The feature only reaches peacockdb-ffi/peacockdb-core, not the
+          # DataFusion/Arrow graph, so the extra compile is small.
+          cargo test --no-run --features rust-only -p peacockdb-core --test test_plan_bytes
         env:
           CMAKE_GENERATOR: Ninja
           LD_LIBRARY_PATH: /opt/conda/lib
@@ -129,6 +134,17 @@ jobs:
           # coverage that no test provides.
           cargo test -p peacockdb-core --test test_cpu_h200
           cargo test -p peacockdb-ffi --test test_ffi
+          # The FlatBuffer wire-format guard lives HERE, not in the golden-only
+          # cost-report tier where it was first wired. It NEEDS the sf1 parquet,
+          # because it builds real physical plans before serializing them — the
+          # old rationale ("pure text/bytes over committed artifacts, no executor,
+          # no dataset, no GPU") was wrong on "no dataset" and would invite someone
+          # to move it straight back. It does NOT need a GPU or the linked C++
+          # executor (it runs under rust-only), so the parquet CPU tier is its home.
+          # It MUST run in CI: the C++ side consumes these bytes, so a write-order
+          # shift that only went red locally would reach master green.
+          # See tests/test_plan_bytes.rs and goldens/plan_bytes.sha256.
+          cargo test --features rust-only -p peacockdb-core --test test_plan_bytes
         env:
           CMAKE_GENERATOR: Ninja
           LD_LIBRARY_PATH: /opt/conda/lib
@@ -457,14 +473,6 @@ jobs:
       # dataset, no GPU — so it stays in this cheap golden-only tier.
       - name: Cost goldens match plan-golden regeneration (Rust)
         run: cargo test --features rust-only -p peacockdb-core --test test_cost_model
-
-      # The FlatBuffer wire-format guard. Belongs in this tier for the same reason
-      # as the cost goldens: pure text/bytes over committed artifacts, no executor,
-      # no dataset, no GPU. It MUST run in CI — the C++ side consumes these bytes,
-      # so a write-order shift that only ever went red locally would reach master
-      # green. See tests/test_plan_bytes.rs and goldens/plan_bytes.sha256.
-      - name: Serialized plan bytes are stable (wire format)
-        run: cargo test --features rust-only -p peacockdb-core --test test_plan_bytes
 
       # Every peacockdb-core integration test target must be NAMED by some workflow
       # step above. CI does not sweep them as a set, so a new tests/test_*.rs is

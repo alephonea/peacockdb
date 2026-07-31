@@ -101,8 +101,36 @@ fn corpus() -> Vec<(String, String, String, String)> {
     out
 }
 
+/// Fail LOUD and EARLY when the sf1 parquet is absent.
+///
+/// This test builds real physical plans before serializing them, so it needs the
+/// dataset — it is NOT a pure-text check over committed artifacts. Without this
+/// guard a parquet-less tier surfaces the problem as a deep `NotFound` inside
+/// `create_context_with_tables_mode`, which reads as "the wire-format guard is
+/// broken" rather than "this tier has no parquet". That misdiagnosis has already
+/// cost one debug cycle.
+///
+/// Deliberately FAIL, never SKIP. A skip exits 0 — green, having verified nothing —
+/// which is exactly how a wire-format guard quietly stops guarding (the same lesson
+/// as the `PASSED 0 tests` / `ran_any` guards in the test runners).
+fn assert_dataset_present() {
+    let root = common::testdata_root();
+    let probe = root.join("tpch.sf1/lineitem.parquet");
+    assert!(
+        probe.exists(),
+        "test_plan_bytes requires the sf1 parquet (it builds physical plans before \
+         serializing them, so it is NOT a committed-artifacts-only check).\n\
+         Missing: {}\n\
+         Provision the dataset (testdata/generate_testdata.sh --bench tpch) or run this \
+         target in the CPU tier that already provisions parquet — NOT the golden-only tier.",
+        probe.display()
+    );
+}
+
 #[tokio::test]
 async fn serialized_plan_bytes_are_stable() {
+    assert_dataset_present();
+
     let mut actual: BTreeMap<String, String> = BTreeMap::new();
 
     for (dataset, sf, query, device) in corpus() {
