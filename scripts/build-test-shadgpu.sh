@@ -174,7 +174,7 @@ fi
 if [ "$RUN" -eq 1 ]; then
   # Optional knobs (set in the caller's env, not via flags):
   #   PEACOCK_GPU_DEBUG=1    enable PCK_TRACE + per-node cudaStreamSynchronize
-  #                          in plan_executor.cpp (localizes async errors).
+  #                          in src/expr.cpp (localizes async errors).
   #   PCK_TEST_FILTER=<sub>  cargo-test name filter forwarded to the rust
   #                          binary (e.g. gpu_tpch_sf1_q13_H200). Empty = run all.
   #   PCK_RUN_CPP=0          skip peacock_plan_tests (default: run them).
@@ -219,6 +219,12 @@ if [ "$RUN" -eq 1 ]; then
       for t in /home/info/peacockdb/cpp/install/bin/peacock_*_tests; do
         [ -x "\$t" ] || continue
         tname=\${t##*/}
+        # Multi-GPU suites are MANUAL-ONLY — they are EXCLUDE_FROM_ALL in CMake and
+        # need two visible GPUs, so they are neither built by default nor run here or
+        # in CI. Skip them explicitly: if someone builds them locally they land in
+        # install/bin and this glob would otherwise sweep them into the gate, where
+        # they fail for want of a second GPU and read as a regression.
+        case "\$tname" in peacock_multi_gpu_*) echo "==> \$tname (skipped: multi-GPU is manual-only)"; continue ;; esac
         echo "==> \$tname (C++)"
         tlog=/tmp/\$tname.log
         "\$t" > "\$tlog" 2>&1

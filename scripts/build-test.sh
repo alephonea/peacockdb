@@ -229,12 +229,19 @@ if [ "$RSYNC" -eq 1 ]; then
   ssh "$HOST" "mkdir -p '$REMOTE_DIR/cpp/install'"
   rsync -r -P "$INSTALL_DIR"/* "$HOST:$REMOTE_DIR/cpp/install/"
 
-  if [ "$MODE" = "cpu" ] && [ "$RUST_ONLY" -eq 0 ] && [ -d testdata/goldens ]; then
+  if [ "$MODE" = "cpu" ] && [ -d testdata/goldens ]; then
     # Ship the committed goldens (testdata/goldens/<dataset>.sf<N>/) so they match
     # the just-built binaries — version-controlled fixtures, run-independent of the
     # remote's checked-out commit. Heavy parquet datasets are generated on the
     # remote, untouched. The GPU suite uses no goldens, so skip in --gpu mode.
     # (For an --update-canonical run the remote regenerates these in place.)
+    #
+    # This deliberately does NOT exclude --rust-only. It used to, and that was a
+    # trap: --rust-only IS the golden/plan verify mode, so it needs the goldens
+    # more than the C++ path does. With the exclusion in place a --rust-only run
+    # verified the new binaries against whatever stale goldens the remote happened
+    # to have — on verda that meant the pre-Executors-refactor device labels
+    # (tp1-mem120gib vs tp1-standard), i.e. 110/110 "canonical file not found".
     echo "==> rsync goldens testdata/goldens"
     rsync -r --delete testdata/goldens/ "$HOST:$REMOTE_DIR/testdata/goldens/"
   fi

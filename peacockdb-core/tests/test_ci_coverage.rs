@@ -33,6 +33,74 @@ fn repo_root() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..")
 }
 
+/// Does this workflow line actually RUN `--test <name>`?
+///
+/// Matching is line-wise and deliberately strict, because a coverage guard that
+/// reports FALSE coverage is worse than no guard at all. Two ways a naive
+/// `workflows.contains("--test {name}")` lies:
+///
+///   - PREFIX COLLISION. `--test test_cpu_executor` is a substring of
+///     `--test test_cpu_executor_misc`. This repo HAS that prefix pair, so deleting
+///     the standalone `test_cpu_executor` step would still report it covered — one
+///     edit away from a live hole. Fixed by requiring a word boundary (whitespace
+///     or end-of-line) after the name.
+///   - `--no-run` BLINDNESS. `cargo test --no-run ... --test X` BUILDS X without
+///     running it. A target named only in such a step is "wired" while never
+///     executing — precisely the built-but-never-run hole (peacock_tpchv_tests) that
+///     this guard exists to close. Fixed by skipping those lines entirely.
+///
+/// Both are safe to check line-wise: every `--no-run` invocation in the workflows
+/// carries its `--test` flags on the SAME line.
+fn line_runs_target(line: &str, name: &str) -> bool {
+    if line.contains("--no-run") {
+        return false;
+    }
+    let needle = format!("--test {name}");
+    let mut from = 0;
+    while let Some(i) = line[from..].find(&needle) {
+        let end = from + i + needle.len();
+        match line[end..].chars().next() {
+            // end-of-line, or a separator -> a real, whole-name mention
+            None => return true,
+            Some(c) if c.is_whitespace() => return true,
+            // otherwise this was a longer target name that merely starts with `name`
+            _ => {}
+        }
+        from = end;
+    }
+    false
+}
+
+/// The matcher's own guard. Both cases below PASS under the naive
+/// `workflows.contains("--test {name}")` this replaced, which is the point:
+/// without these, a regression back to substring matching is invisible.
+#[test]
+fn line_matcher_rejects_both_false_coverage_modes() {
+    // (1) prefix collision — a longer target name must not cover a shorter one.
+    let only_misc = "          cargo test -p peacockdb-core --test test_cpu_executor_misc";
+    assert!(
+        !line_runs_target(only_misc, "test_cpu_executor"),
+        "prefix collision: `--test test_cpu_executor_misc` must NOT count as running \
+         test_cpu_executor"
+    );
+    assert!(line_runs_target(only_misc, "test_cpu_executor_misc"));
+
+    // (2) --no-run blindness — building a target is not running it.
+    let build_only =
+        "          cargo test --no-run -p peacockdb-core --test test_query_plan --test test_ffi";
+    assert!(
+        !line_runs_target(build_only, "test_query_plan"),
+        "--no-run builds without running; it must not count as CI coverage"
+    );
+
+    // A genuine run step still counts, including at end-of-line and mid-line.
+    assert!(line_runs_target("cargo test -p x --test test_query_plan", "test_query_plan"));
+    assert!(line_runs_target(
+        "cargo test -p x --test test_query_plan --test test_ffi",
+        "test_query_plan"
+    ));
+}
+
 #[test]
 fn every_rust_test_target_is_named_by_ci() {
     let tests_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests");
@@ -52,22 +120,24 @@ fn every_rust_test_target_is_named_by_ci() {
 
     // Read every workflow, not just pipeline.yml: a target named by any of them counts.
     let wf_dir = repo_root().join(".github/workflows");
-    let mut workflows = String::new();
+    let mut workflow_lines: Vec<String> = Vec::new();
     for entry in std::fs::read_dir(&wf_dir).expect("read .github/workflows/") {
         let path = entry.expect("dir entry").path();
         if matches!(path.extension().and_then(|e| e.to_str()), Some("yml") | Some("yaml")) {
-            workflows.push_str(&std::fs::read_to_string(&path).expect("read workflow"));
+            let text = std::fs::read_to_string(&path).expect("read workflow");
+            workflow_lines.extend(text.lines().map(str::to_string));
         }
     }
-    assert!(!workflows.is_empty(), "no workflow files found under .github/workflows");
+    assert!(!workflow_lines.is_empty(), "no workflow files found under .github/workflows");
 
     let exempt: BTreeSet<&str> = INTENTIONALLY_NOT_IN_CI.iter().map(|(n, _)| *n).collect();
 
     let missing: Vec<&String> = targets
         .iter()
         .filter(|t| !exempt.contains(t.as_str()))
-        // `--test <name>`; require the flag so a passing mention in prose doesn't count.
-        .filter(|t| !workflows.contains(&format!("--test {t}")))
+        // Must be RUN by some line: `--test <name>` at a word boundary, in a step
+        // that is not `--no-run`. See line_runs_target for why both matter.
+        .filter(|t| !workflow_lines.iter().any(|l| line_runs_target(l, t)))
         .collect();
 
     assert!(
