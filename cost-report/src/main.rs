@@ -70,8 +70,25 @@ struct RegistryRow {
     dataset: String,
     query: String,
     states: BTreeMap<String, String>,
+    /// "ok" | "fail" — whether `create_physical_plan` succeeds for this query.
+    plan_status: String,
     features: Vec<String>,
     tickets: Vec<String>,
+}
+
+/// How a row renders its four execution-mode cells.
+///
+/// The two non-executable categories collapse those four columns into ONE spanning
+/// cell: a query that cannot execute has nothing to say per-mode, and four identical
+/// em-dashes invite the reader to hunt for a distinction that isn't there.
+#[derive(PartialEq, Debug, Clone, Copy)]
+enum RowKind {
+    /// Plans AND has at least one execution mode enabled — four normal mode cells.
+    Executable,
+    /// Plans, but no execution mode is enabled yet.
+    PlanOnly,
+    /// `create_physical_plan` itself fails (see the plan-attempt probe).
+    PlanFailed,
 }
 
 impl Registry {
@@ -86,8 +103,8 @@ impl Registry {
                 .position(|c| c == name)
                 .unwrap_or_else(|| panic!("registry CSV has no {name:?} column"))
         };
-        let (i_ds, i_q, i_feat, i_tick) =
-            (idx("dataset"), idx("query"), idx("features"), idx("tickets"));
+        let (i_ds, i_q, i_feat, i_tick, i_ps) =
+            (idx("dataset"), idx("query"), idx("features"), idx("tickets"), idx("plan_status"));
         let mode_idx: Vec<(String, usize)> =
             MODE_COLUMNS.iter().map(|m| (m.to_string(), idx(m))).collect();
 
@@ -106,6 +123,7 @@ impl Registry {
                 dataset: f[i_ds].to_string(),
                 query: f[i_q].to_string(),
                 states,
+                plan_status: f[i_ps].to_string(),
                 features: f[i_feat].split_whitespace().map(str::to_string).collect(),
                 tickets: f[i_tick].split_whitespace().map(str::to_string).collect(),
             });
@@ -140,6 +158,7 @@ struct Row {
     /// mixed_join, …), which the spec requires the widget to include.
     n: Option<u32>,
     states: BTreeMap<String, String>,
+    plan_status: String,
     features: Vec<String>,
     tickets: Vec<String>,
     peacockdb: Option<u64>,
@@ -154,6 +173,18 @@ impl Row {
 
     fn state(&self, col: &str) -> &str {
         self.states.get(col).map(String::as_str).unwrap_or("na")
+    }
+
+    /// Which of the three row shapes this is. Plan failure dominates: a query that
+    /// cannot be planned cannot have a meaningful execution mode, so it is reported
+    /// as PlanFailed even if the registry somehow also marked a mode enabled (that
+    /// combination would itself be a bug worth seeing as "plan ✗").
+    fn kind(&self) -> RowKind {
+        if self.plan_status == "fail" {
+            return RowKind::PlanFailed;
+        }
+        let any_enabled = MODE_COLUMNS.iter().any(|c| self.state(c) == "enabled");
+        if any_enabled { RowKind::Executable } else { RowKind::PlanOnly }
     }
 
     /// "Operational" for the summary line = the single-partition GPU mode is
@@ -301,8 +332,8 @@ fn main() {
     // scraping test_gpu.rs for uncommented macro lines.
     let registry = Registry::load(&registry_csv);
 
-    let tpch = build_dataset("TPC-H", 22, "testdata/goldens/tpch.sf1", "testdata/tpch-queries", &testdata.join("goldens/tpch.sf1"), &registry, "tpch");
-    let tpcds = build_dataset("TPC-DS", 99, "testdata/goldens/tpcds.sf1", "testdata/tpcds-queries", &testdata.join("goldens/tpcds.sf1"), &registry, "tpcds");
+    let tpch = build_dataset("TPC-H", "testdata/goldens/tpch.sf1", "testdata/tpch-queries", &testdata.join("goldens/tpch.sf1"), &registry, "tpch");
+    let tpcds = build_dataset("TPC-DS", "testdata/goldens/tpcds.sf1", "testdata/tpcds-queries", &testdata.join("goldens/tpcds.sf1"), &registry, "tpcds");
     let datasets = [tpch, tpcds];
 
     // CI gate: a query whose Σout we EXPECT must actually have one. A missing value
@@ -355,7 +386,6 @@ fn main() {
 
 fn build_dataset(
     label: &'static str,
-    total: usize,
     canon_rel: &'static str,
     query_rel: &'static str,
     canon: &Path,
@@ -382,6 +412,7 @@ fn build_dataset(
                 query: r.query.clone(),
                 n,
                 states: r.states.clone(),
+                plan_status: r.plan_status.clone(),
                 features: r.features.clone(),
                 tickets: r.tickets.clone(),
                 // PeacockDB total now lives in the cheap-to-regenerate .cost.txt (the
@@ -400,6 +431,12 @@ fn build_dataset(
         (None, Some(_)) => std::cmp::Ordering::Greater,
         (None, None) => a.query.cmp(&b.query),
     });
+    // `total` is the number of registry rows for this dataset, NOT a hardcoded
+    // query count. It used to be the literal 22/99 (the numbered queries), which
+    // became wrong the moment the registry started including the synthetic
+    // micro-queries: TPC-H rendered "32/22 GPU-operational" — 32 operational out of
+    // 36 rows, printed against a denominator that no longer described the table.
+    let total = rows.len();
     Dataset { label, total, canon_rel, query_rel, rows }
 }
 
@@ -460,7 +497,7 @@ fn cost_cell_html(value: Option<u64>, url: Option<String>) -> String {
 
 fn cost_cell_md(value: Option<u64>, url: Option<String>) -> String {
     match (value, url) {
-        (Some(v), Some(u)) => format!("[{}]({u})", fmt_bytes(v)),
+        (Some(v), Some(u)) => format!("<a href=\"{u}\">{}</a>", fmt_bytes(v)),
         (Some(v), None) => fmt_bytes(v),
         (None, _) => "—".to_string(),
     }
@@ -489,11 +526,12 @@ fn peacock_cell_html(value: Option<u64>, plan_url: Option<String>, cost_url: Opt
 fn peacock_cell_md(value: Option<u64>, plan_url: Option<String>, cost_url: Option<String>) -> String {
     let Some(v) = value else { return "—".to_string() };
     let mut links = Vec::new();
+    // HTML anchors, not markdown links — this cell lands inside a raw <td>.
     if let Some(u) = plan_url {
-        links.push(format!("[plan]({u})"));
+        links.push(format!("<a href=\"{u}\">plan</a>"));
     }
     if let Some(u) = cost_url {
-        links.push(format!("[cost]({u})"));
+        links.push(format!("<a href=\"{u}\">cost</a>"));
     }
     if links.is_empty() {
         fmt_bytes(v)
@@ -504,6 +542,32 @@ fn peacock_cell_md(value: Option<u64>, plan_url: Option<String>, cost_url: Optio
 
 /// Query-column cell: the `q<n>` label linked to its SQL source when a URL exists
 /// (sha present), plain `q<n>` otherwise (dry run) — mirrors the golden-link cells.
+/// The four execution-mode `<td>`s for a row — or ONE `colspan=4` cell when the
+/// query has no per-mode story to tell.
+///
+/// Executable rows are unchanged (full_table_cpu split + 3 glyphs). The other two
+/// kinds merge, because four repeated em-dashes read as "look for the difference"
+/// when the real statement is a single fact about the whole row: it plans but
+/// nothing runs it yet, or it does not plan at all.
+fn mode_cells_html(r: &Row) -> String {
+    match r.kind() {
+        RowKind::Executable => format!(
+            "<td class=\"mode\">{}</td><td class=\"mode\">{}</td>\
+             <td class=\"mode\">{}</td><td class=\"mode\">{}</td>",
+            r.ftc_cell(),
+            state_glyph(r.state("partitioned_cpu")),
+            state_glyph(r.state("full_table_gpu")),
+            state_glyph(r.state("partitioned_gpu")),
+        ),
+        RowKind::PlanOnly => {
+            "<td class=\"mode span\" colspan=\"4\">plan ✓</td>".to_string()
+        }
+        RowKind::PlanFailed => {
+            "<td class=\"mode span\" colspan=\"4\">plan ✗</td>".to_string()
+        }
+    }
+}
+
 fn query_cell_html(name: &str, url: Option<String>) -> String {
     match url {
         Some(u) => format!("<a href=\"{u}\">{name}</a>"),
@@ -543,14 +607,39 @@ fn tickets_md(tickets: &[String], repo: &str) -> String {
     }
     tickets
         .iter()
-        .map(|t| format!("[#{t}](https://github.com/{repo}/issues/{t})"))
+        .map(|t| format!("<a href=\"https://github.com/{repo}/issues/{t}\">#{t}</a>"))
         .collect::<Vec<_>>()
         .join(" ")
 }
 
+/// Markdown counterpart of [`mode_cells_html`]. Markdown has no `colspan`, and (d)
+/// specified the merge for the HTML render only — so the PR comment keeps its
+/// existing 10-column shape and carries the plan status in the first mode cell with
+/// the remaining three dashed. Returns FOUR pipe-separated cells.
+fn mode_cells_md(r: &Row) -> String {
+    match r.kind() {
+        RowKind::Executable => format!(
+            "<td><sub>{}</sub></td><td>{}</td><td>{}</td><td>{}</td>",
+            r.ftc_cell(),
+            state_glyph(r.state("partitioned_cpu")),
+            state_glyph(r.state("full_table_gpu")),
+            state_glyph(r.state("partitioned_gpu")),
+        ),
+        RowKind::PlanOnly => {
+            "<td colspan=\"4\"><sub>plan ✓</sub></td>".to_string()
+        }
+        RowKind::PlanFailed => {
+            "<td colspan=\"4\"><sub>plan ✗</sub></td>".to_string()
+        }
+    }
+}
+
+/// NOTE: emits an HTML anchor, not markdown `[text](url)`. The comment's table is
+/// raw HTML (needed for colspan + <sub>), and GitHub does NOT process markdown link
+/// syntax inside raw HTML block elements — it would render the brackets literally.
 fn query_cell_md(name: &str, url: Option<String>) -> String {
     match url {
-        Some(u) => format!("[{name}]({u})"),
+        Some(u) => format!("<a href=\"{u}\">{name}</a>"),
         None => name.to_string(),
     }
 }
@@ -600,6 +689,8 @@ fn render_html(
          /* Same reasoning for the features column: its width is set by the longest \
             single chip (an unbreakable token), so the cell font is what controls it. */\
          td.feat{font-size:.68rem;}\
+         /* merged plan-status cell spanning the 4 mode columns */\
+         td.span{font-size:.75rem;color:#57606a;font-style:italic;}\
          .chip{display:inline-block;background:#eef2f6;border:1px solid #d0d7de;border-radius:10px;\
                padding:0 .4rem;font-size:.95em;color:#38434f;margin:.05rem 0;}\
          .legend{margin-top:.6rem;color:#57606a;font-size:.85rem;}\
@@ -670,15 +761,11 @@ fn render_html(
             let dk_url = r.duckdb.and_then(|_| links.golden_url(d.canon_rel, &stem, "duckdb_cost.txt"));
             let _ = write!(
                 s,
-                "<tr class=\"{}\"><td>{}</td><td class=\"mode\">{}</td><td class=\"mode\">{}</td>\
-                 <td class=\"mode\">{}</td><td class=\"mode\">{}</td><td class=\"num\">{}</td>\
+                "<tr class=\"{}\"><td>{}</td>{}<td class=\"num\">{}</td>\
                  <td class=\"num\">{}</td><td class=\"num\">{}</td><td class=\"feat\">{}</td><td>{}</td></tr>",
                 r.bucket(),
                 query_cell_html(&r.query, links.query_url(d.query_rel, &stem)),
-                r.ftc_cell(),
-                state_glyph(r.state("partitioned_cpu")),
-                state_glyph(r.state("full_table_gpu")),
-                state_glyph(r.state("partitioned_gpu")),
+                mode_cells_html(r),
                 peacock_cell_html(r.peacockdb, plan_url, cost_url),
                 cost_cell_html(r.duckdb, dk_url),
                 ratio_or_dash(r.ratio()),
@@ -735,9 +822,17 @@ fn render_markdown(datasets: &[Dataset], pages_url: &str, published: bool, links
     for d in datasets {
         let _ = write!(
             s,
+            // A raw HTML table, NOT a GFM pipe table. Two things the widget's
+            // structure needs are impossible in pipe tables: colspan (for the merged
+            // plan-status cell) and any font control. GitHub renders inline HTML in
+            // comments, and <sub> shrinks text — `class`/`style` are stripped by its
+            // sanitizer, so <sub> is the mechanism, not CSS.
             "<details><summary>{} — {}/{} operational</summary>\n\n\
-             | Query | ft_cpu | p_cpu | ft_gpu | p_gpu | PeacockDB Σout | DuckDB Σout | Ratio | Features | Tickets |\n\
-             |---|---|---|---|---|---:|---:|---:|---|---|\n",
+             <table>\n<tr><th>Query</th><th><sub>full_table_cpu</sub></th>\
+             <th><sub>partitioned_cpu</sub></th><th><sub>full_table_gpu</sub></th>\
+             <th><sub>partitioned_gpu</sub></th><th>PeacockDB Σout</th>\
+             <th>DuckDB Σout</th><th>Ratio</th><th><sub>Features</sub></th>\
+             <th>Tickets</th></tr>\n",
             d.label,
             d.operational(),
             d.total
@@ -755,12 +850,11 @@ fn render_markdown(datasets: &[Dataset], pages_url: &str, published: bool, links
             };
             let _ = write!(
                 s,
-                "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+                "<tr><td>{}</td>{}<td>{}</td>\
+                 <td>{}</td><td>{}</td>\
+                 <td><sub>{}</sub></td><td>{}</td></tr>\n",
                 query_cell_md(&r.query, links.query_url(d.query_rel, &stem)),
-                r.ftc_cell(),
-                state_glyph(r.state("partitioned_cpu")),
-                state_glyph(r.state("full_table_gpu")),
-                state_glyph(r.state("partitioned_gpu")),
+                mode_cells_md(r),
                 peacock_cell_md(r.peacockdb, plan_url, cost_url),
                 cost_cell_md(r.duckdb, dk_url),
                 ratio_cell,
@@ -768,7 +862,7 @@ fn render_markdown(datasets: &[Dataset], pages_url: &str, published: bool, links
                 tickets_md(&r.tickets, &links.repo),
             );
         }
-        s.push_str("\n</details>\n\n");
+        s.push_str("</table>\n</details>\n\n");
     }
     let _ = write!(
         s,
@@ -1118,6 +1212,7 @@ mod tests {
             query: query.to_string(),
             n: query.strip_prefix('q').and_then(|d| d.parse::<u32>().ok()),
             states,
+            plan_status: "ok".to_string(),
             features: vec![],
             tickets: vec![],
             peacockdb,
@@ -1161,6 +1256,43 @@ mod tests {
         assert!(features_html(&["stddev_var".to_string()]).contains("stddev_var"));
     }
 
+    /// The three row shapes, and the merge. PlanOnly is covered here deliberately:
+    /// no query in the current registry is plan-only (the 4 non-executable TPC-DS
+    /// queries all FAIL to plan), so without this test that branch would ship
+    /// unexercised and could rot silently until the first query lands in it.
+    #[test]
+    fn row_kind_and_merged_mode_cells() {
+        let exec = test_row("q1", &[("full_table_gpu", "enabled")], None, None);
+        assert_eq!(exec.kind(), RowKind::Executable);
+        let h = mode_cells_html(&exec);
+        assert_eq!(h.matches("<td").count(), 4, "executable rows keep 4 cells: {h}");
+        assert!(!h.contains("colspan"), "executable rows must not merge: {h}");
+
+        // plans, but nothing enabled -> one spanning cell
+        let plan_only = test_row("q42", &[], None, None);
+        assert_eq!(plan_only.kind(), RowKind::PlanOnly);
+        let h = mode_cells_html(&plan_only);
+        assert_eq!(h.matches("<td").count(), 1);
+        assert!(h.contains("colspan=\"4\"") && h.contains("plan ✓"), "{h}");
+
+        // does not plan -> one spanning cell, and plan failure DOMINATES an
+        // enabled mode (that combination is itself a bug and must read as ✗).
+        let mut failed = test_row("q27", &[("full_table_gpu", "enabled")], None, None);
+        failed.plan_status = "fail".to_string();
+        assert_eq!(failed.kind(), RowKind::PlanFailed);
+        let h = mode_cells_html(&failed);
+        assert!(h.contains("colspan=\"4\"") && h.contains("plan ✗"), "{h}");
+
+        // The markdown comment now mirrors the HTML structure (raw <table>), so the
+        // same invariants hold there: 4 cells when executable, 1 spanning cell
+        // otherwise. <sub> is what shrinks text — GitHub strips class/style.
+        assert_eq!(mode_cells_md(&exec).matches("<td").count(), 4);
+        assert!(mode_cells_md(&exec).contains("<sub>"));
+        assert_eq!(mode_cells_md(&plan_only).matches("<td").count(), 1);
+        assert!(mode_cells_md(&plan_only).contains("colspan=\"4\""));
+        assert!(mode_cells_md(&failed).contains("plan ✗"));
+    }
+
     /// full_table_cpu is ONE column showing both target-partition counts.
     #[test]
     fn ftc_cell_shows_the_tp_split() {
@@ -1171,6 +1303,7 @@ mod tests {
             query: "q1".into(),
             n: Some(1),
             states,
+            plan_status: "ok".to_string(),
             features: vec![],
             tickets: vec![],
             peacockdb: None,
@@ -1196,7 +1329,7 @@ mod tests {
         let v = Some(43_308_088u64);
         let url = Some("https://x/blob/abc/testdata/goldens/tpch.sf1/q1.tp1-mini.cpu.txt".to_string());
         assert!(cost_cell_html(v, url.clone()).starts_with("<a href="));
-        assert!(cost_cell_md(v, url).starts_with("[41.30 MB]("));
+        assert!(cost_cell_md(v, url).starts_with("<a href="));
         // value but no sha/url → plain text, no link.
         assert_eq!(cost_cell_html(v, None), "41.30 MB");
         assert_eq!(cost_cell_md(v, None), "41.30 MB");
@@ -1246,7 +1379,11 @@ mod tests {
         let html = peacock_cell_html(Some(43_308_088), plan.clone(), cost.clone());
         assert!(html.contains(">plan</a>") && html.contains(">cost</a>") && html.starts_with("41.30 MB ("));
         let md = peacock_cell_md(Some(43_308_088), plan, cost);
-        assert_eq!(md, "41.30 MB ([plan](https://x/q1.tp8-mini.cpu.txt), [cost](https://x/q1.tp8-mini.cost.txt))");
+        // HTML anchors: the comment's table is raw HTML, where markdown link
+        // syntax would render literally as brackets.
+        assert!(md.contains("<a href=\"https://x/q1.tp8-mini.cpu.txt\">plan</a>"), "{md}");
+        assert!(md.contains("<a href=\"https://x/q1.tp8-mini.cost.txt\">cost</a>"), "{md}");
+        assert!(md.starts_with("41.30 MB ("));
         // value but no urls (dry run) → plain bytes, no links.
         assert_eq!(peacock_cell_html(Some(43_308_088), None, None), "41.30 MB");
         assert_eq!(peacock_cell_md(Some(43_308_088), None, None), "41.30 MB");
@@ -1372,13 +1509,13 @@ mod tests {
         let html = render_html(&[one_row_dataset()], "https://p/", &linked, None, None);
         assert!(html.contains(&format!("<a href=\"{url}\">q1</a>")));
         let md = render_markdown(&[one_row_dataset()], "https://p/", false, &linked, None);
-        assert!(md.contains(&format!("[q1]({url})")));
+        assert!(md.contains(&format!("<a href=\"{url}\">q1</a>")));
 
         // No sha → plain q1 cell, no query link.
         let html_plain = render_html(&[one_row_dataset()], "https://p/", &no_links(), None, None);
         assert!(html_plain.contains("<td>q1</td>") && !html_plain.contains("q1.sql"));
         let md_plain = render_markdown(&[one_row_dataset()], "https://p/", false, &no_links(), None);
-        assert!(md_plain.contains("| q1 |") && !md_plain.contains("q1.sql"));
+        assert!(md_plain.contains("<td>q1</td>") && !md_plain.contains("q1.sql"));
     }
 
     #[test]

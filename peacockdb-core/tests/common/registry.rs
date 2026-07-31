@@ -81,6 +81,8 @@ pub struct CsvRow {
     pub query: String,
     /// column -> state
     pub states: BTreeMap<String, String>,
+    /// "ok" | "fail" — whether create_physical_plan succeeds for this query.
+    pub plan_status: String,
     pub features: Vec<String>,
     pub tickets: Vec<String>,
 }
@@ -118,9 +120,9 @@ pub fn load_csv() -> Vec<CsvRow> {
     // "No such file or directory" on a remote host reads as "the registry check is
     // broken" when it actually means "this host was not given the fixture" — that
     // misdiagnosis has now cost four debug cycles across three provisioning paths
-    // (verda goldens, the shad-gpu runner, and CI's own gpu-tests rsync step).
-    // Both runners now ship every git-tracked file under testdata/, so this message
-    // should only ever appear on a NEW provisioning path that has not caught up.
+    // (verda goldens, the shad-gpu runner, and CI's own gpu-tests rsync step). Each
+    // path still names its files by hand, so this message exists to point the next
+    // person straight at the path that needs updating.
     let text = std::fs::read_to_string(&path).unwrap_or_else(|e| {
         panic!(
             "cannot read the cost-registry fixture: {e}\n\
@@ -139,7 +141,7 @@ pub fn load_csv() -> Vec<CsvRow> {
     let expect: Vec<&str> = ["dataset", "sf", "query"]
         .into_iter()
         .chain(COLUMNS)
-        .chain(["features", "tickets"])
+        .chain(["plan_status", "features", "tickets"])
         .collect();
     assert_eq!(header, expect, "registry CSV header changed; update COLUMNS to match");
 
@@ -169,8 +171,19 @@ pub fn load_csv() -> Vec<CsvRow> {
             );
             states.insert(col.to_string(), s.to_string());
         }
+        // plan_status: does create_physical_plan SUCCEED for this query? Distinct
+        // from the `plan` COLUMN, which records whether a query_plan_test exists.
+        // A query can have no plan test and still plan fine, and the widget needs
+        // the distinction to decide whether a row renders "plan ✓" or "plan ✗".
+        let plan_status = f[9];
+        assert!(
+            matches!(plan_status, "ok" | "fail"),
+            "{}:{}: plan_status must be ok|fail, got {plan_status:?}",
+            path.display(),
+            i + 2
+        );
         let features: Vec<String> =
-            f[9].split_whitespace().map(str::to_string).collect();
+            f[10].split_whitespace().map(str::to_string).collect();
         for feat in &features {
             assert!(
                 FEATURE_CODES.contains(&feat.as_str()),
@@ -179,7 +192,7 @@ pub fn load_csv() -> Vec<CsvRow> {
                 i + 2
             );
         }
-        let tickets: Vec<String> = f[10].split_whitespace().map(str::to_string).collect();
+        let tickets: Vec<String> = f[11].split_whitespace().map(str::to_string).collect();
         for t in &tickets {
             assert!(
                 t.chars().all(|c| c.is_ascii_digit()),
@@ -193,6 +206,7 @@ pub fn load_csv() -> Vec<CsvRow> {
             sf: f[1].to_string(),
             query: f[2].to_string(),
             states,
+            plan_status: plan_status.to_string(),
             features,
             tickets,
         });
