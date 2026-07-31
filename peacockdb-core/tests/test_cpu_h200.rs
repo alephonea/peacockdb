@@ -131,3 +131,14 @@ cpu_result_test!(tpcds, 1, q96, tp1_standard, true);
 cpu_result_test!(tpcds, 1, q97, tp1_standard, true);
 cpu_result_test!(tpcds, 1, q98, tp1_standard, false);
 cpu_result_test!(tpcds, 1, q99, tp1_standard, true);
+
+// ── registry verification (Inc5) ──────────────────────────────────────────
+/// Owns the `ftc_tp1` column outright — every tp1 query is registered here at
+/// tp1-standard, including scan_limit (which is ALSO registered at tp1-mini in
+/// test_cpu_executor.rs; both map to ftc_tp1, so no cross-binary exception is
+/// needed). The `elsewhere` staleness check in registry.rs is what established
+/// that: an entry claiming scan_limit lived only in the other binary failed.
+#[test]
+fn registry_matches_csv_ftc_tp1_column() {
+    common::registry::assert_registry_matches_csv(&["ftc_tp1"], &[]);
+}

@@ -123,6 +123,11 @@ jobs:
           cargo test -p peacockdb-core --test test_cpu_oom
           cargo test -p peacockdb-core --test test_node_executor
           cargo test -p peacockdb-core --test test_query_plan_misc
+          # Despite the H200 name this needs NO GPU (~25s): the tp1-standard goldens
+          # are CPU-emulated. It also owns the reverse half of the cost-registry
+          # check for the ftc_tp1 column, so without it a CSV row could claim
+          # coverage that no test provides.
+          cargo test -p peacockdb-core --test test_cpu_h200
           cargo test -p peacockdb-ffi --test test_ffi
         env:
           CMAKE_GENERATOR: Ninja

@@ -240,3 +240,13 @@ cpu_result_test!(tpcds, 1, q99, tp8_mini, false);
 // cpu_result_test!(tpcds, 1, q72, tp8_mini, false);
 // q86: GROUPING() aggregate has no physical-plan support.
 // cpu_result_test!(tpcds, 1, q86, tp8_mini, false);
+
+// ── registry verification (Inc5) ──────────────────────────────────────────
+/// Owns `ftc_tp8` and `partitioned_cpu`. It also registers the single tp1-mini
+/// `ftc_tp1` entry (scan_limit); that column's REVERSE check lives in
+/// test_cpu_h200.rs, but the forward check still applies to it here — a test that
+/// exists must match its CSV cell no matter which binary owns the column.
+#[test]
+fn registry_matches_csv_cpu_columns() {
+    common::registry::assert_registry_matches_csv(&["ftc_tp8", "partitioned_cpu"], &[]);
+}

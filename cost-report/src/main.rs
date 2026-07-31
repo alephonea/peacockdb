@@ -20,7 +20,9 @@
 //!   cost-report [--testdata DIR] [--tests FILE] [--html FILE] [--md FILE]
 //!               [--pages-url URL] [--sha SHA] [--repo OWNER/REPO] [--published]
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
+#[cfg(test)]
+use std::collections::BTreeSet;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
@@ -42,11 +44,124 @@ const SENTINEL: &str = "<!-- peacockdb-cost-report -->";
 /// PR comment independently of the coverage/ratio report above.
 const DIFF_SENTINEL: &str = "<!-- peacockdb-cost-regression -->";
 
+/// The execution-mode columns, in display order. `all_at_once` deliberately has no
+/// column: it is a whole-plan-at-once GPU path with no per-node breakdown, so a
+/// per-query enabled/disabled cell would be meaningless.
+const MODE_COLUMNS: [&str; 5] = [
+    "ftc_tp1",
+    "ftc_tp8",
+    "partitioned_cpu",
+    "full_table_gpu",
+    "partitioned_gpu",
+];
+
+/// One row of `testdata/cost-registry.csv` — the widget's source of truth.
+///
+/// This REPLACES the old textual scrape of `test_gpu.rs`, which could only see one
+/// file and inferred "enabled" from whether a macro line was commented out. The CSV
+/// is verified against the test suite's own link-time inventory by the registry
+/// tests in peacockdb-core (both directions), so a stale cell fails the build rather
+/// than silently mis-rendering a tick here.
+struct Registry {
+    rows: Vec<RegistryRow>,
+}
+
+struct RegistryRow {
+    dataset: String,
+    query: String,
+    states: BTreeMap<String, String>,
+    features: Vec<String>,
+    tickets: Vec<String>,
+}
+
+impl Registry {
+    fn load(path: &Path) -> Registry {
+        let text = std::fs::read_to_string(path)
+            .unwrap_or_else(|e| panic!("cannot read registry CSV {}: {e}", path.display()));
+        let mut lines = text.lines();
+        let header: Vec<&str> = lines.next().expect("registry CSV is empty").split(',').collect();
+        let cols: Vec<String> = header.iter().map(|s| s.to_string()).collect();
+        let idx = |name: &str| -> usize {
+            cols.iter()
+                .position(|c| c == name)
+                .unwrap_or_else(|| panic!("registry CSV has no {name:?} column"))
+        };
+        let (i_ds, i_q, i_feat, i_tick) =
+            (idx("dataset"), idx("query"), idx("features"), idx("tickets"));
+        let mode_idx: Vec<(String, usize)> =
+            MODE_COLUMNS.iter().map(|m| (m.to_string(), idx(m))).collect();
+
+        let mut rows = Vec::new();
+        for line in lines {
+            if line.trim().is_empty() {
+                continue;
+            }
+            let f: Vec<&str> = line.split(',').collect();
+            assert_eq!(f.len(), cols.len(), "registry CSV: ragged row: {line}");
+            let states = mode_idx
+                .iter()
+                .map(|(m, i)| (m.clone(), f[*i].to_string()))
+                .collect();
+            rows.push(RegistryRow {
+                dataset: f[i_ds].to_string(),
+                query: f[i_q].to_string(),
+                states,
+                features: f[i_feat].split_whitespace().map(str::to_string).collect(),
+                tickets: f[i_tick].split_whitespace().map(str::to_string).collect(),
+            });
+        }
+        assert!(!rows.is_empty(), "registry CSV has no rows");
+        Registry { rows }
+    }
+
+    fn for_dataset(&self, dataset: &str) -> impl Iterator<Item = &RegistryRow> {
+        self.rows.iter().filter(move |r| r.dataset == dataset)
+    }
+}
+
+/// Render a cell state as its glyph. `enabled` means the mode runs AND its result is
+/// validated (golden or live oracle — both count); `skip` means it runs but nothing
+/// checks the result, which is why it gets its own glyph rather than being folded
+/// into either ✓ or ✗.
+fn state_glyph(state: &str) -> &'static str {
+    match state {
+        "enabled" => "✓",
+        "skip" => "~",
+        "disabled" => "✗",
+        _ => "—",
+    }
+}
+
 struct Row {
-    n: u32,
-    operational: bool,
+    /// Underscore form as written in the tests/CSV (`q1`, `shuffle_stddev`).
+    query: String,
+    /// Query number when the name is `q<N>` — used for the numeric sort and the
+    /// `q<n>.sql` link. `None` for the synthetic micro-queries (aggregate_groupby,
+    /// mixed_join, …), which the spec requires the widget to include.
+    n: Option<u32>,
+    states: BTreeMap<String, String>,
+    features: Vec<String>,
+    tickets: Vec<String>,
     peacockdb: Option<u64>,
     duckdb: Option<u64>,
+}
+
+impl Row {
+    /// Golden/SQL file stem: the CSV's underscore form maps to hyphenated paths.
+    fn stem(&self) -> String {
+        self.query.replace('_', "-")
+    }
+
+    fn state(&self, col: &str) -> &str {
+        self.states.get(col).map(String::as_str).unwrap_or("na")
+    }
+
+    /// "Operational" for the summary line = the single-partition GPU mode is
+    /// enabled. That is the mode the old test_gpu.rs scrape counted, so the
+    /// headline number stays comparable across this change.
+    fn operational(&self) -> bool {
+        self.state("full_table_gpu") == "enabled"
+    }
 }
 
 impl Row {
@@ -61,15 +176,21 @@ impl Row {
     /// Color bucket: green (within budget), red (over), grey (skip / no cost).
     fn bucket(&self) -> &'static str {
         match self.ratio() {
-            _ if !self.operational => "grey",
+            _ if !self.operational() => "grey",
             Some(r) if r <= RATIO_GREEN_MAX => "green",
             Some(_) => "red",
             None => "grey",
         }
     }
 
-    fn status(&self) -> &'static str {
-        if self.operational { "✓ GPU" } else { "✗ skip" }
+    /// full_table_cpu is one logical mode run at two target-partition counts, so it
+    /// renders as a single cell showing the split rather than two columns.
+    fn ftc_cell(&self) -> String {
+        format!(
+            "tp1{} tp8{}",
+            state_glyph(self.state("ftc_tp1")),
+            state_glyph(self.state("ftc_tp8"))
+        )
     }
 }
 
@@ -86,7 +207,7 @@ struct Dataset {
 
 impl Dataset {
     fn operational(&self) -> usize {
-        self.rows.iter().filter(|r| r.operational).count()
+        self.rows.iter().filter(|r| r.operational()).count()
     }
 }
 
@@ -97,16 +218,20 @@ struct Links {
 }
 
 impl Links {
-    fn golden_url(&self, canon_rel: &str, n: u32, ext: &str) -> Option<String> {
+    /// `stem` is the hyphenated file stem (`q6`, `scan-limit`), so numbered and
+    /// synthetic queries share one path builder.
+    fn golden_url(&self, canon_rel: &str, stem: &str, ext: &str) -> Option<String> {
         let sha = self.sha.as_ref()?;
-        Some(format!("https://github.com/{}/blob/{sha}/{canon_rel}/q{n}.{ext}", self.repo))
+        Some(format!("https://github.com/{}/blob/{sha}/{canon_rel}/{stem}.{ext}", self.repo))
     }
 
-    /// Link to a query's SQL source (`<query_rel>/q<n>.sql`) at the report's
-    /// commit; `None` on dry runs (no sha), mirroring [`golden_url`].
-    fn query_url(&self, query_rel: &str, n: u32) -> Option<String> {
+    /// Link to a query's SQL source (`<query_rel>/<stem>.sql`) at the report's
+    /// commit; `None` on dry runs (no sha), mirroring [`golden_url`]. The synthetic
+    /// micro-queries have real .sql files too (aggregate-groupby.sql, …), so they
+    /// link exactly like the numbered ones.
+    fn query_url(&self, query_rel: &str, stem: &str) -> Option<String> {
         let sha = self.sha.as_ref()?;
-        Some(format!("https://github.com/{}/blob/{sha}/{query_rel}/q{n}.sql", self.repo))
+        Some(format!("https://github.com/{}/blob/{sha}/{query_rel}/{stem}.sql", self.repo))
     }
 }
 
@@ -122,7 +247,13 @@ fn main() {
     let env = |k: &str| std::env::var(k).ok().filter(|s| !s.is_empty());
 
     let testdata = PathBuf::from(opt("--testdata", "testdata"));
-    let tests = PathBuf::from(opt("--tests", "peacockdb-core/tests/test_gpu.rs"));
+    // The registry CSV lives beside the goldens it describes; --registry overrides
+    // for out-of-tree runs. (`--tests`, which pointed at test_gpu.rs for the old
+    // textual scrape, is gone — coverage is read from this CSV now.)
+    let registry_csv = PathBuf::from(opt(
+        "--registry",
+        testdata.join("cost-registry.csv").to_str().unwrap_or("testdata/cost-registry.csv"),
+    ));
     let html_out = opt("--html", "cost_report.html");
     // When set, assemble the page-per-sha Pages site here instead of writing a
     // single --html file (master deploy); see `assemble_site`.
@@ -165,24 +296,31 @@ fn main() {
         .cloned()
         .or_else(|| env("COST_REPORT_GENERATED_AT"));
 
-    let test_src = std::fs::read_to_string(&tests)
-        .unwrap_or_else(|e| panic!("cannot read {}: {e}", tests.display()));
-    let op_tpch = operational_set(&test_src, "tpch");
-    let op_tpcds = operational_set(&test_src, "tpcds");
+    // Coverage now comes from the committed registry CSV (verified against the test
+    // suite's link-time inventory by peacockdb-core's registry tests), NOT from
+    // scraping test_gpu.rs for uncommented macro lines.
+    let registry = Registry::load(&registry_csv);
 
-    let tpch = build_dataset("TPC-H", 22, "testdata/goldens/tpch.sf1", "testdata/tpch-queries", &testdata.join("goldens/tpch.sf1"), &op_tpch);
-    let tpcds = build_dataset("TPC-DS", 99, "testdata/goldens/tpcds.sf1", "testdata/tpcds-queries", &testdata.join("goldens/tpcds.sf1"), &op_tpcds);
+    let tpch = build_dataset("TPC-H", 22, "testdata/goldens/tpch.sf1", "testdata/tpch-queries", &testdata.join("goldens/tpch.sf1"), &registry, "tpch");
+    let tpcds = build_dataset("TPC-DS", 99, "testdata/goldens/tpcds.sf1", "testdata/tpcds-queries", &testdata.join("goldens/tpcds.sf1"), &registry, "tpcds");
     let datasets = [tpch, tpcds];
 
-    // CI gate: every OPERATIONAL (enabled gpu_test!) query must have a
-    // PeacockDB cost. A missing one silently renders "—" (e.g. a stale CPU_DEVICE
-    // or an absent golden) and CI would stay green — so fail loudly instead.
-    // Non-operational/disabled queries are left lenient (a dash there is fine).
+    // CI gate: a query whose Σout we EXPECT must actually have one. A missing value
+    // silently renders "—" (e.g. a stale CPU_DEVICE or an absent golden) and CI
+    // would stay green — so fail loudly instead.
+    //
+    // "Expect" = the query is GPU-operational AND its full_table_cpu run at the
+    // CPU_DEVICE tier is enabled, because that is the exact golden the Σout is read
+    // from (`<query>.{CPU_DEVICE}.cost.txt`). Requiring it of every operational
+    // query would be wrong now that the registry includes the synthetic
+    // micro-queries: tpch/scan_limit is GPU-operational but runs full_table_cpu at
+    // tp1-mini only, so no tp8-mini cost golden exists or should. Its Σout cell is a
+    // dash, and the ftc column shows why.
     let mut missing: Vec<String> = Vec::new();
     for d in &datasets {
         for r in &d.rows {
-            if r.operational && r.peacockdb.is_none() {
-                missing.push(format!("{} q{}", d.label, r.n));
+            if r.operational() && r.state("ftc_tp8") == "enabled" && r.peacockdb.is_none() {
+                missing.push(format!("{} {}", d.label, r.query));
             }
         }
     }
@@ -215,56 +353,53 @@ fn main() {
     }
 }
 
-/// Query numbers whose GPU result test is enabled for `dataset`. A query is
-/// operational iff an uncommented `gpu_test!(<dataset>, <sf>, q<N>, …)`
-/// invocation appears (the repo disables one by commenting its macro line).
-/// Only `q<N>` queries are counted (synthetic micro-queries like `scan_limit`
-/// aren't in the numbered coverage table).
-fn operational_set(src: &str, dataset: &str) -> BTreeSet<u32> {
-    let needle = format!("gpu_test!({dataset},");
-    let mut set = BTreeSet::new();
-    for line in src.lines() {
-        let t = line.trim_start();
-        if t.starts_with("//") {
-            continue;
-        }
-        let Some(pos) = t.find(&needle) else { continue };
-        if let Some(qpos) = t[pos..].find(", q") {
-            let digits: String = t[pos + qpos + 3..]
-                .chars()
-                .take_while(|c| c.is_ascii_digit())
-                .collect();
-            if let Ok(n) = digits.parse::<u32>() {
-                set.insert(n);
-            }
-        }
-    }
-    set
-}
-
 fn build_dataset(
     label: &'static str,
     total: usize,
     canon_rel: &'static str,
     query_rel: &'static str,
     canon: &Path,
-    operational: &BTreeSet<u32>,
+    registry: &Registry,
+    dataset_key: &str,
 ) -> Dataset {
     // Each golden carries its own explicit total footer (peacockdb_cost= /
     // duckdb_cost=), the single source of truth for that side's number; the
     // per-node output_bytes/materialized values above it are the contribution
     // breakdown that sums to it. We read the footer (sum_field over a key that
     // appears once == that value).
-    let rows = (1..=total as u32)
-        .map(|n| Row {
-            n,
-            operational: operational.contains(&n),
-            // PeacockDB total now lives in the cheap-to-regenerate .cost.txt (the
-            // .cpu.txt no longer carries a footer); same `peacockdb_cost=` key.
-            peacockdb: read_total(&canon.join(format!("q{n}.{CPU_DEVICE}.cost.txt")), "peacockdb_cost="),
-            duckdb: read_total(&canon.join(format!("q{n}.duckdb_cost.txt")), "duckdb_cost="),
+    // Rows come from the registry CSV, not a 1..=N range, so the synthetic
+    // micro-queries (aggregate_groupby, mixed_join, …) appear alongside the numbered
+    // ones as the spec requires. Numbered queries sort first, by number.
+    let mut rows: Vec<Row> = registry
+        .for_dataset(dataset_key)
+        .map(|r| {
+            let n = r
+                .query
+                .strip_prefix('q')
+                .and_then(|d| d.parse::<u32>().ok());
+            let stem = r.query.replace('_', "-");
+            Row {
+                query: r.query.clone(),
+                n,
+                states: r.states.clone(),
+                features: r.features.clone(),
+                tickets: r.tickets.clone(),
+                // PeacockDB total now lives in the cheap-to-regenerate .cost.txt (the
+                // .cpu.txt no longer carries a footer); same `peacockdb_cost=` key.
+                peacockdb: read_total(
+                    &canon.join(format!("{stem}.{CPU_DEVICE}.cost.txt")),
+                    "peacockdb_cost=",
+                ),
+                duckdb: read_total(&canon.join(format!("{stem}.duckdb_cost.txt")), "duckdb_cost="),
+            }
         })
         .collect();
+    rows.sort_by(|a, b| match (a.n, b.n) {
+        (Some(x), Some(y)) => x.cmp(&y),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => a.query.cmp(&b.query),
+    });
     Dataset { label, total, canon_rel, query_rel, rows }
 }
 
@@ -369,17 +504,54 @@ fn peacock_cell_md(value: Option<u64>, plan_url: Option<String>, cost_url: Optio
 
 /// Query-column cell: the `q<n>` label linked to its SQL source when a URL exists
 /// (sha present), plain `q<n>` otherwise (dry run) — mirrors the golden-link cells.
-fn query_cell_html(n: u32, url: Option<String>) -> String {
+fn query_cell_html(name: &str, url: Option<String>) -> String {
     match url {
-        Some(u) => format!("<a href=\"{u}\">q{n}</a>"),
-        None => format!("q{n}"),
+        Some(u) => format!("<a href=\"{u}\">{name}</a>"),
+        None => name.to_string(),
     }
 }
 
-fn query_cell_md(n: u32, url: Option<String>) -> String {
+/// Feature codes as small chips. Empty renders as an em-dash rather than a blank
+/// cell, so "no features" is visibly deliberate.
+fn features_html(features: &[String]) -> String {
+    if features.is_empty() {
+        return "—".to_string();
+    }
+    features
+        .iter()
+        .map(|f| format!("<span class=\"chip\">{f}</span>"))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Ticket numbers as GitHub issue links. Bare numbers in the CSV; the repo comes
+/// from the report's `--repo`, so forks link to their own issues.
+fn tickets_html(tickets: &[String], repo: &str) -> String {
+    if tickets.is_empty() {
+        return "—".to_string();
+    }
+    tickets
+        .iter()
+        .map(|t| format!("<a href=\"https://github.com/{repo}/issues/{t}\">#{t}</a>"))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn tickets_md(tickets: &[String], repo: &str) -> String {
+    if tickets.is_empty() {
+        return "—".to_string();
+    }
+    tickets
+        .iter()
+        .map(|t| format!("[#{t}](https://github.com/{repo}/issues/{t})"))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn query_cell_md(name: &str, url: Option<String>) -> String {
     match url {
-        Some(u) => format!("[q{n}]({u})"),
-        None => format!("q{n}"),
+        Some(u) => format!("[{name}]({u})"),
+        None => name.to_string(),
     }
 }
 
@@ -411,7 +583,7 @@ fn render_html(
         "body{font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;margin:2rem;color:#1b1f23;}\
          h1{font-size:1.5rem;}h2{margin-top:2rem;font-size:1.2rem;}\
          .summary{font-size:1.05rem;background:#f6f8fa;border:1px solid #d0d7de;border-radius:6px;padding:.6rem .9rem;}\
-         table{border-collapse:collapse;width:100%;max-width:760px;margin-top:.5rem;}\
+         table{border-collapse:collapse;width:100%;margin-top:.5rem;}\
          th,td{border:1px solid #d0d7de;padding:.35rem .6rem;text-align:left;font-variant-numeric:tabular-nums;}\
          th{background:#f6f8fa;}td.num{text-align:right;}\
          tr.green td:first-child{border-left:4px solid #1a7f37;}\
@@ -419,6 +591,10 @@ fn render_html(
          tr.grey td:first-child{border-left:4px solid #8c959f;}\
          tr.green{background:#e9f7ee;}tr.red{background:#ffe0e0;}tr.grey{background:#f3f4f6;color:#57606a;}\
          .foot{margin-top:1.5rem;color:#57606a;font-size:.85rem;}\
+         td.mode{text-align:center;white-space:nowrap;font-variant-numeric:normal;}\
+         .chip{display:inline-block;background:#eef2f6;border:1px solid #d0d7de;border-radius:10px;\
+               padding:0 .45rem;font-size:.78rem;color:#38434f;margin:.05rem 0;}\
+         .legend{margin-top:.6rem;color:#57606a;font-size:.85rem;}\
          .caveat{margin-top:.8rem;background:#fff8c5;border:1px solid #d4a72c;border-radius:6px;padding:.6rem .9rem;font-size:.9rem;}",
     );
     s.push_str("</style></head><body>");
@@ -456,23 +632,49 @@ fn render_html(
          <strong>directional only</strong>, to be replaced by a proper cost model; it asserts nothing and gates nothing.</p>",
     );
 
+    s.push_str(
+        "<p class=\"legend\"><strong>Mode columns</strong> come from \
+         <code>testdata/cost-registry.csv</code>, which is verified against the test suite's own \
+         link-time inventory (both directions) — a tick here means a test really exists. \
+         <strong>✓</strong> enabled (result validated, by golden or live oracle) · \
+         <strong>~</strong> skip (runs, result NOT validated) · \
+         <strong>✗</strong> disabled (deliberately off — see Tickets) · \
+         <strong>—</strong> n/a (mode does not apply to this query). \
+         <em>full_table_cpu</em> shows both target-partition counts in one cell. The \
+         <em>all_at_once</em> GPU path has no column: it executes a whole plan in one shot with no \
+         per-node breakdown, so a per-query cell would be meaningless.</p>",
+    );
+
     for d in datasets {
-        let _ = write!(s, "<h2>{}</h2><table><tr><th>Query</th><th>Status</th>\
-            <th>PeacockDB Σout</th><th>DuckDB Σout</th><th>Ratio</th></tr>", d.label);
+        let _ = write!(
+            s,
+            "<h2>{}</h2><table><tr><th>Query</th><th>full_table_cpu</th>\
+             <th>partitioned_cpu</th><th>full_table_gpu</th><th>partitioned_gpu</th>\
+             <th>PeacockDB Σout</th><th>DuckDB Σout</th><th>Ratio</th>\
+             <th>Features</th><th>Tickets</th></tr>",
+            d.label
+        );
         for r in &d.rows {
-            let plan_url = r.peacockdb.and_then(|_| links.golden_url(d.canon_rel, r.n, &format!("{CPU_DEVICE}.cpu.txt")));
-            let cost_url = r.peacockdb.and_then(|_| links.golden_url(d.canon_rel, r.n, &format!("{CPU_DEVICE}.cost.txt")));
-            let dk_url = r.duckdb.and_then(|_| links.golden_url(d.canon_rel, r.n, "duckdb_cost.txt"));
+            let stem = r.stem();
+            let plan_url = r.peacockdb.and_then(|_| links.golden_url(d.canon_rel, &stem, &format!("{CPU_DEVICE}.cpu.txt")));
+            let cost_url = r.peacockdb.and_then(|_| links.golden_url(d.canon_rel, &stem, &format!("{CPU_DEVICE}.cost.txt")));
+            let dk_url = r.duckdb.and_then(|_| links.golden_url(d.canon_rel, &stem, "duckdb_cost.txt"));
             let _ = write!(
                 s,
-                "<tr class=\"{}\"><td>{}</td><td>{}</td><td class=\"num\">{}</td>\
-                 <td class=\"num\">{}</td><td class=\"num\">{}</td></tr>",
+                "<tr class=\"{}\"><td>{}</td><td class=\"mode\">{}</td><td class=\"mode\">{}</td>\
+                 <td class=\"mode\">{}</td><td class=\"mode\">{}</td><td class=\"num\">{}</td>\
+                 <td class=\"num\">{}</td><td class=\"num\">{}</td><td>{}</td><td>{}</td></tr>",
                 r.bucket(),
-                query_cell_html(r.n, links.query_url(d.query_rel, r.n)),
-                r.status(),
+                query_cell_html(&r.query, links.query_url(d.query_rel, &stem)),
+                r.ftc_cell(),
+                state_glyph(r.state("partitioned_cpu")),
+                state_glyph(r.state("full_table_gpu")),
+                state_glyph(r.state("partitioned_gpu")),
                 peacock_cell_html(r.peacockdb, plan_url, cost_url),
                 cost_cell_html(r.duckdb, dk_url),
                 ratio_or_dash(r.ratio()),
+                features_html(&r.features),
+                tickets_html(&r.tickets, &links.repo),
             );
         }
         s.push_str("</table>");
@@ -525,15 +727,17 @@ fn render_markdown(datasets: &[Dataset], pages_url: &str, published: bool, links
         let _ = write!(
             s,
             "<details><summary>{} — {}/{} operational</summary>\n\n\
-             | Query | Status | PeacockDB Σout | DuckDB Σout | Ratio |\n|---|---|---:|---:|---:|\n",
+             | Query | ft_cpu | p_cpu | ft_gpu | p_gpu | PeacockDB Σout | DuckDB Σout | Ratio | Features | Tickets |\n\
+             |---|---|---|---|---|---:|---:|---:|---|---|\n",
             d.label,
             d.operational(),
             d.total
         );
         for r in &d.rows {
-            let plan_url = r.peacockdb.and_then(|_| links.golden_url(d.canon_rel, r.n, &format!("{CPU_DEVICE}.cpu.txt")));
-            let cost_url = r.peacockdb.and_then(|_| links.golden_url(d.canon_rel, r.n, &format!("{CPU_DEVICE}.cost.txt")));
-            let dk_url = r.duckdb.and_then(|_| links.golden_url(d.canon_rel, r.n, "duckdb_cost.txt"));
+            let stem = r.stem();
+            let plan_url = r.peacockdb.and_then(|_| links.golden_url(d.canon_rel, &stem, &format!("{CPU_DEVICE}.cpu.txt")));
+            let cost_url = r.peacockdb.and_then(|_| links.golden_url(d.canon_rel, &stem, &format!("{CPU_DEVICE}.cost.txt")));
+            let dk_url = r.duckdb.and_then(|_| links.golden_url(d.canon_rel, &stem, "duckdb_cost.txt"));
             // Markdown can't set a row background, so flag the >threshold rows
             // with 🔴 — the comment-side equivalent of the HTML light-red row.
             let ratio_cell = match r.bucket() {
@@ -542,12 +746,17 @@ fn render_markdown(datasets: &[Dataset], pages_url: &str, published: bool, links
             };
             let _ = write!(
                 s,
-                "| {} | {} | {} | {} | {} |\n",
-                query_cell_md(r.n, links.query_url(d.query_rel, r.n)),
-                r.status(),
+                "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+                query_cell_md(&r.query, links.query_url(d.query_rel, &stem)),
+                r.ftc_cell(),
+                state_glyph(r.state("partitioned_cpu")),
+                state_glyph(r.state("full_table_gpu")),
+                state_glyph(r.state("partitioned_gpu")),
                 peacock_cell_md(r.peacockdb, plan_url, cost_url),
                 cost_cell_md(r.duckdb, dk_url),
                 ratio_cell,
+                if r.features.is_empty() { "—".to_string() } else { r.features.join(" ") },
+                tickets_md(&r.tickets, &links.repo),
             );
         }
         s.push_str("\n</details>\n\n");
@@ -704,7 +913,7 @@ fn diff_query_url(links: &Links, label: &str) -> Option<String> {
     let (dataset, query) = label.split_once('/')?;
     let bench = dataset.split('.').next()?; // "tpch.sf1" -> "tpch"
     let n: u32 = query.strip_prefix('q')?.parse().ok()?;
-    links.query_url(&format!("testdata/{bench}-queries"), n)
+    links.query_url(&format!("testdata/{bench}-queries"), &format!("q{n}"))
 }
 
 fn diff_query_cell_html(links: &Links, label: &str) -> String {
@@ -885,24 +1094,80 @@ fn run_cost_diff(testdata: &Path, base: &str, html_out: &str, md_out: &str, link
 mod tests {
     use super::*;
 
+    /// Build a Row for tests. `modes` maps each mode column to its state; anything
+    /// unlisted defaults to "na". Keeps the tests readable now that a Row carries
+    /// five mode cells plus features and tickets.
+    fn test_row(query: &str, modes: &[(&str, &str)], peacockdb: Option<u64>, duckdb: Option<u64>) -> Row {
+        let mut states = BTreeMap::new();
+        for m in MODE_COLUMNS {
+            states.insert(m.to_string(), "na".to_string());
+        }
+        for (k, v) in modes {
+            states.insert(k.to_string(), v.to_string());
+        }
+        Row {
+            query: query.to_string(),
+            n: query.strip_prefix('q').and_then(|d| d.parse::<u32>().ok()),
+            states,
+            features: vec![],
+            tickets: vec![],
+            peacockdb,
+            duckdb,
+        }
+    }
+
+    // `operational_set_honors_comment_convention` is GONE with the function it
+    // tested. Coverage no longer comes from parsing test_gpu.rs for uncommented
+    // macro lines — it comes from testdata/cost-registry.csv, which peacockdb-core's
+    // registry tests check against the suite's link-time inventory in both
+    // directions. That is a strictly stronger guarantee than the comment convention:
+    // the scrape could only ever see one file and could not notice a query whose
+    // test had been deleted outright.
+
+    /// The glyph mapping is the whole visual contract of the widget, so pin it.
+    /// `skip` must NOT collapse into ✓ or ✗ — it means "ran, result unvalidated",
+    /// which is exactly the state a reader must be able to distinguish from a
+    /// verified pass.
     #[test]
-    fn operational_set_honors_comment_convention() {
-        let src = "\
-gpu_test!(tpch, 1, q1, tp1_standard, golden_exact);
-gpu_test!(tpch, 1, q11, tp1_standard, oracle);
-gpu_test!(tpch, 1, scan_limit, tp1_standard, golden_exact);
-// gpu_test!(tpch, 1, q9, tp1_standard, golden_exact);
-gpu_test!(tpcds, 1, q5, tp1_standard, golden_exact);
-//gpu_test!(tpcds, 1, q28, tp1_standard, golden_exact);
-";
-        let tpch = operational_set(src, "tpch");
-        let tpcds = operational_set(src, "tpcds");
-        assert!(tpch.contains(&1) && tpch.contains(&11));
-        assert!(!tpch.contains(&9)); // commented out
-        assert_eq!(tpch.len(), 2); // q1/q11 only; scan_limit (non-qN) not counted
-        assert!(tpcds.contains(&5));
-        assert!(!tpcds.contains(&28)); // commented (no space after //)
-        assert_eq!(tpcds.len(), 1);
+    fn state_glyphs_are_distinct_and_total() {
+        assert_eq!(state_glyph("enabled"), "✓");
+        assert_eq!(state_glyph("skip"), "~");
+        assert_eq!(state_glyph("disabled"), "✗");
+        assert_eq!(state_glyph("na"), "—");
+        // Anything unrecognized renders as na rather than panicking mid-report...
+        assert_eq!(state_glyph("bogus"), "—");
+        // ...but the four real states must all differ.
+        let g: Vec<&str> = ["enabled", "skip", "disabled", "na"].iter().map(|s| state_glyph(s)).collect();
+        let uniq: BTreeSet<&&str> = g.iter().collect();
+        assert_eq!(uniq.len(), 4, "glyphs collide: {g:?}");
+    }
+
+    #[test]
+    fn ticket_and_feature_cells_render_links_and_dashes() {
+        assert_eq!(tickets_html(&[], "o/r"), "—");
+        assert_eq!(features_html(&[]), "—");
+        let t = tickets_html(&["103".to_string()], "asymptote-tech/peacockdb");
+        assert!(t.contains("https://github.com/asymptote-tech/peacockdb/issues/103"), "{t}");
+        assert!(t.contains("#103"), "{t}");
+        assert!(features_html(&["stddev_var".to_string()]).contains("stddev_var"));
+    }
+
+    /// full_table_cpu is ONE column showing both target-partition counts.
+    #[test]
+    fn ftc_cell_shows_the_tp_split() {
+        let mut states = BTreeMap::new();
+        states.insert("ftc_tp1".to_string(), "enabled".to_string());
+        states.insert("ftc_tp8".to_string(), "disabled".to_string());
+        let r = Row {
+            query: "q1".into(),
+            n: Some(1),
+            states,
+            features: vec![],
+            tickets: vec![],
+            peacockdb: None,
+            duckdb: None,
+        };
+        assert_eq!(r.ftc_cell(), "tp1✓ tp8✗");
     }
 
     #[test]
@@ -954,7 +1219,12 @@ gpu_test!(tpcds, 1, q5, tp1_standard, golden_exact);
 
     #[test]
     fn bucket_threshold_is_1_4() {
-        let row = |p: u64, d: u64, op: bool| Row { n: 1, operational: op, peacockdb: Some(p), duckdb: Some(d) };
+        let row = |p: u64, d: u64, op: bool| test_row(
+            "q1",
+            &[("full_table_gpu", if op { "enabled" } else { "na" })],
+            Some(p),
+            Some(d),
+        );
         assert_eq!(row(14, 10, true).bucket(), "green"); // ratio 1.4 → green (≤)
         assert_eq!(row(141, 100, true).bucket(), "red"); // ratio 1.41 → red
         assert_eq!(row(14, 10, false).bucket(), "grey"); // not operational → grey
@@ -1059,15 +1329,20 @@ gpu_test!(tpcds, 1, q5, tp1_standard, golden_exact);
     fn query_url_links_only_with_sha() {
         let links = Links { repo: "o/r".into(), sha: Some("abc123".into()) };
         assert_eq!(
-            links.query_url("testdata/tpch-queries", 6),
+            links.query_url("testdata/tpch-queries", "q6"),
             Some("https://github.com/o/r/blob/abc123/testdata/tpch-queries/q6.sql".to_string())
         );
         assert_eq!(
-            links.query_url("testdata/tpcds-queries", 14),
+            links.query_url("testdata/tpcds-queries", "q14"),
             Some("https://github.com/o/r/blob/abc123/testdata/tpcds-queries/q14.sql".to_string())
         );
+        // Synthetic micro-queries link the same way, via their hyphenated stem.
+        assert_eq!(
+            links.query_url("testdata/tpch-queries", "scan-limit"),
+            Some("https://github.com/o/r/blob/abc123/testdata/tpch-queries/scan-limit.sql".to_string())
+        );
         // no sha (dry run) → no link.
-        assert_eq!(no_links().query_url("testdata/tpch-queries", 1), None);
+        assert_eq!(no_links().query_url("testdata/tpch-queries", "q1"), None);
     }
 
     fn one_row_dataset() -> Dataset {
@@ -1076,7 +1351,7 @@ gpu_test!(tpcds, 1, q5, tp1_standard, golden_exact);
             total: 1,
             canon_rel: "testdata/goldens/tpch.sf1",
             query_rel: "testdata/tpch-queries",
-            rows: vec![Row { n: 1, operational: true, peacockdb: Some(100), duckdb: Some(100) }],
+            rows: vec![test_row("q1", &[("full_table_gpu", "enabled")], Some(100), Some(100))],
         }
     }
 

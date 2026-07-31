@@ -216,3 +216,21 @@ gpu_test!(tpcds, 1, q96, tp1_standard, golden_exact);
 gpu_test!(tpcds, 1, q97, tp1_standard, golden_exact);
 gpu_test!(tpcds, 1, q98, tp1_standard, oracle);             // >256KB result
 gpu_test!(tpcds, 1, q99, tp1_standard, golden_exact);
+
+// ── registry verification (Inc5) ──────────────────────────────────────────
+/// Owns `full_table_gpu` + `partitioned_gpu`, and enforces the cross-mode golden
+/// invariant (an enabled GPU mode needs its same-device `.cpu.txt`). Both are
+/// cfg'd off under rust-only, where gpu_test! emits neither test nor registration —
+/// an uncfg'd reverse check would then see an empty inventory and fail spuriously.
+#[cfg(not(feature = "rust-only"))]
+#[test]
+fn registry_matches_csv_gpu_columns() {
+    common::registry::assert_registry_matches_csv(&["full_table_gpu", "partitioned_gpu"], &[]);
+}
+
+// NOTE: the cross-mode golden invariant deliberately does NOT live here. It reads
+// only the CSV and the goldens on disk — no GPU, no inventory — so gating it behind
+// this binary's `not(rust-only)` build would mean it could only ever fail on a host
+// that has a GPU toolchain. That is the same "guard that cannot go red where it
+// matters" hole test_ci_coverage exists to close. It runs in the CPU tier instead,
+// in test_query_plan.rs.

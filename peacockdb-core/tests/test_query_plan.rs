@@ -156,3 +156,22 @@ query_plan_test!(tpcds, 1, q99, tp8_mini);
 // query_plan_test!(tpcds, 1, q72, tp8_mini);
 // q86: DataFusion 45 doesn't physical-plan the GROUPING() aggregate.
 // query_plan_test!(tpcds, 1, q86, tp8_mini);
+
+// ── registry verification (Inc5) ──────────────────────────────────────────
+/// This binary owns the `plan` column of testdata/cost-registry.csv. `inventory`
+/// collects per binary, so each suite verifies its own columns; together the four
+/// suites cover all six. See common/registry.rs.
+#[test]
+fn registry_matches_csv_plan_column() {
+    common::registry::assert_registry_matches_csv(&["plan"], &[]);
+}
+
+/// The cross-mode golden invariant: a GPU mode marked `enabled` in the CSV requires
+/// its same-device `.cpu.txt` golden, which the GPU test asserts per-node rows+cost
+/// against. It lives HERE, in the CPU tier, rather than in test_gpu.rs: it inspects
+/// only committed files, so putting it behind the GPU build would make it unable to
+/// fail on the CPU tiers where most CI runs happen.
+#[test]
+fn registry_cross_mode_golden_invariant() {
+    common::registry::assert_cross_mode_golden_invariant();
+}

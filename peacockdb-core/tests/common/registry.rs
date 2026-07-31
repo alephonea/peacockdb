@@ -1,0 +1,389 @@
+//! Test registry: the link-time inventory behind `testdata/cost-registry.csv`.
+//!
+//! Every unified test macro submits one [`RegistryEntry`] at its invocation site, so
+//! the cost widget's CSV can be checked against what the suite ACTUALLY declares
+//! rather than against a textual scrape of `test_gpu.rs` (which could only ever see
+//! one file, and only by parsing comments).
+//!
+//! # Why this is verified per test binary
+//!
+//! `inventory` collects per LINKED BINARY. The macro invocations are spread across
+//! four integration-test binaries (test_query_plan, test_cpu_h200, test_cpu_executor,
+//! test_gpu), so no single test can see all registrations — a "one test checks
+//! everything" design is simply not available here. Instead each binary asserts the
+//! CSV columns IT owns, in both directions, and together they cover every column.
+//! [`assert_registry_matches_csv`] takes those owned columns explicitly rather than
+//! inferring them: inferring "columns this binary registered something for" would
+//! silently pass a binary whose entire column vanished.
+//!
+//! # States
+//!
+//! A cell is `enabled | skip | disabled | na`. Only `enabled` and `skip` produce a
+//! test (and therefore a registration); `disabled` (commented-out invocation) and
+//! `na` (mode never applied to this query) must be ABSENT from the inventory. That
+//! asymmetry is what makes the reverse direction meaningful.
+
+use std::collections::{BTreeMap, BTreeSet};
+
+/// One test-macro invocation, submitted at the invocation site.
+///
+/// `kind` + `device` determine the CSV column (see [`column_for`]); keeping them
+/// separate rather than baking the column name into each macro means the mapping
+/// lives in exactly one place and can be unit-tested.
+#[derive(Debug)]
+pub struct RegistryEntry {
+    /// "plan" | "ftc" | "node13" | "gpu"
+    pub kind: &'static str,
+    pub dataset: &'static str,
+    pub sf: &'static str,
+    /// Underscore form, as written in the macro (`shuffle_stddev`, `q12`).
+    pub query: &'static str,
+    /// Underscore form (`tp8_mini`, `tp1_standard`).
+    pub device: &'static str,
+    /// "enabled" | "skip"
+    pub state: &'static str,
+}
+
+inventory::collect!(RegistryEntry);
+
+/// The CSV's per-mode columns, in file order.
+pub const COLUMNS: [&str; 6] = [
+    "plan",
+    "ftc_tp1",
+    "ftc_tp8",
+    "partitioned_cpu",
+    "full_table_gpu",
+    "partitioned_gpu",
+];
+
+/// Map a registration to its CSV column.
+///
+/// full_table_cpu is split by target-partition count (tp1 vs tp8) because the two
+/// exercise materially different paths; the memory tier (mini/standard) does not
+/// affect which column a run belongs to — e.g. `scan_limit` is registered at
+/// tp1_mini while every other tp1 row is tp1_standard, and both are `ftc_tp1`.
+pub fn column_for(kind: &str, device: &str) -> Option<&'static str> {
+    let tp1 = device.starts_with("tp1");
+    match kind {
+        "plan" => Some("plan"),
+        "node13" => Some("partitioned_cpu"),
+        "ftc" => Some(if tp1 { "ftc_tp1" } else { "ftc_tp8" }),
+        "gpu" => Some(if tp1 { "full_table_gpu" } else { "partitioned_gpu" }),
+        _ => None,
+    }
+}
+
+/// A parsed CSV row.
+#[derive(Debug, Clone)]
+pub struct CsvRow {
+    pub dataset: String,
+    pub sf: String,
+    pub query: String,
+    /// column -> state
+    pub states: BTreeMap<String, String>,
+    pub features: Vec<String>,
+    pub tickets: Vec<String>,
+}
+
+/// The 14 hand-assigned feature codes. Not derived from SQL and not asserted
+/// against it — but the SET is closed, so a typo'd code fails rather than silently
+/// creating a new one-off category that renders as an unknown chip in the widget.
+pub const FEATURE_CODES: [&str; 14] = [
+    "window_functions",
+    "rollup",
+    "grouping_sets",
+    "anti_join",
+    "semi_join",
+    "cross_join",
+    "nested_loop_join",
+    "correlated_subquery",
+    "stddev_var",
+    "avg",
+    "count_distinct",
+    "string_like",
+    "top_n",
+    "outer_join",
+];
+
+pub fn registry_csv_path() -> std::path::PathBuf {
+    super::testdata_root().join("cost-registry.csv")
+}
+
+/// Parse the committed registry CSV. Panics with a precise message on malformed
+/// input — this is a committed fixture, so a parse failure is a bug to fix, not a
+/// condition to tolerate.
+pub fn load_csv() -> Vec<CsvRow> {
+    let path = registry_csv_path();
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+    let mut lines = text.lines();
+    let header: Vec<&str> = lines.next().expect("registry CSV is empty").split(',').collect();
+    let expect: Vec<&str> = ["dataset", "sf", "query"]
+        .into_iter()
+        .chain(COLUMNS)
+        .chain(["features", "tickets"])
+        .collect();
+    assert_eq!(header, expect, "registry CSV header changed; update COLUMNS to match");
+
+    let mut rows = Vec::new();
+    for (i, line) in lines.enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let f: Vec<&str> = line.split(',').collect();
+        assert_eq!(
+            f.len(),
+            expect.len(),
+            "{}:{}: expected {} fields, got {}: {line}",
+            path.display(),
+            i + 2,
+            expect.len(),
+            f.len()
+        );
+        let mut states = BTreeMap::new();
+        for (c, col) in COLUMNS.iter().enumerate() {
+            let s = f[3 + c];
+            assert!(
+                matches!(s, "enabled" | "skip" | "disabled" | "na"),
+                "{}:{}: column {col} has invalid state {s:?} (expected enabled|skip|disabled|na)",
+                path.display(),
+                i + 2
+            );
+            states.insert(col.to_string(), s.to_string());
+        }
+        let features: Vec<String> =
+            f[9].split_whitespace().map(str::to_string).collect();
+        for feat in &features {
+            assert!(
+                FEATURE_CODES.contains(&feat.as_str()),
+                "{}:{}: unknown feature code {feat:?} — must be one of {FEATURE_CODES:?}",
+                path.display(),
+                i + 2
+            );
+        }
+        let tickets: Vec<String> = f[10].split_whitespace().map(str::to_string).collect();
+        for t in &tickets {
+            assert!(
+                t.chars().all(|c| c.is_ascii_digit()),
+                "{}:{}: ticket {t:?} is not a bare issue number",
+                path.display(),
+                i + 2
+            );
+        }
+        rows.push(CsvRow {
+            dataset: f[0].to_string(),
+            sf: f[1].to_string(),
+            query: f[2].to_string(),
+            states,
+            features,
+            tickets,
+        });
+    }
+    assert!(!rows.is_empty(), "registry CSV has no rows");
+    rows
+}
+
+/// Assert this binary's inventory agrees with the CSV, in BOTH directions, for the
+/// columns this binary owns.
+///
+/// Forward: every registration must match its CSV cell (a test that exists but is
+/// recorded `disabled`/`na` fails). Reverse: every CSV cell marked `enabled`/`skip`
+/// in an owned column must have a registration (a CSV row with no backing test
+/// fails). Without the reverse direction the CSV could claim coverage that no test
+/// provides — which is the exact failure mode this registry replaces.
+/// `elsewhere` lists cells `(dataset, sf, query, column)` that belong to an owned
+/// column but are registered in a DIFFERENT test binary, so the reverse direction
+/// must not demand them here.
+///
+/// This exists because one column really is split: `ftc_tp1` is 110 invocations in
+/// test_cpu_h200.rs (tp1-standard) plus `scan_limit` at tp1-mini in
+/// test_cpu_executor.rs. Listing the exceptions explicitly — rather than weakening
+/// the reverse check to "only verify what this binary happens to register" — keeps
+/// the check meaningful: a whole column going missing still fails.
+pub fn assert_registry_matches_csv(owned_columns: &[&str], elsewhere: &[(&str, &str, &str, &str)]) {
+    for c in owned_columns {
+        assert!(COLUMNS.contains(c), "unknown column {c:?}");
+    }
+    let rows = load_csv();
+    let csv: BTreeMap<(String, String, String), &CsvRow> = rows
+        .iter()
+        .map(|r| ((r.dataset.clone(), r.sf.clone(), r.query.clone()), r))
+        .collect();
+
+    let mut problems: Vec<String> = Vec::new();
+    let mut registered: BTreeSet<(String, String, String, String)> = BTreeSet::new();
+
+    // --- forward: inventory -> CSV
+    for e in inventory::iter::<RegistryEntry> {
+        let Some(col) = column_for(e.kind, e.device) else {
+            problems.push(format!(
+                "registration with unmappable kind/device: {}/{}",
+                e.kind, e.device
+            ));
+            continue;
+        };
+        let key = (e.dataset.to_string(), e.sf.to_string(), e.query.to_string());
+        // The FORWARD check applies to every registration this binary can see, even
+        // for a column another binary owns the reverse check for: if a test exists,
+        // its CSV cell must describe it correctly, full stop. Only the reverse
+        // direction is ownership-scoped (this binary cannot know whether a cell it
+        // does not own is backed by a test somewhere else).
+        if owned_columns.contains(&col) {
+            registered.insert((key.0.clone(), key.1.clone(), key.2.clone(), col.to_string()));
+        }
+        match csv.get(&key) {
+            None => problems.push(format!(
+                "test exists but NO CSV row: {} sf{} {} [{col}] — add the row to {}",
+                e.dataset,
+                e.sf,
+                e.query,
+                registry_csv_path().display()
+            )),
+            Some(row) => {
+                let got = row.states.get(col).map(String::as_str).unwrap_or("na");
+                if got != e.state {
+                    problems.push(format!(
+                        "state mismatch: {} sf{} {} [{col}] — test says {:?}, CSV says {got:?}",
+                        e.dataset, e.sf, e.query, e.state
+                    ));
+                }
+            }
+        }
+    }
+
+    // --- reverse: CSV -> inventory
+    for row in &rows {
+        for col in owned_columns {
+            let state = row.states.get(*col).map(String::as_str).unwrap_or("na");
+            if state != "enabled" && state != "skip" {
+                continue;
+            }
+            let key = (
+                row.dataset.clone(),
+                row.sf.clone(),
+                row.query.clone(),
+                col.to_string(),
+            );
+            if registered.contains(&key) {
+                continue;
+            }
+            if elsewhere.iter().any(|(d, s, q, c)| {
+                *d == row.dataset && *s == row.sf && *q == row.query && *c == *col
+            }) {
+                continue; // registered by another test binary
+            }
+            problems.push(format!(
+                "CSV claims {state:?} but NO test registers it: {} sf{} {} [{col}] — \
+                 either add the test or set the cell to disabled/na",
+                row.dataset, row.sf, row.query
+            ));
+        }
+    }
+
+    // Keep `elsewhere` honest: an entry naming a cell that is NOT enabled/skip, or
+    // that this binary actually does register, is stale and would mask a real gap.
+    for (d, s, q, c) in elsewhere {
+        let key = (d.to_string(), s.to_string(), q.to_string());
+        let Some(row) = csv.get(&key) else {
+            problems.push(format!("`elsewhere` names a query with no CSV row: {d} sf{s} {q}"));
+            continue;
+        };
+        let state = row.states.get(*c).map(String::as_str).unwrap_or("na");
+        if state != "enabled" && state != "skip" {
+            problems.push(format!(
+                "stale `elsewhere` entry: {d} sf{s} {q} [{c}] is {state:?}, so the reverse \
+                 check would not demand it anyway — remove it"
+            ));
+        }
+        if registered.contains(&(d.to_string(), s.to_string(), q.to_string(), c.to_string())) {
+            problems.push(format!(
+                "stale `elsewhere` entry: {d} sf{s} {q} [{c}] IS registered in this binary"
+            ));
+        }
+    }
+
+    assert!(
+        problems.is_empty(),
+        "registry/CSV disagreement ({} problem(s)):\n{}",
+        problems.len(),
+        problems.join("\n")
+    );
+}
+
+/// Queries exempt from the cross-mode golden invariant, with the reason.
+///
+/// Keep this list SHORT and ticketed. An entry here means a GPU mode is enabled
+/// without the matching CPU golden, which the invariant otherwise forbids.
+/// DELIBERATELY EMPTY. The mechanism exists (and is staleness-checked below) so a
+/// real exemption can be added honestly, but nothing needs one today.
+///
+/// In particular tpch/shuffle_stddev — the #103 flaky case — does NOT need one, on
+/// two independent counts: its `partitioned_gpu` cell is `disabled`, and this
+/// invariant only inspects `enabled` cells; and its tp8-standard `.cpu.txt` golden
+/// exists anyway, so the check would pass even if the cell were re-enabled. Adding
+/// an exemption for it would be dead config that silently pre-excuses a future
+/// regression on that query — the same trap as a stale INTENTIONALLY_NOT_IN_CI
+/// entry. If #103 is fixed by re-enabling the cell, nothing here needs to change.
+const GOLDEN_INVARIANT_EXEMPT: &[(&str, &str, &str, &str)] = &[];
+
+/// Cross-mode golden invariant: a GPU mode marked `enabled` needs the SAME-DEVICE
+/// CPU golden to exist, because the GPU test asserts per-node rows+cost against
+/// that `.cpu.txt`. Without it the GPU test would silently have nothing to compare
+/// against — green while verifying only the final result.
+pub fn assert_cross_mode_golden_invariant() {
+    let rows = load_csv();
+    let mut problems: Vec<String> = Vec::new();
+
+    for row in &rows {
+        for (col, device) in [
+            ("full_table_gpu", "tp1-standard"),
+            ("partitioned_gpu", "tp8-standard"),
+        ] {
+            if row.states.get(col).map(String::as_str) != Some("enabled") {
+                continue;
+            }
+            if GOLDEN_INVARIANT_EXEMPT.iter().any(|(d, s, q, _)| {
+                *d == row.dataset && *s == row.sf && *q == row.query
+            }) {
+                continue;
+            }
+            let query = row.query.replace('_', "-");
+            let golden = super::testdata_root()
+                .join(format!("goldens/{}.sf{}", row.dataset, row.sf))
+                .join(format!("{query}.{device}.cpu.txt"));
+            if !golden.exists() {
+                problems.push(format!(
+                    "{} sf{} {} [{col}] is enabled but its same-device CPU golden is missing: {}",
+                    row.dataset,
+                    row.sf,
+                    row.query,
+                    golden.display()
+                ));
+            }
+        }
+    }
+
+    assert!(
+        problems.is_empty(),
+        "cross-mode golden invariant violated ({} case(s)):\n{}",
+        problems.len(),
+        problems.join("\n")
+    );
+
+    // Keep the exemption list honest: a stale entry would silently excuse a future
+    // regression on the same query (same trap as INTENTIONALLY_NOT_IN_CI).
+    for (d, s, q, why) in GOLDEN_INVARIANT_EXEMPT {
+        let row = rows
+            .iter()
+            .find(|r| r.dataset == *d && r.sf == *s && r.query == *q)
+            .unwrap_or_else(|| panic!("exemption names a query with no CSV row: {d} sf{s} {q}"));
+        let still_needed = ["full_table_gpu", "partitioned_gpu"].iter().any(|col| {
+            row.states.get(*col).map(String::as_str) == Some("enabled")
+        });
+        assert!(
+            still_needed,
+            "stale exemption: {d} sf{s} {q} has no enabled GPU mode, so the invariant \
+             would not fire for it anyway — remove it ({why})"
+        );
+    }
+}

@@ -25,7 +25,11 @@ const INTENTIONALLY_NOT_IN_CI: &[(&str, &str)] = &[
     ("test_gpu", "GPU host only — run by the gpu-tests job from a prebuilt binary, not via cargo"),
     ("test_inc2_conformance", "GPU host only — same as test_gpu"),
     ("test_gpu_executor_misc", "needs the linked C++/CUDA executor; not built in the CPU tiers"),
-    ("test_cpu_h200", "H200-device goldens; exercised on the GPU host, not in the CPU tiers"),
+    // test_cpu_h200 is NOT exempt. It was, with the reason "H200-device goldens;
+    // exercised on the GPU host, not in the CPU tiers" — which was factually wrong:
+    // it needs no GPU and runs in ~25s. It also owns the REVERSE half of the
+    // cost-registry check for the ftc_tp1 column, so leaving it out of CI meant a
+    // CSV row could claim coverage no test provided. Now wired into the CPU tier.
     ("test_ci_coverage", "this test"),
 ];
 

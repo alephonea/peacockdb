@@ -161,6 +161,12 @@ if [ "$RSYNC" -eq 1 ]; then
   # exact mirror so removed/renamed goldens don't linger. (Cheap: goldens are small.)
   ssh shad-gpu "mkdir -p /home/info/peacockdb/testdata/goldens"
   resilient_rsync -r --delete testdata/goldens/ shad-gpu:/home/info/peacockdb/testdata/goldens/
+  # The cost-registry CSV is a committed fixture the registry tests READ (they assert
+  # it against the suite's link-time inventory). Goldens alone are not enough: without
+  # this the registry test fails on "cannot read cost-registry.csv" — a
+  # mis-provisioned run, not a product fault. Same trap as the goldens that
+  # build-test.sh's --rust-only mode used to skip.
+  resilient_rsync -a testdata/cost-registry.csv shad-gpu:/home/info/peacockdb/testdata/
   # Ship our setup-glibc.sh (with patch_rust_dir) so --patch uses the
   # version that knows about cpp/install/rust-tests/.
   ssh shad-gpu "mkdir -p /home/info/peacockdb/scripts"

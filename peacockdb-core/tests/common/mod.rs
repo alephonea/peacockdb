@@ -7,6 +7,7 @@
 #![allow(dead_code)]
 
 pub mod cost_model;
+pub mod registry;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -1107,11 +1108,48 @@ pub async fn assert_gpu_query(
 }
 
 // --- unified test macros ----------------------------------------------------
+/// Submit one [`common::registry::RegistryEntry`] for a test-macro invocation.
+///
+/// Called by every unified macro below, so the registry records what the suite
+/// actually declares. `inventory` collects per linked binary, which is why the
+/// verify step is per-binary — see `common/registry.rs`.
+#[macro_export]
+macro_rules! register_test {
+    ($kind:literal, $dataset:ident, $sf:literal, $query:ident, $device:ident, $state:expr) => {
+        ::inventory::submit! {
+            $crate::common::registry::RegistryEntry {
+                kind: $kind,
+                dataset: stringify!($dataset),
+                sf: stringify!($sf),
+                query: stringify!($query),
+                device: stringify!($device),
+                state: $state,
+            }
+        }
+    };
+}
+
+/// Map a `gpu_test!` mode keyword to its registry state, at COMPILE time.
+///
+/// `skip` means the GPU runs but its result is not validated (`~` in the widget);
+/// every other mode validates and counts as `enabled`. Two macro arms rather than a
+/// runtime match, because `inventory::submit!` needs a const field.
+#[macro_export]
+macro_rules! gpu_mode_state {
+    (skip) => {
+        "skip"
+    };
+    ($other:ident) => {
+        "enabled"
+    };
+}
+
 /// `query_plan_test!(dataset, sf, query, device)` — all idents/literals; the fn
 /// name is derived via paste!, hyphenated path parts come from `_` -> `-`.
 #[macro_export]
 macro_rules! query_plan_test {
     ($dataset:ident, $sf:literal, $query:ident, $device:ident) => {
+        $crate::register_test!("plan", $dataset, $sf, $query, $device, "enabled");
         paste::paste! {
             #[tokio::test]
             async fn [<plan_ $dataset _sf $sf _ $query _ $device>]() {
@@ -1135,6 +1173,7 @@ macro_rules! query_plan_test {
 #[macro_export]
 macro_rules! cpu_result_test {
     ($dataset:ident, $sf:literal, $query:ident, $device:ident, $gen:literal) => {
+        $crate::register_test!("ftc", $dataset, $sf, $query, $device, "enabled");
         paste::paste! {
             #[tokio::test]
             async fn [<cpu_ $dataset _sf $sf _ $query _ $device>]() {
@@ -1162,6 +1201,7 @@ macro_rules! cpu_result_test {
 #[macro_export]
 macro_rules! cpu_node13_result_test {
     ($dataset:ident, $sf:literal, $query:ident, $device:ident, $gen:literal) => {
+        $crate::register_test!("node13", $dataset, $sf, $query, $device, "enabled");
         paste::paste! {
             #[tokio::test]
             async fn [<cpu_ $dataset _sf $sf _ $query _ $device>]() {
@@ -1188,6 +1228,7 @@ macro_rules! cpu_node13_result_test {
 #[macro_export]
 macro_rules! cpu_result_approx_test {
     ($dataset:ident, $sf:literal, $query:ident, $device:ident, $gen:literal) => {
+        $crate::register_test!("ftc", $dataset, $sf, $query, $device, "enabled");
         paste::paste! {
             #[tokio::test]
             async fn [<cpu_ $dataset _sf $sf _ $query _ $device>]() {
@@ -1216,6 +1257,7 @@ macro_rules! cpu_result_approx_test {
 #[macro_export]
 macro_rules! cpu_node13_result_approx_test {
     ($dataset:ident, $sf:literal, $query:ident, $device:ident, $gen:literal) => {
+        $crate::register_test!("node13", $dataset, $sf, $query, $device, "enabled");
         paste::paste! {
             #[tokio::test]
             async fn [<cpu_ $dataset _sf $sf _ $query _ $device>]() {
@@ -1285,6 +1327,9 @@ macro_rules! cpu_result_fits_test {
 #[macro_export]
 macro_rules! gpu_test {
     ($dataset:ident, $sf:literal, $query:ident, $device:ident, $mode:ident) => {
+        #[cfg(not(feature = "rust-only"))]
+        $crate::register_test!("gpu", $dataset, $sf, $query, $device,
+                               $crate::gpu_mode_state!($mode));
         paste::paste! {
             #[cfg(not(feature = "rust-only"))]
             #[tokio::test]
