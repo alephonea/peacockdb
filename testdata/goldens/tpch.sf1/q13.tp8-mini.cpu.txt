@@ -1,0 +1,19 @@
+GpuSortPreservingMergeExec: [custdist@1 DESC, c_count@0 DESC], partitions=1, output_rows=42, output_bytes=684
+  GpuSortExec: expr=[custdist@1 DESC, c_count@0 DESC], partitions=1, output_rows=42, output_bytes=684
+    GpuProjectExec: expr=[c_count@0 as c_count, count(*)@1 as custdist], partitions=1, output_rows=42, output_bytes=684
+      GpuAggregateExec: group_by=[c_count], aggr=[count(*)], partitions=1, output_rows=42, output_bytes=684
+        GpuCoalesceBatchesExec, partitions=1, output_rows=42, output_bytes=684
+          GpuRepartitionExec: partitioning=Hash([c_count@0], 8), input_partitions=8, partitions=1, output_rows=42, output_bytes=684
+            GpuAggregateExec: group_by=[c_count], aggr=[count(*)], partitions=1, output_rows=42, output_bytes=684
+              GpuProjectExec: expr=[count(orders.o_orderkey)@1 as c_count], partitions=1, output_rows=150000, output_bytes=1218750
+                GpuAggregateExec: group_by=[c_custkey], aggr=[count(orders.o_orderkey)], partitions=1, output_rows=150000, output_bytes=2437500
+                  GpuCoalesceBatchesExec, partitions=1, output_rows=1534302, output_bytes=24932408
+                    GpuHashJoinExec: join_type=Left, on=[(c_custkey@0, o_custkey@1)], projection=[0, 1], partitions=1, output_rows=1534302, output_bytes=24932408
+                      GpuCoalesceBatchesExec, partitions=1, output_rows=150000, output_bytes=1218750
+                        GpuRepartitionExec: partitioning=Hash([c_custkey@0], 8), input_partitions=8, partitions=1, output_rows=150000, output_bytes=1218750
+                          GpuScanExec: table=customer, projections=[c_custkey], partitions=1, output_rows=150000, output_bytes=1218750
+                      GpuCoalesceBatchesExec, partitions=1, output_rows=1484298, output_bytes=24119844
+                        GpuRepartitionExec: partitioning=Hash([o_custkey@1], 8), input_partitions=8, partitions=1, output_rows=1484298, output_bytes=24119844
+                          GpuCoalesceBatchesExec, partitions=1, output_rows=1484298, output_bytes=24119844
+                            GpuFilterExec: predicate=o_comment@2 NOT LIKE %special%requests%, projection=[0, 1], partitions=1, output_rows=1484298, output_bytes=24119844
+                              GpuScanExec: table=orders, projections=[o_orderkey, o_custkey, o_comment], partitions=1, output_rows=1500000, output_bytes=103333312

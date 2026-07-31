@@ -1,3 +1,0 @@
-GpuNestedLoopJoinExec: join_type=Inner, filter=n_regionkey@1 > r_regionkey@0, partitions=1, output_rows=50, output_bytes=9041
-  GpuScanExec: table=region, projections=[r_regionkey, r_name, r_comment], batch_size=1789569706, partitions=1, output_rows=5, output_bytes=435
-  GpuScanExec: table=nation, projections=[n_nationkey, n_name, n_regionkey, n_comment], batch_size=1789569706, partitions=1, output_rows=25, output_bytes=2458

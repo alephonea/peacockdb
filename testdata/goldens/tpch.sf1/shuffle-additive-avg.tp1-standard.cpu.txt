@@ -1,0 +1,3 @@
+GpuProjectExec: expr=[l_returnflag@0 as l_returnflag, l_linestatus@1 as l_linestatus, count(*)@2 as cnt, avg(lineitem.l_quantity)@3 as avg_qty, sum(lineitem.l_quantity)@4 as sum_qty], partitions=1, output_rows=4, output_bytes=213
+  GpuAggregateExec: group_by=[l_returnflag, l_linestatus], aggr=[count(*), avg(lineitem.l_quantity), sum(lineitem.l_quantity)], partitions=1, output_rows=4, output_bytes=213
+    GpuScanExec: table=lineitem, projections=[l_quantity, l_returnflag, l_linestatus], partitions=1, output_rows=6001215, output_bytes=158282054

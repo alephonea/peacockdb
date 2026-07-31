@@ -130,7 +130,7 @@ if [ "$BENCH" = "tpch" ]; then
   # row_number() OVER () on the BASE scan and ORDER BY _rn (the ordinal, NOT the key —
   # base order is not assumed key-ascending). This is required because CI-synthetic and
   # verda-external share ONE golden set, and some tp8 goldens are order-SENSITIVE (per-
-  # partition filter counts in q8/q9/q19 .tp8-mem120gib). Without the pin the shared-
+  # partition filter counts in q8/q9/q19 .tp8-standard). Without the pin the shared-
   # golden invariant would hold only by luck.
   CACHE="${SCRIPT_DIR}/embeddings-cache"
   if [ "$EMB_MODE" = external ]; then

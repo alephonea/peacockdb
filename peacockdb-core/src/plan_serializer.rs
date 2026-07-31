@@ -142,7 +142,7 @@ fn serialize_gpu_scan<'a>(
     // budget gate in GpuMemoryBudgetRule decides map presence; map presence alone
     // decides dedup here — no second, divergent notion of "partitioned").
     //
-    // MAP PRESENT (real-partitioning device, e.g. tp8-mem120gib): the peacock model
+    // MAP PRESENT (real-partitioning device, e.g. tp8-standard): the peacock model
     // reads WHOLE row groups from each DISTINCT physical file per the map, not byte
     // ranges. DataFusion splits ONE file into several byte-RANGE PartitionedFile
     // entries (all the same path) at target_partitions>1; collapse them to distinct
@@ -150,7 +150,7 @@ fn serialize_gpu_scan<'a>(
     // row-group vector ("Must specify row groups for each source"). Dedup preserves
     // first-seen order; genuine multi-file scans keep all distinct paths.
     //
-    // NO MAP (tp1, or the tight tp8-mem2gib determinism device): emit EVERY
+    // NO MAP (tp1, or the tight tp8-mini determinism device): emit EVERY
     // PartitionedFile verbatim — byte-identical to the legacy (pre-Inc1)
     // serialization — so the deserialized scan reconstructs the SAME file_group
     // count and the flatbuffer roundtrip's GpuRepartitionExec.input_partitions

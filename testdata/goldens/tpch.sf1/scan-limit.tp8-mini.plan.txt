@@ -1,0 +1,8 @@
+GpuGlobalLimitExec: skip=0, fetch=10
+  GpuCoalescePartitionsExec
+    GpuScanExec: table=lineitem, projections=[l_orderkey, l_partkey, l_suppkey, l_linenumber, l_quantity, l_extendedprice, l_discount, l_tax, l_returnflag, l_linestatus, l_shipdate, l_commitdate, l_receiptdate, l_shipinstruct, l_shipmode, l_comment]
+--- memory ---
+total_estimate_cost=1340
+GpuGlobalLimitExec: row_width=268, subtree_max_row_bytes=268, estimate_input_bytes=268, estimate_output_bytes=268, estimate_cost=536
+  GpuCoalescePartitionsExec: row_width=268, subtree_max_row_bytes=268, estimate_input_bytes=268, estimate_output_bytes=268, estimate_cost=536
+    GpuScanExec: row_width=268, subtree_max_row_bytes=268, estimate_input_bytes=0, estimate_output_bytes=268, estimate_cost=268

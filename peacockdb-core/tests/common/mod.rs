@@ -19,6 +19,7 @@ use datafusion::physical_plan::{DisplayFormatType, ExecutionPlan};
 
 use datafusion::physical_plan::aggregates::{AggregateExec, AggregateMode};
 
+use peacockdb_core::config::{MemoryLimit, TargetPartitions};
 use peacockdb_core::cpu_executor::{execute_node_by_node_instrumented_enforced, NodeMemoryStats};
 use peacockdb_core::gpu_rule::{
     analyze_memory, row_width, GpuAggregateExec, GpuRepartitionExec, GpuScanExec,
@@ -31,14 +32,14 @@ use peacockdb_core::{
 };
 
 /// Per-device default [`PartitionMode`] — the map + Hash-repartition-lowering
-/// discriminator (dmitry, replacing the old 16 GiB budget threshold). tp8-mem120gib
-/// is the real-8-way device; every other label (tp1-*, tp8-mem2gib) is single-
+/// discriminator (dmitry, replacing the old 16 GiB budget threshold). tp8-standard
+/// is the real-8-way device; every other label (tp1-*, tp8-mini) is single-
 /// partition. The enum — NOT the budget — is now the sole discriminator, so a
 /// memory-constrained genuine-8-way device (GitHub #91) would just add its label
 /// here → `RealMultiPartition`, no budget change needed.
 pub fn partition_mode(device: &str) -> PartitionMode {
     match device {
-        "tp8-mem120gib" => PartitionMode::RealMultiPartition,
+        "tp8-standard" => PartitionMode::RealMultiPartition,
         _ => PartitionMode::SinglePartition,
     }
 }
@@ -47,7 +48,7 @@ pub fn partition_mode(device: &str) -> PartitionMode {
 pub const TARGET_PARTITIONS: usize = 8; // plan tests
 pub const TEST_GPU_MEMORY_BUDGET: usize = 2 * 1024 * 1024 * 1024; // 2 GiB
 pub const FULL_BUDGET: usize = 2 * 1024 * 1024 * 1024;
-pub const TIGHT_BUDGET: usize = 10 * 1024;
+pub const BATCH_STRESS_BUDGET: usize = peacockdb_core::config::BATCH_STRESS_BUDGET;
 pub const GPU_BUDGET: usize = 2 * 1024 * 1024 * 1024;
 
 /// Max rendered size for a committed `.result.txt` golden. Above this the golden is
@@ -106,7 +107,7 @@ pub fn testdata_dir() -> PathBuf {
     testdata_root().join("tpch.sf1")
 }
 
-/// Decode a device label like `tp8-mem2gib` into `(target_partitions, budget_bytes)`.
+/// Decode a device label like `tp8-mini` into `(target_partitions, budget_bytes)`.
 /// The device dimension is authoritative: the golden path/name AND the run config
 /// both derive from it, so a mislabeled test (e.g. a cpu test tagged tp8-…) runs the
 /// config it claims rather than silently diverging from its label. (H200 is GPU-only
@@ -114,17 +115,12 @@ pub fn testdata_dir() -> PathBuf {
 pub fn device_config(device: &str) -> (usize, usize) {
     let (tp, mem) = device
         .split_once('-')
-        .unwrap_or_else(|| panic!("device label '{device}' must look like 'tp<N>-mem<N>gib'"));
-    let partitions: usize = tp
-        .strip_prefix("tp")
-        .and_then(|n| n.parse().ok())
+        .unwrap_or_else(|| panic!("device label '{device}' must look like 'tp<N>-<memtier>'"));
+    let partitions = TargetPartitions::from_label(tp)
         .unwrap_or_else(|| panic!("device '{device}': bad partition count in '{tp}'"));
-    let gib: usize = mem
-        .strip_prefix("mem")
-        .and_then(|m| m.strip_suffix("gib"))
-        .and_then(|n| n.parse().ok())
-        .unwrap_or_else(|| panic!("device '{device}': bad budget in '{mem}' (expected mem<N>gib)"));
-    (partitions, gib * 1024 * 1024 * 1024)
+    let budget = MemoryLimit::from_label(mem)
+        .unwrap_or_else(|| panic!("device '{device}': unknown memory tier '{mem}'"));
+    (partitions.hint(), budget.bytes())
 }
 
 pub fn testdata_minimal_dir() -> PathBuf {
@@ -267,7 +263,7 @@ pub fn assert_plan_matches_canonical_at(plan: &Arc<dyn ExecutionPlan>, canonical
 
 /// Synthetic plan tests (programmatic plans) at the plan device (8 part / 2 GiB).
 pub fn assert_plan_matches_canonical(plan: &Arc<dyn ExecutionPlan>, name: &str) {
-    assert_plan_matches_canonical_at(plan, &plan_golden("tpch", "1", name, "tp8-mem2gib"));
+    assert_plan_matches_canonical_at(plan, &plan_golden("tpch", "1", name, "tp8-mini"));
 }
 
 /// Build the GPU physical plan for `<dataset>-queries/<query>.sql` at `device`'s
@@ -329,7 +325,7 @@ pub fn cpu_stats_str(plan: &Arc<dyn ExecutionPlan>, stats: &[NodeMemoryStats]) -
             node.stat.row_count,
             node.stat.output_bytes,
         ));
-        // Per-partition sub-lines only when N>1 (tp1 + tp8-mem2gib stay compact).
+        // Per-partition sub-lines only when N>1 (tp1 + tp8-mini stay compact).
         if node.stat.part_stats.len() > 1 {
             let sub = " ".repeat(indent + 2);
             for (k, ps) in node.stat.part_stats.iter().enumerate() {
@@ -781,9 +777,9 @@ pub async fn assert_cpu_results_match_datafusion(
     let plan = cpu_ctx.sql(&sql).await.unwrap().create_physical_plan().await.unwrap();
 
     // Executor choice is EXPLICIT per-test (`use_node13`), NOT inferred from the plan:
-    // the SAME plan (e.g. q6 at 8 partitions) backs BOTH the tp8-mem2gib golden — the
+    // the SAME plan (e.g. q6 at 8 partitions) backs BOTH the tp8-mini golden — the
     // #11 instrumented-enforced executor, which streams each node single-partition-
-    // coalesced regardless of target_partitions — AND the tp8-mem120gib golden — the
+    // coalesced regardless of target_partitions — AND the tp8-standard golden — the
     // #13 CpuNodeExecutor, which maintains N partitions across nodes (partial-agg =
     // Σ-over-partitions, CoalescePartitions concat N→1), matching the real 8-way GPU.
     // So a plan-only predicate can't tell them apart; only the device/test does.
@@ -821,9 +817,9 @@ pub async fn assert_cpu_results_match_datafusion(
     // GATED on `gen_result_golden`: write the `.result.txt` ONLY when a golden-
     // asserting `gpu_test!` (GoldenExact/GoldenApprox) actually consumes this
     // (query, device). INVARIANT: `gen_result_golden` must be TRUE exactly for the
-    // (query, device) pairs that have such a consumer — TRUE for tp1-mem120gib
-    // golden_exact/approx + the tp8-mem120gib real-partitioning goldens (q6,
-    // shuffle_additive); FALSE for tp8-mem2gib (no gpu_test! consumer) and for
+    // (query, device) pairs that have such a consumer — TRUE for tp1-standard
+    // golden_exact/approx + the tp8-standard real-partitioning goldens (q6,
+    // shuffle_additive); FALSE for tp8-mini (no gpu_test! consumer) and for
     // oracle-mode queries (>256KB result → GPU uses the live oracle, no golden).
     // false-when-should-be-true = missing golden = the GPU test fails loud (safe);
     // true-when-should-be-false = an orphan golden written but never read (the
@@ -968,7 +964,7 @@ pub async fn assert_gpu_results_match_cpu(data_dir: &Path, queries_dir: &Path, n
 /// node-executor interface and assert its per-node stats (exact row counts + the
 /// rows+schema-derived cost) match the CPU-emulated `.cpu.txt` golden for `device`.
 /// The golden is produced by the CPU path; this just compares the GPU run against
-/// it (never UPDATE_CANONICAL from GPU). Use the H200/tp1 device (tp1-mem120gib):
+/// it (never UPDATE_CANONICAL from GPU). Use the H200/tp1 device (tp1-standard):
 /// at tp1 the plan is single-partition, so GPU and CPU emulation share node
 /// structure + row counts exactly (no partial-aggregate divergence).
 #[cfg(not(feature = "rust-only"))]
@@ -1132,7 +1128,7 @@ macro_rules! query_plan_test {
 /// compare, #11 (instrumented-enforced, single-partition-coalesced) executor.
 /// `gen_result_golden` (bool literal): write the `.result.txt` golden under
 /// UPDATE_CANONICAL only when a golden-asserting `gpu_test!` consumes it (TRUE for
-/// tp1-mem120gib golden_exact; FALSE for tp8-mem2gib and oracle-mode).
+/// tp1-standard golden_exact; FALSE for tp8-mini and oracle-mode).
 #[macro_export]
 macro_rules! cpu_result_test {
     ($dataset:ident, $sf:literal, $query:ident, $device:ident, $gen:literal) => {
@@ -1158,8 +1154,8 @@ macro_rules! cpu_result_test {
 /// result compare, driven by the #13 multi-handle CpuNodeExecutor (real N-partition,
 /// Σ-over-partitions cost). EXPLICIT opt-in (not plan-inferred): a query routed here
 /// MUST be node13-executable (scan map + only additive Final-aggregates; asserted at
-/// runtime). Used for the H200/tp8 device (tp8-mem120gib); AVG/STDDEV/VAR queries
-/// wait for Inc4/Inc5. The SAME plan at tp8-mem2gib stays on #11 via `cpu_result_test!`.
+/// runtime). Used for the H200/tp8 device (tp8-standard); AVG/STDDEV/VAR queries
+/// wait for Inc4/Inc5. The SAME plan at tp8-mini stays on #11 via `cpu_result_test!`.
 #[macro_export]
 macro_rules! cpu_node13_result_test {
     ($dataset:ident, $sf:literal, $query:ident, $device:ident, $gen:literal) => {

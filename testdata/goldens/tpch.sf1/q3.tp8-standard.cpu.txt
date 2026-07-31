@@ -1,0 +1,225 @@
+GpuSortPreservingMergeExec: [revenue@1 DESC, o_orderdate@2 ASC NULLS LAST], partitions=1, output_rows=10, output_bytes=328
+  GpuSortExec: expr=[revenue@1 DESC, o_orderdate@2 ASC NULLS LAST], fetch=10, partitions=8, output_rows=80, output_bytes=2624
+    p0: in_rows=1463 out_rows=10 out_bytes=328
+    p1: in_rows=1488 out_rows=10 out_bytes=328
+    p2: in_rows=1478 out_rows=10 out_bytes=328
+    p3: in_rows=1459 out_rows=10 out_bytes=328
+    p4: in_rows=1401 out_rows=10 out_bytes=328
+    p5: in_rows=1448 out_rows=10 out_bytes=328
+    p6: in_rows=1437 out_rows=10 out_bytes=328
+    p7: in_rows=1446 out_rows=10 out_bytes=328
+    GpuProjectExec: expr=[l_orderkey@0 as l_orderkey, sum(lineitem.l_extendedprice * Int64(1) - lineitem.l_discount)@3 as revenue, o_orderdate@1 as o_orderdate, o_shippriority@2 as o_shippriority], partitions=8, output_rows=11620, output_bytes=377660
+      p0: in_rows=1463 out_rows=1463 out_bytes=47548
+      p1: in_rows=1488 out_rows=1488 out_bytes=48360
+      p2: in_rows=1478 out_rows=1478 out_bytes=48036
+      p3: in_rows=1459 out_rows=1459 out_bytes=47420
+      p4: in_rows=1401 out_rows=1401 out_bytes=45536
+      p5: in_rows=1448 out_rows=1448 out_bytes=47060
+      p6: in_rows=1437 out_rows=1437 out_bytes=46704
+      p7: in_rows=1446 out_rows=1446 out_bytes=46996
+      GpuAggregateExec: group_by=[l_orderkey, o_orderdate, o_shippriority], aggr=[sum(lineitem.l_extendedprice * Int64(1) - lineitem.l_discount)], partitions=8, output_rows=11620, output_bytes=377660
+        p0: in_rows=1463 out_rows=1463 out_bytes=47548
+        p1: in_rows=1488 out_rows=1488 out_bytes=48360
+        p2: in_rows=1478 out_rows=1478 out_bytes=48036
+        p3: in_rows=1459 out_rows=1459 out_bytes=47420
+        p4: in_rows=1401 out_rows=1401 out_bytes=45536
+        p5: in_rows=1448 out_rows=1448 out_bytes=47060
+        p6: in_rows=1437 out_rows=1437 out_bytes=46704
+        p7: in_rows=1446 out_rows=1446 out_bytes=46996
+        GpuCoalesceBatchesExec, partitions=8, output_rows=11620, output_bytes=377660
+          p0: in_rows=1463 out_rows=1463 out_bytes=47548
+          p1: in_rows=1488 out_rows=1488 out_bytes=48360
+          p2: in_rows=1478 out_rows=1478 out_bytes=48036
+          p3: in_rows=1459 out_rows=1459 out_bytes=47420
+          p4: in_rows=1401 out_rows=1401 out_bytes=45536
+          p5: in_rows=1448 out_rows=1448 out_bytes=47060
+          p6: in_rows=1437 out_rows=1437 out_bytes=46704
+          p7: in_rows=1446 out_rows=1446 out_bytes=46996
+          GpuRepartitionExec: partitioning=Hash([l_orderkey@0, o_orderdate@1, o_shippriority@2], 8), input_partitions=1, partitions=8, output_rows=11620, output_bytes=377660
+            p0: in_rows=1463 out_rows=1463 out_bytes=47548
+            p1: in_rows=1488 out_rows=1488 out_bytes=48360
+            p2: in_rows=1478 out_rows=1478 out_bytes=48036
+            p3: in_rows=1459 out_rows=1459 out_bytes=47420
+            p4: in_rows=1401 out_rows=1401 out_bytes=45536
+            p5: in_rows=1448 out_rows=1448 out_bytes=47060
+            p6: in_rows=1437 out_rows=1437 out_bytes=46704
+            p7: in_rows=1446 out_rows=1446 out_bytes=46996
+            GpuCoalescePartitionsExec, partitions=1, output_rows=11620, output_bytes=377652
+              GpuAggregateExec: group_by=[l_orderkey, o_orderdate, o_shippriority], aggr=[sum(lineitem.l_extendedprice * Int64(1) - lineitem.l_discount)], partitions=8, output_rows=11620, output_bytes=377668
+                p0: in_rows=3744 out_rows=1431 out_bytes=46508
+                p1: in_rows=3859 out_rows=1457 out_bytes=47356
+                p2: in_rows=3931 out_rows=1494 out_bytes=48556
+                p3: in_rows=3860 out_rows=1475 out_bytes=47940
+                p4: in_rows=3882 out_rows=1500 out_bytes=48752
+                p5: in_rows=3803 out_rows=1482 out_bytes=48168
+                p6: in_rows=3565 out_rows=1340 out_bytes=43552
+                p7: in_rows=3875 out_rows=1441 out_bytes=46836
+                GpuCoalesceBatchesExec, partitions=8, output_rows=30519, output_bytes=1484007
+                  p0: in_rows=3744 out_rows=3744 out_bytes=182052
+                  p1: in_rows=3859 out_rows=3859 out_bytes=187647
+                  p2: in_rows=3931 out_rows=3931 out_bytes=191148
+                  p3: in_rows=3860 out_rows=3860 out_bytes=187695
+                  p4: in_rows=3882 out_rows=3882 out_bytes=188766
+                  p5: in_rows=3803 out_rows=3803 out_bytes=184924
+                  p6: in_rows=3565 out_rows=3565 out_bytes=173350
+                  p7: in_rows=3875 out_rows=3875 out_bytes=188425
+                  GpuHashJoinExec: join_type=Inner, on=[(o_orderkey@0, l_orderkey@0)], projection=[1, 2, 3, 4, 5], partitions=8, output_rows=30519, output_bytes=1484007
+                    p0: in_rows=18368 out_rows=3744 out_bytes=182052
+                    p1: in_rows=18309 out_rows=3859 out_bytes=187647
+                    p2: in_rows=18599 out_rows=3931 out_bytes=191148
+                    p3: in_rows=18442 out_rows=3860 out_bytes=187695
+                    p4: in_rows=18187 out_rows=3882 out_bytes=188766
+                    p5: in_rows=18460 out_rows=3803 out_bytes=184924
+                    p6: in_rows=18156 out_rows=3565 out_bytes=173350
+                    p7: in_rows=18605 out_rows=3875 out_bytes=188425
+                    GpuCoalesceBatchesExec, partitions=8, output_rows=147126, output_bytes=2409198
+                      p0: in_rows=18368 out_rows=18368 out_bytes=300776
+                      p1: in_rows=18309 out_rows=18309 out_bytes=299811
+                      p2: in_rows=18599 out_rows=18599 out_bytes=304559
+                      p3: in_rows=18442 out_rows=18442 out_bytes=301990
+                      p4: in_rows=18187 out_rows=18187 out_bytes=297814
+                      p5: in_rows=18460 out_rows=18460 out_bytes=302284
+                      p6: in_rows=18156 out_rows=18156 out_bytes=297306
+                      p7: in_rows=18605 out_rows=18605 out_bytes=304658
+                      GpuRepartitionExec: partitioning=Hash([o_orderkey@0], 8), input_partitions=1, partitions=8, output_rows=147126, output_bytes=2409198
+                        p0: in_rows=18368 out_rows=18368 out_bytes=300776
+                        p1: in_rows=18309 out_rows=18309 out_bytes=299811
+                        p2: in_rows=18599 out_rows=18599 out_bytes=304559
+                        p3: in_rows=18442 out_rows=18442 out_bytes=301990
+                        p4: in_rows=18187 out_rows=18187 out_bytes=297814
+                        p5: in_rows=18460 out_rows=18460 out_bytes=302284
+                        p6: in_rows=18156 out_rows=18156 out_bytes=297306
+                        p7: in_rows=18605 out_rows=18605 out_bytes=304658
+                        GpuCoalescePartitionsExec, partitions=1, output_rows=147126, output_bytes=2409189
+                          GpuCoalesceBatchesExec, partitions=8, output_rows=147126, output_bytes=2409204
+                            p0: in_rows=18413 out_rows=18413 out_bytes=301514
+                            p1: in_rows=18348 out_rows=18348 out_bytes=300450
+                            p2: in_rows=18764 out_rows=18764 out_bytes=307262
+                            p3: in_rows=18385 out_rows=18385 out_bytes=301057
+                            p4: in_rows=17986 out_rows=17986 out_bytes=294523
+                            p5: in_rows=18145 out_rows=18145 out_bytes=297127
+                            p6: in_rows=18634 out_rows=18634 out_bytes=305134
+                            p7: in_rows=18451 out_rows=18451 out_bytes=302137
+                            GpuHashJoinExec: join_type=Inner, on=[(c_custkey@0, o_custkey@1)], projection=[1, 3, 4], partitions=8, output_rows=147126, output_bytes=2409204
+                              p0: in_rows=3829 out_rows=18413 out_bytes=301514
+                              p1: in_rows=3724 out_rows=18348 out_bytes=300450
+                              p2: in_rows=3828 out_rows=18764 out_bytes=307262
+                              p3: in_rows=3703 out_rows=18385 out_bytes=301057
+                              p4: in_rows=3733 out_rows=17986 out_bytes=294523
+                              p5: in_rows=3772 out_rows=18145 out_bytes=297127
+                              p6: in_rows=3797 out_rows=18634 out_bytes=305134
+                              p7: in_rows=3756 out_rows=18451 out_bytes=302137
+                              GpuCoalesceBatchesExec, partitions=8, output_rows=30142, output_bytes=244907
+                                p0: in_rows=3829 out_rows=3829 out_bytes=31111
+                                p1: in_rows=3724 out_rows=3724 out_bytes=30258
+                                p2: in_rows=3828 out_rows=3828 out_bytes=31103
+                                p3: in_rows=3703 out_rows=3703 out_bytes=30087
+                                p4: in_rows=3733 out_rows=3733 out_bytes=30331
+                                p5: in_rows=3772 out_rows=3772 out_bytes=30648
+                                p6: in_rows=3797 out_rows=3797 out_bytes=30851
+                                p7: in_rows=3756 out_rows=3756 out_bytes=30518
+                                GpuRepartitionExec: partitioning=Hash([c_custkey@0], 8), input_partitions=1, partitions=8, output_rows=30142, output_bytes=244907
+                                  p0: in_rows=3829 out_rows=3829 out_bytes=31111
+                                  p1: in_rows=3724 out_rows=3724 out_bytes=30258
+                                  p2: in_rows=3828 out_rows=3828 out_bytes=31103
+                                  p3: in_rows=3703 out_rows=3703 out_bytes=30087
+                                  p4: in_rows=3733 out_rows=3733 out_bytes=30331
+                                  p5: in_rows=3772 out_rows=3772 out_bytes=30648
+                                  p6: in_rows=3797 out_rows=3797 out_bytes=30851
+                                  p7: in_rows=3756 out_rows=3756 out_bytes=30518
+                                  GpuCoalescePartitionsExec, partitions=1, output_rows=30142, output_bytes=244904
+                                    GpuCoalesceBatchesExec, partitions=2, output_rows=30142, output_bytes=244905
+                                      p0: in_rows=24641 out_rows=24641 out_bytes=200209
+                                      p1: in_rows=5501 out_rows=5501 out_bytes=44696
+                                      GpuFilterExec: predicate=c_mktsegment@1 = BUILDING, projection=[0], partitions=2, output_rows=30142, output_bytes=244905
+                                        p0: in_rows=122880 out_rows=24641 out_bytes=200209
+                                        p1: in_rows=27120 out_rows=5501 out_bytes=44696
+                                        GpuScanExec: table=customer, projections=[c_custkey, c_mktsegment], partitions=2, output_rows=150000, output_bytes=3187118
+                                          p0: row_groups=[0] out_rows=122880 out_bytes=2611038
+                                          p1: row_groups=[1] out_rows=27120 out_bytes=576080
+                              GpuCoalesceBatchesExec, partitions=8, output_rows=727305, output_bytes=17818988
+                                p0: in_rows=90994 out_rows=90994 out_bytes=2229356
+                                p1: in_rows=91433 out_rows=91433 out_bytes=2240112
+                                p2: in_rows=90905 out_rows=90905 out_bytes=2227176
+                                p3: in_rows=90965 out_rows=90965 out_bytes=2228644
+                                p4: in_rows=90863 out_rows=90863 out_bytes=2226144
+                                p5: in_rows=91318 out_rows=91318 out_bytes=2237292
+                                p6: in_rows=90365 out_rows=90365 out_bytes=2213944
+                                p7: in_rows=90462 out_rows=90462 out_bytes=2216320
+                                GpuRepartitionExec: partitioning=Hash([o_custkey@1], 8), input_partitions=1, partitions=8, output_rows=727305, output_bytes=17818988
+                                  p0: in_rows=90994 out_rows=90994 out_bytes=2229356
+                                  p1: in_rows=91433 out_rows=91433 out_bytes=2240112
+                                  p2: in_rows=90905 out_rows=90905 out_bytes=2227176
+                                  p3: in_rows=90965 out_rows=90965 out_bytes=2228644
+                                  p4: in_rows=90863 out_rows=90863 out_bytes=2226144
+                                  p5: in_rows=91318 out_rows=91318 out_bytes=2237292
+                                  p6: in_rows=90365 out_rows=90365 out_bytes=2213944
+                                  p7: in_rows=90462 out_rows=90462 out_bytes=2216320
+                                  GpuCoalescePartitionsExec, partitions=1, output_rows=727305, output_bytes=17818976
+                                    GpuCoalesceBatchesExec, partitions=6, output_rows=727305, output_bytes=17818976
+                                      p0: in_rows=122880 out_rows=122880 out_bytes=3010560
+                                      p1: in_rows=122880 out_rows=122880 out_bytes=3010560
+                                      p2: in_rows=122880 out_rows=122880 out_bytes=3010560
+                                      p3: in_rows=122880 out_rows=122880 out_bytes=3010560
+                                      p4: in_rows=122880 out_rows=122880 out_bytes=3010560
+                                      p5: in_rows=112905 out_rows=112905 out_bytes=2766176
+                                      GpuFilterExec: predicate=o_orderdate@2 < 1995-03-15, partitions=6, output_rows=727305, output_bytes=17818976
+                                        p0: in_rows=122880 out_rows=122880 out_bytes=3010560
+                                        p1: in_rows=122880 out_rows=122880 out_bytes=3010560
+                                        p2: in_rows=122880 out_rows=122880 out_bytes=3010560
+                                        p3: in_rows=122880 out_rows=122880 out_bytes=3010560
+                                        p4: in_rows=122880 out_rows=122880 out_bytes=3010560
+                                        p5: in_rows=122880 out_rows=112905 out_bytes=2766176
+                                        GpuScanExec: table=orders, projections=[o_orderkey, o_custkey, o_orderdate, o_shippriority], partitions=6, output_rows=737280, output_bytes=18063360
+                                          p0: row_groups=[0] out_rows=122880 out_bytes=3010560
+                                          p1: row_groups=[1] out_rows=122880 out_bytes=3010560
+                                          p2: row_groups=[2] out_rows=122880 out_bytes=3010560
+                                          p3: row_groups=[3] out_rows=122880 out_bytes=3010560
+                                          p4: row_groups=[4] out_rows=122880 out_bytes=3010560
+                                          p5: row_groups=[5] out_rows=122880 out_bytes=3010560
+                    GpuCoalesceBatchesExec, partitions=8, output_rows=3241776, output_bytes=130886718
+                      p0: in_rows=404564 out_rows=404564 out_bytes=16334273
+                      p1: in_rows=406010 out_rows=406010 out_bytes=16392656
+                      p2: in_rows=405787 out_rows=405787 out_bytes=16383652
+                      p3: in_rows=406304 out_rows=406304 out_bytes=16404524
+                      p4: in_rows=403282 out_rows=403282 out_bytes=16282513
+                      p5: in_rows=405441 out_rows=405441 out_bytes=16369683
+                      p6: in_rows=404144 out_rows=404144 out_bytes=16317314
+                      p7: in_rows=406244 out_rows=406244 out_bytes=16402103
+                      GpuRepartitionExec: partitioning=Hash([l_orderkey@0], 8), input_partitions=1, partitions=8, output_rows=3241776, output_bytes=130886718
+                        p0: in_rows=404564 out_rows=404564 out_bytes=16334273
+                        p1: in_rows=406010 out_rows=406010 out_bytes=16392656
+                        p2: in_rows=405787 out_rows=405787 out_bytes=16383652
+                        p3: in_rows=406304 out_rows=406304 out_bytes=16404524
+                        p4: in_rows=403282 out_rows=403282 out_bytes=16282513
+                        p5: in_rows=405441 out_rows=405441 out_bytes=16369683
+                        p6: in_rows=404144 out_rows=404144 out_bytes=16317314
+                        p7: in_rows=406244 out_rows=406244 out_bytes=16402103
+                        GpuCoalescePartitionsExec, partitions=1, output_rows=3241776, output_bytes=130886706
+                          GpuCoalesceBatchesExec, partitions=8, output_rows=3241776, output_bytes=130886709
+                            p0: in_rows=435441 out_rows=435441 out_bytes=17580933
+                            p1: in_rows=491520 out_rows=491520 out_bytes=19845120
+                            p2: in_rows=491520 out_rows=491520 out_bytes=19845120
+                            p3: in_rows=368640 out_rows=368640 out_bytes=14883840
+                            p4: in_rows=368640 out_rows=368640 out_bytes=14883840
+                            p5: in_rows=368640 out_rows=368640 out_bytes=14883840
+                            p6: in_rows=368640 out_rows=368640 out_bytes=14883840
+                            p7: in_rows=348735 out_rows=348735 out_bytes=14080176
+                            GpuFilterExec: predicate=l_shipdate@3 > 1995-03-15, projection=[0, 1, 2], partitions=8, output_rows=3241776, output_bytes=130886709
+                              p0: in_rows=491520 out_rows=435441 out_bytes=17580933
+                              p1: in_rows=491520 out_rows=491520 out_bytes=19845120
+                              p2: in_rows=491520 out_rows=491520 out_bytes=19845120
+                              p3: in_rows=368640 out_rows=368640 out_bytes=14883840
+                              p4: in_rows=368640 out_rows=368640 out_bytes=14883840
+                              p5: in_rows=368640 out_rows=368640 out_bytes=14883840
+                              p6: in_rows=368640 out_rows=368640 out_bytes=14883840
+                              p7: in_rows=348735 out_rows=348735 out_bytes=14080176
+                              GpuScanExec: table=lineitem, projections=[l_orderkey, l_extendedprice, l_discount, l_shipdate], partitions=8, output_rows=3297855, output_bytes=146754548
+                                p0: row_groups=[22, 23, 24, 25] out_rows=491520 out_bytes=21872640
+                                p1: row_groups=[26, 27, 28, 29] out_rows=491520 out_bytes=21872640
+                                p2: row_groups=[30, 31, 32, 33] out_rows=491520 out_bytes=21872640
+                                p3: row_groups=[34, 35, 36] out_rows=368640 out_bytes=16404480
+                                p4: row_groups=[37, 38, 39] out_rows=368640 out_bytes=16404480
+                                p5: row_groups=[40, 41, 42] out_rows=368640 out_bytes=16404480
+                                p6: row_groups=[43, 44, 45] out_rows=368640 out_bytes=16404480
+                                p7: row_groups=[46, 47, 48] out_rows=348735 out_bytes=15518708

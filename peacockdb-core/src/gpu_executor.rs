@@ -42,7 +42,7 @@ impl GpuExecutor {
     }
 
     /// Like [`GpuExecutor::new`] but at an explicit [`PartitionMode`]. The
-    /// real-partitioning GPU verify (tp8-mem120gib) passes
+    /// real-partitioning GPU verify (tp8-standard) passes
     /// [`PartitionMode::RealMultiPartition`] so the scan map + Hash-repartition
     /// lowering match the CPU-emulated golden it verifies against.
     pub async fn new_mode(

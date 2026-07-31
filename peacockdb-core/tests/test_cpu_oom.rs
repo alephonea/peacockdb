@@ -1,6 +1,6 @@
 //! Part 2 — strict resident "GPU"-memory control.
 //!
-//! At the real test budget (tp8-mem2gib) NOTHING OOMs: SF1 data is small and the
+//! At the real test budget (tp8-mini) NOTHING OOMs: SF1 data is small and the
 //! peak concurrently-resident data set across the whole corpus is ~135 MB (path-sum
 //! model), far under 2 GiB. So the OOM path is exercised here with a TIGHT raw
 //! budget (no device-label change), mirroring `test_memory_boundary_preserved_tight_budget`.
@@ -14,7 +14,11 @@
 #[macro_use]
 mod common;
 
-const TIGHT_BUDGET: usize = 100 * 1024 * 1024; // 100 MiB
+use peacockdb_core::config::MemoryLimit;
+
+/// The `Micro` tier IS this budget — see the module header for why 100 MiB is the
+/// value that puts q78 over and q7/q18 under.
+const TIGHT_BUDGET: usize = MemoryLimit::Micro.bytes();
 
 // Flips pass→OOM under strict resident control (asserted, never disabled).
 cpu_result_error_test!(tpcds, 1, q78, TIGHT_BUDGET);

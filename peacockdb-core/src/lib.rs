@@ -1,3 +1,4 @@
+pub mod config;
 pub mod gpu_rule;
 pub mod cpu_executor;
 pub mod gpu_rowgroup_prune;
@@ -51,7 +52,7 @@ pub fn build_session_state_with_gpu_rules_mode(
     SessionContext::new_with_state(state)
 }
 
-/// Single-partition convenience wrapper (the common case: tp1 and the tp8-mem2gib
+/// Single-partition convenience wrapper (the common case: tp1 and the tp8-mini
 /// determinism device). Real N-way partitioning callers use
 /// [`build_session_state_with_gpu_rules_mode`] with [`PartitionMode::RealMultiPartition`].
 pub fn build_session_state_with_gpu_rules(

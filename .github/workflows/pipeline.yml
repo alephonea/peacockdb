@@ -175,7 +175,7 @@ jobs:
           mkdir -p cpp/install/rust-tests
           # test_gpu = the MERGED per-query GPU verify (Phase 2 C2): one GPU run
           # per query asserts BOTH per-node rows + rows+schema cost vs the H200/tp1
-          # *.tp1-mem120gib.cpu.txt goldens AND the final result. The node-by-node
+          # *.tp1-standard.cpu.txt goldens AND the final result. The node-by-node
           # half is what catches intermediate divergences a whole-result check
           # misses (e.g. q14's INTERSECT NULL-semantics regression), so it MUST gate.
           # test_inc2_conformance = the live GPU↔CPU Spark-murmur3 partition-id gate
@@ -266,7 +266,7 @@ jobs:
           # Fresh binaries — --delete keeps cpp/install/ clean across runs.
           rsync -a --delete cpp/install/ gpu:$REMOTE_DIR/cpp/install/
           # Query SQL + minimal dataset + testdata generator + committed goldens.
-          # testdata/goldens carries the *.tp1-mem120gib.cpu.txt H200/tp1 node-by-node
+          # testdata/goldens carries the *.tp1-standard.cpu.txt H200/tp1 node-by-node
           # goldens (29 tpch + 78 tpcds) that test_gpu asserts against; without
           # them the node-by-node verify cannot run.
           rsync -a testdata/tpch-queries testdata/tpcds-queries testdata/tpch.minimal \

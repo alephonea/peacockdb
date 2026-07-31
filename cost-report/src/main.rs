@@ -35,7 +35,7 @@ const DEFAULT_REPO: &str = "asymptote-tech/peacockdb";
 /// `.cpu.txt` filename under the unified golden layout. MUST track the device the
 /// `cpu_result_test!` goldens are canonized at — #11 renamed these tp1 → tp8, so a
 /// stale label here makes every PeacockDB cell render "—" (now guarded in `main`).
-const CPU_DEVICE: &str = "tp8-mem2gib";
+const CPU_DEVICE: &str = "tp8-mini";
 /// Hidden marker so CI can find-and-update its single PR comment in place.
 const SENTINEL: &str = "<!-- peacockdb-cost-report -->";
 /// Separate marker for the cost-regression gate widget, so it upserts as its own
@@ -888,12 +888,12 @@ mod tests {
     #[test]
     fn operational_set_honors_comment_convention() {
         let src = "\
-gpu_test!(tpch, 1, q1, tp1_mem120gib, golden_exact);
-gpu_test!(tpch, 1, q11, tp1_mem120gib, oracle);
-gpu_test!(tpch, 1, scan_limit, tp1_mem120gib, golden_exact);
-// gpu_test!(tpch, 1, q9, tp1_mem120gib, golden_exact);
-gpu_test!(tpcds, 1, q5, tp1_mem120gib, golden_exact);
-//gpu_test!(tpcds, 1, q28, tp1_mem120gib, golden_exact);
+gpu_test!(tpch, 1, q1, tp1_standard, golden_exact);
+gpu_test!(tpch, 1, q11, tp1_standard, oracle);
+gpu_test!(tpch, 1, scan_limit, tp1_standard, golden_exact);
+// gpu_test!(tpch, 1, q9, tp1_standard, golden_exact);
+gpu_test!(tpcds, 1, q5, tp1_standard, golden_exact);
+//gpu_test!(tpcds, 1, q28, tp1_standard, golden_exact);
 ";
         let tpch = operational_set(src, "tpch");
         let tpcds = operational_set(src, "tpcds");
@@ -920,7 +920,7 @@ gpu_test!(tpcds, 1, q5, tp1_mem120gib, golden_exact);
     #[test]
     fn cost_cells_link_only_when_value_and_url_present() {
         let v = Some(43_308_088u64);
-        let url = Some("https://x/blob/abc/testdata/goldens/tpch.sf1/q1.tp1-mem2gib.cpu.txt".to_string());
+        let url = Some("https://x/blob/abc/testdata/goldens/tpch.sf1/q1.tp1-mini.cpu.txt".to_string());
         assert!(cost_cell_html(v, url.clone()).starts_with("<a href="));
         assert!(cost_cell_md(v, url).starts_with("[41.30 MB]("));
         // value but no sha/url → plain text, no link.
@@ -962,12 +962,12 @@ gpu_test!(tpcds, 1, q5, tp1_mem120gib, golden_exact);
 
     #[test]
     fn peacock_cell_renders_plan_and_cost_links() {
-        let plan = Some("https://x/q1.tp8-mem2gib.cpu.txt".to_string());
-        let cost = Some("https://x/q1.tp8-mem2gib.cost.txt".to_string());
+        let plan = Some("https://x/q1.tp8-mini.cpu.txt".to_string());
+        let cost = Some("https://x/q1.tp8-mini.cost.txt".to_string());
         let html = peacock_cell_html(Some(43_308_088), plan.clone(), cost.clone());
         assert!(html.contains(">plan</a>") && html.contains(">cost</a>") && html.starts_with("41.30 MB ("));
         let md = peacock_cell_md(Some(43_308_088), plan, cost);
-        assert_eq!(md, "41.30 MB ([plan](https://x/q1.tp8-mem2gib.cpu.txt), [cost](https://x/q1.tp8-mem2gib.cost.txt))");
+        assert_eq!(md, "41.30 MB ([plan](https://x/q1.tp8-mini.cpu.txt), [cost](https://x/q1.tp8-mini.cost.txt))");
         // value but no urls (dry run) → plain bytes, no links.
         assert_eq!(peacock_cell_html(Some(43_308_088), None, None), "41.30 MB");
         assert_eq!(peacock_cell_md(Some(43_308_088), None, None), "41.30 MB");

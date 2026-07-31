@@ -1,0 +1,26 @@
+GpuSortPreservingMergeExec: [nation_count@1 DESC, r_name@0 ASC NULLS LAST]
+  GpuSortExec: expr=[nation_count@1 DESC, r_name@0 ASC NULLS LAST]
+    GpuProjectExec: expr=[r_name@0 as r_name, count(*)@1 as nation_count]
+      GpuAggregateExec: group_by=[r_name], aggr=[count(*)]
+        GpuCoalesceBatchesExec
+          GpuRepartitionExec: partitioning=Hash([r_name@0], 8), input_partitions=8
+            GpuAggregateExec: group_by=[r_name], aggr=[count(*)]
+              GpuRepartitionExec: partitioning=RoundRobinBatch(8), input_partitions=1
+                GpuCoalesceBatchesExec
+                  GpuHashJoinExec: join_type=Inner, on=[(r_regionkey@0, n_regionkey@0)], projection=[1]
+                    GpuScanExec: table=region, projections=[r_regionkey, r_name]
+                    GpuScanExec: table=nation, projections=[n_regionkey]
+--- memory ---
+total_estimate_cost=792
+GpuSortPreservingMergeExec: row_width=40, subtree_max_row_bytes=80, estimate_input_bytes=40, estimate_output_bytes=40, estimate_cost=80
+  GpuSortExec: row_width=40, subtree_max_row_bytes=80, estimate_input_bytes=40, estimate_output_bytes=40, estimate_cost=80
+    GpuProjectExec: row_width=40, subtree_max_row_bytes=80, estimate_input_bytes=40, estimate_output_bytes=40, estimate_cost=80
+      GpuAggregateExec: row_width=40, subtree_max_row_bytes=80, estimate_input_bytes=40, estimate_output_bytes=40, estimate_cost=80
+        GpuCoalesceBatchesExec: row_width=40, subtree_max_row_bytes=72, estimate_input_bytes=40, estimate_output_bytes=40, estimate_cost=80
+          GpuRepartitionExec: row_width=40, subtree_max_row_bytes=72, estimate_input_bytes=40, estimate_output_bytes=40, estimate_cost=80
+            GpuAggregateExec: row_width=40, subtree_max_row_bytes=72, estimate_input_bytes=32, estimate_output_bytes=40, estimate_cost=72
+              GpuRepartitionExec: row_width=32, subtree_max_row_bytes=72, estimate_input_bytes=32, estimate_output_bytes=32, estimate_cost=64
+                GpuCoalesceBatchesExec: row_width=32, subtree_max_row_bytes=72, estimate_input_bytes=32, estimate_output_bytes=32, estimate_cost=64
+                  GpuHashJoinExec: row_width=32, subtree_max_row_bytes=72, estimate_input_bytes=40, estimate_output_bytes=32, estimate_cost=72
+                    GpuScanExec: row_width=36, subtree_max_row_bytes=36, estimate_input_bytes=0, estimate_output_bytes=36, estimate_cost=36
+                    GpuScanExec: row_width=4, subtree_max_row_bytes=4, estimate_input_bytes=0, estimate_output_bytes=4, estimate_cost=4

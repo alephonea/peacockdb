@@ -185,18 +185,24 @@ if [ "$RUN" -eq 1 ]; then
   # Note the heredoc uses no quoting on the EOF marker, so $VARS expand
   # *locally* before being sent to the remote shell. Escape with \$ for
   # any var that should be expanded remotely (e.g. \$LD_LIBRARY_PATH).
+  # Deliberately NO 'set -e' around the test runs, matching the CI gpu-tests job:
+  # run EVERY binary even when an earlier one fails, OR each exit code into rc, and
+  # fail at the end. Under set -e a single crashing test aborted the whole remote
+  # script — a SIGSEGV in test_gpu silently cost us all 10 test_inc2_conformance
+  # results, which read as "not run" but looked like "fine". One flaky test must not
+  # be able to hide every later binary's result.
   ssh shad-gpu bash <<EOF
-    set -e
-
     export PEACOCK_TESTDATA_DIR=/home/info/peacockdb/testdata
     export PEACOCK_GPU_DEBUG='$PEACOCK_GPU_DEBUG'
     # cpp/install/lib first so libpeacock_gpu.so resolves for the rust test
     # binary (its baked-in rpath points at the build host's cargo target).
     export LD_LIBRARY_PATH=/home/info/peacockdb/cpp/install/lib:/usr/local/cuda-12.5/compat:/home/info/glibc-2.35/lib:\$HOME/miniforge3/envs/rapids-cuda-12.2/lib:\$LD_LIBRARY_PATH
 
+    rc=0
+
     if [ '$PCK_RUN_CPP' = '1' ]; then
       echo "==> peacock_plan_tests (C++)"
-      /home/info/peacockdb/cpp/install/bin/peacock_plan_tests
+      /home/info/peacockdb/cpp/install/bin/peacock_plan_tests || rc=1
     fi
 
     echo "==> rust GPU integration tests (filter='$PCK_TEST_FILTER')"
@@ -205,6 +211,20 @@ if [ "$RUN" -eq 1 ]; then
       echo "--- \$(basename "\$t")"
       # --test-threads=1: GPU/RMM context is process-wide, parallel tests OOM.
       "\$t" --nocapture --test-threads=1 '$PCK_TEST_FILTER'
+      status=\$?
+      if [ "\$status" -ne 0 ]; then
+        # 139 = SIGSEGV. Name it explicitly: a bare non-zero code here has already
+        # been mistaken for an assertion failure.
+        echo "!!! \$(basename "\$t") FAILED (exit \$status)"
+        rc=1
+      fi
     done
+
+    if [ "\$rc" -ne 0 ]; then
+      echo "==> GPU test run FAILED (see '!!!' lines above)"
+    else
+      echo "==> GPU test run OK"
+    fi
+    exit "\$rc"
 EOF
 fi

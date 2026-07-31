@@ -1,0 +1,8 @@
+GpuCoalesceBatchesExec
+  GpuFilterExec: predicate=l_quantity@1 > Some(3000),15,2
+    GpuScanExec: table=lineitem, projections=[l_orderkey, l_quantity]
+--- memory ---
+total_estimate_cost=120
+GpuCoalesceBatchesExec: row_width=24, subtree_max_row_bytes=48, estimate_input_bytes=24, estimate_output_bytes=24, estimate_cost=48
+  GpuFilterExec: row_width=24, subtree_max_row_bytes=48, estimate_input_bytes=24, estimate_output_bytes=24, estimate_cost=48
+    GpuScanExec: row_width=24, subtree_max_row_bytes=24, estimate_input_bytes=0, estimate_output_bytes=24, estimate_cost=24

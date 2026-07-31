@@ -200,12 +200,10 @@ impl GpuExtraDisplay for GpuSortExec {
 }
 
 gpu_exec_node!(GpuCoalesceBatchesExec);
-impl GpuExtraDisplay for GpuCoalesceBatchesExec {
-    fn extra_display_info(&self) -> String {
-        let cb = self.inner.as_any().downcast_ref::<CoalesceBatchesExec>().unwrap();
-        format!("target_batch_size={}", cb.target_batch_size())
-    }
-}
+// target_batch_size is deliberately NOT displayed: it is budget-derived
+// (budget / subtree_max_row_bytes) and vestigial for observable output — see the
+// note on `GpuScanExec`'s display below.
+impl GpuExtraDisplay for GpuCoalesceBatchesExec {}
 
 gpu_exec_node!(GpuCoalescePartitionsExec);
 impl GpuExtraDisplay for GpuCoalescePartitionsExec {}
@@ -375,14 +373,22 @@ pub fn parquet_table_name(parquet: &ParquetExec) -> Option<String> {
 
 // Scan annotation flows through GpuExtraDisplay so the `.txt` plan goldens and the
 // `.cpu.txt` cost tree label the scan identically (one shared source). We surface
-// table + projections (both round-trip through serialization) and batch_size; the
-// pushed-down parquet predicate is deliberately NOT shown here because GpuScan
-// serialization doesn't carry it, so it would break the flatbuffer roundtrip's
-// plan_str equality after deserialize.
+// table + projections (both round-trip through serialization); the pushed-down
+// parquet predicate is deliberately NOT shown here because GpuScan serialization
+// doesn't carry it, so it would break the flatbuffer roundtrip's plan_str equality
+// after deserialize.
+//
+// `batch_size` is deliberately NOT displayed either. It is budget-derived
+// (`gpu_memory_budget / subtree_max_row_bytes`), so rendering it pinned every golden
+// to a `MemoryLimit` tier value — yet it is vestigial for everything a golden
+// records: it only sets the parquet reader's chunk size, never WHICH rows are read
+// (the row-group→partition map comes from `build_scan_map(rgs, n_parts)`, which the
+// budget is not an input to), and each golden quantity is a per-node aggregate over
+// the full stream, so chunking cancels. It is still SERIALIZED — this is display-only.
 impl GpuExtraDisplay for GpuScanExec {
     fn extra_display_info(&self) -> String {
         let Some(parquet) = self.inner.as_any().downcast_ref::<ParquetExec>() else {
-            return format!("batch_size={}", self.gpu_batch_size);
+            return String::new();
         };
         let config = parquet.base_config();
         let mut parts = Vec::new();
@@ -394,14 +400,20 @@ impl GpuExtraDisplay for GpuScanExec {
             None => config.file_schema.fields().iter().map(|f| f.name().clone()).collect(),
         };
         parts.push(format!("projections=[{}]", names.join(", ")));
-        parts.push(format!("batch_size={}", self.gpu_batch_size));
         parts.join(", ")
     }
 }
 
 impl DisplayAs for GpuScanExec {
     fn fmt_as(&self, _t: DisplayFormatType, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "GpuScanExec: {}", self.extra_display_info())
+        // Same empty-extra handling as `gpu_exec_node!`, so a non-ParquetExec inner
+        // (now the only way extra can be empty) renders without a dangling colon.
+        let extra = self.extra_display_info();
+        if extra.is_empty() {
+            write!(f, "GpuScanExec")
+        } else {
+            write!(f, "GpuScanExec: {extra}")
+        }
     }
 }
 
@@ -937,11 +949,11 @@ pub fn analyze_memory_nodes(plan: &Arc<dyn ExecutionPlan>) -> Vec<(String, usize
 
 /// Minimum GPU memory budget at which a multi-partition scan emits a real
 /// RG→batch→partition map (Phase 2 Inc1). BELOW this, the device is treated as
-/// memory-constrained: the scan stays single-partition (the tp8-mem2gib #11
+/// memory-constrained: the scan stays single-partition (the tp8-mini #11
 /// determinism path), so the plan serializes byte-identically to the legacy
 /// scan and the flatbuffer roundtrip is stable (deserialize does not reconstruct
 /// N partitions, so GpuRepartitionExec.input_partitions does not flip 1→8).
-/// The real-partitioning device (H200, tp8-mem120gib) sits well above this and
+/// The real-partitioning device (H200, tp8-standard) sits well above this and
 /// gets the map; tp1 never attaches one regardless (target_partitions == 1).
 /// How a target-partitioned plan is realized on the multi-handle node-executor
 /// path. This — NOT the memory budget — is the sole discriminator for whether the
@@ -954,11 +966,11 @@ pub fn analyze_memory_nodes(plan: &Arc<dyn ExecutionPlan>) -> Vec<(String, usize
 /// work is GitHub #91 (post-Phase-2; do not conflate with this policy flag).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PartitionMode {
-    /// Legacy single-partition-coalesced path — tp1 and the tp8-mem2gib #11
+    /// Legacy single-partition-coalesced path — tp1 and the tp8-mini #11
     /// determinism device. No scan map, no repartition lowering (byte-identical
     /// serialized plan, stable flatbuffer roundtrip).
     SinglePartition,
-    /// Real N-way partitioning (H200 / tp8-mem120gib): the scan emits N partitions
+    /// Real N-way partitioning (H200 / tp8-standard): the scan emits N partitions
     /// per its map and a Hash repartition is lowered + Spark-murmur3 partitioned.
     RealMultiPartition,
 }
@@ -1004,7 +1016,7 @@ impl PhysicalOptimizerRule for GpuMemoryBudgetRule {
                 // the explicit RG→batch→partition map so the scan emits N partitions
                 // (dissolving RoundRobin into the scan). The RGs to read = #12 survivors
                 // if a static predicate prunes, else all groups. tp1 OR the single-
-                // partition mode (tp8-mem2gib) gets an empty map = legacy single-
+                // partition mode (tp8-mini) gets an empty map = legacy single-
                 // partition scan, keeping the serialized plan / roundtrip byte-stable.
                 let n_parts = config.execution.target_partitions;
                 let batches = if real_partitioning(self.partition_mode, n_parts) {
@@ -1039,7 +1051,7 @@ impl PhysicalOptimizerRule for GpuMemoryBudgetRule {
                 // and gives the CPU/GPU node executors a single 1-partition input to
                 // hash-partition into N via Spark-murmur3 (Inc2). RoundRobin and
                 // already-1→N repartitions are left untouched. Off the real device
-                // (tp8-mem2gib/tp1) the plan is unchanged → roundtrip byte-stable.
+                // (tp8-mini/tp1) the plan is unchanged → roundtrip byte-stable.
                 let gpu_rp = node.as_any().downcast_ref::<GpuRepartitionExec>().unwrap();
                 let rp = gpu_rp.inner().as_any().downcast_ref::<RepartitionExec>().unwrap();
                 let input_parts = rp.input().properties().output_partitioning().partition_count();
@@ -1089,6 +1101,50 @@ mod tests {
             input_row_bytes: 0,
             output_row_bytes: 0,
         }
+    }
+
+    // Pins the EXACT batch-size arithmetic (gpu_memory_budget / subtree_max_row_bytes,
+    // floored, min 1). `batch_size` is no longer rendered into any golden — it is
+    // budget-derived and vestigial for observable output — so this is the only place
+    // the formula's output is fixed rather than merely bounded. Without it, a change
+    // to the divisor or the rounding would pass the whole suite silently.
+    #[test]
+    fn batch_size_is_budget_over_subtree_max_row_bytes() {
+        // GpuCoalesceBatchesExec is the observable carrier: the rule rewrites its
+        // inner CoalesceBatchesExec with the computed batch size, so target_batch_size()
+        // reads back exactly what the formula produced.
+        let leaf = empty(vec![Field::new("a", DataType::Int64, false)]);
+        let plan: Arc<dyn ExecutionPlan> = Arc::new(GpuCoalesceBatchesExec::new(Arc::new(
+            CoalesceBatchesExec::new(leaf, 8192),
+        )));
+        let row_bytes = analyze_memory(&plan).subtree_max_row_bytes;
+        assert!(row_bytes > 0, "plan should carry a non-zero row width");
+
+        let batch_size_for = |budget: usize| -> usize {
+            let optimized = GpuMemoryBudgetRule::new(budget, PartitionMode::SinglePartition)
+                .optimize(plan.clone(), &ConfigOptions::default())
+                .expect("optimize");
+            optimized
+                .as_any()
+                .downcast_ref::<GpuCoalesceBatchesExec>()
+                .unwrap()
+                .inner()
+                .as_any()
+                .downcast_ref::<CoalesceBatchesExec>()
+                .unwrap()
+                .target_batch_size()
+        };
+
+        // Exact quotient, floored — not rounded up.
+        assert_eq!(batch_size_for(row_bytes * 100), 100);
+        assert_eq!(batch_size_for(row_bytes * 100 + row_bytes - 1), 100);
+        // A budget under one row still yields a usable batch of 1, never 0.
+        assert_eq!(batch_size_for(row_bytes - 1), 1);
+        // The 10x tier gap that motivated the strip: 120 GiB really is 10x 12 GiB.
+        assert_eq!(
+            batch_size_for(120 * 1024 * 1024 * 1024),
+            10 * batch_size_for(12 * 1024 * 1024 * 1024)
+        );
     }
 
     // Focused coverage of the CrossJoin/NestedLoopJoin cost arm in

@@ -1,0 +1,30 @@
+GpuSortPreservingMergeExec: [o_totalprice@4 DESC, o_orderdate@3 ASC NULLS LAST], partitions=1, output_rows=57, output_bytes=4270
+  GpuSortExec: expr=[o_totalprice@4 DESC, o_orderdate@3 ASC NULLS LAST], fetch=100, partitions=1, output_rows=57, output_bytes=4270
+    GpuAggregateExec: group_by=[c_name, c_custkey, o_orderkey, o_orderdate, o_totalprice], aggr=[sum(lineitem.l_quantity)], partitions=1, output_rows=57, output_bytes=4270
+      GpuCoalesceBatchesExec, partitions=1, output_rows=57, output_bytes=4270
+        GpuRepartitionExec: partitioning=Hash([c_name@0, c_custkey@1, o_orderkey@2, o_orderdate@3, o_totalprice@4], 8), input_partitions=8, partitions=1, output_rows=57, output_bytes=4270
+          GpuAggregateExec: group_by=[c_name, c_custkey, o_orderkey, o_orderdate, o_totalprice], aggr=[sum(lineitem.l_quantity)], partitions=1, output_rows=57, output_bytes=4270
+            GpuCoalesceBatchesExec, partitions=1, output_rows=399, output_bytes=29830
+              GpuHashJoinExec: join_type=RightSemi, on=[(l_orderkey@0, o_orderkey@2)], partitions=1, output_rows=399, output_bytes=29830
+                GpuCoalesceBatchesExec, partitions=1, output_rows=57, output_bytes=464
+                  GpuFilterExec: predicate=sum(lineitem.l_quantity)@1 > Some(30000),25,2, projection=[0], partitions=1, output_rows=57, output_bytes=464
+                    GpuAggregateExec: group_by=[l_orderkey], aggr=[sum(lineitem.l_quantity)], partitions=1, output_rows=1500000, output_bytes=36375000
+                      GpuCoalesceBatchesExec, partitions=1, output_rows=1500000, output_bytes=36375000
+                        GpuRepartitionExec: partitioning=Hash([l_orderkey@0], 8), input_partitions=8, partitions=1, output_rows=1500000, output_bytes=36375000
+                          GpuAggregateExec: group_by=[l_orderkey], aggr=[sum(lineitem.l_quantity)], partitions=1, output_rows=1500000, output_bytes=36375000
+                            GpuScanExec: table=lineitem, projections=[l_orderkey, l_quantity], partitions=1, output_rows=6001215, output_bytes=145529464
+                GpuCoalesceBatchesExec, partitions=1, output_rows=6001215, output_bytes=448590826
+                  GpuHashJoinExec: join_type=Inner, on=[(o_orderkey@2, l_orderkey@0)], projection=[0, 1, 2, 3, 4, 6], partitions=1, output_rows=6001215, output_bytes=448590826
+                    GpuCoalesceBatchesExec, partitions=1, output_rows=1500000, output_bytes=87937504
+                      GpuRepartitionExec: partitioning=Hash([o_orderkey@2], 8), input_partitions=8, partitions=1, output_rows=1500000, output_bytes=87937504
+                        GpuCoalesceBatchesExec, partitions=1, output_rows=1500000, output_bytes=87937504
+                          GpuHashJoinExec: join_type=Inner, on=[(c_custkey@0, o_custkey@1)], projection=[0, 1, 2, 4, 5], partitions=1, output_rows=1500000, output_bytes=87937504
+                            GpuCoalesceBatchesExec, partitions=1, output_rows=150000, output_bytes=4537504
+                              GpuRepartitionExec: partitioning=Hash([c_custkey@0], 8), input_partitions=8, partitions=1, output_rows=150000, output_bytes=4537504
+                                GpuScanExec: table=customer, projections=[c_custkey, c_name], partitions=1, output_rows=150000, output_bytes=4537504
+                            GpuCoalesceBatchesExec, partitions=1, output_rows=1500000, output_bytes=54750000
+                              GpuRepartitionExec: partitioning=Hash([o_custkey@1], 8), input_partitions=8, partitions=1, output_rows=1500000, output_bytes=54750000
+                                GpuScanExec: table=orders, projections=[o_orderkey, o_custkey, o_totalprice, o_orderdate], partitions=1, output_rows=1500000, output_bytes=54750000
+                    GpuCoalesceBatchesExec, partitions=1, output_rows=6001215, output_bytes=145529464
+                      GpuRepartitionExec: partitioning=Hash([l_orderkey@0], 8), input_partitions=8, partitions=1, output_rows=6001215, output_bytes=145529464
+                        GpuScanExec: table=lineitem, projections=[l_orderkey, l_quantity], partitions=1, output_rows=6001215, output_bytes=145529464

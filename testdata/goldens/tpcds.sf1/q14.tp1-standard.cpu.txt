@@ -1,0 +1,255 @@
+GpuSortExec: expr=[channel@0 ASC, i_brand_id@1 ASC, i_class_id@2 ASC, i_category_id@3 ASC], fetch=100, partitions=1, output_rows=100, output_bytes=5975
+  GpuProjectExec: expr=[channel@0 as channel, i_brand_id@1 as i_brand_id, i_class_id@2 as i_class_id, i_category_id@3 as i_category_id, sum(y.sales)@5 as sum_sales, sum(y.number_sales)@6 as sum_number_sales], partitions=1, output_rows=19772, output_bytes=1143649
+    GpuAggregateExec: group_by=[channel, i_brand_id, i_class_id, i_category_id, __grouping_id], aggr=[sum(y.sales), sum(y.number_sales)], partitions=1, output_rows=19772, output_bytes=1165893
+      GpuCoalescePartitionsExec, partitions=1, output_rows=19772, output_bytes=1165893
+        GpuAggregateExec: group_by=[channel, i_brand_id, i_class_id, i_category_id], aggr=[sum(y.sales), sum(y.number_sales)], partitions=1, output_rows=19772, output_bytes=1165893
+          GpuUnionExec, partitions=1, output_rows=9813, output_bytes=567799
+            GpuProjectExec: expr=[store as channel, i_brand_id@0 as i_brand_id, i_class_id@1 as i_class_id, i_category_id@2 as i_category_id, sum(store_sales.ss_quantity * store_sales.ss_list_price)@3 as sales, count(*)@4 as number_sales], partitions=1, output_rows=3513, output_bytes=202885
+              GpuProjectExec: expr=[i_brand_id@1 as i_brand_id, i_class_id@2 as i_class_id, i_category_id@3 as i_category_id, sum(store_sales.ss_quantity * store_sales.ss_list_price)@4 as sum(store_sales.ss_quantity * store_sales.ss_list_price), count(*)@5 as count(*), avg_sales.average_sales@0 as avg_sales.average_sales], partitions=1, output_rows=3513, output_bytes=227472
+                GpuNestedLoopJoinExec: join_type=Inner, filter=CAST(sum(store_sales.ss_quantity * store_sales.ss_list_price)@0 AS Decimal128(38, 6)) > avg_sales.average_sales@1, partitions=1, output_rows=3513, output_bytes=227472
+                  GpuProjectExec: expr=[CAST(avg(sq2.quantity * sq2.list_price)@0 AS Decimal128(38, 6)) as avg_sales.average_sales], partitions=1, output_rows=1, output_bytes=17
+                    GpuAggregateExec: group_by=[], aggr=[avg(sq2.quantity * sq2.list_price)], partitions=1, output_rows=1, output_bytes=17
+                      GpuCoalescePartitionsExec, partitions=1, output_rows=1, output_bytes=26
+                        GpuAggregateExec: group_by=[], aggr=[avg(sq2.quantity * sq2.list_price)], partitions=1, output_rows=1, output_bytes=26
+                          GpuUnionExec, partitions=1, output_rows=2936305, output_bytes=71205398
+                            GpuProjectExec: expr=[ss_quantity@0 as quantity, ss_list_price@1 as list_price], partitions=1, output_rows=1644368, output_bytes=39875924
+                              GpuCoalesceBatchesExec, partitions=1, output_rows=1644368, output_bytes=39875924
+                                GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ss_sold_date_sk@0)], projection=[2, 3], partitions=1, output_rows=1644368, output_bytes=39875924
+                                  GpuCoalesceBatchesExec, partitions=1, output_rows=1096, output_bytes=8905
+                                    GpuFilterExec: predicate=d_year@1 >= 1999 AND d_year@1 <= 2001, projection=[0], partitions=1, output_rows=1096, output_bytes=8905
+                                      GpuScanExec: table=date_dim, projections=[d_date_sk, d_year], partitions=1, output_rows=73049, output_bytes=1187048
+                                  GpuScanExec: table=store_sales, projections=[ss_sold_date_sk, ss_quantity, ss_list_price], partitions=1, output_rows=2880404, output_bytes=93253081
+                            GpuProjectExec: expr=[cs_quantity@0 as quantity, cs_list_price@1 as list_price], partitions=1, output_rows=859879, output_bytes=20852066
+                              GpuCoalesceBatchesExec, partitions=1, output_rows=859879, output_bytes=20852066
+                                GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, cs_sold_date_sk@0)], projection=[2, 3], partitions=1, output_rows=859879, output_bytes=20852066
+                                  GpuCoalesceBatchesExec, partitions=1, output_rows=1096, output_bytes=8905
+                                    GpuFilterExec: predicate=d_year@1 >= 1999 AND d_year@1 <= 2001, projection=[0], partitions=1, output_rows=1096, output_bytes=8905
+                                      GpuScanExec: table=date_dim, projections=[d_date_sk, d_year], partitions=1, output_rows=73049, output_bytes=1187048
+                                  GpuScanExec: table=catalog_sales, projections=[cs_sold_date_sk, cs_quantity, cs_list_price], partitions=1, output_rows=1441548, output_bytes=46670118
+                            GpuProjectExec: expr=[ws_quantity@0 as quantity, ws_list_price@1 as list_price], partitions=1, output_rows=432058, output_bytes=10477408
+                              GpuCoalesceBatchesExec, partitions=1, output_rows=432058, output_bytes=10477408
+                                GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ws_sold_date_sk@0)], projection=[2, 3], partitions=1, output_rows=432058, output_bytes=10477408
+                                  GpuCoalesceBatchesExec, partitions=1, output_rows=1096, output_bytes=8905
+                                    GpuFilterExec: predicate=d_year@1 >= 1999 AND d_year@1 <= 2001, projection=[0], partitions=1, output_rows=1096, output_bytes=8905
+                                      GpuScanExec: table=date_dim, projections=[d_date_sk, d_year], partitions=1, output_rows=73049, output_bytes=1187048
+                                  GpuScanExec: table=web_sales, projections=[ws_sold_date_sk, ws_quantity, ws_list_price], partitions=1, output_rows=719384, output_bytes=23290057
+                  GpuAggregateExec: group_by=[i_brand_id, i_class_id, i_category_id], aggr=[sum(store_sales.ss_quantity * store_sales.ss_list_price), count(*)], partitions=1, output_rows=3529, output_bytes=171602
+                    GpuCoalesceBatchesExec, partitions=1, output_rows=86568, output_bytes=4209369
+                      GpuHashJoinExec: join_type=LeftSemi, on=[(ss_item_sk@0, ss_item_sk@0)], projection=[1, 2, 3, 4, 5], partitions=1, output_rows=86568, output_bytes=4209369
+                        GpuCoalesceBatchesExec, partitions=1, output_rows=86880, output_bytes=4930440
+                          GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ss_sold_date_sk@0)], projection=[2, 3, 4, 5, 6, 7], partitions=1, output_rows=86880, output_bytes=4930440
+                            GpuCoalesceBatchesExec, partitions=1, output_rows=30, output_bytes=244
+                              GpuFilterExec: predicate=d_year@1 = 2001 AND d_moy@2 = 11, projection=[0], partitions=1, output_rows=30, output_bytes=244
+                                GpuScanExec: table=date_dim, projections=[d_date_sk, d_year, d_moy], partitions=1, output_rows=73049, output_bytes=1780572
+                            GpuProjectExec: expr=[ss_sold_date_sk@3 as ss_sold_date_sk, ss_item_sk@4 as ss_item_sk, ss_quantity@5 as ss_quantity, ss_list_price@6 as ss_list_price, i_brand_id@0 as i_brand_id, i_class_id@1 as i_class_id, i_category_id@2 as i_category_id], partitions=1, output_rows=2880404, output_bytes=186866213
+                              GpuCoalesceBatchesExec, partitions=1, output_rows=2880404, output_bytes=186866213
+                                GpuHashJoinExec: join_type=Inner, on=[(i_item_sk@0, ss_item_sk@1)], projection=[1, 2, 3, 4, 5, 6, 7], partitions=1, output_rows=2880404, output_bytes=186866213
+                                  GpuScanExec: table=item, projections=[i_item_sk, i_brand_id, i_class_id, i_category_id], partitions=1, output_rows=18000, output_bytes=585000
+                                  GpuScanExec: table=store_sales, projections=[ss_sold_date_sk, ss_item_sk, ss_quantity, ss_list_price], partitions=1, output_rows=2880404, output_bytes=116656364
+                        GpuProjectExec: expr=[i_item_sk@0 as ss_item_sk], partitions=1, output_rows=16193, output_bytes=131569
+                          GpuCoalesceBatchesExec, partitions=1, output_rows=16193, output_bytes=131569
+                            GpuHashJoinExec: join_type=Inner, on=[(i_brand_id@1, brand_id@0), (i_class_id@2, class_id@1), (i_category_id@3, category_id@2)], projection=[0], partitions=1, output_rows=16193, output_bytes=131569
+                              GpuScanExec: table=item, projections=[i_item_sk, i_brand_id, i_class_id, i_category_id], partitions=1, output_rows=18000, output_bytes=585000
+                              GpuCoalesceBatchesExec, partitions=1, output_rows=3837, output_bytes=93528
+                                GpuHashJoinExec: join_type=RightSemi, on=[(i_brand_id@0, brand_id@0), (i_class_id@1, class_id@1), (i_category_id@2, category_id@2)], partitions=1, output_rows=3837, output_bytes=93528
+                                  GpuCoalesceBatchesExec, partitions=1, output_rows=432058, output_bytes=10531416
+                                    GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ws_sold_date_sk@0)], projection=[2, 3, 4], partitions=1, output_rows=432058, output_bytes=10531416
+                                      GpuCoalesceBatchesExec, partitions=1, output_rows=1096, output_bytes=8905
+                                        GpuFilterExec: predicate=d_year@1 >= 1999 AND d_year@1 <= 2001, projection=[0], partitions=1, output_rows=1096, output_bytes=8905
+                                          GpuScanExec: table=date_dim, projections=[d_date_sk, d_year], partitions=1, output_rows=73049, output_bytes=1187048
+                                      GpuProjectExec: expr=[ws_sold_date_sk@3 as ws_sold_date_sk, i_brand_id@0 as i_brand_id, i_class_id@1 as i_class_id, i_category_id@2 as i_category_id], partitions=1, output_rows=719384, output_bytes=23379980
+                                        GpuCoalesceBatchesExec, partitions=1, output_rows=719384, output_bytes=23379980
+                                          GpuHashJoinExec: join_type=Inner, on=[(i_item_sk@0, ws_item_sk@1)], projection=[1, 2, 3, 4], partitions=1, output_rows=719384, output_bytes=23379980
+                                            GpuScanExec: table=item, projections=[i_item_sk, i_brand_id, i_class_id, i_category_id], partitions=1, output_rows=18000, output_bytes=585000
+                                            GpuScanExec: table=web_sales, projections=[ws_sold_date_sk, ws_item_sk], partitions=1, output_rows=719384, output_bytes=11689990
+                                  GpuAggregateExec: group_by=[brand_id, class_id, category_id], aggr=[], partitions=1, output_rows=3837, output_bytes=93528
+                                    GpuCoalesceBatchesExec, partitions=1, output_rows=3837, output_bytes=93528
+                                      GpuHashJoinExec: join_type=RightSemi, on=[(i_brand_id@0, brand_id@0), (i_class_id@1, class_id@1), (i_category_id@2, category_id@2)], partitions=1, output_rows=3837, output_bytes=93528
+                                        GpuCoalesceBatchesExec, partitions=1, output_rows=859879, output_bytes=20959551
+                                          GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, cs_sold_date_sk@0)], projection=[2, 3, 4], partitions=1, output_rows=859879, output_bytes=20959551
+                                            GpuCoalesceBatchesExec, partitions=1, output_rows=1096, output_bytes=8905
+                                              GpuFilterExec: predicate=d_year@1 >= 1999 AND d_year@1 <= 2001, projection=[0], partitions=1, output_rows=1096, output_bytes=8905
+                                                GpuScanExec: table=date_dim, projections=[d_date_sk, d_year], partitions=1, output_rows=73049, output_bytes=1187048
+                                            GpuProjectExec: expr=[cs_sold_date_sk@3 as cs_sold_date_sk, i_brand_id@0 as i_brand_id, i_class_id@1 as i_class_id, i_category_id@2 as i_category_id], partitions=1, output_rows=1441548, output_bytes=46850312
+                                              GpuCoalesceBatchesExec, partitions=1, output_rows=1441548, output_bytes=46850312
+                                                GpuHashJoinExec: join_type=Inner, on=[(i_item_sk@0, cs_item_sk@1)], projection=[1, 2, 3, 4], partitions=1, output_rows=1441548, output_bytes=46850312
+                                                  GpuScanExec: table=item, projections=[i_item_sk, i_brand_id, i_class_id, i_category_id], partitions=1, output_rows=18000, output_bytes=585000
+                                                  GpuScanExec: table=catalog_sales, projections=[cs_sold_date_sk, cs_item_sk], partitions=1, output_rows=1441548, output_bytes=23425156
+                                        GpuAggregateExec: group_by=[brand_id, class_id, category_id], aggr=[], partitions=1, output_rows=3837, output_bytes=93528
+                                          GpuProjectExec: expr=[i_brand_id@0 as brand_id, i_class_id@1 as class_id, i_category_id@2 as category_id], partitions=1, output_rows=1644368, output_bytes=40081470
+                                            GpuCoalesceBatchesExec, partitions=1, output_rows=1644368, output_bytes=40081470
+                                              GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ss_sold_date_sk@0)], projection=[2, 3, 4], partitions=1, output_rows=1644368, output_bytes=40081470
+                                                GpuCoalesceBatchesExec, partitions=1, output_rows=1096, output_bytes=8905
+                                                  GpuFilterExec: predicate=d_year@1 >= 1999 AND d_year@1 <= 2001, projection=[0], partitions=1, output_rows=1096, output_bytes=8905
+                                                    GpuScanExec: table=date_dim, projections=[d_date_sk, d_year], partitions=1, output_rows=73049, output_bytes=1187048
+                                                GpuProjectExec: expr=[ss_sold_date_sk@3 as ss_sold_date_sk, i_brand_id@0 as i_brand_id, i_class_id@1 as i_class_id, i_category_id@2 as i_category_id], partitions=1, output_rows=2880404, output_bytes=93613132
+                                                  GpuCoalesceBatchesExec, partitions=1, output_rows=2880404, output_bytes=93613132
+                                                    GpuHashJoinExec: join_type=Inner, on=[(i_item_sk@0, ss_item_sk@1)], projection=[1, 2, 3, 4], partitions=1, output_rows=2880404, output_bytes=93613132
+                                                      GpuScanExec: table=item, projections=[i_item_sk, i_brand_id, i_class_id, i_category_id], partitions=1, output_rows=18000, output_bytes=585000
+                                                      GpuScanExec: table=store_sales, projections=[ss_sold_date_sk, ss_item_sk], partitions=1, output_rows=2880404, output_bytes=46806566
+            GpuProjectExec: expr=[catalog as channel, i_brand_id@0 as i_brand_id, i_class_id@1 as i_class_id, i_category_id@2 as i_category_id, sum(catalog_sales.cs_quantity * catalog_sales.cs_list_price)@3 as sales, count(*)@4 as number_sales], partitions=1, output_rows=3423, output_bytes=204529
+              GpuProjectExec: expr=[i_brand_id@1 as i_brand_id, i_class_id@2 as i_class_id, i_category_id@3 as i_category_id, sum(catalog_sales.cs_quantity * catalog_sales.cs_list_price)@4 as sum(catalog_sales.cs_quantity * catalog_sales.cs_list_price), count(*)@5 as count(*), avg_sales.average_sales@0 as avg_sales.average_sales], partitions=1, output_rows=3423, output_bytes=221640
+                GpuNestedLoopJoinExec: join_type=Inner, filter=CAST(sum(catalog_sales.cs_quantity * catalog_sales.cs_list_price)@0 AS Decimal128(38, 6)) > avg_sales.average_sales@1, partitions=1, output_rows=3423, output_bytes=221640
+                  GpuProjectExec: expr=[CAST(avg(sq2.quantity * sq2.list_price)@0 AS Decimal128(38, 6)) as avg_sales.average_sales], partitions=1, output_rows=1, output_bytes=17
+                    GpuAggregateExec: group_by=[], aggr=[avg(sq2.quantity * sq2.list_price)], partitions=1, output_rows=1, output_bytes=17
+                      GpuCoalescePartitionsExec, partitions=1, output_rows=1, output_bytes=26
+                        GpuAggregateExec: group_by=[], aggr=[avg(sq2.quantity * sq2.list_price)], partitions=1, output_rows=1, output_bytes=26
+                          GpuUnionExec, partitions=1, output_rows=2936305, output_bytes=71205398
+                            GpuProjectExec: expr=[ss_quantity@0 as quantity, ss_list_price@1 as list_price], partitions=1, output_rows=1644368, output_bytes=39875924
+                              GpuCoalesceBatchesExec, partitions=1, output_rows=1644368, output_bytes=39875924
+                                GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ss_sold_date_sk@0)], projection=[2, 3], partitions=1, output_rows=1644368, output_bytes=39875924
+                                  GpuCoalesceBatchesExec, partitions=1, output_rows=1096, output_bytes=8905
+                                    GpuFilterExec: predicate=d_year@1 >= 1999 AND d_year@1 <= 2001, projection=[0], partitions=1, output_rows=1096, output_bytes=8905
+                                      GpuScanExec: table=date_dim, projections=[d_date_sk, d_year], partitions=1, output_rows=73049, output_bytes=1187048
+                                  GpuScanExec: table=store_sales, projections=[ss_sold_date_sk, ss_quantity, ss_list_price], partitions=1, output_rows=2880404, output_bytes=93253081
+                            GpuProjectExec: expr=[cs_quantity@0 as quantity, cs_list_price@1 as list_price], partitions=1, output_rows=859879, output_bytes=20852066
+                              GpuCoalesceBatchesExec, partitions=1, output_rows=859879, output_bytes=20852066
+                                GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, cs_sold_date_sk@0)], projection=[2, 3], partitions=1, output_rows=859879, output_bytes=20852066
+                                  GpuCoalesceBatchesExec, partitions=1, output_rows=1096, output_bytes=8905
+                                    GpuFilterExec: predicate=d_year@1 >= 1999 AND d_year@1 <= 2001, projection=[0], partitions=1, output_rows=1096, output_bytes=8905
+                                      GpuScanExec: table=date_dim, projections=[d_date_sk, d_year], partitions=1, output_rows=73049, output_bytes=1187048
+                                  GpuScanExec: table=catalog_sales, projections=[cs_sold_date_sk, cs_quantity, cs_list_price], partitions=1, output_rows=1441548, output_bytes=46670118
+                            GpuProjectExec: expr=[ws_quantity@0 as quantity, ws_list_price@1 as list_price], partitions=1, output_rows=432058, output_bytes=10477408
+                              GpuCoalesceBatchesExec, partitions=1, output_rows=432058, output_bytes=10477408
+                                GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ws_sold_date_sk@0)], projection=[2, 3], partitions=1, output_rows=432058, output_bytes=10477408
+                                  GpuCoalesceBatchesExec, partitions=1, output_rows=1096, output_bytes=8905
+                                    GpuFilterExec: predicate=d_year@1 >= 1999 AND d_year@1 <= 2001, projection=[0], partitions=1, output_rows=1096, output_bytes=8905
+                                      GpuScanExec: table=date_dim, projections=[d_date_sk, d_year], partitions=1, output_rows=73049, output_bytes=1187048
+                                  GpuScanExec: table=web_sales, projections=[ws_sold_date_sk, ws_quantity, ws_list_price], partitions=1, output_rows=719384, output_bytes=23290057
+                  GpuAggregateExec: group_by=[i_brand_id, i_class_id, i_category_id], aggr=[sum(catalog_sales.cs_quantity * catalog_sales.cs_list_price), count(*)], partitions=1, output_rows=3516, output_bytes=170968
+                    GpuCoalesceBatchesExec, partitions=1, output_rows=46536, output_bytes=2262813
+                      GpuHashJoinExec: join_type=LeftSemi, on=[(cs_item_sk@0, ss_item_sk@0)], projection=[1, 2, 3, 4, 5], partitions=1, output_rows=46536, output_bytes=2262813
+                        GpuCoalesceBatchesExec, partitions=1, output_rows=46689, output_bytes=2649606
+                          GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, cs_sold_date_sk@0)], projection=[2, 3, 4, 5, 6, 7], partitions=1, output_rows=46689, output_bytes=2649606
+                            GpuCoalesceBatchesExec, partitions=1, output_rows=30, output_bytes=244
+                              GpuFilterExec: predicate=d_year@1 = 2001 AND d_moy@2 = 11, projection=[0], partitions=1, output_rows=30, output_bytes=244
+                                GpuScanExec: table=date_dim, projections=[d_date_sk, d_year, d_moy], partitions=1, output_rows=73049, output_bytes=1780572
+                            GpuProjectExec: expr=[cs_sold_date_sk@3 as cs_sold_date_sk, cs_item_sk@4 as cs_item_sk, cs_quantity@5 as cs_quantity, cs_list_price@6 as cs_list_price, i_brand_id@0 as i_brand_id, i_class_id@1 as i_class_id, i_category_id@2 as i_category_id], partitions=1, output_rows=1441548, output_bytes=93520430
+                              GpuCoalesceBatchesExec, partitions=1, output_rows=1441548, output_bytes=93520430
+                                GpuHashJoinExec: join_type=Inner, on=[(i_item_sk@0, cs_item_sk@1)], projection=[1, 2, 3, 4, 5, 6, 7], partitions=1, output_rows=1441548, output_bytes=93520430
+                                  GpuScanExec: table=item, projections=[i_item_sk, i_brand_id, i_class_id, i_category_id], partitions=1, output_rows=18000, output_bytes=585000
+                                  GpuScanExec: table=catalog_sales, projections=[cs_sold_date_sk, cs_item_sk, cs_quantity, cs_list_price], partitions=1, output_rows=1441548, output_bytes=58382696
+                        GpuProjectExec: expr=[i_item_sk@0 as ss_item_sk], partitions=1, output_rows=16193, output_bytes=131569
+                          GpuCoalesceBatchesExec, partitions=1, output_rows=16193, output_bytes=131569
+                            GpuHashJoinExec: join_type=Inner, on=[(i_brand_id@1, brand_id@0), (i_class_id@2, class_id@1), (i_category_id@3, category_id@2)], projection=[0], partitions=1, output_rows=16193, output_bytes=131569
+                              GpuScanExec: table=item, projections=[i_item_sk, i_brand_id, i_class_id, i_category_id], partitions=1, output_rows=18000, output_bytes=585000
+                              GpuCoalesceBatchesExec, partitions=1, output_rows=3837, output_bytes=93528
+                                GpuHashJoinExec: join_type=RightSemi, on=[(i_brand_id@0, brand_id@0), (i_class_id@1, class_id@1), (i_category_id@2, category_id@2)], partitions=1, output_rows=3837, output_bytes=93528
+                                  GpuCoalesceBatchesExec, partitions=1, output_rows=432058, output_bytes=10531416
+                                    GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ws_sold_date_sk@0)], projection=[2, 3, 4], partitions=1, output_rows=432058, output_bytes=10531416
+                                      GpuCoalesceBatchesExec, partitions=1, output_rows=1096, output_bytes=8905
+                                        GpuFilterExec: predicate=d_year@1 >= 1999 AND d_year@1 <= 2001, projection=[0], partitions=1, output_rows=1096, output_bytes=8905
+                                          GpuScanExec: table=date_dim, projections=[d_date_sk, d_year], partitions=1, output_rows=73049, output_bytes=1187048
+                                      GpuProjectExec: expr=[ws_sold_date_sk@3 as ws_sold_date_sk, i_brand_id@0 as i_brand_id, i_class_id@1 as i_class_id, i_category_id@2 as i_category_id], partitions=1, output_rows=719384, output_bytes=23379980
+                                        GpuCoalesceBatchesExec, partitions=1, output_rows=719384, output_bytes=23379980
+                                          GpuHashJoinExec: join_type=Inner, on=[(i_item_sk@0, ws_item_sk@1)], projection=[1, 2, 3, 4], partitions=1, output_rows=719384, output_bytes=23379980
+                                            GpuScanExec: table=item, projections=[i_item_sk, i_brand_id, i_class_id, i_category_id], partitions=1, output_rows=18000, output_bytes=585000
+                                            GpuScanExec: table=web_sales, projections=[ws_sold_date_sk, ws_item_sk], partitions=1, output_rows=719384, output_bytes=11689990
+                                  GpuAggregateExec: group_by=[brand_id, class_id, category_id], aggr=[], partitions=1, output_rows=3837, output_bytes=93528
+                                    GpuCoalesceBatchesExec, partitions=1, output_rows=3837, output_bytes=93528
+                                      GpuHashJoinExec: join_type=RightSemi, on=[(i_brand_id@0, brand_id@0), (i_class_id@1, class_id@1), (i_category_id@2, category_id@2)], partitions=1, output_rows=3837, output_bytes=93528
+                                        GpuCoalesceBatchesExec, partitions=1, output_rows=859879, output_bytes=20959551
+                                          GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, cs_sold_date_sk@0)], projection=[2, 3, 4], partitions=1, output_rows=859879, output_bytes=20959551
+                                            GpuCoalesceBatchesExec, partitions=1, output_rows=1096, output_bytes=8905
+                                              GpuFilterExec: predicate=d_year@1 >= 1999 AND d_year@1 <= 2001, projection=[0], partitions=1, output_rows=1096, output_bytes=8905
+                                                GpuScanExec: table=date_dim, projections=[d_date_sk, d_year], partitions=1, output_rows=73049, output_bytes=1187048
+                                            GpuProjectExec: expr=[cs_sold_date_sk@3 as cs_sold_date_sk, i_brand_id@0 as i_brand_id, i_class_id@1 as i_class_id, i_category_id@2 as i_category_id], partitions=1, output_rows=1441548, output_bytes=46850312
+                                              GpuCoalesceBatchesExec, partitions=1, output_rows=1441548, output_bytes=46850312
+                                                GpuHashJoinExec: join_type=Inner, on=[(i_item_sk@0, cs_item_sk@1)], projection=[1, 2, 3, 4], partitions=1, output_rows=1441548, output_bytes=46850312
+                                                  GpuScanExec: table=item, projections=[i_item_sk, i_brand_id, i_class_id, i_category_id], partitions=1, output_rows=18000, output_bytes=585000
+                                                  GpuScanExec: table=catalog_sales, projections=[cs_sold_date_sk, cs_item_sk], partitions=1, output_rows=1441548, output_bytes=23425156
+                                        GpuAggregateExec: group_by=[brand_id, class_id, category_id], aggr=[], partitions=1, output_rows=3837, output_bytes=93528
+                                          GpuProjectExec: expr=[i_brand_id@0 as brand_id, i_class_id@1 as class_id, i_category_id@2 as category_id], partitions=1, output_rows=1644368, output_bytes=40081470
+                                            GpuCoalesceBatchesExec, partitions=1, output_rows=1644368, output_bytes=40081470
+                                              GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ss_sold_date_sk@0)], projection=[2, 3, 4], partitions=1, output_rows=1644368, output_bytes=40081470
+                                                GpuCoalesceBatchesExec, partitions=1, output_rows=1096, output_bytes=8905
+                                                  GpuFilterExec: predicate=d_year@1 >= 1999 AND d_year@1 <= 2001, projection=[0], partitions=1, output_rows=1096, output_bytes=8905
+                                                    GpuScanExec: table=date_dim, projections=[d_date_sk, d_year], partitions=1, output_rows=73049, output_bytes=1187048
+                                                GpuProjectExec: expr=[ss_sold_date_sk@3 as ss_sold_date_sk, i_brand_id@0 as i_brand_id, i_class_id@1 as i_class_id, i_category_id@2 as i_category_id], partitions=1, output_rows=2880404, output_bytes=93613132
+                                                  GpuCoalesceBatchesExec, partitions=1, output_rows=2880404, output_bytes=93613132
+                                                    GpuHashJoinExec: join_type=Inner, on=[(i_item_sk@0, ss_item_sk@1)], projection=[1, 2, 3, 4], partitions=1, output_rows=2880404, output_bytes=93613132
+                                                      GpuScanExec: table=item, projections=[i_item_sk, i_brand_id, i_class_id, i_category_id], partitions=1, output_rows=18000, output_bytes=585000
+                                                      GpuScanExec: table=store_sales, projections=[ss_sold_date_sk, ss_item_sk], partitions=1, output_rows=2880404, output_bytes=46806566
+            GpuProjectExec: expr=[web as channel, i_brand_id@0 as i_brand_id, i_class_id@1 as i_class_id, i_category_id@2 as i_category_id, sum(web_sales.ws_quantity * web_sales.ws_list_price)@3 as sales, count(*)@4 as number_sales], partitions=1, output_rows=2877, output_bytes=160399
+              GpuProjectExec: expr=[i_brand_id@1 as i_brand_id, i_class_id@2 as i_class_id, i_category_id@3 as i_category_id, sum(web_sales.ws_quantity * web_sales.ws_list_price)@4 as sum(web_sales.ws_quantity * web_sales.ws_list_price), count(*)@5 as count(*), avg_sales.average_sales@0 as avg_sales.average_sales], partitions=1, output_rows=2877, output_bytes=186288
+                GpuNestedLoopJoinExec: join_type=Inner, filter=CAST(sum(web_sales.ws_quantity * web_sales.ws_list_price)@0 AS Decimal128(38, 6)) > avg_sales.average_sales@1, partitions=1, output_rows=2877, output_bytes=186288
+                  GpuProjectExec: expr=[CAST(avg(sq2.quantity * sq2.list_price)@0 AS Decimal128(38, 6)) as avg_sales.average_sales], partitions=1, output_rows=1, output_bytes=17
+                    GpuAggregateExec: group_by=[], aggr=[avg(sq2.quantity * sq2.list_price)], partitions=1, output_rows=1, output_bytes=17
+                      GpuCoalescePartitionsExec, partitions=1, output_rows=1, output_bytes=26
+                        GpuAggregateExec: group_by=[], aggr=[avg(sq2.quantity * sq2.list_price)], partitions=1, output_rows=1, output_bytes=26
+                          GpuUnionExec, partitions=1, output_rows=2936305, output_bytes=71205398
+                            GpuProjectExec: expr=[ss_quantity@0 as quantity, ss_list_price@1 as list_price], partitions=1, output_rows=1644368, output_bytes=39875924
+                              GpuCoalesceBatchesExec, partitions=1, output_rows=1644368, output_bytes=39875924
+                                GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ss_sold_date_sk@0)], projection=[2, 3], partitions=1, output_rows=1644368, output_bytes=39875924
+                                  GpuCoalesceBatchesExec, partitions=1, output_rows=1096, output_bytes=8905
+                                    GpuFilterExec: predicate=d_year@1 >= 1999 AND d_year@1 <= 2001, projection=[0], partitions=1, output_rows=1096, output_bytes=8905
+                                      GpuScanExec: table=date_dim, projections=[d_date_sk, d_year], partitions=1, output_rows=73049, output_bytes=1187048
+                                  GpuScanExec: table=store_sales, projections=[ss_sold_date_sk, ss_quantity, ss_list_price], partitions=1, output_rows=2880404, output_bytes=93253081
+                            GpuProjectExec: expr=[cs_quantity@0 as quantity, cs_list_price@1 as list_price], partitions=1, output_rows=859879, output_bytes=20852066
+                              GpuCoalesceBatchesExec, partitions=1, output_rows=859879, output_bytes=20852066
+                                GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, cs_sold_date_sk@0)], projection=[2, 3], partitions=1, output_rows=859879, output_bytes=20852066
+                                  GpuCoalesceBatchesExec, partitions=1, output_rows=1096, output_bytes=8905
+                                    GpuFilterExec: predicate=d_year@1 >= 1999 AND d_year@1 <= 2001, projection=[0], partitions=1, output_rows=1096, output_bytes=8905
+                                      GpuScanExec: table=date_dim, projections=[d_date_sk, d_year], partitions=1, output_rows=73049, output_bytes=1187048
+                                  GpuScanExec: table=catalog_sales, projections=[cs_sold_date_sk, cs_quantity, cs_list_price], partitions=1, output_rows=1441548, output_bytes=46670118
+                            GpuProjectExec: expr=[ws_quantity@0 as quantity, ws_list_price@1 as list_price], partitions=1, output_rows=432058, output_bytes=10477408
+                              GpuCoalesceBatchesExec, partitions=1, output_rows=432058, output_bytes=10477408
+                                GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ws_sold_date_sk@0)], projection=[2, 3], partitions=1, output_rows=432058, output_bytes=10477408
+                                  GpuCoalesceBatchesExec, partitions=1, output_rows=1096, output_bytes=8905
+                                    GpuFilterExec: predicate=d_year@1 >= 1999 AND d_year@1 <= 2001, projection=[0], partitions=1, output_rows=1096, output_bytes=8905
+                                      GpuScanExec: table=date_dim, projections=[d_date_sk, d_year], partitions=1, output_rows=73049, output_bytes=1187048
+                                  GpuScanExec: table=web_sales, projections=[ws_sold_date_sk, ws_quantity, ws_list_price], partitions=1, output_rows=719384, output_bytes=23290057
+                  GpuAggregateExec: group_by=[i_brand_id, i_class_id, i_category_id], aggr=[sum(web_sales.ws_quantity * web_sales.ws_list_price), count(*)], partitions=1, output_rows=3362, output_bytes=163481
+                    GpuCoalesceBatchesExec, partitions=1, output_rows=23438, output_bytes=1139674
+                      GpuHashJoinExec: join_type=LeftSemi, on=[(ws_item_sk@0, ss_item_sk@0)], projection=[1, 2, 3, 4, 5], partitions=1, output_rows=23438, output_bytes=1139674
+                        GpuCoalesceBatchesExec, partitions=1, output_rows=23524, output_bytes=1334990
+                          GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ws_sold_date_sk@0)], projection=[2, 3, 4, 5, 6, 7], partitions=1, output_rows=23524, output_bytes=1334990
+                            GpuCoalesceBatchesExec, partitions=1, output_rows=30, output_bytes=244
+                              GpuFilterExec: predicate=d_year@1 = 2001 AND d_moy@2 = 11, projection=[0], partitions=1, output_rows=30, output_bytes=244
+                                GpuScanExec: table=date_dim, projections=[d_date_sk, d_year, d_moy], partitions=1, output_rows=73049, output_bytes=1780572
+                            GpuProjectExec: expr=[ws_sold_date_sk@3 as ws_sold_date_sk, ws_item_sk@4 as ws_item_sk, ws_quantity@5 as ws_quantity, ws_list_price@6 as ws_list_price, i_brand_id@0 as i_brand_id, i_class_id@1 as i_class_id, i_category_id@2 as i_category_id], partitions=1, output_rows=719384, output_bytes=46670037
+                              GpuCoalesceBatchesExec, partitions=1, output_rows=719384, output_bytes=46670037
+                                GpuHashJoinExec: join_type=Inner, on=[(i_item_sk@0, ws_item_sk@1)], projection=[1, 2, 3, 4, 5, 6, 7], partitions=1, output_rows=719384, output_bytes=46670037
+                                  GpuScanExec: table=item, projections=[i_item_sk, i_brand_id, i_class_id, i_category_id], partitions=1, output_rows=18000, output_bytes=585000
+                                  GpuScanExec: table=web_sales, projections=[ws_sold_date_sk, ws_item_sk, ws_quantity, ws_list_price], partitions=1, output_rows=719384, output_bytes=29135052
+                        GpuProjectExec: expr=[i_item_sk@0 as ss_item_sk], partitions=1, output_rows=16193, output_bytes=131569
+                          GpuCoalesceBatchesExec, partitions=1, output_rows=16193, output_bytes=131569
+                            GpuHashJoinExec: join_type=Inner, on=[(i_brand_id@1, brand_id@0), (i_class_id@2, class_id@1), (i_category_id@3, category_id@2)], projection=[0], partitions=1, output_rows=16193, output_bytes=131569
+                              GpuScanExec: table=item, projections=[i_item_sk, i_brand_id, i_class_id, i_category_id], partitions=1, output_rows=18000, output_bytes=585000
+                              GpuCoalesceBatchesExec, partitions=1, output_rows=3837, output_bytes=93528
+                                GpuHashJoinExec: join_type=RightSemi, on=[(i_brand_id@0, brand_id@0), (i_class_id@1, class_id@1), (i_category_id@2, category_id@2)], partitions=1, output_rows=3837, output_bytes=93528
+                                  GpuCoalesceBatchesExec, partitions=1, output_rows=432058, output_bytes=10531416
+                                    GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ws_sold_date_sk@0)], projection=[2, 3, 4], partitions=1, output_rows=432058, output_bytes=10531416
+                                      GpuCoalesceBatchesExec, partitions=1, output_rows=1096, output_bytes=8905
+                                        GpuFilterExec: predicate=d_year@1 >= 1999 AND d_year@1 <= 2001, projection=[0], partitions=1, output_rows=1096, output_bytes=8905
+                                          GpuScanExec: table=date_dim, projections=[d_date_sk, d_year], partitions=1, output_rows=73049, output_bytes=1187048
+                                      GpuProjectExec: expr=[ws_sold_date_sk@3 as ws_sold_date_sk, i_brand_id@0 as i_brand_id, i_class_id@1 as i_class_id, i_category_id@2 as i_category_id], partitions=1, output_rows=719384, output_bytes=23379980
+                                        GpuCoalesceBatchesExec, partitions=1, output_rows=719384, output_bytes=23379980
+                                          GpuHashJoinExec: join_type=Inner, on=[(i_item_sk@0, ws_item_sk@1)], projection=[1, 2, 3, 4], partitions=1, output_rows=719384, output_bytes=23379980
+                                            GpuScanExec: table=item, projections=[i_item_sk, i_brand_id, i_class_id, i_category_id], partitions=1, output_rows=18000, output_bytes=585000
+                                            GpuScanExec: table=web_sales, projections=[ws_sold_date_sk, ws_item_sk], partitions=1, output_rows=719384, output_bytes=11689990
+                                  GpuAggregateExec: group_by=[brand_id, class_id, category_id], aggr=[], partitions=1, output_rows=3837, output_bytes=93528
+                                    GpuCoalesceBatchesExec, partitions=1, output_rows=3837, output_bytes=93528
+                                      GpuHashJoinExec: join_type=RightSemi, on=[(i_brand_id@0, brand_id@0), (i_class_id@1, class_id@1), (i_category_id@2, category_id@2)], partitions=1, output_rows=3837, output_bytes=93528
+                                        GpuCoalesceBatchesExec, partitions=1, output_rows=859879, output_bytes=20959551
+                                          GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, cs_sold_date_sk@0)], projection=[2, 3, 4], partitions=1, output_rows=859879, output_bytes=20959551
+                                            GpuCoalesceBatchesExec, partitions=1, output_rows=1096, output_bytes=8905
+                                              GpuFilterExec: predicate=d_year@1 >= 1999 AND d_year@1 <= 2001, projection=[0], partitions=1, output_rows=1096, output_bytes=8905
+                                                GpuScanExec: table=date_dim, projections=[d_date_sk, d_year], partitions=1, output_rows=73049, output_bytes=1187048
+                                            GpuProjectExec: expr=[cs_sold_date_sk@3 as cs_sold_date_sk, i_brand_id@0 as i_brand_id, i_class_id@1 as i_class_id, i_category_id@2 as i_category_id], partitions=1, output_rows=1441548, output_bytes=46850312
+                                              GpuCoalesceBatchesExec, partitions=1, output_rows=1441548, output_bytes=46850312
+                                                GpuHashJoinExec: join_type=Inner, on=[(i_item_sk@0, cs_item_sk@1)], projection=[1, 2, 3, 4], partitions=1, output_rows=1441548, output_bytes=46850312
+                                                  GpuScanExec: table=item, projections=[i_item_sk, i_brand_id, i_class_id, i_category_id], partitions=1, output_rows=18000, output_bytes=585000
+                                                  GpuScanExec: table=catalog_sales, projections=[cs_sold_date_sk, cs_item_sk], partitions=1, output_rows=1441548, output_bytes=23425156
+                                        GpuAggregateExec: group_by=[brand_id, class_id, category_id], aggr=[], partitions=1, output_rows=3837, output_bytes=93528
+                                          GpuProjectExec: expr=[i_brand_id@0 as brand_id, i_class_id@1 as class_id, i_category_id@2 as category_id], partitions=1, output_rows=1644368, output_bytes=40081470
+                                            GpuCoalesceBatchesExec, partitions=1, output_rows=1644368, output_bytes=40081470
+                                              GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ss_sold_date_sk@0)], projection=[2, 3, 4], partitions=1, output_rows=1644368, output_bytes=40081470
+                                                GpuCoalesceBatchesExec, partitions=1, output_rows=1096, output_bytes=8905
+                                                  GpuFilterExec: predicate=d_year@1 >= 1999 AND d_year@1 <= 2001, projection=[0], partitions=1, output_rows=1096, output_bytes=8905
+                                                    GpuScanExec: table=date_dim, projections=[d_date_sk, d_year], partitions=1, output_rows=73049, output_bytes=1187048
+                                                GpuProjectExec: expr=[ss_sold_date_sk@3 as ss_sold_date_sk, i_brand_id@0 as i_brand_id, i_class_id@1 as i_class_id, i_category_id@2 as i_category_id], partitions=1, output_rows=2880404, output_bytes=93613132
+                                                  GpuCoalesceBatchesExec, partitions=1, output_rows=2880404, output_bytes=93613132
+                                                    GpuHashJoinExec: join_type=Inner, on=[(i_item_sk@0, ss_item_sk@1)], projection=[1, 2, 3, 4], partitions=1, output_rows=2880404, output_bytes=93613132
+                                                      GpuScanExec: table=item, projections=[i_item_sk, i_brand_id, i_class_id, i_category_id], partitions=1, output_rows=18000, output_bytes=585000
+                                                      GpuScanExec: table=store_sales, projections=[ss_sold_date_sk, ss_item_sk], partitions=1, output_rows=2880404, output_bytes=46806566
