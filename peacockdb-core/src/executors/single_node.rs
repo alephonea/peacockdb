@@ -14,51 +14,17 @@ use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
 use datafusion::physical_plan::{execute_stream, ExecutionPlan};
 use datafusion::physical_plan::union::{InterleaveExec, UnionExec};
 
-use crate::gpu_rule::{
-    GpuAggregateExec, GpuCoalesceBatchesExec, GpuCoalescePartitionsExec, GpuFilterExec,
-    GpuHashJoinExec, GpuInterleaveExec, GpuProjectExec, GpuRepartitionExec, GpuScanExec,
-    GpuSortExec, GpuSortPreservingMergeExec,
-};
 
 use super::executor::NodeMemoryStats;
 use super::stream::{drain_stream, InstrumentedStream, StreamSourceExec};
 
 // 
-// TODO(Inc3): `strip_gpu` (and its `try_strip!` chain) is the inverse of the
-// operator wrappers and MIGRATES to operators/mod.rs, collapsing onto
-// `Operator::partition_topology` + an `as_operator()` registry lookup. Parked here
-// for Inc2 so it has exactly one owner; do NOT duplicate it into the callers.
+/// Delegates to the ONE dispatch point, `operators::strip_target` (Inc3). The old
+/// `try_strip!` chain lived here; it is gone, not duplicated. Behavior is unchanged,
+/// asymmetry included — see the per-operator `strips_to_inner` impls for which
+/// wrappers deliberately pass through unstripped, and why.
 pub(crate) fn strip_gpu(node: Arc<dyn ExecutionPlan>) -> (Arc<dyn ExecutionPlan>, Option<usize>) {
-    macro_rules! try_strip {
-        ($ty:ty) => {
-            if let Some(n) = node.as_any().downcast_ref::<$ty>() {
-                return (n.inner().clone(), None);
-            }
-        };
-    }
-
-    // GpuScanExec is special: it carries the memory-budget batch size.
-    if let Some(scan) = node.as_any().downcast_ref::<GpuScanExec>() {
-        return (scan.inner().clone(), Some(scan.gpu_batch_size));
-    }
-
-    try_strip!(GpuFilterExec);
-    try_strip!(GpuProjectExec);
-    try_strip!(GpuAggregateExec);
-    try_strip!(GpuHashJoinExec);
-    try_strip!(GpuSortExec);
-    try_strip!(GpuCoalesceBatchesExec);
-    try_strip!(GpuCoalescePartitionsExec);
-    try_strip!(GpuRepartitionExec);
-    try_strip!(GpuSortPreservingMergeExec);
-    // Strip to the bare InterleaveExec so build_stream's substitution sees it:
-    // with single-partition stream stubs InterleaveExec::try_new can't interleave,
-    // so it's rebuilt as a (semantically-equivalent) UnionExec. Without stripping,
-    // the wrapper's with_new_children surfaces that error and it isn't recognised.
-    try_strip!(GpuInterleaveExec);
-
-    // Plain CPU node — pass through unchanged.
-    (node, None)
+    crate::operators::strip_target(&node)
 }
 
 /// Apply a batch-size override to a `TaskContext`, returning the updated context.

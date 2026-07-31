@@ -1,0 +1,218 @@
+//! Wire-format guard: the EXACT bytes `serialize_plan_mode` emits, per query.
+//!
+//! Why this exists (Inc3). Nothing else in the suite pins the serialized layout:
+//!   - `.plan.txt` goldens are rendered TEXT. FlatBuffer field write-order changes
+//!     none of it, so a completely different binary layout leaves them identical.
+//!   - The round-trip oracle asserts `reserialize(deserialize(bytes)) == bytes`
+//!     WITHIN ONE BUILD. That proves idempotency, not stability across versions: a
+//!     different-but-internally-consistent layout passes it 100%.
+//! So a refactor could silently change every byte on the wire and the whole suite
+//! would stay green — while the C++ side, which READS these bytes, is a live
+//! cross-language consumer. This file closes that gap: the digests are committed, so
+//! any layout shift turns the suite red and has to be justified rather than noticed.
+//!
+//! FlatBufferBuilder is a no-interning bump arena, so byte identity is sensitive to
+//! statement ORDER inside each serializer arm, not just to field values. That is
+//! precisely the property this guard protects.
+//!
+//! Regenerate deliberately (a diff here means the wire format moved):
+//!   UPDATE_CANONICAL=1 cargo test --features rust-only -p peacockdb-core --test test_plan_bytes
+
+#[macro_use]
+mod common;
+
+use std::collections::BTreeMap;
+
+use sha2::{Digest, Sha256};
+
+use peacockdb_core::plan_serializer::serialize_plan_mode;
+
+/// `<dataset>.sf<sf>/<query>.<device>` -> sha256 of the serialized plan bytes.
+fn digest_path() -> std::path::PathBuf {
+    common::testdata_root().join("goldens/plan_bytes.sha256")
+}
+
+/// The corpus is DERIVED from the committed `.plan.txt` goldens rather than listed
+/// here, so it cannot drift out of sync with the plan suite: add a plan golden and
+/// this guard covers it automatically.
+fn corpus() -> Vec<(String, String, String, String)> {
+    let mut out = Vec::new();
+    let root = common::testdata_root().join("goldens");
+    let mut dirs: Vec<_> = std::fs::read_dir(&root)
+        .unwrap_or_else(|e| panic!("cannot read {}: {e}", root.display()))
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.is_dir())
+        .collect();
+    dirs.sort();
+    for dir in dirs {
+        // `<dataset>.sf<sf>`
+        let dname = dir.file_name().unwrap().to_string_lossy().to_string();
+        let Some((dataset, sf)) = dname.split_once(".sf") else { continue };
+        let mut files: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|f| f.ends_with(".plan.txt"))
+            .collect();
+        files.sort();
+        for f in files {
+            let stem = f.trim_end_matches(".plan.txt");
+            // `<query>.<device>` — device is the LAST dot-separated component.
+            let Some((query, device)) = stem.rsplit_once('.') else { continue };
+            out.push((dataset.to_string(), sf.to_string(), query.to_string(), device.to_string()));
+        }
+    }
+    out
+}
+
+#[tokio::test]
+async fn serialized_plan_bytes_are_stable() {
+    let mut actual: BTreeMap<String, String> = BTreeMap::new();
+
+    for (dataset, sf, query, device) in corpus() {
+        let key = format!("{dataset}.sf{sf}/{query}.{device}");
+        let (partitions, budget) = common::device_config(&device);
+        let data_dir = common::data_dir_for(&dataset, &sf);
+        let sql_path = common::queries_dir_for(&dataset).join(format!("{query}.sql"));
+        let Ok(sql) = std::fs::read_to_string(&sql_path) else { continue };
+
+        let ctx = peacockdb_core::create_context_with_tables_mode(
+            &data_dir,
+            partitions,
+            budget,
+            common::partition_mode(&device),
+        )
+        .await
+        .unwrap();
+        let plan = ctx.sql(&sql).await.unwrap().create_physical_plan().await.unwrap();
+
+        // Record UNSUPPORTED rather than skipping: a node becoming (un)serializable is
+        // itself a wire-format change, and silently dropping it would hide that.
+        let value = match serialize_plan_mode(&plan, common::partition_mode(&device)) {
+            Ok(bytes) => {
+                let mut h = Sha256::new();
+                h.update(&bytes);
+                format!("{:x} {}", h.finalize(), bytes.len())
+            }
+            Err(e) => format!("UNSUPPORTED {e}"),
+        };
+        actual.insert(key, value);
+    }
+
+    // The three INLINE-SQL plans. They have no testdata/*-queries/*.sql file, so the
+    // corpus walk above cannot see them — yet they are exactly the plans
+    // test_plan_serialiser.rs round-trips, i.e. the serializer's own test plans were
+    // the unguarded ones. SQL kept verbatim in sync with test_plan_serialiser.rs.
+    for (name, sql) in [
+        ("filter_agg", "SELECT count(*) FROM customer WHERE c_acctbal > 0"),
+        (
+            "join_sort",
+            "SELECT n.n_name, r.r_name \
+             FROM nation n JOIN region r ON n.n_regionkey = r.r_regionkey \
+             ORDER BY n.n_name",
+        ),
+        (
+            "group_join_sort",
+            "SELECT r.r_name, count(*) AS nation_count \
+             FROM nation n JOIN region r ON n.n_regionkey = r.r_regionkey \
+             GROUP BY r.r_name \
+             ORDER BY nation_count DESC, r.r_name",
+        ),
+    ] {
+        let device = "tp8-mini";
+        let (partitions, budget) = common::device_config(device);
+        let ctx = peacockdb_core::create_context_with_tables_mode(
+            &common::data_dir_for("tpch", "1"),
+            partitions,
+            budget,
+            common::partition_mode(device),
+        )
+        .await
+        .unwrap();
+        let plan = ctx.sql(sql).await.unwrap().create_physical_plan().await.unwrap();
+        let value = match serialize_plan_mode(&plan, common::partition_mode(device)) {
+            Ok(bytes) => {
+                let mut h = Sha256::new();
+                h.update(&bytes);
+                format!("{:x} {}", h.finalize(), bytes.len())
+            }
+            Err(e) => format!("UNSUPPORTED {e}"),
+        };
+        actual.insert(format!("tpch.sf1/{name}.{device} [inline]"), value);
+    }
+
+    assert!(!actual.is_empty(), "corpus was empty — no .plan.txt goldens found");
+
+    let rendered: String =
+        actual.iter().map(|(k, v)| format!("{k}  {v}\n")).collect::<Vec<_>>().concat();
+
+    let path = digest_path();
+    if std::env::var("UPDATE_CANONICAL").is_ok() {
+        // Deliberately obstructive. These digests exist to be a FIXED expectation from
+        // before a refactor; regenerating them on a red test photographs the new
+        // behavior and asserts it against itself, which proves nothing. Requiring a
+        // second, explicit variable makes that a decision rather than a reflex.
+        if std::env::var("PEACOCK_REWRITE_PLAN_BYTES").is_err() {
+            panic!(
+                "REFUSING to regenerate {}.\n\
+                 A red digest test means the serialized bytes MOVED. The C++ side READS \
+                 these bytes, so this is a cross-language wire-format change — find out WHY \
+                 before touching this file. Regenerating to make the test pass destroys the \
+                 only guard on the layout.\n\
+                 If the change really is intended and reviewed, set \
+                 PEACOCK_REWRITE_PLAN_BYTES=1 as well.",
+                path.display()
+            );
+        }
+        let header = concat!(
+            "# serialize_plan_mode() wire-format digests: sha256 + byte length per query.\n",
+            "# REGENERATING THIS DEFEATS ITS PURPOSE. A red digest test means the serialized\n",
+            "# bytes MOVED — find out WHY (the C++ side reads these bytes); do NOT regenerate\n",
+            "# to make it pass. See tests/test_plan_bytes.rs for the full rationale.\n",
+            "# Baseline provenance: generated at 9cc44c9 (Inc2 head), BEFORE the Inc3\n",
+            "# serializer migration, so a green test proves bytes did not move across it.\n",
+        );
+        std::fs::write(&path, format!("{header}{rendered}")).unwrap();
+        eprintln!("Updated plan-bytes digests: {} ({} entries)", path.display(), actual.len());
+        return;
+    }
+
+    let expected = std::fs::read_to_string(&path).unwrap_or_else(|_| {
+        panic!(
+            "missing {}\nRun with UPDATE_CANONICAL=1 to generate it.",
+            path.display()
+        )
+    });
+
+    // Report every drifted query, not just the first — a layout change moves all of
+    // them at once, and seeing one line is misleading about the blast radius.
+    let expected_map: BTreeMap<&str, &str> = expected
+        .lines()
+        .filter(|l| !l.trim().is_empty() && !l.starts_with('#'))
+        .filter_map(|l| l.split_once("  "))
+        .collect();
+    let mut drifted = Vec::new();
+    for (k, v) in &actual {
+        match expected_map.get(k.as_str()) {
+            Some(e) if *e == v.as_str() => {}
+            Some(e) => drifted.push(format!("  {k}\n    expected {e}\n    actual   {v}")),
+            None => drifted.push(format!("  {k}\n    (absent from the digest golden)")),
+        }
+    }
+    let missing: Vec<&&str> =
+        expected_map.keys().filter(|k| !actual.contains_key(**k)).collect();
+
+    assert!(
+        drifted.is_empty() && missing.is_empty(),
+        "serialized plan bytes moved for {} of {} queries (and {} golden entries vanished).\n\
+         The FlatBuffer wire format changed — the C++ side reads these bytes, so this is a \
+         cross-language change, not a test nit. Justify it, then regenerate with \
+         UPDATE_CANONICAL=1.\n{}\n{}",
+        drifted.len(),
+        actual.len(),
+        missing.len(),
+        drifted.join("\n"),
+        if missing.is_empty() { String::new() } else { format!("vanished: {missing:?}") }
+    );
+}

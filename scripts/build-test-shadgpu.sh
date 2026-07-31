@@ -242,20 +242,40 @@ if [ "$RUN" -eq 1 ]; then
       echo "==> ran \$ran_any C++ test binaries"
     fi
 
+    # Same two guards as the C++ loop above, and they matter MORE here: PCK_TEST_FILTER
+    # is human-typed, so a typo matches nothing, libtest reports "0 passed" and exits 0,
+    # and the run reads GREEN having verified nothing. A zero-test outcome must be red.
     echo "==> rust GPU integration tests (filter='$PCK_TEST_FILTER')"
+    rust_ran=0
     for t in /home/info/peacockdb/cpp/install/rust-tests/*; do
       [ -x "\$t" ] || continue
-      echo "--- \$(basename "\$t")"
+      tname=\${t##*/}
+      echo "--- \$tname"
+      rlog=/tmp/\$tname.rustlog
       # --test-threads=1: GPU/RMM context is process-wide, parallel tests OOM.
-      "\$t" --nocapture --test-threads=1 '$PCK_TEST_FILTER'
+      "\$t" --nocapture --test-threads=1 '$PCK_TEST_FILTER' > "\$rlog" 2>&1
       status=\$?
+      rzero=0
+      while IFS= read -r line; do
+        printf '%s\n' "\$line"
+        case "\$line" in *"test result:"*" 0 passed"*) rzero=1 ;; esac
+      done < "\$rlog"
       if [ "\$status" -ne 0 ]; then
         # 139 = SIGSEGV. Name it explicitly: a bare non-zero code here has already
         # been mistaken for an assertion failure.
-        echo "!!! \$(basename "\$t") FAILED (exit \$status)"
+        echo "!!! \$tname FAILED (exit \$status)"
+        rc=1
+      elif [ "\$rzero" -eq 1 ]; then
+        echo "!!! \$tname ran 0 tests (filter '$PCK_TEST_FILTER' matched nothing?) — nothing was verified"
         rc=1
       fi
+      rust_ran=\$((rust_ran + 1))
     done
+    if [ "\$rust_ran" -eq 0 ]; then
+      echo "!!! no rust test binaries found in cpp/install/rust-tests — every rust GPU test vanished"
+      rc=1
+    fi
+    echo "==> ran \$rust_ran rust test binaries"
 
     if [ "\$rc" -ne 0 ]; then
       echo "==> GPU test run FAILED (see '!!!' lines above)"

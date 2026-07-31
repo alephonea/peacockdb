@@ -25,6 +25,7 @@ datafusion-comet-spark-expr = { version = "0.6.0", default-features = false }
 [dev-dependencies]
 datafusion = "45"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+sha2 = "0.10"   # plan-bytes wire-format digests (already in the graph via DataFusion)
 paste = "1"   # derive test fn idents from the unified (dataset, sf, query, device) macros
 
 # No [patch] section needed

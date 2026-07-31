@@ -1,0 +1,137 @@
+# serialize_plan_mode() wire-format digests: sha256 + byte length per query.
+# REGENERATING THIS DEFEATS ITS PURPOSE. A red digest test means the serialized
+# bytes MOVED — find out WHY (the C++ side reads these bytes); do NOT regenerate
+# to make it pass. See tests/test_plan_bytes.rs for the full rationale.
+# Baseline provenance: generated at 9cc44c9 (Inc2 head), BEFORE the Inc3
+# serializer migration, so a green test proves bytes did not move across it.
+tpcds.sf1/q1.tp8-mini  b5dbb42824b66c66cef65353bf896f40046bf46c554517f71f04bfec15e51ee9 20112
+tpcds.sf1/q10.tp8-mini  a11cc6848d1fe0ddbec49dcb3d2c5b7d995d26c87d4e78209769fac5015be1a2 34072
+tpcds.sf1/q11.tp8-mini  b25015b7a4cca63b9dc6f068e714e23509ed4de1958502e6dce75a9f5d6c0667 67280
+tpcds.sf1/q12.tp8-mini  966cbd966fac55a8b94d377798dac59edb47c455a3d13b0d00cfffd6973f57b6 16408
+tpcds.sf1/q13.tp8-mini  2d39d27db9e21cc087746342aee44db1ff4a98500feb5d81593a477a63b99514 30616
+tpcds.sf1/q14.tp8-mini  7c2d14956fdd6df9e7596f345a8edef4aca4503081402a9dbed061d4923b6120 180048
+tpcds.sf1/q15.tp8-mini  44b8e595f18dd16b0ca7328165fe9d06c53790a185275520232151bc10ca2fe1 14272
+tpcds.sf1/q16.tp8-mini  f012e1fa7cb3d27394324d1a23f251c5ca354657392c9a3612e0441ba836c491 19784
+tpcds.sf1/q17.tp8-mini  969c1e963e1447127df655019798bf1a277cfc04b5e4feed36f3d53409b8b910 39328
+tpcds.sf1/q18.tp8-mini  6c1685916744cba6a739debbccb210fdbf181f4a2b197f2a29ad40c071dfd006 38128
+tpcds.sf1/q19.tp8-mini  e3a43b2232b45a612319432c0aea45d060dc906e1b82a9f62931f2c20ba41872 21680
+tpcds.sf1/q2.tp8-mini  da6d058d8ddc793b0b97efc268322dd9e69d4ab7b576bc4cab2780de79d6875b 46240
+tpcds.sf1/q20.tp8-mini  b64d39e738edbc2dfc44df74a28784eaa1d99c47823569beb102175b473ab2c0 16512
+tpcds.sf1/q21.tp8-mini  a2328f784720fdb79fc8002f101050aaec645803aa9b944fc41a684b74ffcfdc 18272
+tpcds.sf1/q22.tp8-mini  016444c5f7deb28963a5502bbb8e1f241ae4986fe94ab7915c69bc2447eba3c4 11360
+tpcds.sf1/q23.tp8-mini  3714bdc48b3c8095564a2246cfe37882a10b313c49fc7216dfe0b953abf87622 78088
+tpcds.sf1/q24.tp8-mini  a7451409f84897b072b2afc19522c8299c30b8a50aaa50d6b49498659aea2d7b 59816
+tpcds.sf1/q25.tp8-mini  cd4e226e825c9c1c874567adacc0da9322a86c506f8f7897ba2f578ee7a5b824 33552
+tpcds.sf1/q26.tp8-mini  80748d03a80b077a96aefaaf737bcfd89282cfa62917dd6f08e96077c1dfe53e 19120
+tpcds.sf1/q28.tp8-mini  db780ccbdbefd08921f847f807b6a7ea683a1656ddd99be38255decc0f5eb5b3 39752
+tpcds.sf1/q29.tp8-mini  68704d8bff6350ffd58b41ca7df8e37c19c2c0afada51bca6065d6139820a84f 33528
+tpcds.sf1/q3.tp8-mini  ae89894aaaf71ce66651e8fd6c9105a2289d1c0d75164aa7b397673e7fd49cc3 10624
+tpcds.sf1/q30.tp8-mini  9ac8030a0af99c888d163edc349bd701a3e49d27fbccceba21330d52728a7fe7 33544
+tpcds.sf1/q31.tp8-mini  69d233f42c3f70137404f78873de1140aedcb56bf3624b2f45540717245ac201 65656
+tpcds.sf1/q32.tp8-mini  f1d878b0c6739f471aee98c09d82be4fc81ad4670fab49d28c0c306341b0bd5b 15960
+tpcds.sf1/q33.tp8-mini  f0b92fc66a11f692888d83d254892a64b5b7abcefa2d047cd67823e9608d03e0 36328
+tpcds.sf1/q34.tp8-mini  13240da59197c3bffea81a0ffbd62b3030053e6b2130a3c626d05edf9e043147 17664
+tpcds.sf1/q35.tp8-mini  3a02fd203d153dd71addea3217c1436199cb8faee227f358351a0873096149f2 37448
+tpcds.sf1/q36.tp8-mini  UNSUPPORTED unsupported window function: rank() PARTITION BY [results_rollup.lochierarchy, CASE WHEN results_rollup.t_class = Int64(0) THEN results_rollup.i_category END] ORDER BY [results_rollup.gross_margin ASC NULLS LAST] RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW (only aggregate windows supported)
+tpcds.sf1/q37.tp8-mini  43434e2e32495c44d82c679dfb39fb6449bd3f7142744972ad96751585933853 12904
+tpcds.sf1/q38.tp8-mini  3e5bf19c9a8f4fa0ebbe410eb4f737a911519c064861bff7d8ed3ad1e2027fc9 28320
+tpcds.sf1/q39.tp8-mini  6816b438f5257f641fd0979b2ea27c882b5e6e257c2a40e7b58ae1f35cbad770 37904
+tpcds.sf1/q4.tp8-mini  2d37f16a0072b94bfdf64d8b7b7a225942ca675156eb7bdd2cd0ee7676c2f715 115776
+tpcds.sf1/q40.tp8-mini  5f27c825da91f85cb94167daf51f2533928a47a0116b9bf59182944c6509c22b 22608
+tpcds.sf1/q41.tp8-mini  3559af52110fbd8428d5a6b172ee2ee121757288d9cd815de6df43eb4fa24b7c 14168
+tpcds.sf1/q42.tp8-mini  a94e1e1ae4bce8b7a7c8a6c87c80a362011be9ead92a513796d6855ceb58896d 10776
+tpcds.sf1/q43.tp8-mini  77aea0865392299bd7628af4a9df1e4920666894a93bdb98f9daa21fd1fbae26 20712
+tpcds.sf1/q44.tp8-mini  UNSUPPORTED unsupported window function: rank() ORDER BY [v1.rank_col ASC NULLS LAST] RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW (only aggregate windows supported)
+tpcds.sf1/q45.tp8-mini  dc3a62143f9bfedc5799b16787529bab18b1b6e24926d68cce7158d680a06909 21328
+tpcds.sf1/q46.tp8-mini  bc5f8922fa13964f88dacacbafc42ddb3d8eb380acec188054d6aac3d437f8fd 25376
+tpcds.sf1/q47.tp8-mini  UNSUPPORTED unsupported window function: rank() PARTITION BY [item.i_category, item.i_brand, store.s_store_name, store.s_company_name] ORDER BY [date_dim.d_year ASC NULLS LAST, date_dim.d_moy ASC NULLS LAST] RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW (only aggregate windows supported)
+tpcds.sf1/q48.tp8-mini  e32a5320a3a6b91c0e2e921840232d85d02f9ffec2c6a5f5f93ddd96a8dc13aa 20208
+tpcds.sf1/q49.tp8-mini  UNSUPPORTED unsupported window function: rank() ORDER BY [in_web.currency_ratio ASC NULLS LAST] RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW (only aggregate windows supported)
+tpcds.sf1/q5.tp8-mini  71cfd1a0bb9b5a2e6da47a0e3fccad2f5d9dc2aafae62034ac640a0861365c3a 52576
+tpcds.sf1/q50.tp8-mini  397d35a019df256be80973d96dc5eeb4f4c5087187d5969ee7c00e5c017e9f30 37048
+tpcds.sf1/q51.tp8-mini  c2e3ecdd3f5dad846349ab1897cf0b76c2c55df92c063264b464444a625d5cb2 24120
+tpcds.sf1/q52.tp8-mini  cdfea58f0f379d6db78d9ee054a29493d95c675f06f72bf067fb48a1add2e843 10792
+tpcds.sf1/q53.tp8-mini  cd8d9f7237b885e48891560c712a386ba91a6f5906bfc5183af90b7437d63054 20048
+tpcds.sf1/q54.tp8-mini  da6da474c05421d9c3172751b0d1dee4a374102c0c2b07847a847240acdd146b 33288
+tpcds.sf1/q55.tp8-mini  8421baab12c18648ea2ce0e6e206fc00eb5010ccd20cf4c73a318446b658ad1d 10336
+tpcds.sf1/q56.tp8-mini  f32fa96b6e9f4fbd4f66f7736cfa5339084ccd1a6407daa74fd8e1b7cc48005e 36824
+tpcds.sf1/q57.tp8-mini  UNSUPPORTED unsupported window function: rank() PARTITION BY [item.i_category, item.i_brand, call_center.cc_name] ORDER BY [date_dim.d_year ASC NULLS LAST, date_dim.d_moy ASC NULLS LAST] RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW (only aggregate windows supported)
+tpcds.sf1/q58.tp8-mini  470e68943f4a40d603819842d25f528ce07bfb33eb6be2634858f0bc0c720ac1 45720
+tpcds.sf1/q59.tp8-mini  a8d5de6b6c6a254123155bb00db7108f9d4b94955deb4625629db727641174fc 54088
+tpcds.sf1/q6.tp8-mini  103efeab9a80f0f134810bf0a60371cbb1b9d186cf833b454b444a338e138134 20296
+tpcds.sf1/q60.tp8-mini  b2a446876a9fc621e234f859e4d585ace2bdad907763f7d3bcb08be08a2a4bd0 36024
+tpcds.sf1/q61.tp8-mini  9f5a1bc15b487caabb1fddb690597b05736caecc54b8933d90d56182701d5d41 32912
+tpcds.sf1/q62.tp8-mini  72cf82685ee058fcabeb9617370e7ddb491e4e1764aa0e57e9702bb5532b7d80 26480
+tpcds.sf1/q63.tp8-mini  7dab8d733e73d1d68358a1355eae7f70d126753fa8da14d9419608339a9cab45 20048
+tpcds.sf1/q64.tp8-mini  cc05f631dceeb64680c990ecaa9c0c1396c482178f1c41e5f447469cbee68643 178176
+tpcds.sf1/q65.tp8-mini  91cd6c109eb0ba48bc1db48626ff62720fb8e9bcab7b2fd8441c048a859e4992 22048
+tpcds.sf1/q66.tp8-mini  8fc735f1cf5f1f578f245eba8402217b5d0ac17a8ca2996e93363fd35d121647 165232
+tpcds.sf1/q67.tp8-mini  UNSUPPORTED unsupported window function: rank() PARTITION BY [dw1.i_category] ORDER BY [dw1.sumsales DESC NULLS FIRST] RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW (only aggregate windows supported)
+tpcds.sf1/q68.tp8-mini  f9c54084ec8bffeda0a26c32a4bd86e8caadad07f8e7f917e9aba2beb68ed12b 27472
+tpcds.sf1/q69.tp8-mini  c9641d0508a4c9536e491951694921cd69875c6f456897ab977ec34d7a3eb04a 27776
+tpcds.sf1/q7.tp8-mini  2fc2bdea50d021fc5e8ebbdd69d5be1a60f47428bcdd2e87f589a4d0ad907130 18520
+tpcds.sf1/q71.tp8-mini  805b0e2096d00bfdf5e67a97df4de311ff44843116513d1f257f21edce24f1c5 24760
+tpcds.sf1/q73.tp8-mini  308e4cca9005207bf9eedea05b90c168307d0756b5439ff9dd2e34ee66974e26 17432
+tpcds.sf1/q74.tp8-mini  fa990f8df8ed6a95877d5bfd3f69c57d96d175a6ab5e6f5136b59fff4c1d5baf 46760
+tpcds.sf1/q75.tp8-mini  b526366bdb7609a464a6b579e6cc5c43e10f1da925a54e03569b7053a5575c6e 115880
+tpcds.sf1/q76.tp8-mini  0ffc87ab3d5a1ea776c758a990939aec97209b09bd4061cf15bcb21b18b0c211 31040
+tpcds.sf1/q77.tp8-mini  8f307bec7f116f6da2512a9e3d06bee9936a5e3d4d3cee7620883db6920c7925 54336
+tpcds.sf1/q78.tp8-mini  dfd231aad6d05e1cccc677adecc4589bd598e900ce5205ce512e9c9a901eee11 53472
+tpcds.sf1/q79.tp8-mini  527eb88027d6cdcfb6ccb80bc0df58319fb095cab7bbd162613d9fb9bf6aa62b 20240
+tpcds.sf1/q8.tp8-mini  074137ed64d53706e8e43954e7c2e8732f44c0e68fdac877786738f70050512f 122728
+tpcds.sf1/q80.tp8-mini  d15cfa48bffa85c397211c1a1612bc439ae7221a0e47c1e75b2a0d3bbc67ca02 73872
+tpcds.sf1/q81.tp8-mini  b95d778681eea6fefd0ea5a0a7cc595096b7bfada4d19fb2819c9a25c77a4cdd 37688
+tpcds.sf1/q82.tp8-mini  2830ee3136444aeb55220890b2208c8fdecd494a2340ae3bc1ada701639da135 12440
+tpcds.sf1/q83.tp8-mini  f406a9b091b5d65480453e1f3e2ce65ae2763bf314d600a176642cc79756f0c9 42232
+tpcds.sf1/q84.tp8-mini  e607791a690cc4dd3571e8b6f34a673fd3d87e3aff7ffd7398a932bfeb9c5b06 14288
+tpcds.sf1/q85.tp8-mini  f4fca45d72e3365ac35b350fe2a12ee9d178b4e6f758332e1e4c7b9aea43174d 38352
+tpcds.sf1/q87.tp8-mini  8f5446fedcfe9e8953dc93f248b5d9ce669f8f27ba2bb61855d7284ced7d5bb9 28240
+tpcds.sf1/q88.tp8-mini  19aad16ef61dd1352557fd792e50ae30d0d6c5befc571c4800a76c1c067bc60f 76120
+tpcds.sf1/q89.tp8-mini  0a7e7d9f782b1337c0f75d257a2bf8f40b6c77c0c4159fe56e11e8b474088f39 23568
+tpcds.sf1/q9.tp8-mini  0838cddb056ee159c522553bbabf26dfdccc8cb79c7bf845e75cbf5414c69843 50464
+tpcds.sf1/q90.tp8-mini  a1d24f0529f394df517ae0b6f8c445482a3f490836fd201de891e7303aacfe29 17400
+tpcds.sf1/q91.tp8-mini  6f9749304aa09b400f1cf3d29edafbf759a8fe813d1ee35c219452b4af73038c 23936
+tpcds.sf1/q92.tp8-mini  06e2aa62a449cb2c1a5c45884b7cfc3cfd87091330aac619171d65745ad40a6c 16144
+tpcds.sf1/q93.tp8-mini  2750a24cda6bc78f5b8ff0e0f7b662011ee74056e140e0ee49c5421b9c7e58a6 10312
+tpcds.sf1/q94.tp8-mini  c96b528ba2bdf018b6854e0d2d2b082500e101873c068e73732098bb63384ed1 18880
+tpcds.sf1/q95.tp8-mini  77200b3292bdd25be0cf0f70598bfa3f8e99f3dfd9c874472cc1303ba981efd1 26008
+tpcds.sf1/q96.tp8-mini  e420e5a2b069bf6b028b2a382bcbb86ed8b726da9f9ac17c4d027964a80065c9 8360
+tpcds.sf1/q97.tp8-mini  f114899b9a0debe3cf3013fa98cbf51590e97a0673cdadc6cddac66708cbc454 17648
+tpcds.sf1/q98.tp8-mini  9ba00871b2e80488256e7bf5bf21733ee31076444c17e409c8168207e964c3fd 16008
+tpcds.sf1/q99.tp8-mini  c5abb8008dca1961cb2b0be01dead2c6d03fb74098630180b4177169070474b2 27208
+tpch.sf1/aggregate-groupby.tp8-mini  ec7bd8b468762bb7ef61205c959caa031de983de0ef5ed65a08a9a9769936f3f 2616
+tpch.sf1/anti-join.tp8-mini  417209e66cf25db6476c3442aaf4bd30b13f8b7aea82674378f463a34c21b542 4344
+tpch.sf1/cross-join.tp8-mini  90add4131fb4207e62871c0cf9b7d82dee155cd8e6fa54c66d7ea51aa814d967 1044
+tpch.sf1/filter-project.tp8-mini  a4c55f1331b6b5dd263df2e70477e13169fc8049eee779183e1e9f1c7e4c4389 1680
+tpch.sf1/filter_agg.tp8-mini [inline]  70547ce63799477ff477551942830b2e701a7a60212952fa3ce09372691ee083 2024
+tpch.sf1/group_join_sort.tp8-mini [inline]  54be0414698784de6a80f684e7ecaadc7c0a1a9394090d33867cb559b357f992 2832
+tpch.sf1/hash-join.tp8-mini  20f263f5b591f624c7236c01e6eb0567de1d9d26f1525125c2fc22800455a4ee 4656
+tpch.sf1/join_sort.tp8-mini [inline]  83d42312c418f2ac4372ce95253dc1551d06c6c1f87eafec480987d701635196 1456
+tpch.sf1/left-join.tp8-mini  74b14f7aa2ff85bb0fdc481b65d3b8505ba2bbcc88ad947226e683634622612e 4664
+tpch.sf1/mixed-join.tp8-mini  UNSUPPORTED unsupported scalar value: IntervalMonthDayNano("IntervalMonthDayNano { months: 0, days: 90, nanoseconds: 0 }")
+tpch.sf1/nested-loop-join.tp8-mini  5afde58333d01315e9282477b68737863ddbd0e1f627b03605871e90bcec0249 1248
+tpch.sf1/q1.tp8-mini  eeae7fbc3f1185b9d7ef31bdea5019ebb92d28e2fb2ec1b1ce8cbc8f76c59dcd 11752
+tpch.sf1/q10.tp8-mini  4d56b144945548cdc88b0f9a533d281e15730ecc30b183ee3c385ee0fa510061 16392
+tpch.sf1/q11.tp8-mini  1c2e9dca8db3526599d9c9ace7608f33697643bc1c760e305d897f0ff7f27e00 13752
+tpch.sf1/q12.tp8-mini  a155cb5890915b37279c87eaa462dd0adafef6283303d8f877434c5c01e805cf 10040
+tpch.sf1/q13.tp8-mini  83d91f483252fecd16eccddd3e641f965559fa7e9983547b60d8c2b9d7d92fd5 5584
+tpch.sf1/q14.tp8-mini  5a61f9c410d101beee148638dfa111f30027565b673c387aeb1e954283d5389f 7272
+tpch.sf1/q15.tp8-mini  d0ea3bb69160da40ab888e6e3bbea3a8e4c0abcbaf898f8c1496f4f73e70fdcf 12152
+tpch.sf1/q16.tp8-mini  5359dbdc4405872818bda90d9049a8dc84022622c830dcfef78ed49af30b1f5e 11688
+tpch.sf1/q17.tp8-mini  7bfecf38818e769fba52eaf818739a30d784d49a6bdb9bd2fcd5a06e7382a9d6 8720
+tpch.sf1/q18.tp8-mini  7186fc2fde5895aa66d44b6a1705f1bf80dd52d63815166bc9d7de440940464d 12672
+tpch.sf1/q19.tp8-mini  b6d2a60e6cea96daeddeeb0cac5da0b12959411875ceca2cf56945cc8812e549 12984
+tpch.sf1/q2.tp8-mini  f81fa8b902172604b3a1aa8c1f95f6e9c88c7bcf7f076ecfc0b556f9c027b4b4 24144
+tpch.sf1/q20.tp8-mini  7e72176b3d68cb0c2cecbc1f8e558877e516ee6f2d41266168feaed7cf256a21 11824
+tpch.sf1/q21.tp8-mini  371651b139e8fc109c7dfbd3b5259f52052908f4e96155aa6ef4efd9c18f1f9b 13832
+tpch.sf1/q22.tp8-mini  691c7bd0018feef9ee070d559f8b0a9a33a6df0bcd63edbc1270368e280e5cfb 11880
+tpch.sf1/q3.tp8-mini  4298ee80b2be1a6d1a3ce1c3cb1895ad26088961f63bee93a1c94d14b551a548 10776
+tpch.sf1/q4.tp8-mini  d5a6d09bd1e0c9eca92063f81d1211e17465854bde2477aed7a07724053e5d55 5736
+tpch.sf1/q5.tp8-mini  a218738f0c67442fa39fdfbc956b6fb41637707688e9969635bd4d5d7af656b3 14048
+tpch.sf1/q6.tp8-mini  60887857280d7f39f7217b6c5a952bb8fe76246a2e672756486628035ab1c5e4 3712
+tpch.sf1/q7.tp8-mini  6efae62f8d1e34be49015f6d65051339a10faf2654c1c8cd9812b13b73dfef1f 18048
+tpch.sf1/q8.tp8-mini  c73e770bdf89f987c6dd8b50b4e6805efcc9cd8ce383c09b485c3385adc5b038 21936
+tpch.sf1/q9.tp8-mini  b79258a8c4ea1052c728fa03ef908112b863461effac668630e9c6fddc943d53 17984
+tpch.sf1/scan-limit.tp8-mini  9087202a1ec93d261a162bcec6e981a30b10524579bb2ea7b9e8b309e37aa277 3000
+tpch.sf1/semi-join.tp8-mini  b75c1070c8d89eba3aa1fc944312fe8eecba6e6c7dc1d3084e3d91fb29d2a282 4344
+tpch.sf1/shuffle-additive.tp8-standard  9a8db40ab9cb1826f1c00f4494c5811b562c82dad364d98c13a0a391407aa92b 4752

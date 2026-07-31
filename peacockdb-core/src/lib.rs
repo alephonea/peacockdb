@@ -3,6 +3,8 @@ pub mod executors;
 pub mod gpu_rule;
 pub mod cpu_executor;
 pub mod gpu_rowgroup_prune;
+pub mod memory;
+pub mod operators;
 #[cfg(not(feature = "rust-only"))]
 pub mod gpu_executor;
 #[allow(unused_imports, dead_code, clippy::all)]

@@ -2142,6 +2142,7 @@ dependencies = [
  "futures",
  "paste",
  "peacockdb-ffi",
+ "sha2",
  "tokio",
 ]
 

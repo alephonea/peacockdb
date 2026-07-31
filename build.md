@@ -75,7 +75,7 @@ GPU TO CPU TESTS
   cargo test -p peacockdb-core --lib cpu_executor                                                                            
    
   # one specific test                                                                                                        
-  cargo test -p peacockdb-core --lib cpu_executor::tests::test_execution_strips_gpu_nodes
+  cargo test -p peacockdb-core --test test_cpu_executor_misc test_execution_strips_gpu_nodes
                                                                                                                              
   # with output printed (useful for seeing node names etc.)                                                                  
   cargo test -p peacockdb-core --lib cpu_executor -- --nocapture                                                             
