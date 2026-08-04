@@ -15,19 +15,125 @@
 
 use std::collections::BTreeSet;
 
-/// Targets deliberately absent from CI, each with the reason it is exempt.
-const INTENTIONALLY_NOT_IN_CI: &[(&str, &str)] = &[
-    ("test_gpu", "GPU host only — run by the gpu-tests job from a prebuilt binary, not via cargo"),
-    ("test_inc2_conformance", "GPU host only — same as test_gpu"),
-    ("test_gpu_executor_misc", "needs the linked C++/CUDA executor; not built in the CPU tiers"),
-    // test_cpu_h200 is NOT exempt: it needs no GPU (runs in ~25s) and owns the
-    // REVERSE half of the cost-registry check for the ftc_tp1 column — leaving it
-    // out of CI would let a CSV row claim coverage no test provides.
-    ("test_ci_coverage", "this test"),
+/// Why a target is absent from the normal CI tiers.
+///
+/// An enum rather than a free-text reason plus a bool, because the two kinds differ in
+/// what can be CHECKED: [`Exemption::GpuJob`] makes a claim about a committed workflow
+/// array, so the claim is verified below; [`Exemption::NotRun`] asserts only that
+/// nothing runs the target, which nothing can confirm.
+#[derive(Debug)]
+enum Exemption {
+    /// Run on the GPU host by pipeline.yml's gpu-tests job, from a prebuilt binary
+    /// rather than via cargo. VERIFIED: the target must appear in that job's
+    /// `for t in …` staging array. Without that check, dropping a target from the
+    /// array retires it silently while this exemption still excuses it — an execution
+    /// mode disappearing with nothing red, which is the failure the pipeline comment
+    /// warns about in prose but nothing enforced.
+    GpuJob,
+    /// Not run by any workflow, for the stated reason.
+    NotRun(&'static str),
+}
+
+/// Targets deliberately absent from the CI tiers this guard sweeps.
+const INTENTIONALLY_NOT_IN_CI: &[(&str, Exemption)] = &[
+    ("test_gpu_full_table", Exemption::GpuJob),
+    ("test_gpu_partitioned", Exemption::GpuJob),
+    ("test_inc2_conformance", Exemption::GpuJob),
+    ("test_gpu_executor_misc", Exemption::NotRun(
+        "needs the linked C++/CUDA executor; not built in the CPU tiers and not staged \
+         for the GPU job",
+    )),
+    ("diag_flip_audit", Exemption::NotRun(
+        "diagnostic printer, no assertions — run by hand while #97/#95 gate the tp8 \
+         rollout; wiring it to CI would add a step that cannot fail",
+    )),
+    // test_cpu_partitioned is NOT exempt: it needs no GPU (its tp8-standard goldens
+    // are CPU-emulated) and it owns the cost-registry check for the partitioned_cpu
+    // column — leaving it out of CI would let a CSV row claim coverage no test
+    // provides.
+    ("test_ci_coverage", Exemption::NotRun("this test")),
 ];
 
 fn repo_root() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..")
+}
+
+/// Join backslash-continued shell lines into one logical line.
+///
+/// A shell command in a workflow may be split across `\` continuations, and YAML makes
+/// that idiomatic for long `cargo test` invocations. [`line_runs_target`] decides
+/// `--no-run` per line, so an unfolded build invocation hands it continuation lines
+/// that carry `--test` flags but not the `--no-run` that disqualifies them — they read
+/// as run steps and the guard reports coverage that does not exist.
+///
+/// Folding here rather than requiring one physical line per invocation: continuations
+/// are legitimate YAML and the next person will reintroduce them.
+fn fold_continuations(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut acc = String::new();
+    for line in text.lines() {
+        let trimmed = line.trim_end();
+        match trimmed.strip_suffix('\\') {
+            // Keep a separator, or `--test a \` + `--test b` would fuse into one token.
+            Some(head) => {
+                acc.push_str(head);
+                acc.push(' ');
+            }
+            None => {
+                acc.push_str(trimmed);
+                out.push(std::mem::take(&mut acc));
+            }
+        }
+    }
+    // A trailing continuation with no terminating line still has to be emitted.
+    if !acc.is_empty() {
+        out.push(acc);
+    }
+    out
+}
+
+/// Does this workflow line RUN the lib unit tests (`--lib`, not `--no-run`)?
+///
+/// The inline `#[cfg(test)]` modules are a target class this guard was blind to: every
+/// other invocation in the workflows passes `--test`, which selects integration
+/// targets ONLY, so `config`/`gpu_rule`/`resident`'s unit tests ran locally and never
+/// at the merge gate. Being invisible to the guard AND to CI is the same hole one
+/// level down — a target class nothing enumerates.
+fn line_runs_lib_tests(line: &str) -> bool {
+    if line.contains("--no-run") {
+        return false;
+    }
+    // Word-boundary check, same reasoning as line_runs_target: `--library` or a longer
+    // flag starting with `--lib` must not count.
+    let Some(i) = line.find("--lib") else { return false };
+    let after_ok = line[i + "--lib".len()..].chars().next().is_none_or(char::is_whitespace);
+    after_ok && line.contains("cargo test") && line.contains("-p peacockdb-core")
+}
+
+/// The test targets pipeline.yml's gpu-tests job stages and runs, read out of the
+/// committed workflow (`for t in <names>; do`).
+///
+/// Parsed rather than duplicated: this is the array a [`Exemption::GpuJob`] entry
+/// points at, so a copy here would defeat the check it exists to make.
+fn gpu_job_staged_targets() -> BTreeSet<String> {
+    let text = std::fs::read_to_string(repo_root().join(".github/workflows/pipeline.yml"))
+        .expect("read pipeline.yml");
+    let line = text
+        .lines()
+        .find(|l| l.trim_start().starts_with("for t in test_"))
+        .expect(
+            "pipeline.yml has no `for t in test_…; do` staging loop — the gpu-tests \
+             staging step was renamed or removed, and every GpuJob exemption now rests \
+             on an array that does not exist",
+        );
+    line.trim()
+        .trim_start_matches("for t in ")
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .split_whitespace()
+        .map(str::to_string)
+        .collect()
 }
 
 /// Does this workflow line actually RUN `--test <name>`?
@@ -36,9 +142,9 @@ fn repo_root() -> std::path::PathBuf {
 /// reports FALSE coverage is worse than no guard at all. Two ways a naive
 /// `workflows.contains("--test {name}")` lies:
 ///
-///   - PREFIX COLLISION. `--test test_cpu_executor` is a substring of
-///     `--test test_cpu_executor_misc`. This repo HAS that prefix pair, so deleting
-///     the standalone `test_cpu_executor` step would still report it covered — one
+///   - PREFIX COLLISION. `--test test_query_plan` is a substring of
+///     `--test test_query_plan_misc`. This repo HAS that prefix pair, so deleting
+///     the standalone `test_query_plan` step would still report it covered — one
 ///     edit away from a live hole. Fixed by requiring a word boundary (whitespace
 ///     or end-of-line) after the name.
 ///   - `--no-run` BLINDNESS. `cargo test --no-run ... --test X` BUILDS X without
@@ -46,8 +152,11 @@ fn repo_root() -> std::path::PathBuf {
 ///     executing — precisely the built-but-never-run hole (peacock_tpchv_tests) that
 ///     this guard exists to close. Fixed by skipping those lines entirely.
 ///
-/// Both are safe to check line-wise: every `--no-run` invocation in the workflows
-/// carries its `--test` flags on the SAME line.
+/// `--no-run` is detected per LINE, so callers MUST pass lines that have already been
+/// through [`fold_continuations`]. A build invocation split across `\` continuations
+/// carries `--no-run` only on its first physical line, and the continuation lines then
+/// read as genuine run steps — which is exactly how this guard silently weakened once
+/// (five targets were counted as run by a build continuation).
 fn line_runs_target(line: &str, name: &str) -> bool {
     if line.contains("--no-run") {
         return false;
@@ -74,13 +183,13 @@ fn line_runs_target(line: &str, name: &str) -> bool {
 #[test]
 fn line_matcher_rejects_both_false_coverage_modes() {
     // (1) prefix collision — a longer target name must not cover a shorter one.
-    let only_misc = "          cargo test -p peacockdb-core --test test_cpu_executor_misc";
+    let only_misc = "          cargo test -p peacockdb-core --test test_query_plan_misc";
     assert!(
-        !line_runs_target(only_misc, "test_cpu_executor"),
-        "prefix collision: `--test test_cpu_executor_misc` must NOT count as running \
-         test_cpu_executor"
+        !line_runs_target(only_misc, "test_query_plan"),
+        "prefix collision: `--test test_query_plan_misc` must NOT count as running \
+         test_query_plan"
     );
-    assert!(line_runs_target(only_misc, "test_cpu_executor_misc"));
+    assert!(line_runs_target(only_misc, "test_query_plan_misc"));
 
     // (2) --no-run blindness — building a target is not running it.
     let build_only =
@@ -96,24 +205,86 @@ fn line_matcher_rejects_both_false_coverage_modes() {
         "cargo test -p x --test test_query_plan --test test_ffi",
         "test_query_plan"
     ));
+
+    // (3) LINE CONTINUATION — the mode that actually shipped. A --no-run build split
+    // across `\` carries the flag only on its first physical line, so every target
+    // named on a continuation looked like a run step. Five real targets were counted
+    // that way; coverage survived only because each ALSO had a genuine run line, i.e.
+    // the guard had stopped guarding while still reporting green.
+    let build_continued = "          cargo test --no-run -p peacockdb-core --test test_a \\\n\
+                           --test test_b --test test_c";
+    let folded = fold_continuations(build_continued);
+    assert_eq!(folded.len(), 1, "the continuation must fold into ONE logical line: {folded:?}");
+    for t in ["test_a", "test_b", "test_c"] {
+        assert!(
+            !folded.iter().any(|l| line_runs_target(l, t)),
+            "{t} is BUILT, not run — a continuation must not count as coverage"
+        );
+    }
+    // --lib detection: a build is not a run, and the flag needs a word boundary.
+    assert!(line_runs_lib_tests("          cargo test --features rust-only -p peacockdb-core --lib"));
+    assert!(!line_runs_lib_tests(
+        "          cargo test --no-run --features rust-only -p peacockdb-core --lib --test test_plan_bytes"
+    ), "--no-run builds the lib target without running it");
+    assert!(!line_runs_lib_tests("          cargo test -p peacockdb-core --test test_query_plan"),
+            "an integration-only invocation does not run the lib tests");
+
+    // ...while a continued RUN step still counts, on any of its physical lines.
+    let run_continued = "          cargo test -p peacockdb-core --test test_a \\\n\
+                         --test test_b";
+    let folded = fold_continuations(run_continued);
+    for t in ["test_a", "test_b"] {
+        assert!(folded.iter().any(|l| line_runs_target(l, t)), "{t} IS run");
+    }
+}
+
+/// Every integration-test target in the WORKSPACE, as `(crate, target)`.
+///
+/// Two scoping bugs this closes, both of which let a target escape the gate by being
+/// somewhere or something the enumeration did not think to look for:
+///   - ONE CRATE. This used to read `CARGO_MANIFEST_DIR/tests` only, so
+///     peacockdb-ffi's targets were invisible. They happen to be wired, but a new one
+///     would never have been noticed. Crates come from the workspace manifest, so
+///     adding a member cannot silently shrink the guard's scope.
+///   - THE `test_` PREFIX. This used to collect only stems starting with `test_`,
+///     which made a naming convention load-bearing and unenforced: `tests/audit_foo.rs`
+///     is a real cargo target and was invisible purely because of its name. Every
+///     `tests/*.rs` counts now.
+fn workspace_test_targets() -> BTreeSet<(String, String)> {
+    let root = repo_root();
+    let manifest = std::fs::read_to_string(root.join("Cargo.toml")).expect("read workspace Cargo.toml");
+    // Members are the authority; a hardcoded crate list here would be a second source
+    // of truth and would drift exactly as the single-crate glob did.
+    let members: Vec<String> = manifest
+        .lines()
+        .skip_while(|l| !l.starts_with("[workspace]"))
+        .skip(1)
+        .take_while(|l| !l.starts_with('['))
+        .filter_map(|l| l.trim().trim_end_matches(',').strip_prefix('"')?.strip_suffix('"').map(str::to_string))
+        .collect();
+    assert!(!members.is_empty(), "no [workspace] members parsed from Cargo.toml");
+
+    let mut targets = BTreeSet::new();
+    for m in &members {
+        let dir = root.join(m).join("tests");
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        for entry in entries {
+            let path = entry.expect("dir entry").path();
+            if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+                continue;
+            }
+            // `common/` is a shared module dir, not a target; only *.rs files are.
+            targets.insert((m.clone(), path.file_stem().unwrap().to_string_lossy().to_string()));
+        }
+    }
+    targets
 }
 
 #[test]
 fn every_rust_test_target_is_named_by_ci() {
-    let tests_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests");
-    let mut targets: BTreeSet<String> = BTreeSet::new();
-    for entry in std::fs::read_dir(&tests_dir).expect("read tests/") {
-        let path = entry.expect("dir entry").path();
-        if path.extension().and_then(|e| e.to_str()) != Some("rs") {
-            continue;
-        }
-        let stem = path.file_stem().unwrap().to_string_lossy().to_string();
-        // `common/` is a shared module, not a target; only test_*.rs are targets.
-        if stem.starts_with("test_") {
-            targets.insert(stem);
-        }
-    }
-    assert!(!targets.is_empty(), "found no tests/test_*.rs — the glob is wrong, not the repo");
+    let all = workspace_test_targets();
+    let targets: BTreeSet<String> = all.iter().map(|(_, t)| t.clone()).collect();
+    assert!(!targets.is_empty(), "found no tests/*.rs in any workspace crate — the enumeration is wrong, not the repo");
 
     // Read every workflow, not just pipeline.yml: a target named by any of them counts.
     let wf_dir = repo_root().join(".github/workflows");
@@ -122,7 +293,10 @@ fn every_rust_test_target_is_named_by_ci() {
         let path = entry.expect("dir entry").path();
         if matches!(path.extension().and_then(|e| e.to_str()), Some("yml") | Some("yaml")) {
             let text = std::fs::read_to_string(&path).expect("read workflow");
-            workflow_lines.extend(text.lines().map(str::to_string));
+            // Folded, NOT raw: see fold_continuations — a build invocation split
+            // across `\` would otherwise contribute continuation lines that look
+            // like run steps.
+            workflow_lines.extend(fold_continuations(&text));
         }
     }
     assert!(!workflow_lines.is_empty(), "no workflow files found under .github/workflows");
@@ -145,12 +319,53 @@ fn every_rust_test_target_is_named_by_ci() {
         missing.iter().map(|t| format!("  - {t}")).collect::<Vec<_>>().join("\n")
     );
 
+    // The lib unit tests are not an integration target, so the sweep above cannot see
+    // them. Assert the run line exists directly, or deleting it silently un-gates the
+    // inline #[cfg(test)] modules exactly as it did before this check.
+    assert!(
+        workflow_lines.iter().any(|l| line_runs_lib_tests(l)),
+        "no workflow line runs the peacockdb-core LIB unit tests. Every other cargo \
+         invocation passes --test, which selects integration targets only, so the \
+         inline #[cfg(test)] modules (config, gpu_rule, resident) would run locally \
+         and never at the merge gate. Add `cargo test --features rust-only \
+         -p peacockdb-core --lib` to the CPU tier."
+    );
+
+    // F5: a GpuJob exemption CLAIMS the gpu-tests job runs the target. Verify that
+    // against the committed workflow text rather than trusting the claim. The array is
+    // read from pipeline.yml, never copied here — a hardcoded list would be a second
+    // source of truth and would drift exactly as this exemption did.
+    let gpu_staging = gpu_job_staged_targets();
+    let unstaged: Vec<&str> = INTENTIONALLY_NOT_IN_CI
+        .iter()
+        .filter(|(_, e)| matches!(e, Exemption::GpuJob))
+        .map(|(n, _)| *n)
+        .filter(|n| !gpu_staging.contains(*n))
+        .collect();
+    assert!(
+        unstaged.is_empty(),
+        "these targets are exempt on the grounds that the gpu-tests job runs them, but \
+         they do NOT appear in its staging array in pipeline.yml: {unstaged:?}\n\
+         Either add them back to that array or change their exemption — as it stands \
+         they run nowhere and nothing would go red.\nArray currently names: {:?}",
+        gpu_staging
+    );
+
     // Keep the exemption list honest: an entry for a target that no longer exists is
-    // stale and would silently excuse a future target that reuses the name.
-    let stale: Vec<&str> =
-        exempt.iter().filter(|e| !targets.contains(**e)).copied().collect();
+    // stale and would silently excuse a future target that reuses the name. Report the
+    // stated reason alongside, because that is what the reader has to judge — "is this
+    // claim still true?" is answerable, "is `test_foo` still exempt?" is not.
+    let stale: Vec<String> = INTENTIONALLY_NOT_IN_CI
+        .iter()
+        .filter(|(n, _)| !targets.contains(*n))
+        .map(|(n, e)| match e {
+            Exemption::GpuJob => format!("{n} (exempt as: run by the gpu-tests job)"),
+            Exemption::NotRun(why) => format!("{n} (exempt as: {why})"),
+        })
+        .collect();
     assert!(
         stale.is_empty(),
-        "INTENTIONALLY_NOT_IN_CI names targets that no longer exist: {stale:?} — remove them"
+        "INTENTIONALLY_NOT_IN_CI names targets that no longer exist — remove them:\n  {}",
+        stale.join("\n  ")
     );
 }

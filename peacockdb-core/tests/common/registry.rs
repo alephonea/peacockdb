@@ -2,15 +2,16 @@
 //!
 //! Every unified test macro submits one [`RegistryEntry`] at its invocation site, so
 //! the cost widget's CSV can be checked against what the suite ACTUALLY declares
-//! rather than against a textual scrape of `test_gpu.rs` (which could only ever see
+//! rather than against a textual scrape of one suite file (which could only ever see
 //! one file, and only by parsing comments).
 //!
 //! # Why this is verified per test binary
 //!
 //! `inventory` collects per LINKED BINARY. The macro invocations are spread across
-//! four integration-test binaries (test_query_plan, test_cpu_h200, test_cpu_executor,
-//! test_gpu), so no single test can see all registrations — a "one test checks
-//! everything" design is simply not available here. Instead each binary asserts the
+//! five integration-test binaries (test_query_plan, test_cpu_full_table,
+//! test_cpu_partitioned, test_gpu_full_table, test_gpu_partitioned), so no single
+//! test can see all registrations — a "one test checks everything" design is simply
+//! not available here. Instead each binary asserts the
 //! CSV columns IT owns, in both directions, and together they cover every column.
 //! [`assert_registry_matches_csv`] takes those owned columns explicitly rather than
 //! inferring them: inferring "columns this binary registered something for" would
@@ -32,13 +33,15 @@ use std::collections::{BTreeMap, BTreeSet};
 /// lives in exactly one place and can be unit-tested.
 #[derive(Debug)]
 pub struct RegistryEntry {
-    /// "plan" | "ftc" | "node13" | "gpu"
+    /// "plan" | "ftc" | "partitioned" | "gpu_full_table" | "gpu_partitioned"
     pub kind: &'static str,
     pub dataset: &'static str,
     pub sf: &'static str,
     /// Underscore form, as written in the macro (`shuffle_stddev`, `q12`).
     pub query: &'static str,
-    /// Underscore form (`tp8_mini`, `tp1_standard`).
+    /// Underscore form, as written in the macro. CPU macros pass a bare device
+    /// (`tp8_mini`); GPU macros pass the combined golden label
+    /// (`full_table_tp1_standard`).
     pub device: &'static str,
     /// "enabled" | "skip"
     pub state: &'static str,
@@ -58,17 +61,21 @@ pub const COLUMNS: [&str; 6] = [
 
 /// Map a registration to its CSV column.
 ///
-/// full_table_cpu is split by target-partition count (tp1 vs tp8) because the two
-/// exercise materially different paths; the memory tier (mini/standard) does not
-/// affect which column a run belongs to — e.g. `scan_limit` is registered at
-/// tp1_mini while every other tp1 row is tp1_standard, and both are `ftc_tp1`.
+/// The kind alone decides the column for every mode-named macro — the GPU kinds map
+/// straight through rather than sniffing the device, so no column is ever chosen by
+/// parsing a label. full_table_cpu is the one exception: it is split by
+/// target-partition count (tp1 vs tp8) because the two exercise materially different
+/// paths. That split reads a `tp` count out of a `tp` label, which is parsing, not
+/// routing; the memory tier (mini/standard) does not affect it — e.g. `scan_limit` is
+/// registered at tp1_mini while every other tp1 row is tp1_standard, and both are
+/// `ftc_tp1`.
 pub fn column_for(kind: &str, device: &str) -> Option<&'static str> {
-    let tp1 = device.starts_with("tp1");
     match kind {
         "plan" => Some("plan"),
-        "node13" => Some("partitioned_cpu"),
-        "ftc" => Some(if tp1 { "ftc_tp1" } else { "ftc_tp8" }),
-        "gpu" => Some(if tp1 { "full_table_gpu" } else { "partitioned_gpu" }),
+        "partitioned" => Some("partitioned_cpu"),
+        "ftc" => Some(if device.starts_with("tp1") { "ftc_tp1" } else { "ftc_tp8" }),
+        "gpu_full_table" => Some("full_table_gpu"),
+        "gpu_partitioned" => Some("partitioned_gpu"),
         _ => None,
     }
 }
@@ -240,11 +247,12 @@ pub fn load_csv() -> Vec<CsvRow> {
 /// column but are registered in a DIFFERENT test binary, so the reverse direction
 /// must not demand them here.
 ///
-/// This exists because one column really is split: `ftc_tp1` is 110 invocations in
-/// test_cpu_h200.rs (tp1-standard) plus `scan_limit` at tp1-mini in
-/// test_cpu_executor.rs. Listing the exceptions explicitly — rather than weakening
-/// the reverse check to "only verify what this binary happens to register" — keeps
-/// the check meaningful: a whole column going missing still fails.
+/// No binary needs `elsewhere` today: after the split by execution mode, every
+/// column is registered entirely within the one binary that owns it. The parameter
+/// stays because listing exceptions explicitly — rather than weakening the reverse
+/// check to "only verify what this binary happens to register" — is what keeps the
+/// check meaningful when a column IS split again: a whole column going missing must
+/// still fail. Stale entries are rejected below, so an empty list cannot rot.
 pub fn assert_registry_matches_csv(owned_columns: &[&str], elsewhere: &[(&str, &str, &str, &str)]) {
     for c in owned_columns {
         assert!(COLUMNS.contains(c), "unknown column {c:?}");
@@ -364,14 +372,15 @@ pub fn assert_registry_matches_csv(owned_columns: &[&str], elsewhere: &[(&str, &
 ///
 /// In particular tpch/shuffle_stddev — the #103 flaky case — does NOT need one, on
 /// two independent counts: its `partitioned_gpu` cell is `disabled`, and this
-/// invariant only inspects `enabled` cells; and its tp8-standard `.cpu.txt` golden
-/// exists anyway, so the check would pass even if the cell were re-enabled. Adding
+/// invariant only inspects `enabled` cells; and its partitioned-tp8-standard
+/// `.cpu.txt` golden exists anyway, so the check would pass even if the cell were
+/// re-enabled. Adding
 /// an exemption for it would be dead config that silently pre-excuses a future
 /// regression on that query — the same trap as a stale INTENTIONALLY_NOT_IN_CI
 /// entry. If #103 is fixed by re-enabling the cell, nothing here needs to change.
 const GOLDEN_INVARIANT_EXEMPT: &[(&str, &str, &str, &str)] = &[];
 
-/// Cross-mode golden invariant: a GPU mode marked `enabled` needs the SAME-DEVICE
+/// Cross-mode golden invariant: a GPU mode marked `enabled` needs the SAME-LABEL
 /// CPU golden to exist, because the GPU test asserts per-node rows+cost against
 /// that `.cpu.txt`. Without it the GPU test would silently have nothing to compare
 /// against — green while verifying only the final result.
@@ -380,9 +389,9 @@ pub fn assert_cross_mode_golden_invariant() {
     let mut problems: Vec<String> = Vec::new();
 
     for row in &rows {
-        for (col, device) in [
-            ("full_table_gpu", "tp1-standard"),
-            ("partitioned_gpu", "tp8-standard"),
+        for (col, label) in [
+            ("full_table_gpu", "full_table-tp1-standard"),
+            ("partitioned_gpu", "partitioned-tp8-standard"),
         ] {
             if row.states.get(col).map(String::as_str) != Some("enabled") {
                 continue;
@@ -395,10 +404,10 @@ pub fn assert_cross_mode_golden_invariant() {
             let query = row.query.replace('_', "-");
             let golden = super::testdata_root()
                 .join(format!("goldens/{}.sf{}", row.dataset, row.sf))
-                .join(format!("{query}.{device}.cpu.txt"));
+                .join(format!("{query}.{label}.cpu.txt"));
             if !golden.exists() {
                 problems.push(format!(
-                    "{} sf{} {} [{col}] is enabled but its same-device CPU golden is missing: {}",
+                    "{} sf{} {} [{col}] is enabled but its same-label CPU golden is missing: {}",
                     row.dataset,
                     row.sf,
                     row.query,

@@ -7,7 +7,8 @@
 //!   - DuckDB Σout    = pipeline-breaker materialized bytes computed from the
 //!                      `<q>.duckdb_cost.txt` profiling tree (see [`duckdb_cost`]).
 //!   - GPU coverage   = whether the query's GPU result test is enabled in
-//!                      `test_gpu.rs` (uncommented macro invocation).
+//!                      `test_gpu_full_table.rs` / `test_gpu_partitioned.rs`
+//!                      (uncommented macro invocation).
 //!
 //! Both sides are deterministic, measured byte sums — NOT wall-clock cost, and
 //! the two engines emit different plan trees, so the ratio is a provisional,
@@ -35,11 +36,11 @@ const RATIO_GREEN_MAX: f64 = 1.4;
 
 const PAGES_URL_DEFAULT: &str = "https://asymptote-tech.github.io/peacockdb/";
 const DEFAULT_REPO: &str = "asymptote-tech/peacockdb";
-/// Device label of the CPU-cost goldens (8 partitions / 2 GiB), part of the
-/// `.cpu.txt` filename under the unified golden layout. MUST track the device the
-/// `cpu_result_test!` goldens are canonized at — a stale label here makes every
-/// PeacockDB cell render "—" (guarded in `main`).
-const CPU_DEVICE: &str = "tp8-mini";
+/// Golden label of the CPU-cost goldens (full-table execution, 8 partitions /
+/// 2 GiB), the `<mode>-<tp>-<tier>` component of the `.cpu.txt` filename. MUST
+/// track the mode + device the `cpu_full_table_result_test!` goldens are canonized
+/// at — a stale label here makes every PeacockDB cell render "—" (guarded in `main`).
+const CPU_DEVICE: &str = "full_table-tp8-mini";
 /// Hidden marker so CI can find-and-update its single PR comment in place.
 const SENTINEL: &str = "<!-- peacockdb-cost-report -->";
 /// Separate marker for the cost-regression gate widget, so it upserts as its own
@@ -137,6 +138,29 @@ impl Registry {
     }
 }
 
+/// The CPU columns whose `✓` links to a golden, and the single `<mode>-<tp>-<tier>`
+/// label each links at.
+///
+/// ONE label per column, so the link target is predictable from the column alone.
+/// `scan_limit` is the query that makes this worth stating: it is registered at BOTH
+/// tp1_mini and tp1_standard and `column_for` keys on the tp count rather than the
+/// memory tier, so its single `ftc_tp1` cell aggregates two runs and it owns two
+/// goldens. It links at tp1-standard like every other tp1 row; a hyperlink cannot
+/// express "two runs" and inventing a second candidate for it would add config that
+/// nothing else can reach.
+///
+/// The existence check in `build_dataset` plus the gate in `main` is what makes one
+/// label safe: a query registered ONLY at some other tier has no golden here and
+/// fails by name, rather than rendering a dead link.
+///
+/// Deliberately NOT derived from `CPU_DEVICE`: that const is the Σout cells' golden,
+/// and folding the two together would let a Σout retarget silently move these links.
+const CPU_GOLDEN_LABEL: [(&str, &str); 3] = [
+    ("ftc_tp1", "full_table-tp1-standard"),
+    ("ftc_tp8", "full_table-tp8-mini"),
+    ("partitioned_cpu", "partitioned-tp8-standard"),
+];
+
 /// Render a cell state as its glyph. `enabled` means the mode runs AND its result is
 /// validated (golden or live oracle — both count); `skip` means it runs but nothing
 /// checks the result, which is why it gets its own glyph rather than being folded
@@ -163,6 +187,11 @@ struct Row {
     tickets: Vec<String>,
     peacockdb: Option<u64>,
     duckdb: Option<u64>,
+    /// CPU column -> the `<mode>-<tp>-<tier>` golden label ([`CPU_GOLDEN_LABEL`])
+    /// whose `.cpu.txt` exists on disk for this query, for the ✓ links. Absent for
+    /// non-`enabled` cells, which never link, and for an `enabled` cell whose golden
+    /// is missing — which `main` then reports rather than rendering unlinked.
+    cpu_golden: BTreeMap<String, String>,
 }
 
 impl Row {
@@ -213,13 +242,35 @@ impl Row {
         }
     }
 
+    /// One CPU mode's glyph, hyperlinked to the `.cpu.txt` it was verified against
+    /// when the cell is `enabled` and a URL exists.
+    ///
+    /// ONLY `✓` links: `~`, `✗` and `—` have no golden behind them, so a link would
+    /// promise a file that is not there. Falls back to the bare glyph on a dry run
+    /// (no sha ⇒ `golden_url` is `None`), exactly like the Σout cells.
+    fn cpu_glyph(&self, col: &str, links: &Links, canon_rel: &str) -> String {
+        let glyph = state_glyph(self.state(col));
+        let url = self
+            .cpu_golden
+            .get(col)
+            .and_then(|label| links.golden_url(canon_rel, &self.stem(), &format!("{label}.cpu.txt")));
+        match url {
+            Some(u) => format!("<a href=\"{u}\">{glyph}</a>"),
+            None => glyph.to_string(),
+        }
+    }
+
     /// full_table_cpu is one logical mode run at two target-partition counts, so it
     /// renders as a single cell showing the split rather than two columns.
-    fn ftc_cell(&self) -> String {
+    ///
+    /// Returns MARKUP, not a label: the two glyphs link to different goldens
+    /// (tp1-standard/tp1-mini vs tp8-mini), so they cannot be one escaped string.
+    /// Both renders emit HTML here — the PR comment's table is raw HTML too.
+    fn ftc_cell(&self, links: &Links, canon_rel: &str) -> String {
         format!(
             "tp1{} tp8{}",
-            state_glyph(self.state("ftc_tp1")),
-            state_glyph(self.state("ftc_tp8"))
+            self.cpu_glyph("ftc_tp1", links, canon_rel),
+            self.cpu_glyph("ftc_tp8", links, canon_rel)
         )
     }
 }
@@ -342,8 +393,8 @@ fn main() {
     // from (`<query>.{CPU_DEVICE}.cost.txt`). Requiring it of every operational
     // query would be wrong now that the registry includes the synthetic
     // micro-queries: tpch/scan_limit is GPU-operational but runs full_table_cpu at
-    // tp1-mini only, so no tp8-mini cost golden exists or should. Its Σout cell is a
-    // dash, and the ftc column shows why.
+    // tp1-mini only, so no full_table-tp8-mini cost golden exists or should. Its Σout
+    // cell is a dash, and the ftc column shows why.
     let mut missing: Vec<String> = Vec::new();
     for d in &datasets {
         for r in &d.rows {
@@ -357,6 +408,34 @@ fn main() {
             "cost-report: missing PeacockDB cost for {} operational queries (stale CPU_DEVICE='{CPU_DEVICE}' or absent .cost.txt goldens): {}",
             missing.len(),
             missing.join(", ")
+        );
+        std::process::exit(1);
+    }
+
+    // Every `enabled` CPU cell must have a .cpu.txt: assert_cpu_cost_canonical runs on
+    // EVERY CPU macro invocation, independent of the ResultGolden keyword (which gates
+    // only .result.txt). That invariant is the whole premise of these links, so a cell
+    // that resolves to nothing is a real breakage — a new device label, or a golden
+    // renamed without updating CPU_GOLDEN_LABEL — and must be loud rather than a
+    // silently unlinked ✓.
+    let mut unlinked: Vec<String> = Vec::new();
+    for d in &datasets {
+        for r in &d.rows {
+            for (col, label) in CPU_GOLDEN_LABEL {
+                if r.state(col) == "enabled" && !r.cpu_golden.contains_key(col) {
+                    unlinked.push(format!("{} {} [{col}] (expected {label})", d.label, r.query));
+                }
+            }
+        }
+    }
+    if !unlinked.is_empty() {
+        eprintln!(
+            "cost-report: {} enabled CPU cell(s) have no .cpu.txt golden under any known \
+             label. Every enabled CPU cell owns one (assert_cpu_cost_canonical is \
+             unconditional), so this means a query registered at a tier CPU_GOLDEN_LABEL \
+             does not name, or a golden rename it has not caught up with:\n  {}",
+            unlinked.len(),
+            unlinked.join("\n  ")
         );
         std::process::exit(1);
     }
@@ -418,6 +497,16 @@ fn build_dataset(
                     "peacockdb_cost=",
                 ),
                 duckdb: read_total(&canon.join(format!("{stem}.duckdb_cost.txt")), "duckdb_cost="),
+                // Check the golden exists rather than assuming it: see
+                // CPU_GOLDEN_LABEL. Only `enabled` cells are resolved — the others
+                // never render a link, and checking them would make the main() gate
+                // below fire on cells that legitimately have no golden.
+                cpu_golden: CPU_GOLDEN_LABEL
+                    .iter()
+                    .filter(|(col, _)| r.states.get(*col).map(String::as_str) == Some("enabled"))
+                    .filter(|(_, label)| canon.join(format!("{stem}.{label}.cpu.txt")).exists())
+                    .map(|(col, label)| (col.to_string(), label.to_string()))
+                    .collect(),
             }
         })
         .collect();
@@ -541,13 +630,13 @@ fn peacock_cell_md(value: Option<u64>, plan_url: Option<String>, cost_url: Optio
 /// two kinds merge, because four repeated em-dashes read as "look for the
 /// difference" when the real statement is a single fact about the whole row: it
 /// plans but nothing runs it yet, or it does not plan at all.
-fn mode_cells_html(r: &Row) -> String {
+fn mode_cells_html(r: &Row, links: &Links, canon_rel: &str) -> String {
     match r.kind() {
         RowKind::Executable => format!(
             "<td class=\"mode\">{}</td><td class=\"mode\">{}</td>\
              <td class=\"mode\">{}</td><td class=\"mode\">{}</td>",
-            r.ftc_cell(),
-            state_glyph(r.state("partitioned_cpu")),
+            r.ftc_cell(links, canon_rel),
+            r.cpu_glyph("partitioned_cpu", links, canon_rel),
             state_glyph(r.state("full_table_gpu")),
             state_glyph(r.state("partitioned_gpu")),
         ),
@@ -608,12 +697,12 @@ fn tickets_md(tickets: &[String], repo: &str) -> String {
 /// (GFM pipe tables support neither `colspan` nor font control), so the same shapes
 /// apply: four `<td>` mode cells for an Executable row, one `colspan=4`
 /// plan-status cell otherwise. `<sub>` shrinks text — GitHub strips class/style.
-fn mode_cells_md(r: &Row) -> String {
+fn mode_cells_md(r: &Row, links: &Links, canon_rel: &str) -> String {
     match r.kind() {
         RowKind::Executable => format!(
             "<td><sub>{}</sub></td><td>{}</td><td>{}</td><td>{}</td>",
-            r.ftc_cell(),
-            state_glyph(r.state("partitioned_cpu")),
+            r.ftc_cell(links, canon_rel),
+            r.cpu_glyph("partitioned_cpu", links, canon_rel),
             state_glyph(r.state("full_table_gpu")),
             state_glyph(r.state("partitioned_gpu")),
         ),
@@ -681,6 +770,14 @@ fn render_html(
          /* Same reasoning for the features column: its width is set by the longest \
             single chip (an unbreakable token), so the cell font is what controls it. */\
          td.feat{font-size:.68rem;}\
+         /* The synthetic micro-queries (aggregate_groupby, shuffle_stddev, …) are \
+            long unbreakable tokens, unlike the q<N> names, so they alone set the \
+            Query column's min-content width. Shrinking just those keeps the numbered \
+            rows at full size. Row::number is None for exactly this set. */\
+         td.micro{font-size:.72rem;}\
+         /* Both Sigma-out columns, header and values: byte counts are the widest \
+            numeric cells and are reference data, not the headline. */\
+         th.sigma,td.sigma{font-size:.72rem;}\
          /* merged plan-status cell spanning the 4 mode columns */\
          td.span{font-size:.75rem;color:#57606a;font-style:italic;}\
          .chip{display:inline-block;background:#eef2f6;border:1px solid #d0d7de;border-radius:10px;\
@@ -749,7 +846,7 @@ fn render_html(
             "<h2>{}</h2><table><tr><th>Query</th><th class=\"modeh\">ft_cpu</th>\
              <th class=\"modeh\">p_cpu</th><th class=\"modeh\">ft_gpu</th>\
              <th class=\"modeh\">p_gpu</th>\
-             <th>PeacockDB Σout</th><th>DuckDB Σout</th><th>Ratio</th>\
+             <th class=\"sigma\">PeacockDB Σout</th><th class=\"sigma\">DuckDB Σout</th><th>Ratio</th>\
              <th>Features</th><th>Tickets</th></tr>",
             d.label
         );
@@ -760,11 +857,14 @@ fn render_html(
             let dk_url = r.duckdb.and_then(|_| links.golden_url(d.canon_rel, &stem, "duckdb_cost.txt"));
             let _ = write!(
                 s,
-                "<tr class=\"{}\"><td>{}</td>{}<td class=\"num\">{}</td>\
-                 <td class=\"num\">{}</td><td class=\"num\">{}</td><td class=\"feat\">{}</td><td>{}</td></tr>",
+                "<tr class=\"{}\"><td{}>{}</td>{}<td class=\"num sigma\">{}</td>\
+                 <td class=\"num sigma\">{}</td><td class=\"num\">{}</td><td class=\"feat\">{}</td><td>{}</td></tr>",
                 r.bucket(),
+                // Attribute omitted entirely for q<N> rows — an empty class="" is
+                // noise in the output and is what the plain-cell test asserts against.
+                if r.n.is_none() { " class=\"micro\"" } else { "" },
                 query_cell_html(&r.query, links.query_url(d.query_rel, &stem)),
-                mode_cells_html(r),
+                mode_cells_html(r, links, d.canon_rel),
                 peacock_cell_html(r.peacockdb, plan_url, cost_url),
                 cost_cell_html(r.duckdb, dk_url),
                 ratio_or_dash(r.ratio()),
@@ -829,8 +929,8 @@ fn render_markdown(datasets: &[Dataset], pages_url: &str, published: bool, links
             "<details><summary>{} — {}/{} operational</summary>\n\n\
              <table>\n<tr><th>Query</th><th><sub>ft_cpu</sub></th>\
              <th><sub>p_cpu</sub></th><th><sub>ft_gpu</sub></th>\
-             <th><sub>p_gpu</sub></th><th>PeacockDB Σout</th>\
-             <th>DuckDB Σout</th><th>Ratio</th><th><sub>Features</sub></th>\
+             <th><sub>p_gpu</sub></th><th><sub>PeacockDB Σout</sub></th>\
+             <th><sub>DuckDB Σout</sub></th><th>Ratio</th><th><sub>Features</sub></th>\
              <th>Tickets</th></tr>\n",
             d.label,
             d.operational(),
@@ -849,11 +949,16 @@ fn render_markdown(datasets: &[Dataset], pages_url: &str, published: bool, links
             };
             let _ = write!(
                 s,
-                "<tr><td>{}</td>{}<td>{}</td>\
-                 <td>{}</td><td>{}</td>\
+                "<tr><td>{}</td>{}<td><sub>{}</sub></td>\
+                 <td><sub>{}</sub></td><td>{}</td>\
                  <td><sub>{}</sub></td><td>{}</td></tr>\n",
-                query_cell_md(&r.query, links.query_url(d.query_rel, &stem)),
-                mode_cells_md(r),
+                // <sub> only for the non-numeric names; q<N> keeps full size. GitHub
+                // strips class/style, so <sub> is the only lever here.
+                match r.n {
+                    None => format!("<sub>{}</sub>", query_cell_md(&r.query, links.query_url(d.query_rel, &stem))),
+                    Some(_) => query_cell_md(&r.query, links.query_url(d.query_rel, &stem)),
+                },
+                mode_cells_md(r, links, d.canon_rel),
                 peacock_cell_md(r.peacockdb, plan_url, cost_url),
                 cost_cell_md(r.duckdb, dk_url),
                 ratio_cell,
@@ -1196,6 +1301,18 @@ fn run_cost_diff(testdata: &Path, base: &str, html_out: &str, md_out: &str, link
 mod tests {
     use super::*;
 
+    /// A dry-run `Links` (no sha), the shape every cell falls back to when the
+    /// report is generated without a commit: `golden_url` yields None, so glyphs and
+    /// costs render as plain text. Tests that assert bare glyph output use this.
+    fn dry_links() -> Links {
+        Links { repo: "o/r".to_string(), sha: None }
+    }
+
+    /// A `Links` WITH a sha, so link-emitting paths are exercised.
+    fn sha_links() -> Links {
+        Links { repo: "o/r".to_string(), sha: Some("abc123".to_string()) }
+    }
+
     /// Build a Row for tests. `modes` maps each mode column to its state; anything
     /// unlisted defaults to "na". Keeps the tests readable now that a Row carries
     /// five mode cells plus features and tickets.
@@ -1216,6 +1333,7 @@ mod tests {
             tickets: vec![],
             peacockdb,
             duckdb,
+            cpu_golden: BTreeMap::new(),
         }
     }
 
@@ -1255,14 +1373,14 @@ mod tests {
     fn row_kind_and_merged_mode_cells() {
         let exec = test_row("q1", &[("full_table_gpu", "enabled")], None, None);
         assert_eq!(exec.kind(), RowKind::Executable);
-        let h = mode_cells_html(&exec);
+        let h = mode_cells_html(&exec, &dry_links(), "testdata/goldens/tpch.sf1");
         assert_eq!(h.matches("<td").count(), 4, "executable rows keep 4 cells: {h}");
         assert!(!h.contains("colspan"), "executable rows must not merge: {h}");
 
         // plans, but nothing enabled -> one spanning cell
         let plan_only = test_row("q42", &[], None, None);
         assert_eq!(plan_only.kind(), RowKind::PlanOnly);
-        let h = mode_cells_html(&plan_only);
+        let h = mode_cells_html(&plan_only, &dry_links(), "testdata/goldens/tpch.sf1");
         assert_eq!(h.matches("<td").count(), 1);
         assert!(h.contains("colspan=\"4\"") && h.contains("plan ✓"), "{h}");
 
@@ -1271,17 +1389,17 @@ mod tests {
         let mut failed = test_row("q27", &[("full_table_gpu", "enabled")], None, None);
         failed.plan_status = "fail".to_string();
         assert_eq!(failed.kind(), RowKind::PlanFailed);
-        let h = mode_cells_html(&failed);
+        let h = mode_cells_html(&failed, &dry_links(), "testdata/goldens/tpch.sf1");
         assert!(h.contains("colspan=\"4\"") && h.contains("plan ✗"), "{h}");
 
         // The markdown comment now mirrors the HTML structure (raw <table>), so the
         // same invariants hold there: 4 cells when executable, 1 spanning cell
         // otherwise. <sub> is what shrinks text — GitHub strips class/style.
-        assert_eq!(mode_cells_md(&exec).matches("<td").count(), 4);
-        assert!(mode_cells_md(&exec).contains("<sub>"));
-        assert_eq!(mode_cells_md(&plan_only).matches("<td").count(), 1);
-        assert!(mode_cells_md(&plan_only).contains("colspan=\"4\""));
-        assert!(mode_cells_md(&failed).contains("plan ✗"));
+        assert_eq!(mode_cells_md(&exec, &dry_links(), "testdata/goldens/tpch.sf1").matches("<td").count(), 4);
+        assert!(mode_cells_md(&exec, &dry_links(), "testdata/goldens/tpch.sf1").contains("<sub>"));
+        assert_eq!(mode_cells_md(&plan_only, &dry_links(), "testdata/goldens/tpch.sf1").matches("<td").count(), 1);
+        assert!(mode_cells_md(&plan_only, &dry_links(), "testdata/goldens/tpch.sf1").contains("colspan=\"4\""));
+        assert!(mode_cells_md(&failed, &dry_links(), "testdata/goldens/tpch.sf1").contains("plan ✗"));
     }
 
     /// full_table_cpu is ONE column showing both target-partition counts.
@@ -1299,8 +1417,88 @@ mod tests {
             tickets: vec![],
             peacockdb: None,
             duckdb: None,
+            cpu_golden: BTreeMap::new(),
         };
-        assert_eq!(r.ftc_cell(), "tp1✓ tp8✗");
+        // Dry run (no sha): no URLs, so both glyphs are bare — the same degradation
+        // the Sigma-out cells have always had.
+        assert_eq!(r.ftc_cell(&dry_links(), "testdata/goldens/tpch.sf1"), "tp1✓ tp8✗");
+    }
+
+    /// The ✓ links, resolved PER COLUMN from [`CPU_GOLDEN_LABEL`].
+    ///
+    /// scan_limit earns a case here because it is the one query where the answer is
+    /// not obvious: it owns TWO tp1 goldens (registered at tp1_mini and tp1_standard,
+    /// both mapping to the single ftc_tp1 cell), yet that cell shows one link, at
+    /// tp1-standard like every other tp1 row. Pinning it stops a future reader from
+    /// "fixing" the link to tp1-mini on the theory that the mini golden is unreachable
+    /// by mistake — it is unreachable by decision (see the task spec).
+    #[test]
+    fn enabled_cpu_glyphs_link_to_their_own_golden() {
+        let canon = "testdata/goldens/tpch.sf1";
+
+        let mut r = test_row("q1", &[("ftc_tp1", "enabled"), ("ftc_tp8", "enabled")], None, None);
+        r.cpu_golden.insert("ftc_tp1".into(), "full_table-tp1-standard".into());
+        r.cpu_golden.insert("ftc_tp8".into(), "full_table-tp8-mini".into());
+        let cell = r.ftc_cell(&sha_links(), canon);
+        assert!(cell.contains(&format!("{canon}/q1.full_table-tp1-standard.cpu.txt")), "{cell}");
+        assert!(cell.contains(&format!("{canon}/q1.full_table-tp8-mini.cpu.txt")), "{cell}");
+        assert_eq!(cell.matches("<a href=").count(), 2, "both glyphs link: {cell}");
+
+        // scan_limit owns BOTH tp1 goldens (registered at tp1_mini and tp1_standard,
+        // one ftc_tp1 cell). It links at tp1-standard like every other tp1 row — the
+        // decision recorded in the task spec — and its stem is hyphenated.
+        let mut sl = test_row("scan_limit", &[("ftc_tp1", "enabled"), ("ftc_tp8", "disabled")], None, None);
+        sl.cpu_golden.insert("ftc_tp1".into(), "full_table-tp1-standard".into());
+        let cell = sl.ftc_cell(&sha_links(), canon);
+        assert!(cell.contains(&format!("{canon}/scan-limit.full_table-tp1-standard.cpu.txt")), "{cell}");
+
+        // Only ✓ links: a disabled cell has no golden behind it, so it stays plain
+        // even when a sha is present.
+        assert_eq!(sl.cpu_glyph("ftc_tp8", &sha_links(), canon), "✗");
+        // ...and a `skip` cell likewise (runs, but nothing verified it).
+        let sk = test_row("q2", &[("partitioned_cpu", "skip")], None, None);
+        assert_eq!(sk.cpu_glyph("partitioned_cpu", &sha_links(), canon), "~");
+    }
+
+    /// Every mode column is accounted for: either CPU_GOLDEN_LABEL probes it, or it is
+    /// a GPU column that owns no golden.
+    ///
+    /// The list that DEFINES the golden check was itself unchecked. Add a seventh mode
+    /// column, or rename one, and CPU_GOLDEN_LABEL simply never probes it: its ✓ renders
+    /// unlinked and the missing-golden gate stays silent, because that gate only
+    /// iterates the labels it already knows. Same shape as an exemption list nothing
+    /// validates, one level up. This forces the new column to be classified —
+    /// linkable-with-a-golden, or GPU/unlinkable — rather than degrading quietly.
+    #[test]
+    fn every_mode_column_is_either_probed_or_declared_goldenless() {
+        use std::collections::BTreeSet;
+        // GPU columns read the CPU golden rather than owning one, so they are
+        // deliberately not linked — see the CPU_GOLDEN_LABEL doc.
+        const GOLDENLESS: [&str; 2] = ["full_table_gpu", "partitioned_gpu"];
+
+        let probed: BTreeSet<&str> = CPU_GOLDEN_LABEL.iter().map(|(c, _)| *c).collect();
+        let declared: BTreeSet<&str> = GOLDENLESS.into_iter().collect();
+        let covered: BTreeSet<&str> = probed.union(&declared).copied().collect();
+        let all: BTreeSet<&str> = MODE_COLUMNS.into_iter().collect();
+
+        assert!(
+            probed.is_disjoint(&declared),
+            "a column cannot be both probed for a golden and declared goldenless: {:?}",
+            probed.intersection(&declared).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            covered, all,
+            "unclassified mode column(s): {:?}. Add it to CPU_GOLDEN_LABEL with the \
+             golden label its ✓ should link to, or to GOLDENLESS if it owns no golden.",
+            all.difference(&covered).collect::<Vec<_>>()
+        );
+    }
+
+    /// The Query column shrinks ONLY the non-numeric names, in both renders.
+    #[test]
+    fn micro_query_names_render_small() {
+        assert!(test_row("shuffle_stddev", &[], None, None).n.is_none());
+        assert!(test_row("q1", &[], None, None).n.is_some());
     }
 
     #[test]
@@ -1318,7 +1516,7 @@ mod tests {
     #[test]
     fn cost_cells_link_only_when_value_and_url_present() {
         let v = Some(43_308_088u64);
-        let url = Some("https://x/blob/abc/testdata/goldens/tpch.sf1/q1.tp1-mini.cpu.txt".to_string());
+        let url = Some("https://x/blob/abc/testdata/goldens/tpch.sf1/q1.full_table-tp1-mini.cpu.txt".to_string());
         assert!(cost_cell_html(v, url.clone()).starts_with("<a href="));
         assert!(cost_cell_md(v, url).starts_with("<a href="));
         // value but no sha/url → plain text, no link.
@@ -1365,15 +1563,15 @@ mod tests {
 
     #[test]
     fn peacock_cell_renders_plan_and_cost_links() {
-        let plan = Some("https://x/q1.tp8-mini.cpu.txt".to_string());
-        let cost = Some("https://x/q1.tp8-mini.cost.txt".to_string());
+        let plan = Some("https://x/q1.full_table-tp8-mini.cpu.txt".to_string());
+        let cost = Some("https://x/q1.full_table-tp8-mini.cost.txt".to_string());
         let html = peacock_cell_html(Some(43_308_088), plan.clone(), cost.clone());
         assert!(html.contains(">plan</a>") && html.contains(">cost</a>") && html.starts_with("41.30 MB ("));
         let md = peacock_cell_md(Some(43_308_088), plan, cost);
         // HTML anchors: the comment's table is raw HTML, where markdown link
         // syntax would render literally as brackets.
-        assert!(md.contains("<a href=\"https://x/q1.tp8-mini.cpu.txt\">plan</a>"), "{md}");
-        assert!(md.contains("<a href=\"https://x/q1.tp8-mini.cost.txt\">cost</a>"), "{md}");
+        assert!(md.contains("<a href=\"https://x/q1.full_table-tp8-mini.cpu.txt\">plan</a>"), "{md}");
+        assert!(md.contains("<a href=\"https://x/q1.full_table-tp8-mini.cost.txt\">cost</a>"), "{md}");
         assert!(md.starts_with("41.30 MB ("));
         // value but no urls (dry run) → plain bytes, no links.
         assert_eq!(peacock_cell_html(Some(43_308_088), None, None), "41.30 MB");

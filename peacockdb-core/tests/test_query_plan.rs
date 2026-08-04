@@ -159,7 +159,7 @@ query_plan_test!(tpcds, 1, q99, tp8_mini);
 
 // ── registry verification ───────────────────────────────────────────────────
 /// This binary owns the `plan` column of testdata/cost-registry.csv. `inventory`
-/// collects per binary, so each suite verifies its own columns; together the four
+/// collects per binary, so each suite verifies its own columns; together the five
 /// suites cover all six. See common/registry.rs.
 #[test]
 fn registry_matches_csv_plan_column() {
@@ -168,7 +168,7 @@ fn registry_matches_csv_plan_column() {
 
 /// The cross-mode golden invariant: a GPU mode marked `enabled` in the CSV requires
 /// its same-device `.cpu.txt` golden, which the GPU test asserts per-node rows+cost
-/// against. It lives HERE, in the CPU tier, rather than in test_gpu.rs: it inspects
+/// against. It lives HERE, in the CPU tier, rather than in the GPU suites: it inspects
 /// only committed files, so putting it behind the GPU build would make it unable to
 /// fail on the CPU tiers where most CI runs happen.
 #[test]

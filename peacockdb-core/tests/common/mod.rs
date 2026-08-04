@@ -1,12 +1,14 @@
 //! Shared test harness for the plan / cpu / gpu suites.
 //!
 //! All helper functions and the unified test macros live here; the suite files
-//! (test_query_plan.rs, test_cpu_executor.rs, test_gpu.rs) contain only
-//! macro invocations. Each integration-test crate includes this via
-//! `#[macro_use] mod common;`. Every suite uses a subset, so dead code is fine.
+//! (test_query_plan.rs, test_cpu_full_table.rs, test_cpu_partitioned.rs,
+//! test_gpu_full_table.rs, test_gpu_partitioned.rs) contain only macro invocations.
+//! Each integration-test crate includes this via `#[macro_use] mod common;`. Every
+//! suite uses a subset, so dead code is fine.
 #![allow(dead_code)]
 
 pub mod cost_model;
+pub mod exec_mode;
 pub mod registry;
 
 use std::path::{Path, PathBuf};
@@ -33,17 +35,10 @@ use peacockdb_core::{
     create_context_with_tables_mode, register_tables_for, PartitionMode,
 };
 
-/// Per-device default [`PartitionMode`] — the map + Hash-repartition-lowering
-/// discriminator. tp8-standard is the real-8-way device; every other label
-/// (tp1-*, tp8-mini) is single-partition. The enum — NOT the budget — is the
-/// sole discriminator, so a memory-constrained genuine-8-way device (#91) would
-/// just add its label here → `RealMultiPartition`, no budget change needed.
-pub fn partition_mode(device: &str) -> PartitionMode {
-    match device {
-        "tp8-standard" => PartitionMode::RealMultiPartition,
-        _ => PartitionMode::SinglePartition,
-    }
-}
+use exec_mode::{golden_label, CpuOracle, ExecMode, ResultGolden};
+// Only the GPU asserts split a combined label, and they are cfg'd out under rust-only.
+#[cfg(not(feature = "rust-only"))]
+use exec_mode::gpu_label_device;
 
 // --- run configs encoded in the device label -------------------------------
 // All single-sourced from `config` — a tier's value must exist in exactly one place,
@@ -63,7 +58,10 @@ pub const RESULT_GOLDEN_MAX_BYTES: usize = 256 * 1024;
 // --- parameterized testdata layout -----------------------------------------
 //   data    = <root>/<dataset>.sf<sf>/        (parquet)
 //   queries = <root>/<dataset>-queries/<query>.sql
-//   goldens = <root>/goldens/<dataset>.sf<sf>/<query>.<device>.{plan.txt,cpu.txt}
+//   goldens = <root>/goldens/<dataset>.sf<sf>/<query>.<label>.{cpu,cost,result}.txt
+//             where <label> = <mode>-<tp>-<tier>, e.g. `full_table-tp8-mini`.
+//   plan goldens keep the bare <device>: plan shape is executor-independent, and
+//   goldens/plan_bytes.sha256 pins those names.
 // PEACOCK_TESTDATA_DIR overrides the compile-time root so a binary built on one
 // machine can run on another (e.g. shad-gpu).
 pub fn testdata_root() -> PathBuf {
@@ -89,21 +87,25 @@ pub fn plan_golden(dataset: &str, sf: &str, query: &str, device: &str) -> PathBu
     golden_dir_for(dataset, sf).join(format!("{query}.{device}.plan.txt"))
 }
 
-pub fn cpu_golden(dataset: &str, sf: &str, query: &str, device: &str) -> PathBuf {
-    golden_dir_for(dataset, sf).join(format!("{query}.{device}.cpu.txt"))
+/// Per-node CPU cost-tree golden. `label` is the `<mode>-<tp>-<tier>` component
+/// ([`exec_mode::golden_label`]) — the same plan at the same device produces a
+/// DIFFERENT tree under full-table vs partitioned execution, so the mode is part
+/// of the filename.
+pub fn cpu_golden(dataset: &str, sf: &str, query: &str, label: &str) -> PathBuf {
+    golden_dir_for(dataset, sf).join(format!("{query}.{label}.cpu.txt"))
 }
 
 /// Total-cost + per-category breakdown golden (#83), derived from the `.cpu.txt`
 /// per-node tree via `cost_model::cost_text_from_cpu`; verified by `test_cost_model.rs`.
-pub fn cost_golden(dataset: &str, sf: &str, query: &str, device: &str) -> PathBuf {
-    golden_dir_for(dataset, sf).join(format!("{query}.{device}.cost.txt"))
+pub fn cost_golden(dataset: &str, sf: &str, query: &str, label: &str) -> PathBuf {
+    golden_dir_for(dataset, sf).join(format!("{query}.{label}.cost.txt"))
 }
 
 /// Frozen final-result snapshot (`batches_to_sorted_str`), generated ONLY from the
 /// CPU oracle under UPDATE_CANONICAL (never the GPU), so the merged GPU test can
 /// assert the final result without a live CPU run.
-pub fn result_golden(dataset: &str, sf: &str, query: &str, device: &str) -> PathBuf {
-    golden_dir_for(dataset, sf).join(format!("{query}.{device}.result.txt"))
+pub fn result_golden(dataset: &str, sf: &str, query: &str, label: &str) -> PathBuf {
+    golden_dir_for(dataset, sf).join(format!("{query}.{label}.result.txt"))
 }
 
 pub fn testdata_dir() -> PathBuf {
@@ -269,8 +271,38 @@ pub fn assert_plan_matches_canonical(plan: &Arc<dyn ExecutionPlan>, name: &str) 
     assert_plan_matches_canonical_at(plan, &plan_golden("tpch", "1", name, "tp8-mini"));
 }
 
+/// The PLAN tier's device → [`PartitionMode`] table, and the ONLY surviving
+/// label→mode decode in the suite.
+///
+/// Execution mode is stated at the call site by the macro name (see
+/// [`exec_mode::ExecMode`]); planning has no such call site to state it at.
+/// `.plan.txt` golden names carry no mode — `goldens/plan_bytes.sha256` keys on
+/// `<query>.<device>` — and `test_plan_bytes::corpus` builds its whole corpus by
+/// reading those filenames off disk and rsplitting the device out of the stem. So
+/// for the plan tier the mode must be recoverable from the label alone. It is
+/// load-bearing, not cosmetic: shuffle_additive @ tp8-standard is the one plan
+/// golden whose shape depends on `RealMultiPartition` (scan map + lowered Hash
+/// repartition).
+///
+/// EXHAUSTIVE on purpose, and that is what earns the exception. Because `corpus`
+/// discovers labels from disk, an unlisted device fails LOUD on the very next plan
+/// golden instead of silently planning single-partition — a stronger guarantee than
+/// the execution path ever had with its `_ => SinglePartition` fall-through.
+pub fn plan_partition_mode(device: &str) -> PartitionMode {
+    match device {
+        "tp8-standard" => PartitionMode::RealMultiPartition,
+        "tp8-mini" => PartitionMode::SinglePartition,
+        other => panic!(
+            "plan device '{other}' has no PartitionMode. Add it to \
+             common::plan_partition_mode and decide its mode deliberately — do NOT \
+             default it, or the plan golden and its plan_bytes digest silently \
+             record a mode nobody chose."
+        ),
+    }
+}
+
 /// Build the GPU physical plan for `<dataset>-queries/<query>.sql` at `device`'s
-/// partition config + [`PartitionMode`] (via [`partition_mode`]). Shared by the
+/// partition config + [`PartitionMode`] (via [`plan_partition_mode`]). Shared by the
 /// plan-canonical test and bespoke serializer tests that need the lowered plan.
 pub async fn plan_for(dataset: &str, sf: &str, query: &str, device: &str) -> Arc<dyn ExecutionPlan> {
     let data_dir = data_dir_for(dataset, sf);
@@ -286,7 +318,7 @@ pub async fn plan_for(dataset: &str, sf: &str, query: &str, device: &str) -> Arc
         .unwrap_or_else(|_| panic!("query file not found: {}", sql_path.display()));
     let (partitions, budget) = device_config(device);
     let gpu_ctx = register_tables_for(
-        build_session_state_with_gpu_rules_mode(partitions, budget, partition_mode(device)),
+        build_session_state_with_gpu_rules_mode(partitions, budget, plan_partition_mode(device)),
         &data_dir,
     )
     .await
@@ -727,30 +759,32 @@ fn all_final_aggs_state_mergeable(plan: &Arc<dyn ExecutionPlan>) -> bool {
     here && plan.children().iter().all(|c| all_final_aggs_state_mergeable(c))
 }
 
-/// True iff the plan can be driven by the #13 CpuNodeExecutor: it has a multi-
-/// partition scan map AND every multi-partition Final-aggregate is state-mergeable
-/// (see [`state_mergeable_agg`]). A Hash `GpuRepartitionExec` is lowered into
-/// GpuCoalescePartitions(M→1) + GpuRepartition(1→N) and hash-partitioned via
-/// Spark-murmur3, so every group lands wholly in one bucket and the per-bucket
+/// True iff the plan can be driven by the partitioned `CpuNodeExecutor`: it has a
+/// multi-partition scan map AND every multi-partition Final-aggregate is
+/// state-mergeable (see [`state_mergeable_agg`]). A Hash `GpuRepartitionExec` is
+/// lowered into GpuCoalescePartitions(M→1) + GpuRepartition(1→N) and hash-partitioned
+/// via Spark-murmur3, so every group lands wholly in one bucket and the per-bucket
 /// Final merges that group's state. Gate on AGG-KIND, NOT on the mere presence of
 /// a GpuRepartitionExec (which would wrongly admit a non-mergeable shuffle).
-pub(crate) fn plan_is_node13_executable(plan: &Arc<dyn ExecutionPlan>) -> bool {
+pub(crate) fn plan_is_partitioned_executable(plan: &Arc<dyn ExecutionPlan>) -> bool {
     has_scan_map(plan) && all_final_aggs_state_mergeable(plan)
 }
 
 /// Run a query through plain DataFusion (ground truth) and the CPU executor;
 /// assert results match (order-independent) and the cpu cost tree matches golden.
-/// `rel_tol = None` = exact sorted-string compare (the default); `Some(tol)` is
-/// passed only via `cpu_result_approx_test!` for queries whose sole oracle
-/// divergence is float summation reassociation (~1 ULP) — see [`assert_results_match`].
+/// `mode` comes from the calling macro's NAME: it picks the executor, the context's
+/// `PartitionMode`, and the `<mode>-<device>` golden — all three together, so they
+/// cannot disagree.
+/// `oracle` selects the result-compare tolerance; both variants run the SAME
+/// plain-DataFusion oracle at `target_partitions = 1` — see [`CpuOracle`].
 pub async fn assert_cpu_results_match_datafusion(
     dataset: &str,
     sf: &str,
     query: &str,
     device: &str,
-    rel_tol: Option<f64>,
-    use_node13: bool,
-    gen_result_golden: bool,
+    oracle: CpuOracle,
+    mode: ExecMode,
+    golden_mode: ResultGolden,
 ) {
     let data_dir = data_dir_for(dataset, sf);
     let sql_path = queries_dir_for(dataset).join(format!("{query}.sql"));
@@ -764,60 +798,57 @@ pub async fn assert_cpu_results_match_datafusion(
     // per-node from total rows + schema (cpu_executor), so the cost golden is
     // reproducible at any partition count; most cpu devices are tp8 (matching the
     // plan device), but LIMIT-without-total-order queries are canonized at tp1
-    // (their result row set isn't partition-invariant — see test_cpu_executor.rs).
+    // (their result row set isn't partition-invariant — see test_cpu_full_table.rs).
     let (partitions, budget) = device_config(device);
+    let label = golden_label(mode, device);
     let cpu_ctx =
-        create_context_with_tables_mode(&data_dir, partitions, budget, partition_mode(device))
+        create_context_with_tables_mode(&data_dir, partitions, budget, mode.partition_mode())
             .await
             .unwrap();
     let plan = cpu_ctx.sql(&sql).await.unwrap().create_physical_plan().await.unwrap();
 
-    // Executor choice is EXPLICIT per-test (`use_node13`), NOT inferred from the plan:
-    // the SAME plan (e.g. q6 at 8 partitions) backs BOTH the tp8-mini golden — the
-    // #11 instrumented-enforced executor, which streams each node single-partition-
-    // coalesced regardless of target_partitions — AND the tp8-standard golden — the
-    // #13 CpuNodeExecutor, which maintains N partitions across nodes (partial-agg =
-    // Σ-over-partitions, CoalescePartitions concat N→1), matching the real 8-way GPU.
-    // A plan-only predicate can't tell them apart; only the device/test does.
-    // `plan_is_node13_executable` is asserted purely as a SAFETY guard. #11 also
-    // backs the resident-OOM tests. Both yield post-order stats + a coalesced
-    // result, so the assertions below are identical.
-    let (actual, stats): (Vec<RecordBatch>, Vec<NodeMemoryStats>) = if use_node13 {
-        assert!(
-            plan_is_node13_executable(&plan),
-            "{dataset}/{query} @ {device}: #13 requested but plan is not node13-executable \
-             (missing scan map, or a Final-agg uses AVG/STDDEV/VAR — non-additive merge is Inc4/Inc5)"
-        );
-        let mut backend = CpuNodeExecutor::new(cpu_ctx.task_ctx());
-        execute_node_by_node(&plan, &mut backend).await.unwrap()
-    } else {
-        let mut stats: Vec<NodeMemoryStats> = vec![];
-        let actual = execute_full_table_instrumented_enforced(
-            plan.clone(),
-            cpu_ctx.task_ctx(),
-            budget,
-            &mut stats,
-        )
-        .await
-        .unwrap();
-        (actual, stats)
+    // The SAME plan (e.g. q6 at 8 partitions) backs BOTH the full_table-tp8-mini
+    // golden — the instrumented-enforced executor, which streams each node
+    // single-partition-coalesced regardless of target_partitions — AND the
+    // partitioned-tp8-standard golden — the CpuNodeExecutor, which maintains N
+    // partitions across nodes (partial-agg = Σ-over-partitions, CoalescePartitions
+    // concat N→1), matching the real 8-way GPU. A plan-only predicate cannot tell
+    // them apart, which is exactly why the mode is a parameter and not a lookup.
+    // `plan_is_partitioned_executable` is asserted purely as a SAFETY guard. The
+    // full-table executor also backs the resident-OOM tests. Both yield post-order
+    // stats + a coalesced result, so the assertions below are identical.
+    let (actual, stats): (Vec<RecordBatch>, Vec<NodeMemoryStats>) = match mode {
+        ExecMode::Partitioned => {
+            assert!(
+                plan_is_partitioned_executable(&plan),
+                "{dataset}/{query} @ {label}: partitioned execution requested but the plan \
+                 is not partitioned-executable (missing scan map, or a Final-agg uses a \
+                 non-mergeable aggregate)"
+            );
+            let mut backend = CpuNodeExecutor::new(cpu_ctx.task_ctx());
+            execute_node_by_node(&plan, &mut backend).await.unwrap()
+        }
+        ExecMode::FullTable => {
+            let mut stats: Vec<NodeMemoryStats> = vec![];
+            let actual = execute_full_table_instrumented_enforced(
+                plan.clone(),
+                cpu_ctx.task_ctx(),
+                budget,
+                &mut stats,
+            )
+            .await
+            .unwrap();
+            (actual, stats)
+        }
     };
 
-    assert_results_match(&expected, &actual, rel_tol, &format!("{dataset}/{query}"));
-    assert_cpu_cost_canonical(&plan, &stats, &cpu_golden(dataset, sf, query, device));
+    assert_results_match(&expected, &actual, oracle.rel_tol(), &format!("{dataset}/{query}"));
+    assert_cpu_cost_canonical(&plan, &stats, &cpu_golden(dataset, sf, query, &label));
     // Snapshot the (DataFusion-validated) result for the merged GPU test to verify
-    // against, so the GPU run needs no live CPU oracle. UPDATE_CANONICAL only.
-    //
-    // INVARIANT: `gen_result_golden` must be TRUE exactly for the (query, device)
-    // pairs consumed by a golden-asserting `gpu_test!` (GoldenExact/GoldenApprox) —
-    // TRUE for tp1-standard golden_exact/approx + the tp8-standard real-partitioning
-    // goldens (q6, shuffle_additive); FALSE for tp8-mini (no gpu_test! consumer) and
-    // for oracle-mode queries (>256KB result → GPU uses the live oracle, no golden).
-    // false-when-should-be-true fails loud (missing golden); true-when-should-be-
-    // false is an orphan golden written but never read — the silent case this gate
-    // exists to prevent.
-    if gen_result_golden {
-        maybe_write_result_golden(&actual, &result_golden(dataset, sf, query, device));
+    // against, so the GPU run needs no live CPU oracle. UPDATE_CANONICAL only; the
+    // invariant governing when writing is correct lives on [`ResultGolden`].
+    if golden_mode == ResultGolden::Write {
+        maybe_write_result_golden(&actual, &result_golden(dataset, sf, query, &label));
     }
 }
 
@@ -952,15 +983,21 @@ pub async fn assert_gpu_results_match_cpu(data_dir: &Path, queries_dir: &Path, n
     );
 }
 
-/// GPU node-by-node verification (Task #13): run the query through the GPU
-/// node-executor interface and assert its per-node stats (exact row counts + the
-/// rows+schema-derived cost) match the CPU-emulated `.cpu.txt` golden for `device`.
-/// The golden is produced by the CPU path; this just compares the GPU run against
-/// it (never UPDATE_CANONICAL from GPU). Use the H200/tp1 device (tp1-standard):
-/// at tp1 the plan is single-partition, so GPU and CPU emulation share node
-/// structure + row counts exactly (no partial-aggregate divergence).
+/// GPU node-by-node verification: run the query through the GPU node-executor
+/// interface and assert its per-node stats (exact row counts + the rows+schema-derived
+/// cost) match the CPU-emulated `.cpu.txt` golden. The golden is produced by the CPU
+/// path; this just compares the GPU run against it (never UPDATE_CANONICAL from GPU).
+/// `mode` comes from the caller, never from the label: at `FullTable`/tp1 the plan is
+/// single-partition, so GPU and CPU emulation share node structure + row counts exactly
+/// (no partial-aggregate divergence).
 #[cfg(not(feature = "rust-only"))]
-pub async fn assert_gpu_nodes_match_golden(dataset: &str, sf: &str, query: &str, device: &str) {
+pub async fn assert_gpu_nodes_match_golden(
+    dataset: &str,
+    sf: &str,
+    query: &str,
+    device: &str,
+    mode: ExecMode,
+) {
     use peacockdb_core::gpu_executor::GpuExecutor;
 
     let data_dir = data_dir_for(dataset, sf);
@@ -968,14 +1005,15 @@ pub async fn assert_gpu_nodes_match_golden(dataset: &str, sf: &str, query: &str,
     let sql = std::fs::read_to_string(&sql_path)
         .unwrap_or_else(|_| panic!("query file not found: {}", sql_path.display()));
     let (partitions, budget) = device_config(device);
-    let gpu = GpuExecutor::new_mode(&data_dir, partitions, budget, partition_mode(device))
+    let gpu = GpuExecutor::new_mode(&data_dir, partitions, budget, mode.partition_mode())
         .await
         .unwrap();
     let (_batches, plan, stats) = gpu.execute_instrumented(&sql).await.unwrap();
-    assert_cost_golden_verify(&plan, &stats, &cpu_golden(dataset, sf, query, device));
+    let label = golden_label(mode, device);
+    assert_cost_golden_verify(&plan, &stats, &cpu_golden(dataset, sf, query, &label));
 }
 
-/// Per-query result-assertion mode for the merged GPU test (`gpu_test!`) — chosen
+/// Per-query result-assertion mode for the merged GPU tests — chosen
 /// EXPLICITLY at each call site so a reader sees, per query, golden vs live oracle.
 /// `GoldenExact`  = static result-golden, exact compare (fail-closed: missing panics).
 /// `GoldenApprox` = static result-golden, 1e-12 float-tolerant (q14/q39 — avg/sum
@@ -999,7 +1037,7 @@ pub enum GpuResultMode {
     Skip,
 }
 
-/// Map a mode keyword (from `gpu_test!`) to a `GpuResultMode`.
+/// Map a mode keyword (from `gpu_*_test!`) to a `GpuResultMode`.
 #[cfg(not(feature = "rust-only"))]
 pub fn gpu_result_mode(s: &str) -> GpuResultMode {
     match s {
@@ -1009,12 +1047,12 @@ pub fn gpu_result_mode(s: &str) -> GpuResultMode {
         "oracle" => GpuResultMode::Oracle,
         "skip" => GpuResultMode::Skip,
         other => panic!(
-            "gpu_test!: unknown result mode '{other}' (expected golden_exact|golden_approx|golden_approx_std|oracle|skip)"
+            "gpu test macro: unknown result mode '{other}' (expected golden_exact|golden_approx|golden_approx_std|oracle|skip)"
         ),
     }
 }
 
-/// Merged per-query GPU verification (#13): a SINGLE GPU run
+/// Merged per-query GPU verification: a SINGLE GPU run
 /// (the node-by-node executor, which also materializes the final result) asserts
 /// BOTH (a) per-node exact rows + rows/schema cost vs the `.cpu.txt` golden
 /// (ALWAYS), AND (b) the final RESULT vs the peacock CPU oracle (per `result_mode`).
@@ -1024,7 +1062,8 @@ pub async fn assert_gpu_query(
     dataset: &str,
     sf: &str,
     query: &str,
-    device: &str,
+    gpu_label: &str,
+    mode: ExecMode,
     result_mode: GpuResultMode,
 ) {
     use peacockdb_core::gpu_executor::GpuExecutor;
@@ -1034,31 +1073,36 @@ pub async fn assert_gpu_query(
     let sql_path = queries_dir_for(dataset).join(format!("{query}.sql"));
     let sql = std::fs::read_to_string(&sql_path)
         .unwrap_or_else(|_| panic!("query file not found: {}", sql_path.display()));
-    let (partitions, budget) = device_config(device);
+    // The call site carries the joined `<mode>_<tp>_<tier>` label; splitting it here
+    // is what makes a crossed macro/label pair fail loudly rather than silently
+    // asserting against the other mode's goldens.
+    let device = gpu_label_device(mode, gpu_label);
+    let (partitions, budget) = device_config(&device);
+    let label = golden_label(mode, &device);
     let qlabel = format!("{dataset}/{query}");
 
     // ONE GPU execution → final batches + plan + per-node stats.
-    let gpu = GpuExecutor::new_mode(&data_dir, partitions, budget, partition_mode(device))
+    let gpu = GpuExecutor::new_mode(&data_dir, partitions, budget, mode.partition_mode())
         .await
         .unwrap();
     let (actual, plan, stats) = gpu.execute_instrumented(&sql).await.unwrap();
 
     // (a) per-node rows + rows/schema cost vs the golden — ALWAYS (fail-closed,
     //     READ-ONLY: the GPU side must never write/overwrite a cost golden).
-    assert_cost_golden_verify(&plan, &stats, &cpu_golden(dataset, sf, query, device));
+    assert_cost_golden_verify(&plan, &stats, &cpu_golden(dataset, sf, query, &label));
 
     // (b) final result — dispatch on the explicitly-declared mode.
     match result_mode {
         GpuResultMode::Skip => {}
         GpuResultMode::GoldenExact => assert_result_golden(
             &actual,
-            &result_golden(dataset, sf, query, device),
+            &result_golden(dataset, sf, query, &label),
             None,
             &qlabel,
         ),
         GpuResultMode::GoldenApprox => assert_result_golden(
             &actual,
-            &result_golden(dataset, sf, query, device),
+            &result_golden(dataset, sf, query, &label),
             Some(1e-12),
             &qlabel,
         ),
@@ -1067,14 +1111,14 @@ pub async fn assert_gpu_query(
         // GpuResultMode::GoldenApproxStddev doc.
         GpuResultMode::GoldenApproxStddev => assert_result_golden(
             &actual,
-            &result_golden(dataset, sf, query, device),
+            &result_golden(dataset, sf, query, &label),
             Some(1e-11),
             &qlabel,
         ),
         GpuResultMode::Oracle => {
             // Result too large to commit as a golden → validate against a LIVE CPU
             // oracle run (exact). Still result-validated (R4), just not frozen.
-            let cpu = CpuExecutor::new_mode(&data_dir, partitions, budget, partition_mode(device))
+            let cpu = CpuExecutor::new_mode(&data_dir, partitions, budget, mode.partition_mode())
                 .await
                 .unwrap();
             let expected = cpu.execute(&sql).await.unwrap();
@@ -1115,7 +1159,7 @@ macro_rules! register_test {
     };
 }
 
-/// Map a `gpu_test!` mode keyword to its registry state, at COMPILE time.
+/// Map a `gpu_*_test!` mode keyword to its registry state, at COMPILE time.
 ///
 /// `skip` means the GPU runs but its result is not validated (`~` in the widget);
 /// every other mode validates and counts as `enabled`. Two macro arms rather than a
@@ -1151,26 +1195,28 @@ macro_rules! query_plan_test {
     };
 }
 
-/// `cpu_result_test!(dataset, sf, query, device, gen_result_golden)` — EXACT result
-/// compare, #11 (instrumented-enforced, single-partition-coalesced) executor.
-/// `gen_result_golden` (bool literal): write the `.result.txt` golden under
-/// UPDATE_CANONICAL only when a golden-asserting `gpu_test!` consumes it (TRUE for
-/// tp1-standard golden_exact; FALSE for tp8-mini and oracle-mode).
+/// `cpu_full_table_result_test!(dataset, sf, query, device, oracle, result_golden)` —
+/// result compare on the FULL-TABLE executor (instrumented-enforced,
+/// single-partition-coalesced). Reads `<query>.full_table-<device>.cpu.txt`.
+///
+/// `oracle` is `data_fusion_exact` | `data_fusion_approximate` (see `CpuOracle`);
+/// the trailing ident is `result_golden` | `no_result_golden` (see `ResultGolden`).
+/// Both are idents, so their ORDER is not type-checked — oracle is second-to-last.
 #[macro_export]
-macro_rules! cpu_result_test {
-    ($dataset:ident, $sf:literal, $query:ident, $device:ident, $gen:literal) => {
+macro_rules! cpu_full_table_result_test {
+    ($dataset:ident, $sf:literal, $query:ident, $device:ident, $oracle:ident, $gen:ident) => {
         $crate::register_test!("ftc", $dataset, $sf, $query, $device, "enabled");
         paste::paste! {
             #[tokio::test]
-            async fn [<cpu_ $dataset _sf $sf _ $query _ $device>]() {
+            async fn [<cpu_full_table_ $dataset _sf $sf _ $query _ $device>]() {
                 $crate::common::assert_cpu_results_match_datafusion(
                     stringify!($dataset),
                     stringify!($sf),
                     &stringify!($query).replace('_', "-"),
                     &stringify!($device).replace('_', "-"),
-                    None,
-                    false, // #11 executor
-                    $gen,
+                    $crate::common::exec_mode::cpu_oracle_mode(stringify!($oracle)),
+                    $crate::common::exec_mode::ExecMode::FullTable,
+                    $crate::common::exec_mode::result_golden_mode(stringify!($gen)),
                 )
                 .await;
             }
@@ -1178,83 +1224,26 @@ macro_rules! cpu_result_test {
     };
 }
 
-/// `cpu_node13_result_test!(dataset, sf, query, device, gen_result_golden)` — EXACT
-/// result compare, driven by the #13 multi-handle CpuNodeExecutor (real N-partition,
-/// Σ-over-partitions cost). EXPLICIT opt-in (not plan-inferred): a query routed here
-/// MUST be node13-executable (scan map + state-mergeable Final-aggregates; asserted
-/// at runtime). Used for tp8-standard; the SAME plan at tp8-mini stays on #11 via
-/// `cpu_result_test!`.
+/// `cpu_partitioned_result_test!(dataset, sf, query, device, oracle, result_golden)` —
+/// result compare driven by the multi-handle `CpuNodeExecutor` (real N-partition,
+/// Σ-over-partitions cost). Reads `<query>.partitioned-<device>.cpu.txt`. A query
+/// routed here MUST be partitioned-executable (scan map + state-mergeable
+/// Final-aggregates; asserted at runtime). The SAME plan at tp8-mini runs full-table.
 #[macro_export]
-macro_rules! cpu_node13_result_test {
-    ($dataset:ident, $sf:literal, $query:ident, $device:ident, $gen:literal) => {
-        $crate::register_test!("node13", $dataset, $sf, $query, $device, "enabled");
+macro_rules! cpu_partitioned_result_test {
+    ($dataset:ident, $sf:literal, $query:ident, $device:ident, $oracle:ident, $gen:ident) => {
+        $crate::register_test!("partitioned", $dataset, $sf, $query, $device, "enabled");
         paste::paste! {
             #[tokio::test]
-            async fn [<cpu_ $dataset _sf $sf _ $query _ $device>]() {
+            async fn [<cpu_partitioned_ $dataset _sf $sf _ $query _ $device>]() {
                 $crate::common::assert_cpu_results_match_datafusion(
                     stringify!($dataset),
                     stringify!($sf),
                     &stringify!($query).replace('_', "-"),
                     &stringify!($device).replace('_', "-"),
-                    None,
-                    true, // #13 CpuNodeExecutor
-                    $gen,
-                )
-                .await;
-            }
-        }
-    };
-}
-
-/// `cpu_result_approx_test!(dataset, sf, query, device)` — result compare with a
-/// relative tolerance of 1e-12 on Float64 columns. ONLY for queries whose sole
-/// divergence from the DataFusion oracle is float summation reassociation (~1 ULP)
-/// at tp>1. The output_bytes cost golden is still exact (float value doesn't
-/// change byte width).
-#[macro_export]
-macro_rules! cpu_result_approx_test {
-    ($dataset:ident, $sf:literal, $query:ident, $device:ident, $gen:literal) => {
-        $crate::register_test!("ftc", $dataset, $sf, $query, $device, "enabled");
-        paste::paste! {
-            #[tokio::test]
-            async fn [<cpu_ $dataset _sf $sf _ $query _ $device>]() {
-                $crate::common::assert_cpu_results_match_datafusion(
-                    stringify!($dataset),
-                    stringify!($sf),
-                    &stringify!($query).replace('_', "-"),
-                    &stringify!($device).replace('_', "-"),
-                    Some(1e-12),
-                    false, // #11 executor
-                    $gen,
-                )
-                .await;
-            }
-        }
-    };
-}
-
-/// `cpu_node13_result_approx_test!(dataset, sf, query, device, gen)` — like
-/// [`cpu_node13_result_test!`] but with a 1e-12 relative tolerance on Float64
-/// columns. Required for STDDEV/VAR: the Welford M2 state, merged across the 8 hash
-/// partitions, reassociates float summation (~1 ULP; ~3e-14 rel) vs the DataFusion
-/// single-pass oracle, so exact-string compare can't be used. The output_bytes cost
-/// golden stays exact. `gen` writes the `.result.txt` iff a golden `gpu_test!`
-/// consumes it.
-#[macro_export]
-macro_rules! cpu_node13_result_approx_test {
-    ($dataset:ident, $sf:literal, $query:ident, $device:ident, $gen:literal) => {
-        $crate::register_test!("node13", $dataset, $sf, $query, $device, "enabled");
-        paste::paste! {
-            #[tokio::test]
-            async fn [<cpu_ $dataset _sf $sf _ $query _ $device>]() {
-                $crate::common::assert_cpu_results_match_datafusion(
-                    stringify!($dataset),
-                    stringify!($sf),
-                    &stringify!($query).replace('_', "-"),
-                    &stringify!($device).replace('_', "-"),
-                    Some(1e-12),
-                    true, // #13 CpuNodeExecutor
-                    $gen,
+                    $crate::common::exec_mode::cpu_oracle_mode(stringify!($oracle)),
+                    $crate::common::exec_mode::ExecMode::Partitioned,
+                    $crate::common::exec_mode::result_golden_mode(stringify!($gen)),
                 )
                 .await;
             }
@@ -1264,6 +1253,10 @@ macro_rules! cpu_node13_result_approx_test {
 
 /// `cpu_result_error_test!(dataset, sf, query, budget)` — strict resident control
 /// (Part 2): asserts the query OOMs (`ResourcesExhausted`) at the raw `budget`.
+///
+/// NOT mode-named, deliberately: this and [`cpu_result_fits_test!`] take a raw budget
+/// rather than a device, read no mode-tagged golden, and the resident-OOM enforcer
+/// they drive is full-table-only by construction (#91 tracks porting it).
 /// Used ONLY by the tight-budget OOM set; a query that flips pass→OOM moves here,
 /// it is never disabled. `budget` is raw bytes (no device label).
 #[macro_export]
@@ -1304,26 +1297,58 @@ macro_rules! cpu_result_fits_test {
     };
 }
 
-/// `gpu_test!(dataset, sf, query, device, mode)` — the MERGED GPU test: one GPU run
-/// asserts per-node rows+cost vs the `.cpu.txt` golden AND the final result.
+/// `gpu_full_table_test!(dataset, sf, query, label, mode)` — the MERGED GPU test on
+/// the full-table (single-partition) path: one GPU run asserts per-node rows+cost vs
+/// the `.cpu.txt` golden AND the final result.
+///
+/// `label` is the COMBINED golden label (`full_table_tp1_standard`), so the golden
+/// filename is reconstructible from the call site with no lookup; its mode prefix must
+/// match this macro's mode or the run panics (see `exec_mode::gpu_label_device`).
 /// `mode` ∈ { golden_exact | golden_approx | golden_approx_std | oracle | skip }
-/// (see `GpuResultMode`). Fn name is `gpu_<ds>_sf<sf>_<query>_<device>` so
-/// CI/--exact filters keep working.
+/// (see `GpuResultMode`).
 #[macro_export]
-macro_rules! gpu_test {
-    ($dataset:ident, $sf:literal, $query:ident, $device:ident, $mode:ident) => {
+macro_rules! gpu_full_table_test {
+    ($dataset:ident, $sf:literal, $query:ident, $label:ident, $mode:ident) => {
         #[cfg(not(feature = "rust-only"))]
-        $crate::register_test!("gpu", $dataset, $sf, $query, $device,
+        $crate::register_test!("gpu_full_table", $dataset, $sf, $query, $label,
                                $crate::gpu_mode_state!($mode));
         paste::paste! {
             #[cfg(not(feature = "rust-only"))]
             #[tokio::test]
-            async fn [<gpu_ $dataset _sf $sf _ $query _ $device>]() {
+            async fn [<gpu_full_table_ $dataset _sf $sf _ $query _ $label>]() {
                 $crate::common::assert_gpu_query(
                     stringify!($dataset),
                     stringify!($sf),
                     &stringify!($query).replace('_', "-"),
-                    &stringify!($device).replace('_', "-"),
+                    stringify!($label),
+                    $crate::common::exec_mode::ExecMode::FullTable,
+                    $crate::common::gpu_result_mode(stringify!($mode)),
+                )
+                .await;
+            }
+        }
+    };
+}
+
+/// `gpu_partitioned_test!(dataset, sf, query, label, mode)` — as
+/// [`gpu_full_table_test!`] but on the real N-partition path, with
+/// `partitioned_<tp>_<tier>` labels.
+#[macro_export]
+macro_rules! gpu_partitioned_test {
+    ($dataset:ident, $sf:literal, $query:ident, $label:ident, $mode:ident) => {
+        #[cfg(not(feature = "rust-only"))]
+        $crate::register_test!("gpu_partitioned", $dataset, $sf, $query, $label,
+                               $crate::gpu_mode_state!($mode));
+        paste::paste! {
+            #[cfg(not(feature = "rust-only"))]
+            #[tokio::test]
+            async fn [<gpu_partitioned_ $dataset _sf $sf _ $query _ $label>]() {
+                $crate::common::assert_gpu_query(
+                    stringify!($dataset),
+                    stringify!($sf),
+                    &stringify!($query).replace('_', "-"),
+                    stringify!($label),
+                    $crate::common::exec_mode::ExecMode::Partitioned,
                     $crate::common::gpu_result_mode(stringify!($mode)),
                 )
                 .await;

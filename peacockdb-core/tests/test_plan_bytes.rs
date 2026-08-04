@@ -142,7 +142,7 @@ async fn serialized_plan_bytes_are_stable() {
             &data_dir,
             partitions,
             budget,
-            common::partition_mode(&device),
+            common::plan_partition_mode(&device),
         )
         .await
         .unwrap();
@@ -150,7 +150,7 @@ async fn serialized_plan_bytes_are_stable() {
 
         // Record UNSUPPORTED rather than skipping: a node becoming (un)serializable is
         // itself a wire-format change, and silently dropping it would hide that.
-        let value = match serialize_plan_mode(&plan, common::partition_mode(&device)) {
+        let value = match serialize_plan_mode(&plan, common::plan_partition_mode(&device)) {
             Ok(bytes) => {
                 let mut h = Sha256::new();
                 h.update(&bytes);
@@ -187,12 +187,12 @@ async fn serialized_plan_bytes_are_stable() {
             &canonical_data_dir("tpch", "1"),
             partitions,
             budget,
-            common::partition_mode(device),
+            common::plan_partition_mode(device),
         )
         .await
         .unwrap();
         let plan = ctx.sql(sql).await.unwrap().create_physical_plan().await.unwrap();
-        let value = match serialize_plan_mode(&plan, common::partition_mode(device)) {
+        let value = match serialize_plan_mode(&plan, common::plan_partition_mode(device)) {
             Ok(bytes) => {
                 let mut h = Sha256::new();
                 h.update(&bytes);
@@ -209,23 +209,35 @@ async fn serialized_plan_bytes_are_stable() {
         actual.iter().map(|(k, v)| format!("{k}  {v}\n")).collect::<Vec<_>>().concat();
 
     let path = digest_path();
-    if std::env::var("UPDATE_CANONICAL").is_ok() {
-        // Deliberately obstructive. These digests exist to be a FIXED expectation from
-        // before a refactor; regenerating them on a red test photographs the new
-        // behavior and asserts it against itself, which proves nothing. Requiring a
-        // second, explicit variable makes that a decision rather than a reflex.
-        if std::env::var("PEACOCK_REWRITE_PLAN_BYTES").is_err() {
-            panic!(
-                "REFUSING to regenerate {}.\n\
-                 A red digest test means the serialized bytes MOVED. The C++ side READS \
-                 these bytes, so this is a cross-language wire-format change — find out WHY \
-                 before touching this file. Regenerating to make the test pass destroys the \
-                 only guard on the layout.\n\
-                 If the change really is intended and reviewed, set \
-                 PEACOCK_REWRITE_PLAN_BYTES=1 as well.",
-                path.display()
-            );
-        }
+    // THREE states, not two, and the middle one is the point:
+    //   UPDATE_CANONICAL unset                          -> verify
+    //   UPDATE_CANONICAL set, no override               -> VERIFY, and say so
+    //   UPDATE_CANONICAL + PEACOCK_REWRITE_PLAN_BYTES   -> rewrite
+    //
+    // The middle state is what lets a BULK regen exercise this test instead of
+    // skipping it. A regen rewrites .cpu.txt/.plan.txt wholesale; if it also moved the
+    // serialized layout, this digest goes red DURING that run — before the regenerated
+    // goldens are pulled back — which is exactly when you want to know. Refusing by
+    // panic would have hidden that behind a provisioning-shaped failure, and excluding
+    // the target from regen runs (the old script-side regen_excluded) hid it entirely.
+    //
+    // Refusing still does its real job: you cannot make a red digest green by
+    // regenerating, because the rewrite needs a second, deliberate variable.
+    let update = std::env::var("UPDATE_CANONICAL").is_ok();
+    let rewrite = std::env::var("PEACOCK_REWRITE_PLAN_BYTES").is_ok();
+    if update && !rewrite {
+        eprintln!(
+            "NOT regenerating {} — verifying instead.\n\
+             These digests exist to be a FIXED expectation from before a change. A red \
+             digest means the serialized bytes MOVED, and the C++ side READS these bytes, \
+             so that is a cross-language wire-format change: find out WHY. Regenerating \
+             to make it pass would destroy the only guard on the layout.\n\
+             If the change really is intended and reviewed, set \
+             PEACOCK_REWRITE_PLAN_BYTES=1 alongside UPDATE_CANONICAL.",
+            path.display()
+        );
+    }
+    if update && rewrite {
         let header = concat!(
             "# serialize_plan_mode() wire-format digests: sha256 + byte length per query.\n",
             "# REGENERATING THIS DEFEATS ITS PURPOSE. A red digest test means the serialized\n",

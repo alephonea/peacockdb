@@ -1,6 +1,7 @@
-//! Cost-model goldens: derive each `<query>.<device>.cost.txt` from its sibling
-//! `<query>.<device>.cpu.txt` text and assert it matches (or regenerate it under
-//! `UPDATE_CANONICAL=1`). Pure text — no executor, no dataset — so it runs in the
+//! Cost-model goldens: derive each `<query>.<mode>-<tp>-<tier>.cost.txt` from its
+//! sibling `<query>.<mode>-<tp>-<tier>.cpu.txt` text and assert it matches (or
+//! regenerate it under `UPDATE_CANONICAL=1`). Pure text — no executor, no dataset —
+//! so it runs in the
 //! plain CPU CI tier. The taxonomy + multipliers live in `common/cost_model.rs`.
 //!
 //! Byte-identity invariant: at today's all-1.0 multipliers the `.cost.txt` total

@@ -1,15 +1,23 @@
 #!/bin/bash
 
-set -e
+# pipefail is load-bearing here, not boilerplate: the staging step pipes
+# `cargo test --no-run … | python3`, and without it the pipeline takes python's
+# status, so a cargo failure is invisible until the emptiness check downstream.
+set -euo pipefail
 
 # Build the test suite locally and run it on a remote host. Mirrors
-# build-test-shadgpu.sh (build here, ship binaries, run there). Two suites,
-# selected by --cpu (default) or --gpu:
+# build-test-shadgpu.sh (build here, ship binaries, run there). Three suites,
+# selected by the mode flags below (cpu is the default):
 #
-#   --cpu  C++ peacock_cpu_tests + the Rust CPU integration tests
-#          (test_plan_serialiser, test_query_plan, test_cpu_executor, test_ffi).
-#   --gpu  C++ peacock_plan_tests + the Rust GPU integration test
-#          (test_gpu, TPC-H + TPC-DS), run one-at-a-time on the GPU.
+#   cpu (default)  C++ peacock_cpu_tests + every Rust target that builds with cmake
+#                (a SUPERSET of --rust-only, plus test_ffi). No flag selects it —
+#                see usage(): a flag whose only effect is the default is noise.
+#   --rust-only   every Rust target that builds WITHOUT cmake — see build-test.md's
+#                "What rust-only means". Golden regen + cpu/plan verify.
+#   --gpu        C++ peacock_plan_tests + the GPU-runtime Rust targets, run
+#                one-at-a-time on the GPU.
+# The three sets are DERIVED from the sources, not listed here — see the suite
+# selection below. A mode that builds more must not run less.
 #
 # The remote host is NOT hardcoded — pass it with --host. We build locally
 # against a cuDF that matches the remote's ABI (default: a local cudf-26.02
@@ -30,8 +38,9 @@ REMOTE_DIR="/home/dmitry/peacockdb"                           # repo dir on the 
 LOCAL_CUDF_ROOT="/home/dmitry/data/miniforge3/envs/rapids"    # local cuDF (26.02) to build against
 REMOTE_CUDF_ROOT="/home/dmitry/miniforge3/envs/rapids-26.02"  # cuDF runtime libs on the remote
 GCC_VERSION=14                                                # gcc-N for the C++/cmake build (cuDF 26.02 / CUDA 12.x accepts 14)
-MODE=cpu                                                      # cpu | gpu (set via --cpu / --gpu)
+MODE=cpu                                                      # cpu | gpu (set via --gpu); cpu is the default
 RUST_ONLY=0                                                   # --rust-only: build cpu/plan test bins with --features rust-only (NO C++/FFI); for golden regen + cpu/plan verify on verda
+MODE_FLAG=""                                                  # which mode flag was actually passed, for the conflict message
 
 # Dedicated 26.02 C++ build dir, separate from the default cpp/build (which is
 # kept at 25.02 on purpose). Using a distinct dir also avoids the find_package
@@ -43,22 +52,120 @@ CUDA_ARCHITECTURES="80;90"
 RUST_TESTS_STAGING="$INSTALL_DIR/rust-tests"
 
 BUILD=0
-RSYNC=0
+PUSH_BINARIES=0  # --push-binaries: ship cpp/install (lib + C++ bins + staged rust bins) + goldens
 RUN=0
 UPDATE_CANON=0   # --update-canonical: regen goldens during the remote run (UPDATE_CANONICAL=1)
-FETCH_GOLDENS=0  # --fetch-goldens: pull the remote goldens back into the local repo after the run
-PUSH_TESTDATA="" # --push-testdata KIND[,KIND]: rsync local testdata kinds -> remote
-PULL_TESTDATA="" # --pull-testdata KIND[,KIND]: rsync remote testdata kinds -> local
-# Per-kind testdata sync. KIND in {parquet,goldens,duckdb-profiles,queries}; each
-# maps to one or more dirs under testdata/. Used to move datasets generated once on
-# verda to local/shad-gpu (parquet), or pull regenerated goldens back, without
-# touching the (separately shipped) test binaries.
+
+# Per-kind testdata sync, one flag per kind in each direction. The parser IS the
+# validator: an unknown kind is an unknown flag, caught by the `*) usage` arm before
+# any side effect. The old --push-testdata KIND[,KIND] form validated inside a $(…),
+# where `exit 1` ends only the subshell — the error printed and the script carried on.
+PUSH_KINDS=()
+PULL_KINDS=()
 
 usage() {
-  echo "Usage: $0 --host <ssh-dest> [--cpu|--gpu|--rust-only] [--remote-dir <path>] [--local-cudf-root <path>] [--remote-cudf-root <path>] [--gcc-version <n>] [--build] [--rsync] [--run] [--all] [--update-canonical] [--fetch-goldens] [--push-testdata KIND[,KIND]] [--pull-testdata KIND[,KIND]]"
-  echo "  --rust-only: cpu/plan goldens via --features rust-only (no C++/FFI); regen with --update-canonical, fetch with --fetch-goldens, verify by re-running without --update-canonical"
-  echo "  testdata KIND: parquet | goldens | duckdb-profiles | duckdb-dynfilters | queries"
+  cat >&2 <<'USAGE'
+Usage: build-test.sh --host <ssh-dest> [mode] <action...> [options]
+
+  mode      (default cpu)
+    --rust-only    every Rust target that builds WITHOUT cmake. Golden regen + verify.
+    --gpu          the GPU-runtime targets; needs a GPU on the remote.
+    (no --cpu flag: cpu IS the default, and a flag whose only effect is the default
+     is noise. --gpu and --rust-only are mutually exclusive and rejected, not ordered.)
+
+  MODE LADDER: rust-only ⊂ cpu ⊂ gpu-capable. A mode that BUILDS more never RUNS less —
+  the three suites are derived from the sources, not listed, so they cannot drift apart.
+
+  actions (at least one required)
+    --build              build C++ (unless --rust-only) + stage the Rust test binaries
+    --push-binaries      ship cpp/install + the goldens the binaries assert against
+    --run                run the suite on the remote
+    --all                --build --push-binaries --run
+    --push-<kind>        parquet | queries | goldens | duckdb-profiles | duckdb-dynfilters
+    --pull-<kind>        parquet | goldens | duckdb-profiles | duckdb-dynfilters
+                         (no --pull-queries: a --pull-<kind> exists only where the
+                          remote can PRODUCE that kind. Queries are AUTHORED — nothing
+                          on a remote generates a .sql — so pulling would overwrite
+                          committed source with whatever a scratch host holds. The
+                          other four are generated artifacts: parquet on verda,
+                          goldens by --update-canonical, both duckdb sets by their
+                          extractors.)
+    --update-canonical   regen goldens during --run instead of asserting
+    (--push-binaries always ships goldens: binaries without the fixtures they assert
+     against is what produced 110/110 "canonical file not found". --push-goldens is the
+     subset operation — refresh fixtures without rebuilding or reshipping binaries.)
+
+  options
+    --remote-dir <path> --local-cudf-root <path> --remote-cudf-root <path>
+    --gcc-version <n>
+
+  DELIBERATELY ABSENT, so these do not get filed as gaps:
+    no --pull-binaries      binaries flow one way: built locally, shipped to the remote.
+    no embeddings-cache     a per-host INTERMEDIATE for the tpch vector datasets
+                            (fetch_embeddings.sh, ~1.8 GB, gitignored). Regenerate it
+                            where you need it; syncing it would ship a derived artifact.
+USAGE
   exit 1
+}
+
+# The ONE goldens push. It existed twice — the --push-binaries block used
+# `rsync -r --delete`, --push-goldens used `rsync -a --delete` — same intent, different
+# metadata handling, no shared code.
+#
+# PUSH MIRRORS (--delete); PULL IS ADDITIVE. The asymmetry is deliberate and must not be
+# "fixed": the remote is a PARTIAL mirror. testdata/goldens/ contains tpch.sf40/ (16
+# CSVs) and sf40 lives on shad-gpu, so mirroring downward from verda would DELETE
+# fixtures that host never had — out of a git working tree.
+#
+# Accepted consequence: a regen that deletes a .result.txt (result over 256 KB, see
+# maybe_write_result_golden) cannot propagate that deletion back through an additive
+# pull. The deletion is announced on stderr and reaches the operator through the ssh
+# heredoc; that is the handling, not a --delete armed for one rare case.
+# #113: ship every COMMITTED testdata fixture, swept from git rather than named by hand.
+#
+# The hand list is the defect, not the missing file. build-test.sh shipped goldens and
+# nothing else, so widening the rust-only suite surfaced two absent fixtures at once
+# (cost-registry.csv, cost_model.conf) — and load_csv's own panic text had already
+# predicted exactly this, naming the two OTHER provisioning paths that had been fixed
+# one at a time. Three paths, three lists, each patched only when something broke.
+#
+# `--cached --others --exclude-standard` is #113's prescription and both halves matter:
+#   --others         picks up a NEW fixture that is not committed yet; plain ls-files
+#                    would miss it and reintroduce the same class.
+#   --exclude-standard honours .gitignore, which is what keeps the ~1.7 GB of GENERATED
+#                    parquet (tpch.sf1, tpcds.sf1) out — those are produced on the
+#                    remote, not shipped to it.
+# Do NOT add --exclude=*.parquet: tpch.minimal commits 5 parquet files the tests need.
+#
+# goldens are excluded here and pushed by sync_goldens instead — they are the one kind
+# that must MIRROR (--delete) so a regen's baseline is the committed set exactly.
+sync_fixtures() {
+  local list
+  list=$(mktemp)
+  git ls-files --cached --others --exclude-standard testdata \
+    | grep -v '^testdata/goldens/' > "$list"
+  local n
+  n=$(wc -l < "$list")
+  [ "$n" -gt 0 ] || { echo "error: no tracked testdata fixtures found — git sweep is wrong" >&2; rm -f "$list"; exit 1; }
+  echo "==> push $n committed testdata fixtures -> $HOST:$REMOTE_DIR/"
+  rsync -a --files-from="$list" ./ "$HOST:$REMOTE_DIR/"
+  rm -f "$list"
+}
+
+sync_goldens() {
+  case "$1" in
+    push)
+      echo "==> push goldens -> $HOST:$REMOTE_DIR/testdata/goldens"
+      ssh "$HOST" "mkdir -p '$REMOTE_DIR/testdata/goldens'"
+      rsync -a --delete testdata/goldens/ "$HOST:$REMOTE_DIR/testdata/goldens/"
+      ;;
+    pull)
+      echo "==> pull $HOST:$REMOTE_DIR/testdata/goldens -> testdata/goldens (additive)"
+      mkdir -p testdata/goldens
+      rsync -a "$HOST:$REMOTE_DIR/testdata/goldens/" testdata/goldens/
+      ;;
+    *) echo "sync_goldens: bad direction '$1'" >&2; exit 1 ;;
+  esac
 }
 
 # Map a testdata KIND to its repo-relative dir(s) under testdata/.
@@ -75,76 +182,225 @@ testdata_dirs_for_kind() {
 
 if [ $# -eq 0 ]; then usage; fi
 
+# A value-taking flag must be given a value: `--host` at the end of the line would
+# otherwise consume nothing and leave HOST empty, which reads downstream as "no --host".
+need_value() {
+  [ -n "${2:-}" ] || { echo "error: $1 requires a value" >&2; exit 1; }
+}
+
+# --gpu and --rust-only are mutually exclusive, and REJECTED rather than resolved by
+# order. Resolving by order made the same two flags mean different things depending on
+# how they were typed, and one order was half-applied: MODE=gpu with RUST_ONLY still
+# live left LD_LIBRARY_PATH unset for the GPU binaries, so they could not resolve
+# libpeacock_gpu and failed as if the product were broken.
+set_mode() {
+  if [ -n "$MODE_FLAG" ] && [ "$MODE_FLAG" != "$1" ]; then
+    echo "error: $MODE_FLAG and $1 are mutually exclusive — they select different" >&2
+    echo "       build configurations (rust-only builds without cmake; gpu needs the" >&2
+    echo "       linked executor and a GPU at runtime). Pass one." >&2
+    exit 1
+  fi
+  MODE_FLAG="$1"
+}
+
 while [ $# -gt 0 ]; do
   case "$1" in
-    --host)             HOST="$2"; shift ;;
-    --remote-dir)       REMOTE_DIR="$2"; shift ;;
-    --local-cudf-root)  LOCAL_CUDF_ROOT="$2"; shift ;;
-    --remote-cudf-root) REMOTE_CUDF_ROOT="$2"; shift ;;
-    --gcc-version)      GCC_VERSION="$2"; shift ;;
-    --cpu)              MODE=cpu ;;
-    --gpu)              MODE=gpu ;;
-    --rust-only)        MODE=cpu; RUST_ONLY=1 ;;
+    --host)             need_value "$1" "${2:-}"; HOST="$2"; shift ;;
+    --remote-dir)       need_value "$1" "${2:-}"; REMOTE_DIR="$2"; shift ;;
+    --local-cudf-root)  need_value "$1" "${2:-}"; LOCAL_CUDF_ROOT="$2"; shift ;;
+    --remote-cudf-root) need_value "$1" "${2:-}"; REMOTE_CUDF_ROOT="$2"; shift ;;
+    --gcc-version)      need_value "$1" "${2:-}"; GCC_VERSION="$2"; shift ;;
+    --gpu)              set_mode "$1"; MODE=gpu ;;
+    --rust-only)        set_mode "$1"; MODE=cpu; RUST_ONLY=1 ;;
     --build)            BUILD=1 ;;
-    --rsync)            RSYNC=1 ;;
+    --push-binaries)    PUSH_BINARIES=1 ;;
     --run)              RUN=1 ;;
-    --all)              BUILD=1; RSYNC=1; RUN=1 ;;
+    --all)              BUILD=1; PUSH_BINARIES=1; RUN=1 ;;
     --update-canonical) UPDATE_CANON=1 ;;
-    --fetch-goldens)    FETCH_GOLDENS=1 ;;
-    --push-testdata)    PUSH_TESTDATA="$2"; shift ;;
-    --pull-testdata)    PULL_TESTDATA="$2"; shift ;;
-    *) echo "Unknown flag: $1"; usage ;;
+    --push-parquet)           PUSH_KINDS+=(parquet) ;;
+    --push-queries)           PUSH_KINDS+=(queries) ;;
+    --push-goldens)           PUSH_KINDS+=(goldens) ;;
+    --push-duckdb-profiles)   PUSH_KINDS+=(duckdb-profiles) ;;
+    --push-duckdb-dynfilters) PUSH_KINDS+=(duckdb-dynfilters) ;;
+    --pull-parquet)           PULL_KINDS+=(parquet) ;;
+    --pull-goldens)           PULL_KINDS+=(goldens) ;;
+    --pull-duckdb-profiles)   PULL_KINDS+=(duckdb-profiles) ;;
+    --pull-duckdb-dynfilters) PULL_KINDS+=(duckdb-dynfilters) ;;
+    *) echo "Unknown flag: $1" >&2; usage ;;
   esac
   shift
 done
 
-# Suite selection. Each entry is <package>:<test-name>; each binary is staged
+# Suite selection, DERIVED — each entry is <package>:<test-name>; each binary is staged
 # under <install>/rust-tests/<name> so the rsync step ships it.
+#
+# Targets are classified ONCE, by what they REQUIRE, and each mode takes everything it
+# can support. Three hand-written lists is what this replaces: they drifted apart, and
+# the drift was always in the direction of running less than the mode could (--gpu
+# silently skipped test_inc2_conformance, the murmur3 conformance gate; the default
+# branch omitted four targets that build fine with the full feature set).
+#
+# A mode that BUILDS more must not RUN less. So:
+#   needs_cmake   file-gated on not(rust-only): cannot compile without libpeacock_gpu.
+#   rust_only     everything else — no cmake, no CUDA, CPU by construction.
+#   default       rust_only + needs_cmake, minus GPU-runtime-only targets.
+#   gpu           the GPU-runtime set.
+#
+# The rust-only membership test is the FEATURE'S OWN DEFINITION (see build-test.md's
+# "What rust-only means"): a file-level `#![cfg(not(feature = "rust-only"))]` is exactly
+# the marker that says "this cannot exist without the FFI". Derived from the sources, so
+# adding a test file classifies itself.
+rust_only_targets() {
+  local pkg dir f base
+  for pkg in peacockdb-core peacockdb-ffi; do
+    dir="$pkg/tests"
+    [ -d "$dir" ] || continue
+    for f in "$dir"/*.rs; do
+      [ -e "$f" ] || continue
+      base=$(basename "$f" .rs)
+      # File-level gate => needs cmake; excluded from the rust-only set.
+      grep -qF '#![cfg(not(feature = "rust-only"))]' "$f" && continue
+      # EXCLUSIONS, each for a measured reason rather than taste:
+      #   test_ffi  compiles under rust-only but yields ZERO tests (measured) — the
+      #             whole file is behind one cfg. Staging it ships a binary that runs
+      #             nothing, which reads as coverage.
+      #   diag_flip_audit  a manual diagnostic with no assertions (see its module doc
+      #             and its test_ci_coverage exemption). It cannot fail, so it cannot
+      #             contribute to a verify run, and a regen run must not depend on it.
+      case "$base" in
+        test_ffi|diag_flip_audit) continue ;;
+      esac
+      # Needs a GPU at RUNTIME even where it compiles fine — subtracted as a SET, not
+      # by name. See gpu_runtime_targets.
+      if gpu_runtime_targets | grep -qx "$pkg:$base"; then
+        continue
+      fi
+      # SECOND AXIS: what does the target verify — the RUNTIME, or the REPO?
+      # A test that reads the checkout (.github/workflows, the tests/ tree) cannot be
+      # verified from a shipped binary: none of that travels with it. Running
+      # test_ci_coverage on verda compared today's binary against a pipeline.yml left
+      # there by some earlier push — verda is not even a git checkout — so it failed
+      # for reasons that say nothing about the remote. Measured: it is the ONLY target
+      # that reaches outside testdata, so this excludes exactly one thing today and
+      # classifies the next one automatically.
+      # It still runs locally and in CI, which is where a repo check belongs.
+      if grep -qE 'repo_root|\.github/workflows' "$f"; then
+        continue
+      fi
+      printf '%s:%s\n' "$pkg" "$base"
+    done
+  done
+}
+
+# The GPU-RUNTIME set: targets that need a GPU when they RUN, whatever they need to
+# compile. Declared once here and subtracted wherever a mode cannot satisfy it, rather
+# than filtered by name — `grep -v ':test_gpu_'` was the last name-convention dependency
+# in this file, and it let test_inc2_conformance through because the name does not match
+# the prefix.
+#
+# test_inc2_conformance is the case that exposed it. It is the ONLY test file that gates
+# per ITEM (`#[cfg(...)]`, 7 of them) instead of per FILE (`#![cfg(...)]`), so the
+# file-level membership test below cannot see it: with the full feature set its seven
+# live-GPU tests are ACTIVE and call peacock_spark_partition_ids through the FFI, which
+# on a CPU-only remote fails for want of a device — a red run that says nothing about the
+# code. Under --rust-only those same seven compile out and 3 pure-CPU comet checks
+# remain, which is harmless but still not this suite's job.
+gpu_runtime_targets() {
+  cat <<'GPUSET'
+peacockdb-core:test_gpu_full_table
+peacockdb-core:test_gpu_partitioned
+peacockdb-core:test_inc2_conformance
+peacockdb-core:test_gpu_executor_misc
+GPUSET
+}
+
+# Targets that need cmake to compile at all, in dependency-name order.
+needs_cmake_targets() {
+  local pkg dir f base
+  for pkg in peacockdb-core peacockdb-ffi; do
+    dir="$pkg/tests"
+    [ -d "$dir" ] || continue
+    for f in "$dir"/*.rs; do
+      [ -e "$f" ] || continue
+      base=$(basename "$f" .rs)
+      grep -qF '#![cfg(not(feature = "rust-only"))]' "$f" && printf '%s:%s\n' "$pkg" "$base"
+    done
+  done
+  # test_ffi is not file-gated but is empty without the FFI, so it belongs to the
+  # cmake side rather than the rust-only one.
+  printf '%s\n' "peacockdb-ffi:test_ffi"
+}
+
 if [ "$MODE" = "gpu" ]; then
-  RUST_TESTS=(peacockdb-core:test_gpu)
+  # GPU-runtime set. Kept in step with build-test-shadgpu.sh:RUST_TESTS and
+  # pipeline.yml's gpu-tests staging array — three runners had three lists and this
+  # one was short by test_inc2_conformance, the GPU<->comet bit-exact murmur3 gate.
+  # test_gpu_executor_misc is in the GPU-runtime set but is NOT staged: it needs the
+  # linked C++/CUDA executor and is not built for the GPU job (see test_ci_coverage's
+  # exemption table, which records the same fact).
+  mapfile -t RUST_TESTS < <(gpu_runtime_targets | grep -v ':test_gpu_executor_misc$')
   CPP_TEST_BIN=peacock_plan_tests
 elif [ "$RUST_ONLY" -eq 1 ]; then
-  # rust-only golden regen / cpu+plan verify: no C++, no FFI. The two suites that own
-  # goldens (UPDATE_CANONICAL regenerates .plan.txt + .cpu.txt) + their companions.
-  RUST_TESTS=(
-    peacockdb-core:test_query_plan
-    peacockdb-core:test_query_plan_misc
-    peacockdb-core:test_cpu_executor
-    peacockdb-core:test_cpu_executor_misc
-    peacockdb-core:test_cpu_oom
-    peacockdb-core:test_cpu_h200
-  )
+  # Golden regen / cpu+plan verify: no C++, no FFI.
+  mapfile -t RUST_TESTS < <(rust_only_targets)
   CPP_TEST_BIN=""
 else
-  RUST_TESTS=(
-    peacockdb-core:test_plan_serialiser
-    peacockdb-core:test_query_plan
-    peacockdb-core:test_cpu_executor
-    peacockdb-ffi:test_ffi
+  # Superset: everything rust-only can run, plus what only cmake makes buildable.
+  # test_gpu_* are excluded — they compile here but need a GPU at RUNTIME, which is
+  # what --gpu is for.
+  mapfile -t RUST_TESTS < <(
+    rust_only_targets
+    needs_cmake_targets | grep -vxF -f <(gpu_runtime_targets)
   )
   CPP_TEST_BIN=peacock_cpu_tests
 fi
 
-# --fetch-goldens is shorthand for --pull-testdata goldens.
-if [ "$FETCH_GOLDENS" -eq 1 ]; then
-  PULL_TESTDATA="${PULL_TESTDATA:+$PULL_TESTDATA,}goldens"
+# ---- validation: EVERYTHING below runs before the first side effect ----------
+# A typo must fail before anything is built, shipped or deleted — not halfway through.
+
+# An invocation that does nothing and exits 0 is indistinguishable from a successful
+# one. `--host x` alone used to be exactly that.
+if [ "$BUILD" -eq 0 ] && [ "$PUSH_BINARIES" -eq 0 ] && [ "$RUN" -eq 0 ] \
+   && [ ${#PUSH_KINDS[@]} -eq 0 ] && [ ${#PULL_KINDS[@]} -eq 0 ]; then
+  echo "error: no action requested — nothing would happen and the script would exit 0." >&2
+  echo "       Pass at least one of --build / --push-binaries / --run / --all /" >&2
+  echo "       --push-<kind> / --pull-<kind>." >&2
+  usage
 fi
 
-if { [ "$RSYNC" -eq 1 ] || [ "$RUN" -eq 1 ] || [ -n "$PUSH_TESTDATA" ] || [ -n "$PULL_TESTDATA" ]; } && [ -z "$HOST" ]; then
-  echo "error: --host is required for --rsync/--run/--push-testdata/--pull-testdata (e.g. --host dmitry@86.38.182.185)" >&2
+if { [ "$PUSH_BINARIES" -eq 1 ] || [ "$RUN" -eq 1 ] || [ ${#PUSH_KINDS[@]} -gt 0 ] \
+     || [ ${#PULL_KINDS[@]} -gt 0 ]; } && [ -z "$HOST" ]; then
+  echo "error: --host is required for --push-binaries/--run/--push-<kind>/--pull-<kind>" >&2
+  echo "       (e.g. --host dmitry@86.38.182.185)" >&2
+  exit 1
+fi
+
+# A derived suite that comes back EMPTY must be an error. `mapfile` from a helper that
+# prints nothing yields a zero-length array, every `for` body over it vanishes, and the
+# script exits 0 having run no tests — a derivation typo would report success.
+if [ ${#RUST_TESTS[@]} -eq 0 ]; then
+  # Print the MODE, not a flag string: there is no --cpu flag, and naming one in an
+  # error message sends a reader who is already stuck to "Unknown flag: --cpu".
+  echo "error: the derived Rust suite is EMPTY for mode '${MODE_FLAG:-default (cpu)}'." >&2
+  echo "       This is a bug in the derivation (see rust_only_targets/needs_cmake_targets)," >&2
+  echo "       not a valid configuration: a run with no targets would exit 0 having" >&2
+  echo "       verified nothing." >&2
   exit 1
 fi
 
 # Push named testdata kinds local -> remote (before any --run that consumes them).
 # --delete keeps the remote subtree exact (drops files removed locally).
-if [ -n "$PUSH_TESTDATA" ]; then
-  IFS=',' read -ra _kinds <<< "$PUSH_TESTDATA"
-  for kind in "${_kinds[@]}"; do
+if [ ${#PUSH_KINDS[@]} -gt 0 ]; then
+  for kind in "${PUSH_KINDS[@]}"; do
     for d in $(testdata_dirs_for_kind "$kind"); do
-      [ -d "testdata/$d" ] || { echo "--push-testdata: skip missing testdata/$d"; continue; }
-      echo "==> push testdata/$d -> $HOST:$REMOTE_DIR/testdata/$d"
-      ssh "$HOST" "mkdir -p '$REMOTE_DIR/testdata/$d'"
-      rsync -a --delete "testdata/$d/" "$HOST:$REMOTE_DIR/testdata/$d/"
+      [ -d "testdata/$d" ] || { echo "--push-$kind: skip missing testdata/$d"; continue; }
+      if [ "$kind" = "goldens" ]; then
+        sync_goldens push
+      else
+        echo "==> push testdata/$d -> $HOST:$REMOTE_DIR/testdata/$d"
+        ssh "$HOST" "mkdir -p '$REMOTE_DIR/testdata/$d'"
+        rsync -a --delete "testdata/$d/" "$HOST:$REMOTE_DIR/testdata/$d/"
+      fi
     done
   done
 fi
@@ -157,6 +413,10 @@ if [ "$BUILD" -eq 1 ]; then
     # Uses the default ./target so it stays warm alongside plain `cargo test`.
     echo "==> build rust-only test binaries (no C++/FFI)"
     CARGO_FEATURES="--features rust-only"
+    # Stage from EMPTY, as build-test-shadgpu.sh does: a binary left by a previous
+    # mode is otherwise shipped alongside this mode's, and only the run-by-explicit-name
+    # loop keeps it from executing. Renaming a target makes the orphan permanent.
+    rm -rf "$RUST_TESTS_STAGING"
     mkdir -p "$RUST_TESTS_STAGING"
   else
     # cudf (default-feature) build: isolate it in its OWN target dir so it doesn't
@@ -206,6 +466,8 @@ if [ "$BUILD" -eq 1 ]; then
     cmake --install "$BUILD_DIR"
 
     echo "==> stage Rust $MODE test binaries"
+    # Stage from EMPTY here too — see the rust-only branch above.
+    rm -rf "$RUST_TESTS_STAGING"
     mkdir -p "$RUST_TESTS_STAGING"
     export CUDF_ROOT="$LOCAL_CUDF_ROOT"
     # The FFI crate builds its own libpeacock_gpu via the cmake crate in cargo's
@@ -249,7 +511,7 @@ for line in sys.stdin:
   done
 fi
 
-if [ "$RSYNC" -eq 1 ]; then
+if [ "$PUSH_BINARIES" -eq 1 ]; then
   # Strip the rust test binaries before shipping: unstripped debug builds link
   # the whole DataFusion/Arrow stack and are huge. --strip-debug drops only the
   # debug sections, keeping the dynamic symbol table intact.
@@ -259,23 +521,43 @@ if [ "$RSYNC" -eq 1 ]; then
   done
   echo "==> rsync $INSTALL_DIR to $HOST:$REMOTE_DIR/cpp/install"
   ssh "$HOST" "mkdir -p '$REMOTE_DIR/cpp/install'"
-  rsync -r -P "$INSTALL_DIR"/* "$HOST:$REMOTE_DIR/cpp/install/"
+  # --delete, and the source is "$INSTALL_DIR/" NOT "$INSTALL_DIR"/*: with a glob rsync
+  # receives several sources and --delete does not mean what it looks like.
+  # Without it remote orphans are permanent — verda was carrying test_cpu_executor and
+  # test_cpu_h200 (this branch's PRE-RENAME binaries) plus three targets deleted in
+  # June. Clearing the local staging dir stops shipping NEW orphans; only --delete
+  # removes the ones already there. It matters most where the runner GLOBS
+  # rust-tests/* (build-test-shadgpu.sh, pipeline.yml) — there an orphan RUNS.
+  rsync -r -P --delete "$INSTALL_DIR/" "$HOST:$REMOTE_DIR/cpp/install/"
 
-  if [ "$MODE" = "cpu" ] && [ -d testdata/goldens ]; then
+  if [ -d testdata/goldens ]; then
     # Ship the committed goldens (testdata/goldens/<dataset>.sf<N>/) so they match
     # the just-built binaries — version-controlled fixtures, run-independent of the
     # remote's checked-out commit. Heavy parquet datasets are generated on the
-    # remote, untouched. The GPU suite uses no goldens, so skip in --gpu mode.
-    # (For an --update-canonical run the remote regenerates these in place.)
+    # remote, untouched.
+    # TWO reasons, and the regen one is not a footnote:
+    #   VERIFY  the binaries assert against exactly these files.
+    #   REGEN   the push establishes the BASELINE. --delete makes the remote tree equal
+    #           the local committed set, so what comes back is
+    #           (local-committed ∪ regenerated) rather than (remote-leftovers ∪
+    #           regenerated). Without it a regen inherits whatever a previous run left.
     #
-    # This deliberately does NOT exclude --rust-only. It used to, and that was a
-    # trap: --rust-only IS the golden/plan verify mode, so it needs the goldens
-    # more than the C++ path does. With the exclusion in place a --rust-only run
-    # verified the new binaries against whatever stale goldens the remote happened to
-    # have — a device-label skew alone produced 110/110 "canonical file not found".
-    echo "==> rsync goldens testdata/goldens"
-    rsync -r --delete testdata/goldens/ "$HOST:$REMOTE_DIR/testdata/goldens/"
+    # EVERY mode ships them; there is no exclusion here, and both exclusions this
+    # line used to carry were bugs of the same shape:
+    #   --rust-only IS the golden/plan verify mode, so it needs them most.
+    #   --gpu was skipped on the claim that "the GPU suite uses no goldens". False:
+    #     assert_gpu_query verifies the per-node cost tree against the .cpu.txt on
+    #     EVERY run, and the final result against the .result.txt in the three
+    #     golden_* modes.
+    # In both cases the run verified the new binaries against whatever stale goldens
+    # the remote happened to have — a device-label skew alone produced 110/110
+    # "canonical file not found".
+    sync_goldens push
   fi
+  # Fixtures the binaries READ but which are not goldens (cost-registry.csv,
+  # cost_model.conf, the query .sql sets, tpch.minimal). Swept from git — see
+  # sync_fixtures.
+  sync_fixtures
 fi
 
 if [ "$RUN" -eq 1 ]; then
@@ -315,7 +597,7 @@ if [ "$RUN" -eq 1 ]; then
 
   # Run only this mode's binaries by explicit name — globbing rust-tests/* would
   # also pick up stale binaries left by a previous run of the other mode (the
-  # rsync doesn't --delete), e.g. test_cpu_executor lingering during a --gpu run.
+  # rsync doesn't --delete), e.g. test_cpu_full_table lingering during a --gpu run.
   RUST_TEST_NAMES=""
   for spec in "${RUST_TESTS[@]}"; do RUST_TEST_NAMES="$RUST_TEST_NAMES ${spec##*:}"; done
 
@@ -355,17 +637,20 @@ fi
 # (set -e). For goldens we pull only *.txt (the cost/plan goldens); other kinds
 # (e.g. parquet generated once on verda) sync in full. Opt-in so a plain run never
 # overwrites local data.
-if [ -n "$PULL_TESTDATA" ]; then
-  IFS=',' read -ra _kinds <<< "$PULL_TESTDATA"
-  for kind in "${_kinds[@]}"; do
+if [ ${#PULL_KINDS[@]} -gt 0 ]; then
+  for kind in "${PULL_KINDS[@]}"; do
     for d in $(testdata_dirs_for_kind "$kind"); do
-      echo "==> pull $HOST:$REMOTE_DIR/testdata/$d -> testdata/$d"
-      mkdir -p "testdata/$d"
       if [ "$kind" = "goldens" ]; then
-        rsync -r --include='*/' --include='*.txt' --exclude='*' \
-          "$HOST:$REMOTE_DIR/testdata/$d/" "testdata/$d/"
+        # No *.txt filter any more. Its real job was keeping plan_bytes.sha256 out of
+        # the round trip, and that is now the TEST's job (test_plan_bytes refuses to
+        # regenerate without PEACOCK_REWRITE_PLAN_BYTES). Two mechanisms for one
+        # invariant, with the weaker one in the wrong layer, is how they drift. The
+        # filter also silently dropped the 16 sf40 CSVs.
+        sync_goldens pull
       else
-        rsync -a --delete "$HOST:$REMOTE_DIR/testdata/$d/" "testdata/$d/"
+        echo "==> pull $HOST:$REMOTE_DIR/testdata/$d -> testdata/$d (additive)"
+        mkdir -p "testdata/$d"
+        rsync -a "$HOST:$REMOTE_DIR/testdata/$d/" "testdata/$d/"
       fi
     done
   done

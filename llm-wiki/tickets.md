@@ -6,17 +6,17 @@ anchor that the cost widget links to. Names reflect the post-refactor tree: devi
 `tp<N>-<tier>` (micro=100MiB, mini=2GiB, standard=12GiB); C++ in `cpp/src/operators/*.cpp`,
 `expr.cpp`, `node_session.cpp`, `dispatch.cpp`; Rust modes in `peacockdb-core/src/executors/`.
 
-New tickets take the next free number (currently 124).
+New tickets take the next free number (currently 128).
 
 ## Critical correctness
 
 <a id="t103"></a>
 ### #103 — GPU SIGSEGV: shuffle_stddev tp8-standard (Welford N-way merge)
-`gpu_tpch_sf1_shuffle_stddev_tp8_standard` segfaults (139) or fails as a contained
+`gpu_partitioned_tpch_sf1_shuffle_stddev_partitioned_tp8_standard` segfaults (139) or fails as a contained
 `vector::reserve` Err on shad-gpu. Nondeterministic; reproduces at 12 GiB and 120 GiB, so
 not budget-related. Inside `execute_instrumented`, upstream of golden compares; tp1 never
 crashes. Suspect the 8-way Welford M2 merge (`cpp/src/operators/aggregate.cpp`).
-**Test quarantined** 2026-07-31 (commented out in `test_gpu.rs`) — it was the only
+**Test quarantined** 2026-07-31 (commented out in `test_gpu_partitioned.rs`) — it was the only
 coverage of the 8-way M2 merge; tp8 goldens kept. Has already caused one wrongly
 diagnosed "regression" + rollback: check this ticket before blaming your change.
 
@@ -297,10 +297,48 @@ already provisions parquet. Accepted risk until then: stale ✗ cells after an u
 
 <a id="t116"></a>
 ### #116 — Registry rows with no GPU coverage and no blocker
-`hash_join` and `mixed_join` (full_table_gpu=na, no `gpu_test!` entry, no known blocker —
+`hash_join` and `mixed_join` (full_table_gpu=na, no `gpu_full_table_test!` entry, no known blocker —
 plain inner joins plus an aggregate; mixed_join adds a residual range filter) and
-`join_int` (tp8-only oracle test, no tp1 row). Either add the missing `gpu_test!` rows or
+`join_int` (tp8-only oracle test, no tp1 row). Either add the missing GPU test rows or
 mark the cells intentionally-na with a reason.
+
+<a id="t126"></a>
+### #126 — maybe_write_result_golden discards its removal result
+`peacockdb-core/tests/common/mod.rs` (~L566): when a result exceeds
+`RESULT_GOLDEN_MAX_BYTES` the golden is deleted so the GPU test falls back to the live
+oracle, but `let _ = std::fs::remove_file(...)` discards the outcome and the message
+prints unconditionally. A failed removal is therefore reported as "no golden" while the
+stale golden is still on disk, and the message cannot distinguish "deleted a stale one"
+from "there was nothing here". Narrow, but it is a regen path: the operator's next move
+is to trust the log and commit. Same shape as #119. Check the result, and say which of
+the two things happened.
+
+<a id="t127"></a>
+### #127 — Unowned testdata dirs on shad-gpu
+shad-gpu carries `testdata/plans.sf1` (10 files) and `testdata/plans` (3) that no local
+checkout has, that the git-derived fixture sweep does not produce, and that nothing in
+the test suite references. Same shape as the binary orphans that `--delete` just closed:
+state on a remote host no provisioning path owns, so nobody can say whether it is stale
+or load-bearing. Not deleted, because something outside this repo may read it. Establish
+what wrote them and either bring them under the sweep or remove them.
+
+<a id="t124"></a>
+### #124 — common/mod.rs is over the 1000-line bar
+`peacockdb-core/tests/common/mod.rs` is 1410 lines against coding-style.md's "under 1000".
+Pre-existing; the exec-mode refactor moved it the right way (`common/exec_mode.rs` split
+out) but added net lines. Next extraction is the obvious one: ~250 lines of
+`macro_rules!` (the test-macro definitions) into `common/macros.rs`, which puts the file
+under on its own. Deliberately not done inside the refactor — the same page forbids
+scope-creep refactors.
+
+<a id="t125"></a>
+### #125 — `elsewhere` parameter in assert_registry_matches_csv is dead
+`peacockdb-core/tests/common/registry.rs`: after the by-mode file split every CSV column
+is owned wholly by one binary, so all four callers pass `&[]` and the ~20 lines of
+staleness checking can no longer fire. Reviewer's read is DELETE (coding-style.md: no
+fallbacks the task didn't ask for); the parameter was kept only to hold branch scope, and
+its doc paragraph was rewritten to stop justifying it with a now-false example. Re-add it
+in the commit that actually splits a column across binaries again.
 
 <a id="t13"></a>
 ### #13 — Hermetic builds: system-library whitelist + CI audit
@@ -333,7 +371,8 @@ drop/normalize the thread-sensitive field.
 
 <a id="t29"></a>
 ### #29 — Track skipped TPC-DS GPU execution tests
-Superseded: enablement now lives in `test_gpu.rs` plus `testdata/cost-registry.csv`, and
+Superseded: enablement now lives in `test_gpu_full_table.rs` / `test_gpu_partitioned.rs`
+plus `testdata/cost-registry.csv`, and
 each surviving bucket has its own ticket (#32, #62, #57, #55, #56, #63, #45, #46, #47,
 #60, #115). Close.
 

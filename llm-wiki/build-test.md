@@ -11,16 +11,24 @@ Code and tests are authoritative; this page maps them.
   `testdata/goldens/<ds>.sf<sf>/<query>.<device>.plan.txt`. Wire-format guard:
   `tests/test_plan_bytes.rs` vs `goldens/plan_bytes.sha256`. Round-trip:
   `tests/test_plan_serialiser.rs`.
-- **CPU execution tests** — `tests/test_cpu_executor.rs` (+ `_misc`, `test_cpu_oom.rs`,
-  `test_node_executor.rs`, `test_cpu_h200.rs`): run DataFusion ground truth and the CPU
-  executor, assert results and the per-node cost tree against `<query>.<device>.cpu.txt`;
-  derived `.cost.txt` and frozen `.result.txt` goldens ride alongside. Device labels:
-  `tp1-standard`, `tp8-standard`, `tp8-mini`, `tp1-mini`, OOM budget `micro`.
-- **GPU execution tests** — `tests/test_gpu.rs` (`gpu_test!`), two modes of execution:
-  **full-table** (`tp1_standard`, single partition) and **partitioned**
-  (`tp8_standard`, real 8-way with per-partition asserts). One GPU run checks per-node
-  rows+cost vs the `.cpu.txt` golden AND the final result (golden_exact / golden_approx /
-  oracle / skip). Conformance: `test_inc2_conformance.rs` (GPU↔comet murmur3 bit-exact).
+- **CPU execution tests** — split by EXECUTION MODE, not memory tier:
+  `tests/test_cpu_full_table.rs` (`cpu_full_table_result_test!`, tp8-mini / tp1-mini /
+  tp1-standard) and `tests/test_cpu_partitioned.rs` (`cpu_partitioned_result_test!`,
+  tp8-standard, real 8-way), plus `test_cpu_executor_misc.rs`, `test_cpu_oom.rs`,
+  `test_node_executor.rs`. They run DataFusion ground truth and the CPU executor and
+  assert results + the per-node cost tree against
+  `<query>.<mode>-<tp>-<tier>.cpu.txt`; derived `.cost.txt` and frozen `.result.txt`
+  goldens ride alongside. Mode is `full_table` | `partitioned` and comes from the macro
+  name, never from the device label. Device labels: `tp1-standard`, `tp8-standard`,
+  `tp8-mini`, `tp1-mini`, OOM budget `micro`.
+- **GPU execution tests** — one file per execution mode:
+  `tests/test_gpu_full_table.rs` (`gpu_full_table_test!`, single partition) and
+  `tests/test_gpu_partitioned.rs` (`gpu_partitioned_test!`, real 8-way with
+  per-partition asserts). Their device argument is the combined golden label
+  (`full_table_tp1_standard`, `partitioned_tp8_standard`), so the golden filename is
+  reconstructible from the call site. One GPU run checks per-node rows+cost vs the
+  `.cpu.txt` golden AND the final result (golden_exact / golden_approx / oracle / skip).
+  Conformance: `test_inc2_conformance.rs` (GPU↔comet murmur3 bit-exact).
 - **C++ tests** (`cpp/tests/`): `peacock_cpu_tests`, `peacock_gpu_tests`,
   `peacock_plan_tests` run in CI. **Special manual plan tests**: `gpu/test_tpch.cpp`
   (`peacock_tpch_tests`) and `gpu/test_tpchv.cpp` (`peacock_tpchv_tests`) run bare-cudf
@@ -61,6 +69,25 @@ S3 endpoint is Nebius object storage (`storage.eu-north1.nebius.cloud`).
 - **validate-large.yml** — manual dispatch only: full validation of
   sf40/sf200 datasets in place on shad-gpu.
 
+## What `rust-only` means
+
+A cargo feature (`peacockdb-core/rust-only` → `peacockdb-ffi/rust-only`, an empty marker),
+and the definition lives in `peacockdb-ffi/build.rs`: under it the build script **skips
+cmake entirely**, so nothing links `libpeacock_gpu` and neither cuDF nor a CUDA toolchain
+is needed. Everything that reaches the FFI is compiled out behind
+`#[cfg(not(feature = "rust-only"))]` — the GPU executors and backend, the extern
+declarations, and the three GPU test files, which are gated at file level because they
+would have nothing to call.
+
+So it is the Rust half built against DataFusion alone. That is why it is the fast loop,
+and why anything a rust-only binary can do is by definition CPU-only.
+
+**It selects a BUILD, not a set of tests.** `cargo test --features rust-only -p
+peacockdb-core` runs every target that compiles under it — including the full CPU
+execution suite — not just the golden/meta tier. Naming a tier takes `--test`. This has
+been mis-transcribed at least once; see the "refactor is verified with a subset" rule
+below.
+
 ## Local build workflows and caches
 
 One cargo target dir per workflow — this is what prevents cache thrashing (feature flags
@@ -69,28 +96,44 @@ stack on every switch):
 
 | Workflow | Command | C++ build dir | Cargo target dir |
 |---|---|---|---|
-| rust-only (golden regen/verify, fastest loop) | `cargo test --features rust-only -p peacockdb-core` | — | `target/` |
+| rust-only (golden regen/verify, fastest loop) | `cargo test --features rust-only -p peacockdb-core --test <target>` (drop `--test` and it runs every target that compiles, not a tier — see above) | — | `target/` |
 | cost-report | `cargo test -p cost-report`; preview: `scripts/cost-report-preview.sh` | — | `target/` |
 | C++ only, cudf 25.02 | `scripts/build.sh --cudf_ROOT <rapids-cuda-12.2> --gcc-version 12 ...` | `cpp/build` | — |
-| C++ only, cudf 26.02 | `scripts/build-test.sh --build` (drives cmake directly) | `cpp/build26` | — |
+| C++ + staged Rust bins, cudf 26.02 | `scripts/build-test.sh --build` (drives cmake directly) | `cpp/build26` | `target-cudf-<basename cudf_ROOT>` |
 | Rust + cudf (FFI) | via build-test scripts, or manually with `scripts/cargo-cudf.sh` | cargo OUT_DIR | `target-cudf-<basename cudf_ROOT>` |
 
 ccache is auto-enabled for both C++ workflows when the binary is present (host
 compilers only — ccache + nvcc is unreliable). Rust caching is the per-workflow target
 dir below.
 
+Note the C++ side is built TWICE on the cudf path, into two dirs that are both used:
+`build-test.sh` drives cmake into `cpp/build26` for the installable libs and the C++
+test binaries it ships, while `peacockdb-ffi/build.rs` runs cmake again into cargo's
+`OUT_DIR` for the copy the Rust binaries link against. The `.peacock-ffi-cudf-root`
+stamp is what keeps the second one from rebuilding on every `--build`.
+
 Rules that keep this healthy:
 
+- **A refactor that must not change behavior is verified with a representative subset**
+  — one query per mode/tier per binary, plus the full rust-only tier — not a full
+  CPU/GPU suite run: the goldens are the invariant, so unchanged golden bytes and a
+  green rust-only tier prove more per minute than re-running everything.
 - **Day-to-day iteration is the rust-only loop** — plain cargo into `./target`, no
   wrapper, no C++/CUDA:
   `cargo test --features rust-only -p peacockdb-core --test test_query_plan`
 - **Never run cudf-feature cargo builds in `./target`** — they would evict the rust-only
   cache and vice versa (the `ffi` feature and `cudf_ROOT` both change fingerprints, and
   the cudf side recompiles the DataFusion stack at opt-3). For one-off cudf/FFI cargo
-  commands use `scripts/cargo-cudf.sh`, which requires `CUDF_ROOT` and derives
-  `CARGO_TARGET_DIR=target-cudf-$(basename "$CUDF_ROOT")` — the same dir the build-test
-  scripts use, so it shares their warm cache:
-  `CUDF_ROOT=~/data/miniforge3/envs/rapids scripts/cargo-cudf.sh test -p peacockdb-core --test test_gpu --no-run`
+  commands use `scripts/cargo-cudf.sh`, which requires `CUDF_ROOT` and derives BOTH
+  `CARGO_TARGET_DIR=target-cudf-$(basename "$CUDF_ROOT")` AND `CC`/`CXX` from that same
+  basename (25.02 → gcc-12, 26.02 → gcc-14; an unknown root fails and asks for
+  `GCC_VERSION`) — the same dir and the same compiler the build-test scripts use, so it
+  shares their warm cache. Both halves matter: cc-rs emits `rerun-if-env-changed` on
+  `CC`/`CXX`, so entering a target dir with a different C compiler re-runs every native
+  build script (zstd-sys, bzip2-sys, lzma-sys, psm, blake3) and rebuilds the whole
+  DataFusion stack above them — before this, alternating between the two entry points
+  thrashed the cache each way:
+  `CUDF_ROOT=~/data/miniforge3/envs/rapids scripts/cargo-cudf.sh test -p peacockdb-core --test test_gpu_full_table --no-run`
   For anything more than a one-off command, use `build-test.sh` / `build-test-shadgpu.sh`
   instead — they handle build, staging, shipping and running.
 - The FFI crate caches its cmake `cudf_DIR` in OUT_DIR; both build-test scripts clean it
@@ -115,20 +158,39 @@ Rules that keep this healthy:
 
 | Host | Use | Managed by |
 |---|---|---|
-| **shad-gpu** (most used) | GPU test suite (cudf 25.02, H200-class; old glibc → patch step) | `scripts/build-test-shadgpu.sh` (`--build --rsync --patch --run` / `--all`); resilient rsync + retries — the link is flaky |
-| **verda** (when available) | large CPU runs, golden regen | `scripts/build-test.sh --host verda` |
-| **verda-gpu** (least used) | same root volume as verda, with a GPU attached | `scripts/build-test.sh --gpu` |
+| **shad-gpu** (most used) | GPU test suite (cudf 25.02, H200-class; old glibc → patch step) | `scripts/build-test-shadgpu.sh` (`--build --push-binaries --patch --run` / `--all`); resilient rsync + retries — the link is flaky |
+| **verda** (when available) | large CPU runs, golden regen | `scripts/build-test.sh --host verda --all` (add `--rust-only` to skip the C++/FFI half) |
+| **verda-gpu** (least used) | same root volume as verda, with a GPU attached | `scripts/build-test.sh --host verda-gpu --gpu --all` |
 | **nebius** | large CPU-only VM for benchmarking | manual |
 
+- **Testing the regen MECHANISM is not a full regen.** Scope it with `PCK_TEST_FILTER`
+  (forwarded to every staged binary) — two or three queries prove the path as well as
+  903 do, and a full `--update-canonical` run rewrites every golden on the remote and
+  pulls the whole set back into a git working tree, where an unrelated diff can ride
+  home in an unrelated commit. Note that a binary whose tests all filter out runs zero
+  tests and passes, so say which binaries actually executed; and a query-name filter
+  never matches `test_plan_bytes` (its only test is `serialized_plan_bytes_are_stable`),
+  so exercising that guard takes a filter that matches it or a separate run.
 - **Prefer verda for large CPU runs** (whole suite or big selections). It is not always
   up (the human starts it manually) — falling back to a local run is completely fine.
+- **Comparing files across hosts: use checksums, and `LC_ALL=C sort` for any listing.**
+  Two hosts collate `ls`/`sort` differently, so a manifest diff reports differences that
+  are pure collation — this produced two false alarms in one session before checksums
+  settled it. Compare `sha256sum`/`md5sum` output, not directory listings.
 - Rented hosts change SSH host keys on reprovision: `ssh-keygen -R <host>` + re-keyscan
   rather than fighting the mismatch.
 - **Golden regen**: on verda via `scripts/build-test.sh --host verda --rust-only
-  --update-canonical`, then `--pull-testdata goldens` (shorthand `--fetch-goldens`) to
-  bring regenerated goldens back; or locally with `UPDATE_CANONICAL=1 cargo test
-  --features rust-only ...`. `--push-testdata <kind>` / `--pull-testdata <kind>` move
+  --update-canonical`, then `--pull-goldens` to bring regenerated goldens back; or
+  locally with `UPDATE_CANONICAL=1 cargo test --features rust-only ...`. Sync is one
+  flag per kind per direction — `--push-<kind>` / `--pull-<kind>` for
   `parquet | goldens | duckdb-profiles | duckdb-dynfilters | queries`.
+  **Pushes mirror (`--delete`), pulls are additive**, deliberately: the remote is a
+  PARTIAL mirror (`testdata/goldens/` holds `tpch.sf40/`, which lives only on shad-gpu),
+  so mirroring downward would delete fixtures the source host never had, out of a git
+  working tree. `plan_bytes.sha256` rides along safely because `test_plan_bytes` itself
+  refuses to regenerate without `PEACOCK_REWRITE_PLAN_BYTES=1`.
+  The tpch **embeddings cache is NOT syncable** — a per-host intermediate
+  (`fetch_embeddings.sh`, ~1.8 GB, gitignored); regenerate it where you need it.
 - Remote CPU runs ship built binaries + goldens + data only — never source. The CPU test
   crates bake the testdata path at compile time (#49), so the remote needs a
   `/media/data/peacockdb` symlink.

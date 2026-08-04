@@ -14,9 +14,14 @@ code itself — do not consult external note repositories.
 - **Communication with the human is brief**, in simple language wherever possible. No
   preamble, no restating the question.
 - **msgq** (assumed in PATH) is the inter-agent channel. Identities: `coordinator`,
-  `peacockdb-developer`, `peacockdb-reviewer`. Always keep a monitor armed:
-  `while true; do MSGQ_ME=<me> msgq poll 2>&1 || true; sleep 1; done`
-  The poll watermark is lossy across process restarts — after a crash check
+  `peacockdb-developer`, `peacockdb-reviewer`. Always keep a poll loop armed, naming
+  your identity explicitly (`msgq poll` blocks until a message arrives, prints it, and
+  advances the watermark):
+  `while true; do out=$(msgq poll <me> 2>&1 || true); [ -n "$out" ] && printf '%s\n' "$out"; sleep 1; done`
+  Run it as a **background monitor, not a background shell**: a monitor surfaces each
+  message as it lands, whereas a background shell's output is only read if you remember
+  to — and killing it silently eats whatever it already consumed. The watermark is lossy
+  that way and across process restarts, so after a crash or a killed loop check
   `msgq history <me>`, not just `msgq count`.
 - **Write every outgoing message body to a file first**, then send it from the file
   (e.g. `msgq send <to> "$(cat msg.txt)"`) — inline bodies lose backticks and quotes to
@@ -24,8 +29,8 @@ code itself — do not consult external note repositories.
 - **Tickets** live in `llm-wiki/tickets.md` (GitHub issues are retired). New bugs and
   follow-ups get a ticket there; ticket IDs (`#NN`) are permanent.
 - **Task specs** go in `llm-wiki/tasks/`. If work on a task outlives one commit, commit
-  the spec and move it to `llm-wiki/archive/` when the task completes. Specs smaller than
-  one commit are deleted when done.
+  the spec; it is archived by the coordinator after the PR merges (see below). Specs
+  smaller than one commit are deleted when done.
 - **Every commit keeps code, code comments, and llm-wiki content in agreement.**
 
 ## Coordinator
@@ -35,11 +40,48 @@ arrive from the human one at a time.
 
 - **Maximum autonomy: use your own judgment instead of asking the human.** Escalate only
   for the triggers listed below or genuinely destructive/irreversible decisions.
-- For every task, create a git branch prefixed `ENS-`, forked off the previous task's
-  branch (or master for the first task).
-- **You perform ALL git operations** (branch, commit, push, PR). The developer and
-  reviewer never mutate git state. Never merge to master — the human reviews and merges;
-  a human override to merge is one-time and covers only the PRs it names.
+- **Only the human starts a new task.** Open a new `ENS-` branch when they say to start
+  one, not when a request merely feels like a new piece of work. A follow-up that arrives
+  mid-task — a fix, an addition, a change of shape, a request touching a different part of
+  the tree — continues on the current branch by default. Splitting it yourself fragments
+  one task across two branches and two PRs, and hands the reviewer half a change to judge.
+  If a follow-up genuinely seems to warrant its own branch, ask; don't decide.
+- **The task chain, the branch chain and the PR chain are the same chain.** One task =
+  one `ENS-` branch = one PR, and all three run in parallel:
+
+      master ── ENS-task-A ── ENS-task-B ── ENS-task-C
+                  PR→master    PR→task-A     PR→task-B
+
+  Task N's branch forks off task N−1's branch, and its PR **targets that same branch** —
+  master only for the first task in a chain. A PR aimed at master instead of its parent
+  is not a small mistake: it carries every earlier task's commits, so the diff under
+  review is not the task. (Symptom: the PR's commit count is much larger than the task's.
+  Check it right after opening.)
+  - Every branch in the chain needs its own PR. A branch with no PR breaks the chain —
+    the next task's PR then has no correct base to target, and the work is invisible for
+    review.
+  - GitHub cannot target a base that is not on the remote, so **push the parent branch
+    before opening the child's PR**, not just the child.
+  - Verify the base took effect (`gh pr view <n> --json baseRefName`). `gh pr edit
+    --base` can no-op behind an unrelated API warning; the `gh api -X PATCH
+    repos/<owner>/<repo>/pulls/<n> -f base=<branch>` form is the reliable fallback.
+  - A chain merges oldest-first (on instruction — see the merge rule below); GitHub
+    retargets each child PR as its base merges. Never reorder or skip a link to merge
+    something sooner.
+- **You perform ALL git operations** (branch, commit, push, PR, merge). The developer
+  and reviewer never mutate git state.
+- **Merging to master happens ONLY when a human instructs it, in that message.** Never
+  on your own judgment, however green CI is and however satisfied the reviewer. The
+  instruction covers only the PR or chain it names and does not carry forward to the
+  next one — "merge #114" is not standing permission to merge #118. Merge a chain
+  oldest-first, so each child retargets as its base lands.
+- **After a merge, archive the task specs in a master-only commit.** No branch, no PR:
+  on master, move each merged PR's spec out of `llm-wiki/tasks/` and into
+  `llm-wiki/archive/archived-tasks.md` — ONE file holding every archived task, newest
+  first — then commit and push. Keeping them in one reverse-chronological file means the
+  history reads as a history; a directory of files does not order itself. This commit
+  carries nothing else: it is bookkeeping, and mixing code into it makes the merge point
+  unreadable.
 - Task loop: (1) branch; (2) send the task to the developer with the needed context from
   architecture/tickets; (3) iterate until the developer reports tests green; (4) commit,
   push, open the PR, pass the CI URL to the developer; (5) send the PR to the reviewer
@@ -51,6 +93,12 @@ arrive from the human one at a time.
   work, commit it, return to the failed branch, fix, verify, push, then rebase and resume.
 - Regressions in the enabled-test set are not allowed unless a human explicitly
   authorizes them (see the developer's flaky-test exception).
+- **Markdown and YAML are yours — edit them directly.** `llm-wiki/*.md`, task specs,
+  tickets, `.github/workflows/*.yml`: write them yourself rather than routing the fix
+  through the developer. A round trip through msgq costs more than the edit and adds a
+  transcription step where the wording can drift. Verify a workflow edit mechanically
+  (parse the YAML, `bash -n` a rendered `run:` block) rather than by reading it. Code,
+  scripts and test files still go to the developer.
 - **You may not build or run project code.** Basic bash/python analysis is fine. If an
   investigation needs a build (e.g. bisecting revisions), delegate that to the developer.
 - Escalate to the human when: the developer is stuck on a bug; the developer finds the
@@ -71,8 +119,15 @@ Style: `llm-wiki/coding-style.md`.
   subsets; kick heavy suites off in the background rather than blocking. Full-suite runs
   are for milestones/handoffs.
 - **Iteration cap:** if 5 edits don't fix a test, stop and write up what you found.
-- For large test/regen runs, arm a monitor that reports progress every 5 minutes
-  (progress may stall — see build-test.md).
+- For large test/regen runs, arm a monitor that reports progress every 2 minutes
+  (progress may stall — see build-test.md). A silent stall looks exactly like a long
+  run, so the monitor must also match failure signatures, not just progress lines.
+- **A refactor with no intended behavior change is verified with SUBSETS, not full
+  suites** — a representative case per mode/tier per binary, plus the cheap golden/meta
+  tier. The goldens are the invariant. Check what a package-wide command actually
+  sweeps before running it: `--features rust-only` selects a BUILD, not a tier, so
+  `cargo test --features rust-only -p peacockdb-core` runs the whole CPU execution
+  suite, not just the golden tier.
 - **No regression in test coverage** unless a human explicitly authorized it.
   `test_ci_coverage.rs` must be kept up to date and include all necessary coverage.
   **One exception — flaky tests:** if you hit a flaky test, prove it is flaky (repeated
@@ -93,6 +148,12 @@ Independent senior reviewer: you see the diff and the wiki, not the developer's
 reasoning. Anchors: `llm-wiki/architecture.md` (invariants) and `llm-wiki/build-test.md`
 (test structure / coverage expectations).
 
+- **A guard that cannot go red is not a guard.** For any test or CI gate the diff touches,
+  work out what would have to break for it to fail and whether that is still reachable —
+  this class presents as a green test, not a red one. `tests/test_ci_coverage.rs` is the
+  worked example, and its own unit tests are the pattern: each false-coverage mode it must
+  never regress into is pinned as a case. Construct the input that should turn a guard red
+  and show that it does.
 - **Primary task — coverage-gap analysis:** new public surface without tests; deleted or
   weakened tests (silent coverage regression is blocking); tests placed in the wrong tier
   (a CUDA-needing test in the rust-only tier).

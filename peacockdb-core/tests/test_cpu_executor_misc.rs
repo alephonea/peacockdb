@@ -1,5 +1,6 @@
 //! Bespoke (non-macro) CPU-executor tests. The parameterized result/cost suite
-//! lives in test_cpu_executor.rs; shared helpers live in common/mod.rs.
+//! lives in test_cpu_full_table.rs / test_cpu_partitioned.rs; shared helpers live
+//! in common/mod.rs.
 #[macro_use]
 mod common;
 
@@ -12,18 +13,19 @@ use peacockdb_core::create_context_with_tables_mode;
 use peacockdb_core::cpu_executor::NodeMemoryStats;
 use peacockdb_core::executors::full_table_cpu_executor::execute_full_table_instrumented;
 
+use common::exec_mode::{CpuOracle, ExecMode, ResultGolden};
 use common::{
     all_node_names, data_dir_for, device_config, fmt_plan, has_gpu_node, make_ctx,
-    partition_mode, plan_is_node13_executable, queries_dir_for, scan_batch_sizes, FULL_BUDGET,
+    plan_is_partitioned_executable, queries_dir_for, scan_batch_sizes, FULL_BUDGET,
     BATCH_STRESS_BUDGET,
 };
 
 /// Lock the routing predicate — the gate is AGG-KIND (state-mergeability), not the
 /// mere presence of a repartition:
-///   - q6 (global additive agg, no shuffle)                    → node13-executable
-///   - shuffle_additive (GROUP BY + Hash shuffle, SUM/COUNT)   → node13-executable
-///   - q1 (GROUP BY + Hash shuffle, AVG state = sum/count)     → node13-executable
-///   - shuffle_stddev (GROUP BY + Hash shuffle, STDDEV M2)     → node13-executable
+///   - q6 (global additive agg, no shuffle)                    → partitioned-executable
+///   - shuffle_additive (GROUP BY + Hash shuffle, SUM/COUNT)   → partitioned-executable
+///   - q1 (GROUP BY + Hash shuffle, AVG state = sum/count)     → partitioned-executable
+///   - shuffle_stddev (GROUP BY + Hash shuffle, STDDEV M2)     → partitioned-executable
 /// All are evaluated at tp8-standard so they carry a scan map; the ONLY discriminator
 /// is whether every Final-aggregate is state-mergeable. Fails LOUDLY if the predicate
 /// is narrowed to reject a legitimate mergeable shuffle (sum/count/min/max/avg/stddev/var)
@@ -32,13 +34,14 @@ use common::{
 async fn routing_predicate_gates_on_agg_kind() {
     async fn plan_for(query: &str, device: &str) -> Arc<dyn ExecutionPlan> {
         let (parts, budget) = device_config(device);
-        // Real-partitioning mode at tp8-standard so the scan carries its map (the
-        // predicate keys on has_scan_map); the enum — not the budget — is the gate.
+        // Real-partitioning mode so the scan carries its map (the predicate keys on
+        // has_scan_map); the enum — not the budget — is the gate. Stated here rather
+        // than derived from `device`: this builds an EXECUTION context.
         let ctx = create_context_with_tables_mode(
             &data_dir_for("tpch", "1"),
             parts,
             budget,
-            partition_mode(device),
+            ExecMode::Partitioned.partition_mode(),
         )
         .await
         .unwrap();
@@ -47,44 +50,49 @@ async fn routing_predicate_gates_on_agg_kind() {
         ctx.sql(&sql).await.unwrap().create_physical_plan().await.unwrap()
     }
     let q6 = plan_for("q6", "tp8-standard").await;
-    assert!(plan_is_node13_executable(&q6), "q6 (additive global agg) must route to #13");
+    assert!(plan_is_partitioned_executable(&q6), "q6 (additive global agg) must route to the partitioned executor");
     let shuffle = plan_for("shuffle-additive", "tp8-standard").await;
     assert!(
-        plan_is_node13_executable(&shuffle),
-        "shuffle_additive (SUM/COUNT over a Hash shuffle) must route to #13"
+        plan_is_partitioned_executable(&shuffle),
+        "shuffle_additive (SUM/COUNT over a Hash shuffle) must route to the partitioned executor"
     );
     let q1 = plan_for("q1", "tp8-standard").await;
     assert!(
-        plan_is_node13_executable(&q1),
-        "q1 (AVG = additive sum/count state) must route to #13 (Inc4)"
+        plan_is_partitioned_executable(&q1),
+        "q1 (AVG = additive sum/count state) must route to the partitioned executor (Inc4)"
     );
     let stddev = plan_for("shuffle-stddev", "tp8-standard").await;
     assert!(
-        plan_is_node13_executable(&stddev),
-        "shuffle_stddev (STDDEV = Welford count/mean/m2 state) must route to #13 (Inc5)"
+        plan_is_partitioned_executable(&stddev),
+        "shuffle_stddev (STDDEV = Welford count/mean/m2 state) must route to the partitioned executor (Inc5)"
     );
 }
 
-/// A STDDEV Final-agg query driven through the #13 CpuNodeExecutor at a
+/// A STDDEV Final-agg query driven through the partitioned CpuNodeExecutor at a
 /// real-partitioning device (tp8-standard) MERGES CORRECTLY — its Welford
 /// [count, mean, m2] state combines across the 8 hash partitions (each group lands
 /// wholly in one bucket, so the per-bucket Final is exact). Asserts the #13 result
-/// matches DataFusion (the oracle). An UNKNOWN aggregate still stays on #11
+/// matches DataFusion (the oracle). An UNKNOWN aggregate still stays full-table
 /// (whitelist fail-safe).
 #[tokio::test]
-async fn inc5_stddev_final_agg_at_tp8_node13_matches_datafusion() {
-    // Relative tolerance 1e-12 (the q14/q39 convention): the SOLE divergence from the
-    // DataFusion oracle is float summation reassociation of the Welford M2 across the
-    // 8 partitions (~1 ULP; observed rel diff ~3e-14). Exact-string compare can't
-    // tolerate it.
-    // gen=FALSE while quarantined: the golden_approx gpu_test! consumer at
-    // shuffle_stddev/tp8-standard is commented out pending #103, so generating the
-    // .result.txt would write an ORPHAN golden — written, never read — precisely the
-    // silent failure the `gen_result_golden` gate prevents (see tests/common/mod.rs).
-    // Flip back to true when #103 re-enables the gpu_test!. The already-committed
+async fn inc5_stddev_final_agg_at_tp8_partitioned_matches_datafusion() {
+    // DataFusionApproximate (see CpuOracle for the general rationale): here the
+    // reassociated sum is the Welford M2 across the 8 partitions — observed rel diff
+    // ~3e-14, so exact-string compare cannot be used.
+    // ResultGolden::Skip while quarantined: the golden_approx_std consumer at
+    // shuffle_stddev/partitioned-tp8-standard is commented out pending #103, so
+    // generating the .result.txt would write an ORPHAN golden — written, never read —
+    // precisely the silent failure the `ResultGolden` gate prevents. Flip back to
+    // Write when #103 re-enables the gpu_partitioned_test!. The already-committed
     // .result.txt is deliberately left in place.
     common::assert_cpu_results_match_datafusion(
-        "tpch", "1", "shuffle-stddev", "tp8-standard", Some(1e-12), true, false,
+        "tpch",
+        "1",
+        "shuffle-stddev",
+        "tp8-standard",
+        CpuOracle::DataFusionApproximate,
+        ExecMode::Partitioned,
+        ResultGolden::Skip,
     )
     .await;
 }

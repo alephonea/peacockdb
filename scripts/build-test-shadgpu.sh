@@ -43,7 +43,7 @@ fi
 # Rust integration tests that link libpeacock_gpu.so and need to run on the GPU host.
 # After build, each binary is staged under cpp/install/rust-tests/<name> so the
 # existing rsync step picks them up alongside the C++ binaries.
-RUST_TESTS=(test_gpu test_inc2_conformance)
+RUST_TESTS=(test_gpu_full_table test_gpu_partitioned test_inc2_conformance)
 RUST_TESTS_STAGING=cpp/install/rust-tests
 
 BUILD=0
@@ -52,14 +52,14 @@ PATCH=0
 RUN=0
 
 if [ $# -eq 0 ]; then
-  echo "Usage: $0 [--build] [--rsync] [--patch] [--run] [--all]"
+  echo "Usage: $0 [--build] [--push-binaries] [--patch] [--run] [--all]"
   exit 1
 fi
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --build) BUILD=1 ;;
-    --rsync) RSYNC=1 ;;
+    --push-binaries) RSYNC=1 ;;
     --patch) PATCH=1 ;;
     --run)   RUN=1 ;;
     --all)   BUILD=1; RSYNC=1; PATCH=1; RUN=1 ;;
@@ -122,6 +122,14 @@ if [ "$BUILD" -eq 1 ]; then
     echo "--- peacockdb-ffi: cuDF root unchanged ($CUDF_ROOT); skipping clean (reuse cmake _deps)"
   fi
 
+  # Stage from EMPTY. The remote runner globs cpp/install/rust-tests/* rather than
+  # reading RUST_TESTS, so any binary left here by an earlier run gets shipped and
+  # EXECUTED — including one whose target no longer exists. A renamed target (test_gpu
+  # -> test_gpu_full_table/test_gpu_partitioned) is the case that bites: the orphan
+  # still runs, against goldens that were renamed out from under it, and fails as if
+  # the change were broken. rsync's --delete only cleans the REMOTE, so it cannot
+  # help — the stale copy is here.
+  rm -rf "$RUST_TESTS_STAGING"
   mkdir -p "$RUST_TESTS_STAGING"
   for t in "${RUST_TESTS[@]}"; do
     # cargo test --no-run prints a json artifact line per built target; the
@@ -153,7 +161,14 @@ if [ "$RSYNC" -eq 1 ]; then
   for t in "${RUST_TESTS[@]}"; do
     [ -f "$RUST_TESTS_STAGING/$t" ] && strip --strip-debug "$RUST_TESTS_STAGING/$t"
   done
-  resilient_rsync -r cpp/install/* shad-gpu:/home/info/peacockdb/cpp/install/
+  # --delete, and the source is cpp/install/ NOT cpp/install/* : with a glob rsync gets
+  # several sources and --delete does not mean what it looks like. This runner GLOBS
+  # rust-tests/* on the remote, so an orphan left by an earlier run does not just sit
+  # there — it EXECUTES. That is the stale test_gpu failure from this branch: a
+  # pre-rename binary shipped, glibc-patched and run against goldens renamed out from
+  # under it. Clearing the staging dir locally stops shipping new ones; only --delete
+  # removes those already on the host.
+  resilient_rsync -r --delete cpp/install/ shad-gpu:/home/info/peacockdb/cpp/install/
   # Ship the result/cost/cpu GOLDENS the rust GPU tests assert against. Without this
   # the remote keeps whatever goldens a PREVIOUS run left, so a locally-regenerated
   # golden (e.g. a join subtree flipping 1→8 partitions) silently compares the fresh
@@ -164,8 +179,9 @@ if [ "$RSYNC" -eq 1 ]; then
   # The cost-registry CSV is a committed fixture the registry tests READ (they assert
   # it against the suite's link-time inventory). Goldens alone are not enough: without
   # this the registry test fails on "cannot read cost-registry.csv" — a
-  # mis-provisioned run, not a product fault. Same trap as the goldens that
-  # build-test.sh's --rust-only mode used to skip.
+  # mis-provisioned run, not a product fault. Same class as shipping binaries without
+  # the goldens they assert against: every provisioning path names its files by hand,
+  # so a new committed fixture has to be added to each one independently.
   resilient_rsync -a testdata/cost-registry.csv shad-gpu:/home/info/peacockdb/testdata/
   # Ship our setup-glibc.sh (with patch_rust_dir) so --patch uses the
   # version that knows about cpp/install/rust-tests/.
@@ -182,7 +198,7 @@ if [ "$RUN" -eq 1 ]; then
   #   PEACOCK_GPU_DEBUG=1    enable PCK_TRACE + per-node cudaStreamSynchronize
   #                          in src/expr.cpp (localizes async errors).
   #   PCK_TEST_FILTER=<sub>  cargo-test name filter forwarded to the rust
-  #                          binary (e.g. gpu_tpch_sf1_q13_H200). Empty = run all.
+  #                          binary (e.g. gpu_full_table_tpch_sf1_q13_full_table_tp1_standard). Empty = run all.
   #   PCK_RUN_CPP=0          skip peacock_plan_tests (default: run them).
   : "${PEACOCK_GPU_DEBUG:=}"
   : "${PCK_TEST_FILTER:=}"
@@ -194,7 +210,7 @@ if [ "$RUN" -eq 1 ]; then
   # Deliberately NO 'set -e' around the test runs, matching the CI gpu-tests job:
   # run EVERY binary even when an earlier one fails, OR each exit code into rc, and
   # fail at the end. Under set -e a single crashing test aborted the whole remote
-  # script — a SIGSEGV in test_gpu silently cost us all 10 test_inc2_conformance
+  # script — a SIGSEGV in a GPU test binary silently cost us all 10 test_inc2_conformance
   # results, which read as "not run" but looked like "fine". One flaky test must not
   # be able to hide every later binary's result.
   ssh shad-gpu bash <<EOF
