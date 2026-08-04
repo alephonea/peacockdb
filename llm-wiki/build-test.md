@@ -96,15 +96,21 @@ stack on every switch):
 
 | Workflow | Command | C++ build dir | Cargo target dir |
 |---|---|---|---|
-| rust-only (golden regen/verify, fastest loop) | `cargo test --features rust-only -p peacockdb-core` | — | `target/` |
+| rust-only (golden regen/verify, fastest loop) | `cargo test --features rust-only -p peacockdb-core --test <target>` (drop `--test` and it runs every target that compiles, not a tier — see above) | — | `target/` |
 | cost-report | `cargo test -p cost-report`; preview: `scripts/cost-report-preview.sh` | — | `target/` |
 | C++ only, cudf 25.02 | `scripts/build.sh --cudf_ROOT <rapids-cuda-12.2> --gcc-version 12 ...` | `cpp/build` | — |
-| C++ only, cudf 26.02 | `scripts/build-test.sh --build` (drives cmake directly) | `cpp/build26` | — |
+| C++ + staged Rust bins, cudf 26.02 | `scripts/build-test.sh --build` (drives cmake directly) | `cpp/build26` | `target-cudf-<basename cudf_ROOT>` |
 | Rust + cudf (FFI) | via build-test scripts, or manually with `scripts/cargo-cudf.sh` | cargo OUT_DIR | `target-cudf-<basename cudf_ROOT>` |
 
 ccache is auto-enabled for both C++ workflows when the binary is present (host
 compilers only — ccache + nvcc is unreliable). Rust caching is the per-workflow target
 dir below.
+
+Note the C++ side is built TWICE on the cudf path, into two dirs that are both used:
+`build-test.sh` drives cmake into `cpp/build26` for the installable libs and the C++
+test binaries it ships, while `peacockdb-ffi/build.rs` runs cmake again into cargo's
+`OUT_DIR` for the copy the Rust binaries link against. The `.peacock-ffi-cudf-root`
+stamp is what keeps the second one from rebuilding on every `--build`.
 
 Rules that keep this healthy:
 
@@ -153,10 +159,18 @@ Rules that keep this healthy:
 | Host | Use | Managed by |
 |---|---|---|
 | **shad-gpu** (most used) | GPU test suite (cudf 25.02, H200-class; old glibc → patch step) | `scripts/build-test-shadgpu.sh` (`--build --push-binaries --patch --run` / `--all`); resilient rsync + retries — the link is flaky |
-| **verda** (when available) | large CPU runs, golden regen | `scripts/build-test.sh --host verda` |
-| **verda-gpu** (least used) | same root volume as verda, with a GPU attached | `scripts/build-test.sh --gpu` |
+| **verda** (when available) | large CPU runs, golden regen | `scripts/build-test.sh --host verda --all` (add `--rust-only` to skip the C++/FFI half) |
+| **verda-gpu** (least used) | same root volume as verda, with a GPU attached | `scripts/build-test.sh --host verda-gpu --gpu --all` |
 | **nebius** | large CPU-only VM for benchmarking | manual |
 
+- **Testing the regen MECHANISM is not a full regen.** Scope it with `PCK_TEST_FILTER`
+  (forwarded to every staged binary) — two or three queries prove the path as well as
+  903 do, and a full `--update-canonical` run rewrites every golden on the remote and
+  pulls the whole set back into a git working tree, where an unrelated diff can ride
+  home in an unrelated commit. Note that a binary whose tests all filter out runs zero
+  tests and passes, so say which binaries actually executed; and a query-name filter
+  never matches `test_plan_bytes` (its only test is `serialized_plan_bytes_are_stable`),
+  so exercising that guard takes a filter that matches it or a separate run.
 - **Prefer verda for large CPU runs** (whole suite or big selections). It is not always
   up (the human starts it manually) — falling back to a local run is completely fine.
 - Rented hosts change SSH host keys on reprovision: `ssh-keygen -R <host>` + re-keyscan

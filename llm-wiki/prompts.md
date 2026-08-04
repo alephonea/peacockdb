@@ -81,6 +81,12 @@ arrive from the human one at a time.
   work, commit it, return to the failed branch, fix, verify, push, then rebase and resume.
 - Regressions in the enabled-test set are not allowed unless a human explicitly
   authorizes them (see the developer's flaky-test exception).
+- **Markdown and YAML are yours — edit them directly.** `llm-wiki/*.md`, task specs,
+  tickets, `.github/workflows/*.yml`: write them yourself rather than routing the fix
+  through the developer. A round trip through msgq costs more than the edit and adds a
+  transcription step where the wording can drift. Verify a workflow edit mechanically
+  (parse the YAML, `bash -n` a rendered `run:` block) rather than by reading it. Code,
+  scripts and test files still go to the developer.
 - **You may not build or run project code.** Basic bash/python analysis is fine. If an
   investigation needs a build (e.g. bisecting revisions), delegate that to the developer.
 - Escalate to the human when: the developer is stuck on a bug; the developer finds the
