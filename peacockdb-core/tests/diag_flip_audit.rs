@@ -1,3 +1,11 @@
+//! MANUAL DIAGNOSTIC — a printer, not a test. It asserts NOTHING and cannot fail; it
+//! exists to be read. Deliberately not wired into CI: a step with no assertions
+//! reports green forever, which is the false coverage `test_ci_coverage.rs` exists to
+//! prevent (it carries the matching exemption, naming #97/#95 as the work this serves).
+//!
+//! The query list in `diag_flip_audit()` is the INTERFACE: edit it locally to the
+//! bucket you are auditing, run, read the verdicts. A stale-looking list is not a bug.
+//!
 //! Flip-audit utility (#13 corpus rollout): decides whether a query is real-8-way
 //! FLIP-able or which gate it hits, from its gpu-rules physical plan at tp8. For each
 //! query it reports:
@@ -12,7 +20,6 @@
 //!     kernel (e.g. cudf::extract_year → INT16 while DataFusion shows Int32; a DATE
 //!     group key → cuDF TIMESTAMP_DAYS). Treat a `badRepartKeys` flag as advisory; the
 //!     kernel's type_id-printing throw is the on-GPU ground truth.
-//! Edit the query list in `diag_flip_audit()` for the bucket under audit.
 //! Run: cargo test --features rust-only --test diag_flip_audit -- --nocapture --test-threads=1
 use std::path::PathBuf;
 use std::sync::Arc;

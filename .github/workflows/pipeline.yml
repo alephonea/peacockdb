@@ -106,7 +106,13 @@ jobs:
           # includes the feature set, so this cannot share the invocation above.
           # The feature only reaches peacockdb-ffi/peacockdb-core, not the
           # DataFusion/Arrow graph, so the extra compile is small.
-          cargo test --no-run --features rust-only -p peacockdb-core --test test_plan_bytes
+          #
+          # --lib rides HERE rather than on the default-feature line: the lib unit
+          # tests (config, gpu_rule, resident) touch no FFI, so under rust-only their
+          # binary does not link libpeacock_gpu — a smaller link in the tier that has
+          # already hit tmpfs/SIGBUS at link time. It shares this line's already-built
+          # rust-only fingerprint, so it costs no extra dependency compile.
+          cargo test --no-run --features rust-only -p peacockdb-core --lib --test test_plan_bytes
         env:
           CMAKE_GENERATOR: Ninja
           LD_LIBRARY_PATH: /opt/conda/lib
@@ -147,6 +153,11 @@ jobs:
           # shift that only went red locally would reach master green.
           # See tests/test_plan_bytes.rs and goldens/plan_bytes.sha256.
           cargo test --features rust-only -p peacockdb-core --test test_plan_bytes
+          # The inline #[cfg(test)] modules (config, gpu_rule, resident). Every other
+          # cargo invocation in this file passes --test, which selects integration
+          # targets ONLY — so before this line the 9 lib unit tests ran locally and
+          # never in CI. test_ci_coverage asserts this line exists.
+          cargo test --features rust-only -p peacockdb-core --lib
         env:
           CMAKE_GENERATOR: Ninja
           LD_LIBRARY_PATH: /opt/conda/lib

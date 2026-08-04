@@ -1460,6 +1460,40 @@ mod tests {
         assert_eq!(sk.cpu_glyph("partitioned_cpu", &sha_links(), canon), "~");
     }
 
+    /// Every mode column is accounted for: either CPU_GOLDEN_LABEL probes it, or it is
+    /// a GPU column that owns no golden.
+    ///
+    /// The list that DEFINES the golden check was itself unchecked. Add a seventh mode
+    /// column, or rename one, and CPU_GOLDEN_LABEL simply never probes it: its ✓ renders
+    /// unlinked and the missing-golden gate stays silent, because that gate only
+    /// iterates the labels it already knows. Same shape as an exemption list nothing
+    /// validates, one level up. This forces the new column to be classified —
+    /// linkable-with-a-golden, or GPU/unlinkable — rather than degrading quietly.
+    #[test]
+    fn every_mode_column_is_either_probed_or_declared_goldenless() {
+        use std::collections::BTreeSet;
+        // GPU columns read the CPU golden rather than owning one, so they are
+        // deliberately not linked — see the CPU_GOLDEN_LABEL doc.
+        const GOLDENLESS: [&str; 2] = ["full_table_gpu", "partitioned_gpu"];
+
+        let probed: BTreeSet<&str> = CPU_GOLDEN_LABEL.iter().map(|(c, _)| *c).collect();
+        let declared: BTreeSet<&str> = GOLDENLESS.into_iter().collect();
+        let covered: BTreeSet<&str> = probed.union(&declared).copied().collect();
+        let all: BTreeSet<&str> = MODE_COLUMNS.into_iter().collect();
+
+        assert!(
+            probed.is_disjoint(&declared),
+            "a column cannot be both probed for a golden and declared goldenless: {:?}",
+            probed.intersection(&declared).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            covered, all,
+            "unclassified mode column(s): {:?}. Add it to CPU_GOLDEN_LABEL with the \
+             golden label its ✓ should link to, or to GOLDENLESS if it owns no golden.",
+            all.difference(&covered).collect::<Vec<_>>()
+        );
+    }
+
     /// The Query column shrinks ONLY the non-numeric names, in both renders.
     #[test]
     fn micro_query_names_render_small() {
