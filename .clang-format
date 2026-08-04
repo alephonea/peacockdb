@@ -1,0 +1,47 @@
+# C++ formatting for cpp/. DERIVED from the existing tree, not imposed on it — every
+# setting below was measured before it was written, and the measurements are in the
+# commit message. A config that disagrees with the code it governs is worse than none:
+# it is a document confidently contradicting the tree, which is why the old
+# style_guide.md was removed rather than folded into the wiki.
+#
+# NOT wired into CI, deliberately. The tree was never machine-formatted, so every file
+# would fail on arrival and the gate would be switched off within a day. Apply it to
+# code you are already touching; see llm-wiki/coding-style.md.
+#
+# Says nothing about NAMING. clang-format cannot check it, and the departed style guide
+# got it wrong (it claimed snake_case types; every internal type here is PascalCase).
+# "Match surrounding idiom" covers naming.
+---
+Language: Cpp
+
+# Google is the closest-fitting base: 2-space indent, attached braces, no namespace
+# indent, pointers left. Measured against the alternatives, it is the lowest-churn
+# starting point (LLVM costs ~2000 more changed lines, mostly PointerAlignment).
+BasedOnStyle: Google
+
+# Measured: every leading indent in cpp/src, cpp/include and cpp/tests is an even
+# multiple of 2 (2749x2, 1927x4, 997x6, 554x8, 376x10, 99x12). No odd indents at all.
+IndentWidth: 2
+
+# Measured line lengths across 10905 lines: median 47, p90 88, p95 93, p99 100,
+# max 125. 100 is the knee — 93 lines (0.9%) exceed it. 80 would put 1879 lines
+# (17%) over; 120 measured WORSE than 100 because it re-joins wrapped lines the
+# tree keeps split.
+ColumnLimit: 100
+
+# Measured: 7 namespace bodies, 0 indented.
+NamespaceIndentation: None
+
+# Measured: `T* x` 526 vs `T *x` 7 (99%). DerivePointerAlignment must be off or
+# Google's default re-derives it per file and the 7 outliers win locally.
+DerivePointerAlignment: false
+PointerAlignment: Left
+
+# The tree groups project headers ("peacock/…") before system ones, which is neither
+# Google's grouping nor alphabetical. Re-sorting is pure churn with no reader benefit,
+# and it is the single largest source of it (~270 lines).
+SortIncludes: Never
+
+# Comments here carry reasoning, often deliberately laid out. Re-wrapping prose to fit
+# a column adds churn and can wreck an aligned block.
+ReflowComments: false

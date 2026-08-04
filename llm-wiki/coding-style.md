@@ -14,7 +14,23 @@
   `llm-wiki/archive/historical-comments.md` instead of living in the code.
 - **Match surrounding idiom** (naming, comment density, error handling). Trust rustfmt;
   don't hand-format.
+- **C++ formatting** is defined by `.clang-format` at the repo root. Apply it to the
+  lines you changed — `git clang-format` — never to whole files: the tree was never
+  machine-formatted, so reformatting one file to fix one function buries a three-line
+  change in three hundred.
 - **Python:** plain module filenames — no leading underscores.
+- **Bash: the flag set is an interface, and failure is fatal.** No flag that another
+  flag already implies, and none whose only effect is the default. Contradictory
+  combinations are rejected with a message naming the contradiction — never resolved by
+  argument order, which makes the same two flags mean different things depending on how
+  they were typed. Validate every argument, and that the run will actually do something,
+  *before* the first side effect: a typo should fail before it ships files, not halfway
+  through. Prefer `set -euo pipefail`, and remember what it does not cover — an `exit`
+  inside `$(…)` ends the subshell only, and an empty list makes a `for` body vanish
+  silently, so a derived-but-empty work set must be an explicit error rather than a
+  green no-op. Where execution genuinely must continue past a failure (running every
+  test binary before reporting), say why at the site and accumulate the status so the
+  script still exits non-zero.
 - **No defensive code for impossible scenarios**; trust internal invariants and framework
   guarantees. No fallbacks or feature flags the task didn't ask for.
 - **No scope-creep refactors**: a bug fix doesn't need surrounding cleanup.

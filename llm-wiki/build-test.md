@@ -69,6 +69,25 @@ S3 endpoint is Nebius object storage (`storage.eu-north1.nebius.cloud`).
 - **validate-large.yml** — manual dispatch only: full validation of
   sf40/sf200 datasets in place on shad-gpu.
 
+## What `rust-only` means
+
+A cargo feature (`peacockdb-core/rust-only` → `peacockdb-ffi/rust-only`, an empty marker),
+and the definition lives in `peacockdb-ffi/build.rs`: under it the build script **skips
+cmake entirely**, so nothing links `libpeacock_gpu` and neither cuDF nor a CUDA toolchain
+is needed. Everything that reaches the FFI is compiled out behind
+`#[cfg(not(feature = "rust-only"))]` — the GPU executors and backend, the extern
+declarations, and the three GPU test files, which are gated at file level because they
+would have nothing to call.
+
+So it is the Rust half built against DataFusion alone. That is why it is the fast loop,
+and why anything a rust-only binary can do is by definition CPU-only.
+
+**It selects a BUILD, not a set of tests.** `cargo test --features rust-only -p
+peacockdb-core` runs every target that compiles under it — including the full CPU
+execution suite — not just the golden/meta tier. Naming a tier takes `--test`. This has
+been mis-transcribed at least once; see the "refactor is verified with a subset" rule
+below.
+
 ## Local build workflows and caches
 
 One cargo target dir per workflow — this is what prevents cache thrashing (feature flags

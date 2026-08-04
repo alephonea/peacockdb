@@ -6,11 +6,14 @@ set -e
 # build-test-shadgpu.sh (build here, ship binaries, run there). Two suites,
 # selected by --cpu (default) or --gpu:
 #
-#   --cpu  C++ peacock_cpu_tests + the Rust CPU integration tests
-#          (test_plan_serialiser, test_query_plan, test_cpu_full_table, test_ffi).
-#   --gpu  C++ peacock_plan_tests + the Rust GPU integration tests
-#          (test_gpu_full_table + test_gpu_partitioned, TPC-H + TPC-DS), run
-#          one-at-a-time on the GPU.
+#   --cpu        C++ peacock_cpu_tests + every Rust target that builds with cmake
+#                (a SUPERSET of --rust-only, plus test_ffi).
+#   --rust-only   every Rust target that builds WITHOUT cmake — see build-test.md's
+#                "What rust-only means". Golden regen + cpu/plan verify.
+#   --gpu        C++ peacock_plan_tests + the GPU-runtime Rust targets, run
+#                one-at-a-time on the GPU.
+# The three sets are DERIVED from the sources, not listed here — see the suite
+# selection below. A mode that builds more must not run less.
 #
 # The remote host is NOT hardcoded — pass it with --host. We build locally
 # against a cuDF that matches the remote's ABI (default: a local cudf-26.02
@@ -99,33 +102,124 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-# Suite selection. Each entry is <package>:<test-name>; each binary is staged
+# Suite selection, DERIVED — each entry is <package>:<test-name>; each binary is staged
 # under <install>/rust-tests/<name> so the rsync step ships it.
+#
+# Targets are classified ONCE, by what they REQUIRE, and each mode takes everything it
+# can support. Three hand-written lists is what this replaces: they drifted apart, and
+# the drift was always in the direction of running less than the mode could (--gpu
+# silently skipped test_inc2_conformance, the murmur3 conformance gate; the default
+# branch omitted four targets that build fine with the full feature set).
+#
+# A mode that BUILDS more must not RUN less. So:
+#   needs_cmake   file-gated on not(rust-only): cannot compile without libpeacock_gpu.
+#   rust_only     everything else — no cmake, no CUDA, CPU by construction.
+#   default       rust_only + needs_cmake, minus GPU-runtime-only targets.
+#   gpu           the GPU-runtime set.
+#
+# The rust-only membership test is the FEATURE'S OWN DEFINITION (see build-test.md's
+# "What rust-only means"): a file-level `#![cfg(not(feature = "rust-only"))]` is exactly
+# the marker that says "this cannot exist without the FFI". Derived from the sources, so
+# adding a test file classifies itself.
+rust_only_targets() {
+  local pkg dir f base
+  for pkg in peacockdb-core peacockdb-ffi; do
+    dir="$pkg/tests"
+    [ -d "$dir" ] || continue
+    for f in "$dir"/*.rs; do
+      [ -e "$f" ] || continue
+      base=$(basename "$f" .rs)
+      # File-level gate => needs cmake; excluded from the rust-only set.
+      grep -qF '#![cfg(not(feature = "rust-only"))]' "$f" && continue
+      # EXCLUSIONS, each for a measured reason rather than taste:
+      #   test_ffi  compiles under rust-only but yields ZERO tests (measured) — the
+      #             whole file is behind one cfg. Staging it ships a binary that runs
+      #             nothing, which reads as coverage.
+      #   diag_flip_audit  a manual diagnostic with no assertions (see its module doc
+      #             and its test_ci_coverage exemption). It cannot fail, so it cannot
+      #             contribute to a verify run, and a regen run must not depend on it.
+      case "$base" in
+        test_ffi|diag_flip_audit) continue ;;
+      esac
+      printf '%s:%s\n' "$pkg" "$base"
+    done
+  done
+}
+
+# Targets that need cmake to compile at all, in dependency-name order.
+needs_cmake_targets() {
+  local pkg dir f base
+  for pkg in peacockdb-core peacockdb-ffi; do
+    dir="$pkg/tests"
+    [ -d "$dir" ] || continue
+    for f in "$dir"/*.rs; do
+      [ -e "$f" ] || continue
+      base=$(basename "$f" .rs)
+      grep -qF '#![cfg(not(feature = "rust-only"))]' "$f" && printf '%s:%s\n' "$pkg" "$base"
+    done
+  done
+  # test_ffi is not file-gated but is empty without the FFI, so it belongs to the
+  # cmake side rather than the rust-only one.
+  printf '%s\n' "peacockdb-ffi:test_ffi"
+}
+
+# Targets that must NOT be swept into a regen run. --update-canonical exports
+# UPDATE_CANONICAL=1 for EVERY staged binary, so membership here is the only thing
+# standing between a bulk regen and a golden that is supposed to move deliberately.
+#
+#   test_plan_bytes  its digests ARE the wire-format guard: a diff means the FlatBuffer
+#                    layout moved, and the C++ side reads those bytes. Its own header
+#                    says "regenerate deliberately". Auto-regenerating it would convert
+#                    the guard into a rubber stamp — it would rewrite the evidence
+#                    instead of failing. It stays in the VERIFY set, just not the regen.
+#
+# Deliberately NOT excluded: test_cost_model. .cost.txt is derived from .cpu.txt, which
+# a regen DOES rewrite, so leaving it out is what makes a regen self-inconsistent —
+# today's list regenerates .cpu.txt and leaves every .cost.txt stale, so test_cost_model
+# goes red immediately after a "successful" regen. Including it fixes that.
+regen_excluded() {
+  case "$1" in
+    *:test_plan_bytes) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 if [ "$MODE" = "gpu" ]; then
-  RUST_TESTS=(peacockdb-core:test_gpu_full_table peacockdb-core:test_gpu_partitioned)
+  # GPU-runtime set. Kept in step with build-test-shadgpu.sh:RUST_TESTS and
+  # pipeline.yml's gpu-tests staging array — three runners had three lists and this
+  # one was short by test_inc2_conformance, the GPU<->comet bit-exact murmur3 gate.
+  RUST_TESTS=(
+    peacockdb-core:test_gpu_full_table
+    peacockdb-core:test_gpu_partitioned
+    peacockdb-core:test_inc2_conformance
+  )
   CPP_TEST_BIN=peacock_plan_tests
 elif [ "$RUST_ONLY" -eq 1 ]; then
-  # rust-only golden regen / cpu+plan verify: no C++, no FFI. The suites that own
-  # goldens (UPDATE_CANONICAL regenerates .plan.txt + .cpu.txt) + their companions.
-  # Both CPU execution modes are listed: they own disjoint golden sets
-  # (full_table-* vs partitioned-*), so a regen missing either is a silent gap.
-  RUST_TESTS=(
-    peacockdb-core:test_query_plan
-    peacockdb-core:test_query_plan_misc
-    peacockdb-core:test_cpu_full_table
-    peacockdb-core:test_cpu_partitioned
-    peacockdb-core:test_cpu_executor_misc
-    peacockdb-core:test_cpu_oom
-  )
+  # Golden regen / cpu+plan verify: no C++, no FFI.
+  mapfile -t RUST_TESTS < <(rust_only_targets)
   CPP_TEST_BIN=""
 else
-  RUST_TESTS=(
-    peacockdb-core:test_plan_serialiser
-    peacockdb-core:test_query_plan
-    peacockdb-core:test_cpu_full_table
-    peacockdb-ffi:test_ffi
+  # Superset: everything rust-only can run, plus what only cmake makes buildable.
+  # test_gpu_* are excluded — they compile here but need a GPU at RUNTIME, which is
+  # what --gpu is for.
+  mapfile -t RUST_TESTS < <(
+    rust_only_targets
+    needs_cmake_targets | grep -v ':test_gpu_'
   )
   CPP_TEST_BIN=peacock_cpu_tests
+fi
+
+# Drop the regen-excluded targets when this run is a regen.
+if [ "$UPDATE_CANON" -eq 1 ]; then
+  _kept=()
+  for spec in "${RUST_TESTS[@]}"; do
+    if regen_excluded "$spec"; then
+      echo "==> --update-canonical: skipping $spec (must be regenerated deliberately, not swept)"
+    else
+      _kept+=("$spec")
+    fi
+  done
+  RUST_TESTS=("${_kept[@]}")
 fi
 
 # --fetch-goldens is shorthand for --pull-testdata goldens.
