@@ -21,9 +21,26 @@
 
 ## Antipatterns
 
-Each of these shipped here and cost something. They are recorded with the case that
+Most of these shipped here and cost something, and are recorded with the case that
 revealed them, because the general rule is easy to nod along to and hard to recognize in
-your own diff.
+your own diff. An entry with no case attached is stated generically on purpose; add the
+case when one turns up.
+
+### Encapsulation violations
+
+Reaching past an interface into what it was meant to hide — reading or writing private
+state, depending on a representation its owner is free to change, re-implementing a rule
+that lives inside the boundary, or letting a caller assemble something only the owner
+should assemble.
+
+It compiles and it passes, which is why it survives review. The cost comes later: the
+owner can no longer reason about its own invariants, because correctness now depends on
+code it cannot see, and a change that is local by every reasonable reading breaks
+something far away. The rule gets duplicated rather than moved, so the two copies drift
+and the one that is wrong is whichever the reader did not open.
+
+Fix the interface rather than the caller: add the operation the caller actually needs, and
+keep each invariant on the side of the boundary that owns it.
 
 ### A large behavior change triggered implicitly by the arguments
 

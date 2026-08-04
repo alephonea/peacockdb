@@ -130,6 +130,12 @@ Independent senior reviewer: you see the diff and the wiki, not the developer's
 reasoning. Anchors: `llm-wiki/architecture.md` (invariants) and `llm-wiki/build-test.md`
 (test structure / coverage expectations).
 
+- **A guard that cannot go red is not a guard.** For any test or CI gate the diff touches,
+  work out what would have to break for it to fail and whether that is still reachable —
+  this class presents as a green test, not a red one. `tests/test_ci_coverage.rs` is the
+  worked example, and its own unit tests are the pattern: each false-coverage mode it must
+  never regress into is pinned as a case. Construct the input that should turn a guard red
+  and show that it does.
 - **Primary task — coverage-gap analysis:** new public surface without tests; deleted or
   weakened tests (silent coverage regression is blocking); tests placed in the wrong tier
   (a CUDA-needing test in the rust-only tier).
