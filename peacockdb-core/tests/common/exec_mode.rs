@@ -76,6 +76,48 @@ pub fn gpu_label_device(mode: ExecMode, label: &str) -> String {
     device.replace('_', "-")
 }
 
+/// How a CPU run's result is compared against the DataFusion oracle.
+///
+/// BOTH variants run the SAME oracle: plain DataFusion at `target_partitions = 1`
+/// (`build_session_state(1)`). Only the float tolerance differs — which is why this is
+/// an oracle-comparison mode and not a different kind of test, and why it is an
+/// argument rather than a second macro name.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum CpuOracle {
+    /// Exact sorted-string equality. The default.
+    DataFusionExact,
+    /// 1e-12 relative tolerance on Float64 columns. ONLY for queries whose sole
+    /// divergence from the oracle is float summation reassociation: at tp>1 the
+    /// executor sums in a different association order than DataFusion's
+    /// single-partition pass, drifting ~1 ULP. The `output_bytes` cost golden stays
+    /// EXACT either way — a ULP does not change a float's byte width — so this
+    /// loosens the result compare only, never `assert_cpu_cost_canonical`.
+    DataFusionApproximate,
+}
+
+impl CpuOracle {
+    /// The `rel_tol` handed to the result compare. `None` = exact.
+    pub fn rel_tol(self) -> Option<f64> {
+        match self {
+            CpuOracle::DataFusionExact => None,
+            CpuOracle::DataFusionApproximate => Some(1e-12),
+        }
+    }
+}
+
+/// Map a CPU macro's oracle keyword to its [`CpuOracle`]. Mirrors
+/// [`result_golden_mode`]: unknown keyword panics naming the accepted set.
+pub fn cpu_oracle_mode(s: &str) -> CpuOracle {
+    match s {
+        "data_fusion_exact" => CpuOracle::DataFusionExact,
+        "data_fusion_approximate" => CpuOracle::DataFusionApproximate,
+        other => panic!(
+            "cpu result test: unknown oracle keyword '{other}' \
+             (expected data_fusion_exact|data_fusion_approximate)"
+        ),
+    }
+}
+
 /// Whether a CPU run writes the frozen `.result.txt` golden under UPDATE_CANONICAL.
 ///
 /// INVARIANT: [`ResultGolden::Write`] exactly for the (query, golden-label) pairs a

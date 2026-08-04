@@ -13,7 +13,7 @@ use peacockdb_core::create_context_with_tables_mode;
 use peacockdb_core::cpu_executor::NodeMemoryStats;
 use peacockdb_core::executors::full_table_cpu_executor::execute_full_table_instrumented;
 
-use common::exec_mode::{ExecMode, ResultGolden};
+use common::exec_mode::{CpuOracle, ExecMode, ResultGolden};
 use common::{
     all_node_names, data_dir_for, device_config, fmt_plan, has_gpu_node, make_ctx,
     plan_is_partitioned_executable, queries_dir_for, scan_batch_sizes, FULL_BUDGET,
@@ -76,10 +76,9 @@ async fn routing_predicate_gates_on_agg_kind() {
 /// (whitelist fail-safe).
 #[tokio::test]
 async fn inc5_stddev_final_agg_at_tp8_partitioned_matches_datafusion() {
-    // Relative tolerance 1e-12 (the q14/q39 convention): the SOLE divergence from the
-    // DataFusion oracle is float summation reassociation of the Welford M2 across the
-    // 8 partitions (~1 ULP; observed rel diff ~3e-14). Exact-string compare can't
-    // tolerate it.
+    // DataFusionApproximate (see CpuOracle for the general rationale): here the
+    // reassociated sum is the Welford M2 across the 8 partitions — observed rel diff
+    // ~3e-14, so exact-string compare cannot be used.
     // ResultGolden::Skip while quarantined: the golden_approx_std consumer at
     // shuffle_stddev/partitioned-tp8-standard is commented out pending #103, so
     // generating the .result.txt would write an ORPHAN golden — written, never read —
@@ -91,7 +90,7 @@ async fn inc5_stddev_final_agg_at_tp8_partitioned_matches_datafusion() {
         "1",
         "shuffle-stddev",
         "tp8-standard",
-        Some(1e-12),
+        CpuOracle::DataFusionApproximate,
         ExecMode::Partitioned,
         ResultGolden::Skip,
     )

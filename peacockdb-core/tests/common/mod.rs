@@ -35,7 +35,7 @@ use peacockdb_core::{
     create_context_with_tables_mode, register_tables_for, PartitionMode,
 };
 
-use exec_mode::{golden_label, ExecMode, ResultGolden};
+use exec_mode::{golden_label, CpuOracle, ExecMode, ResultGolden};
 // Only the GPU asserts split a combined label, and they are cfg'd out under rust-only.
 #[cfg(not(feature = "rust-only"))]
 use exec_mode::gpu_label_device;
@@ -775,15 +775,14 @@ pub(crate) fn plan_is_partitioned_executable(plan: &Arc<dyn ExecutionPlan>) -> b
 /// `mode` comes from the calling macro's NAME: it picks the executor, the context's
 /// `PartitionMode`, and the `<mode>-<device>` golden — all three together, so they
 /// cannot disagree.
-/// `rel_tol = None` = exact sorted-string compare (the default); `Some(tol)` is
-/// passed only via the `*_approx_test!` macros for queries whose sole oracle
-/// divergence is float summation reassociation (~1 ULP) — see [`assert_results_match`].
+/// `oracle` selects the result-compare tolerance; both variants run the SAME
+/// plain-DataFusion oracle at `target_partitions = 1` — see [`CpuOracle`].
 pub async fn assert_cpu_results_match_datafusion(
     dataset: &str,
     sf: &str,
     query: &str,
     device: &str,
-    rel_tol: Option<f64>,
+    oracle: CpuOracle,
     mode: ExecMode,
     golden_mode: ResultGolden,
 ) {
@@ -843,7 +842,7 @@ pub async fn assert_cpu_results_match_datafusion(
         }
     };
 
-    assert_results_match(&expected, &actual, rel_tol, &format!("{dataset}/{query}"));
+    assert_results_match(&expected, &actual, oracle.rel_tol(), &format!("{dataset}/{query}"));
     assert_cpu_cost_canonical(&plan, &stats, &cpu_golden(dataset, sf, query, &label));
     // Snapshot the (DataFusion-validated) result for the merged GPU test to verify
     // against, so the GPU run needs no live CPU oracle. UPDATE_CANONICAL only; the
@@ -1196,13 +1195,16 @@ macro_rules! query_plan_test {
     };
 }
 
-/// `cpu_full_table_result_test!(dataset, sf, query, device, result_golden)` — EXACT
+/// `cpu_full_table_result_test!(dataset, sf, query, device, oracle, result_golden)` —
 /// result compare on the FULL-TABLE executor (instrumented-enforced,
 /// single-partition-coalesced). Reads `<query>.full_table-<device>.cpu.txt`.
-/// The trailing ident is `result_golden` | `no_result_golden` (see `ResultGolden`).
+///
+/// `oracle` is `data_fusion_exact` | `data_fusion_approximate` (see `CpuOracle`);
+/// the trailing ident is `result_golden` | `no_result_golden` (see `ResultGolden`).
+/// Both are idents, so their ORDER is not type-checked — oracle is second-to-last.
 #[macro_export]
 macro_rules! cpu_full_table_result_test {
-    ($dataset:ident, $sf:literal, $query:ident, $device:ident, $gen:ident) => {
+    ($dataset:ident, $sf:literal, $query:ident, $device:ident, $oracle:ident, $gen:ident) => {
         $crate::register_test!("ftc", $dataset, $sf, $query, $device, "enabled");
         paste::paste! {
             #[tokio::test]
@@ -1212,7 +1214,7 @@ macro_rules! cpu_full_table_result_test {
                     stringify!($sf),
                     &stringify!($query).replace('_', "-"),
                     &stringify!($device).replace('_', "-"),
-                    None,
+                    $crate::common::exec_mode::cpu_oracle_mode(stringify!($oracle)),
                     $crate::common::exec_mode::ExecMode::FullTable,
                     $crate::common::exec_mode::result_golden_mode(stringify!($gen)),
                 )
@@ -1222,41 +1224,14 @@ macro_rules! cpu_full_table_result_test {
     };
 }
 
-/// `cpu_full_table_result_approx_test!(…)` — as [`cpu_full_table_result_test!`] but
-/// with a 1e-12 relative tolerance on Float64 columns. ONLY for queries whose sole
-/// divergence from the DataFusion oracle is float summation reassociation (~1 ULP)
-/// at tp>1. The output_bytes cost golden is still exact (a float value doesn't
-/// change byte width).
-#[macro_export]
-macro_rules! cpu_full_table_result_approx_test {
-    ($dataset:ident, $sf:literal, $query:ident, $device:ident, $gen:ident) => {
-        $crate::register_test!("ftc", $dataset, $sf, $query, $device, "enabled");
-        paste::paste! {
-            #[tokio::test]
-            async fn [<cpu_full_table_ $dataset _sf $sf _ $query _ $device>]() {
-                $crate::common::assert_cpu_results_match_datafusion(
-                    stringify!($dataset),
-                    stringify!($sf),
-                    &stringify!($query).replace('_', "-"),
-                    &stringify!($device).replace('_', "-"),
-                    Some(1e-12),
-                    $crate::common::exec_mode::ExecMode::FullTable,
-                    $crate::common::exec_mode::result_golden_mode(stringify!($gen)),
-                )
-                .await;
-            }
-        }
-    };
-}
-
-/// `cpu_partitioned_result_test!(dataset, sf, query, device, result_golden)` — EXACT
+/// `cpu_partitioned_result_test!(dataset, sf, query, device, oracle, result_golden)` —
 /// result compare driven by the multi-handle `CpuNodeExecutor` (real N-partition,
 /// Σ-over-partitions cost). Reads `<query>.partitioned-<device>.cpu.txt`. A query
 /// routed here MUST be partitioned-executable (scan map + state-mergeable
 /// Final-aggregates; asserted at runtime). The SAME plan at tp8-mini runs full-table.
 #[macro_export]
 macro_rules! cpu_partitioned_result_test {
-    ($dataset:ident, $sf:literal, $query:ident, $device:ident, $gen:ident) => {
+    ($dataset:ident, $sf:literal, $query:ident, $device:ident, $oracle:ident, $gen:ident) => {
         $crate::register_test!("partitioned", $dataset, $sf, $query, $device, "enabled");
         paste::paste! {
             #[tokio::test]
@@ -1266,34 +1241,7 @@ macro_rules! cpu_partitioned_result_test {
                     stringify!($sf),
                     &stringify!($query).replace('_', "-"),
                     &stringify!($device).replace('_', "-"),
-                    None,
-                    $crate::common::exec_mode::ExecMode::Partitioned,
-                    $crate::common::exec_mode::result_golden_mode(stringify!($gen)),
-                )
-                .await;
-            }
-        }
-    };
-}
-
-/// `cpu_partitioned_result_approx_test!(…)` — as [`cpu_partitioned_result_test!`] but
-/// with a 1e-12 relative tolerance on Float64 columns. Required for STDDEV/VAR: the
-/// Welford M2 state, merged across the 8 hash partitions, reassociates float summation
-/// (~1 ULP; ~3e-14 rel) vs the DataFusion single-pass oracle, so exact-string compare
-/// cannot be used. The output_bytes cost golden stays exact.
-#[macro_export]
-macro_rules! cpu_partitioned_result_approx_test {
-    ($dataset:ident, $sf:literal, $query:ident, $device:ident, $gen:ident) => {
-        $crate::register_test!("partitioned", $dataset, $sf, $query, $device, "enabled");
-        paste::paste! {
-            #[tokio::test]
-            async fn [<cpu_partitioned_ $dataset _sf $sf _ $query _ $device>]() {
-                $crate::common::assert_cpu_results_match_datafusion(
-                    stringify!($dataset),
-                    stringify!($sf),
-                    &stringify!($query).replace('_', "-"),
-                    &stringify!($device).replace('_', "-"),
-                    Some(1e-12),
+                    $crate::common::exec_mode::cpu_oracle_mode(stringify!($oracle)),
                     $crate::common::exec_mode::ExecMode::Partitioned,
                     $crate::common::exec_mode::result_golden_mode(stringify!($gen)),
                 )
