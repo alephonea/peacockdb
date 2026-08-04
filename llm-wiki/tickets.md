@@ -6,7 +6,7 @@ anchor that the cost widget links to. Names reflect the post-refactor tree: devi
 `tp<N>-<tier>` (micro=100MiB, mini=2GiB, standard=12GiB); C++ in `cpp/src/operators/*.cpp`,
 `expr.cpp`, `node_session.cpp`, `dispatch.cpp`; Rust modes in `peacockdb-core/src/executors/`.
 
-New tickets take the next free number (currently 121).
+New tickets take the next free number (currently 124).
 
 ## Critical correctness
 
@@ -52,6 +52,30 @@ per-node row counts. q77 full_table_gpu stays off.
 3-CTE anti-join (`LEFT JOIN … IS NULL`) + multi-key DESC LIMIT 100. `round` is proven
 fine (q54). The isolated diff harness segfaults under GPU memory pressure on a shared
 H200 — re-check on a free GPU to separate wrong-result from memory-induced.
+
+<a id="t121"></a>
+### #121 — Multi-GPU q3 frees GPU-p memory on the calling thread
+`cpp/tests/gpu/test_multi_gpu_tpch.cpp` (~L634): `shuffled` (from `hash_shuffle`) is a
+local of the `execute` lambda, so it is destroyed on the **calling** thread. Each
+`shuffled[p]` for p≠0 is a `cudf::table` from GPU p's RMM pool, so this frees device-p
+memory while device 0 is current — the exact worker-per-GPU destruction rule this file
+follows everywhere else (every other buffer is explicitly released on its worker). Pool
+deallocation is stream-ordered per device, so this is the class of mistake that shows up
+later as a corrupted pool or a teardown crash, not immediately. Release each
+`shuffled[p]` on `pool[p]` like the neighbouring `local_top` block.
+
+<a id="t122"></a>
+### #122 — Multi-GPU q6 host merge doesn't check partial scales agree
+`cpp/tests/gpu/test_multi_gpu_tpch.cpp` (~L198): the host `__int128` sum overwrites
+`scale` with each partial's scale without verifying they match. All partials share a
+scale today, so the result is correct — but a future divergence would silently produce a
+wrong sum instead of failing. Assert equality.
+
+<a id="t123"></a>
+### #123 — Unused static helper in test_plan_executor.cpp
+`cpp/tests/gpu/test_plan_executor.cpp:53`: `make_float64_literal(...)` is defined and
+never called — a `-Wunused-function` warning waiting on the next warning-level bump.
+Remove it or use it.
 
 <a id="t118"></a>
 ### #118 — SortPreservingMerge concat fallback ignores fetch (LIMIT dropped)

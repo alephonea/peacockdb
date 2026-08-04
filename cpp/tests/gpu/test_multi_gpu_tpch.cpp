@@ -1,8 +1,8 @@
-// test_multi_gpu_tpch.cpp — the SAME TPC-H q6 and q1 as test_tpch.cpp, but executed as
-// MULTI-GPU plans over all visible GPUs, and checked against the SAME committed DuckDB goldens
-// BYTE-FOR-BYTE (via the shared helper in tpch_golden.hpp). Milestone 1: no joins, no shuffle.
+// The SAME TPC-H queries as test_tpch.cpp, executed as MULTI-GPU plans over all visible GPUs
+// and checked against the SAME committed DuckDB goldens BYTE-FOR-BYTE (shared helper in
+// tpch_golden.hpp).
 //
-// THE PLANS (both size to cudaGetDeviceCount() — never hardcode a GPU count):
+// THE PLANS (all size to cudaGetDeviceCount() — never hardcode a GPU count):
 //   Partition lineitem across the G GPUs on WHOLE parquet row-group boundaries (data
 //   distribution, NOT predicate pushdown — every query filter still runs as an operator). Each
 //   worker owns one contiguous span of row groups for the whole run.
@@ -20,7 +20,7 @@
 //         decimal accumulation) so they match the golden exactly; the means match within the
 //         same 1e-9 tolerance the single-GPU test uses (they are doubles on both sides).
 //
-// The plan is correct at ANY partition count, so it runs for any G >= 1 (skip only if 0 GPUs
+// The plans are correct at ANY partition count, so they run for any G >= 1 (skip only if 0 GPUs
 // or the sf40 data is absent, same as test_tpch.cpp). At G=1 it degenerates to one span / one
 // worker — the FAIR single-GPU baseline: identical code and identical (pooled) allocator, just
 // one partition — so a G=1-vs-G=2 comparison isolates parallelism from allocator choice. NOT
@@ -29,15 +29,14 @@
 // boundary, 2nd-min of 6).
 //
 // The worker-per-GPU model (a device object's whole lifetime stays on its device's thread) and
-// all the scaffolding come from the shared test library multi_gpu.hpp / multi_gpu.cpp.
+// all the scaffolding come from multi_gpu.hpp / multi_gpu.cpp.
 //
-// SHARED PROCESS-WIDE WorkerPool. There is exactly ONE WorkerPool for the whole binary, owned by
-// MultiGpuEnvironment (a gtest Environment) and reused by every query test — no per-test pool
-// construction/teardown. This is what makes running all query BENCHMARKS (PEACOCK_BENCHMARK, 7
-// executes each) in ONE process reliable: in M1, per-test WorkerPool teardown churned a
-// cudf-26.02 process-global piece of state and the next test's benchmark intermittently threw
-// "invalid device ordinal". With a single pool held for the run, there is no teardown to
-// pollute, and the whole suite benchmarks cleanly in one process.
+// SHARED PROCESS-WIDE WorkerPool: exactly ONE WorkerPool for the whole binary, owned by
+// MultiGpuEnvironment (a gtest Environment) and reused by every query test. Per-test pool
+// teardown churns a cudf-26.02 process-global and the next test's benchmark then intermittently
+// throws "invalid device ordinal"; with one pool held for the run there is no teardown to
+// pollute, so the whole suite (PEACOCK_BENCHMARK, 7 executes each) benchmarks cleanly in ONE
+// process.
 
 #include <cudf/aggregation.hpp>
 #include <cudf/binaryop.hpp>
@@ -103,10 +102,6 @@ cudf::timestamp_scalar<cudf::timestamp_D> date_scalar(int y, unsigned mo, unsign
       cudf::timestamp_D{cudf::duration_D{days_since_epoch(y, mo, d)}}, true, s);
 }
 
-// gpu_count(), the shared WorkerPool (MultiGpuEnvironment / g_shared_pool / shared_pool()),
-// benchmark_mgpu() and release_partitions() are now shared scaffolding in multi_gpu.hpp, used by
-// both this binary and test_multi_gpu_tpchv.cpp. main() below still registers the Environment.
-
 // Decimal read out of a fixed_point_scalar (for q6's final reduced scalar).
 Decimal decimal_from_scalar(cudf::scalar const& s) {
   auto const* fp = dynamic_cast<cudf::fixed_point_scalar<numeric::decimal128> const*>(&s);
@@ -120,9 +115,7 @@ Decimal decimal_from_scalar(cudf::scalar const& s) {
   return d;
 }
 
-// ===========================================================================
 // Q6 — multi-GPU embarrassingly-parallel sum. Same query as test_tpch.cpp Q6ExactDecimal.
-// ===========================================================================
 TEST_F(TpchSf40, Q6MultiGpu) {
   const int G = gpu_count();
   if (G < 1) GTEST_SKIP() << "no visible GPU (found " << G << ")";
@@ -160,8 +153,7 @@ TEST_F(TpchSf40, Q6MultiGpu) {
   //      is one decimal per GPU, so the table-gather machinery (pack/peer-copy/unpack/concat/
   //      reduce, used by q1 for real partial TABLES) is pure overhead here. The partials all
   //      share scale -4, so the host sum is exact __int128 integer addition — bit-identical to
-  //      the single-GPU golden. Reading a final scalar to host is what q6 does anyway to
-  //      compare against the golden; this is idiomatic, not CPU-emulation. ----
+  //      the single-GPU golden. ----
   auto execute = [&]() -> Decimal {
     std::vector<std::future<Decimal>> pf;
     for (int g = 0; g < G; ++g) {
@@ -234,10 +226,8 @@ TEST_F(TpchSf40, Q6MultiGpu) {
   release_partitions(pool, parts);
 }
 
-// ===========================================================================
 // Q1 — multi-GPU groupby with partial-aggregate merge. Same query as test_tpch.cpp
 // Q1GroupByAggregates. Each worker emits partial SUMs + partial COUNT per group; GPU0 merges.
-// ===========================================================================
 TEST_F(TpchSf40, Q1MultiGpu) {
   const int G = gpu_count();
   if (G < 1) GTEST_SKIP() << "no visible GPU (found " << G << ")";
@@ -448,7 +438,6 @@ TEST_F(TpchSf40, Q1MultiGpu) {
   release_partitions(pool, parts);  // free pool-allocated partitions on their workers
 }
 
-// ===========================================================================
 // Q3 — 3-way join + high-cardinality group-by, via BROADCAST joins and a HASH-SHUFFLE.
 // Same query as test_tpch.cpp Q3JoinsGroupByTopN, same golden.
 //
@@ -459,17 +448,15 @@ TEST_F(TpchSf40, Q1MultiGpu) {
 //     (~1.2M) and orders to o_orderdate<1995-03-15 (~30M), and customer|X|orders on custkey is
 //     ~6M rows keyed by orderkey. That ~6M build is redundant per GPU but tiny next to lineitem;
 //     broadcasting it avoids shuffling a large join. (Reading full orders per GPU is the
-//     broadcast cost; at higher G one would build customer|X|orders once and broadcast the 6M
-//     result instead — noted, not needed at G=2.)
+//     broadcast cost; at higher G, build customer|X|orders once and broadcast the 6M result.)
 //   - Each GPU joins its lineitem partition against the local customer|X|orders on orderkey and
 //     computes revenue -> per-GPU pre-aggregation rows (orderkey, orderdate, shippriority, revenue).
-//   - The GROUP-BY key is l_orderkey: HIGH cardinality (~millions of distinct keys). The M1
-//     gather-all-partials-to-GPU0 merge does NOT scale there. Instead HASH-SHUFFLE (murmur3) the
+//   - The GROUP-BY key is l_orderkey: HIGH cardinality (~millions of distinct keys), where a
+//     gather-all-partials-to-GPU0 merge does NOT scale. Instead HASH-SHUFFLE (murmur3) the
 //     pre-agg rows by orderkey so every orderkey lives entirely on one GPU; each GPU then does a
 //     COMPLETE local group-by (no cross-GPU partial merge), takes its local top-10, and the final
 //     merge is a trivial gather of G×10 rows + a global top-10. Revenue is exact decimal (−4)
 //     throughout, so it matches the golden bit-for-bit.
-// ===========================================================================
 TEST_F(TpchSf40, Q3MultiGpu) {
   const int G = gpu_count();
   if (G < 1) GTEST_SKIP() << "no visible GPU (found " << G << ")";
@@ -644,7 +631,10 @@ TEST_F(TpchSf40, Q3MultiGpu) {
         fs.push_back(pool[p].submit([&, p] { local_top[p] = cudf::packed_columns{}; }));
       for (auto& f : fs) f.get();
     }
-    (void)shuffled;  // freed at closure end (each shuffled[p] on its own GPU p)
+    // BUG (ticket #121): `shuffled` is destroyed at closure end on the CALLING thread,
+    // so shuffled[p] for p!=0 frees GPU-p pool memory with device 0 current —
+    // the worker-per-GPU destruction rule this file states everywhere else.
+    (void)shuffled;
     return result;
   };
 
@@ -664,9 +654,8 @@ TEST_F(TpchSf40, Q3MultiGpu) {
   release_partitions(pool, ord);
 }
 
-// ===========================================================================
-// Q8 — 7 tables, bushy join order, LOW-cardinality group-by. Same query as test_tpch.cpp Q8,
-// same golden.
+// Q8 — 7 tables, bushy join order, LOW-cardinality group-by. Same query as test_tpch.cpp
+// Q8SevenTableJoin, same golden.
 //
 // PLAN & CARDINALITIES (sf40):
 //   - lineitem (240M) is the fact — ROW-GROUP-PARTITIONED across the GPUs.
@@ -681,12 +670,11 @@ TEST_F(TpchSf40, Q3MultiGpu) {
 //     partition (part_f is broadcast), so partitioning loses nothing.
 //   - GROUP-BY key is o_year: only 1995 and 1996 — LOW cardinality. So NO shuffle: each GPU
 //     emits a partial group-by (o_year -> partial sum(brazil_volume), partial sum(volume)), the G
-//     partials are gathered to GPU0 (M1 pack->peer-copy->unpack->concat) and merged with a final
+//     partials are gathered to GPU0 (pack->peer-copy->unpack->concat) and merged with a final
 //     sum-group-by. Both sums are EXACT decimal(-4) so they re-aggregate bit-for-bit; mkt_share is
 //     recomputed as sum(brazil)/sum(total) in float64 on GPU0 (DuckDB returns DOUBLE for the
 //     decimal/decimal division — matching semantics, tolerant 1e-9), NEVER by averaging partial
 //     ratios.
-// ===========================================================================
 TEST_F(TpchSf40, Q8MultiGpu) {
   const int G = gpu_count();
   if (G < 1) GTEST_SKIP() << "no visible GPU (found " << G << ")";

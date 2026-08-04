@@ -1,15 +1,15 @@
-//! Part 2 — strict resident "GPU"-memory control.
+//! Strict resident "GPU"-memory control.
 //!
-//! At the real test budget (tp8-mini) NOTHING OOMs: SF1 data is small and the
-//! peak concurrently-resident data set across the whole corpus is ~135 MB (path-sum
-//! model), far under 2 GiB. So the OOM path is exercised here with a TIGHT raw
-//! budget (no device-label change), mirroring `test_memory_boundary_preserved_tight_budget`.
+//! At the real test budget (tp8-mini) NOTHING OOMs: SF1 data is small and the peak
+//! concurrently-resident data set across the whole corpus is ~135 MB (path-sum
+//! model), far under 2 GiB. So the OOM path is exercised with a TIGHT raw budget
+//! (no device-label change), mirroring `test_memory_boundary_preserved_tight_budget`.
 //!
 //! Budget = 100 MiB, chosen in the wide gap between the top query (tpcds q78 ≈
 //! 135.5 MB) and the next (tpch q7 ≈ 90.7 MB) so both sides clear ~10% margin:
 //!   - q78 OOMs (+29% over budget),
-//!   - q7 (−13.5%) and q18 (−16%) FIT (boundary-passing cases — the boundary is real).
-//! Resident size uses the Part-1 per-node `output_bytes` logical basis, so it's
+//!   - q7 (−13.5%) and q18 (−16%) FIT — the boundary is real.
+//! Resident size uses the per-node `output_bytes` logical basis, so it is
 //! independent of the batch size the budget induces.
 #[macro_use]
 mod common;

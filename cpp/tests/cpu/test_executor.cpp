@@ -8,11 +8,9 @@ TEST(PeacockGpu, Version) {
   EXPECT_STREQ(peacock_gpu_version(), "0.1.0");
 }
 
-// ---------------------------------------------------------------------------
-// Host-only unit tests for the decimal-scale / AST-routing helpers. These run
-// on the non-GPU CI tiers (every push); the GPU result tests run only on the
-// GPU tier, so a regression in these pure rules would otherwise slip through.
-// ---------------------------------------------------------------------------
+// Host-only unit tests for the decimal-scale / AST-routing helpers: they run on the
+// non-GPU CI tiers (every push), where the GPU result tests do not, so a regression
+// in these pure rules cannot slip through.
 
 namespace {
 namespace fb = peacock::plan;

@@ -1,6 +1,5 @@
-// multi_gpu.cpp — non-template definitions for the multi-GPU test scaffolding (see
-// multi_gpu.hpp). This is the body of the TEST-ONLY static library multi_gpu_testlib; it is
-// not installed, not in CI.
+// Non-template definitions for the multi-GPU test scaffolding declared in multi_gpu.hpp.
+// Body of the TEST-ONLY static library multi_gpu_testlib: not installed, not in CI.
 
 #include "multi_gpu.hpp"
 
@@ -50,7 +49,7 @@ WorkerPool::WorkerPool(int num_gpus) {
                    }
                    // Size the pool off THIS device's free memory (never hardcode). 85% initial
                    // so a query's whole working set fits without a mid-query growth event
-                   // (another cudaMalloc — the very sync we are removing); 95% ceiling.
+                   // (another cudaMalloc — the very sync we are avoiding); 95% ceiling.
                    std::size_t free = 0, total = 0;
                    MG_CUDA_TRY(cudaMemGetInfo(&free, &total));
                    const std::size_t initial = align_down(free * 85 / 100);
@@ -76,13 +75,11 @@ WorkerPool::~WorkerPool() {
     workers_[g]
         ->submit([this, g] {
           cudaDeviceSynchronize();
-          // Reset BOTH the pointer map AND the ref map off the pool, to RMM's static initial
-          // resource. This is the footgun: set_per_device_resource(id, nullptr) resets ONLY the
-          // pointer map — its internal ref-sync is guarded by `if (new_mr != nullptr)`, so it
-          // LEAVES the ref map pointing at the (about-to-be-destroyed) pool. A later WorkerPool
-          // in the same process then inherits a dangling ref until it reinstalls, which surfaced
-          // as an "invalid device ordinal" in q1 only when q6 ran (and tore down its pool)
-          // first. Resetting the ref explicitly closes that window.
+          // FOOTGUN: set_per_device_resource(id, nullptr) resets ONLY the pointer map — its
+          // internal ref-sync is guarded by `if (new_mr != nullptr)`, so it LEAVES the ref map
+          // pointing at the about-to-be-destroyed pool, and a later WorkerPool in the same
+          // process inherits a dangling ref until it reinstalls (surfaces as "invalid device
+          // ordinal"). Both maps must therefore be reset to RMM's static initial resource.
           rmm::mr::set_per_device_resource(rmm::cuda_device_id{g}, nullptr);   // pointer -> initial
           rmm::mr::reset_per_device_resource_ref(rmm::cuda_device_id{g});      // ref     -> initial
           pools_[g].reset();     // pool dtor frees the reserved buffer to upstream, on device g
@@ -156,8 +153,7 @@ std::vector<std::unique_ptr<cudf::table>> hash_shuffle(
   const int G = pool.size();
 
   // Phase 1: each worker g hash_partitions its local table into G contiguous buckets and packs
-  // each bucket. parted[g] (the reordered table) and packed[g][p] (bucket p's serialized bytes)
-  // stay alive on worker g until the exchange has copied them.
+  // each one. parted[g] and packed[g][p] stay alive on worker g until the exchange copies them.
   std::vector<std::unique_ptr<cudf::table>>       parted(G);
   std::vector<std::vector<cudf::packed_columns>>  packed(G);
   std::vector<std::vector<PackedPartial>>         handles(G, std::vector<PackedPartial>(G));

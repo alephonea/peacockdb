@@ -1,26 +1,22 @@
-// test_basic_multi_gpu.cpp — a minimal TWO-GPU pipeline that exercises BOTH cuDF and cuVS
-// on BOTH devices, with a bidirectional data EXCHANGE across the NVLink in the middle. No real
-// data, no external files: the input is generated in-process from a fixed seed, and every
-// check is a self-consistency assertion (no goldens).
+// A minimal TWO-GPU pipeline exercising BOTH cuDF and cuVS on BOTH devices, with a
+// bidirectional EXCHANGE across the NVLink in the middle. Input is generated in-process from a
+// fixed seed and every check is a self-consistency assertion — no goldens, no external files.
 //
-// WHY A WORKER-PER-GPU THREAD POOL — the real constraint, not cosmetic:
+// WHY A WORKER-PER-GPU THREAD POOL — a hard constraint, not cosmetic:
 //
 //   cudaSetDevice is THREAD-LOCAL, and a cuDF column/table (and cuVS/raft device objects)
 //   must be DESTROYED while its owning device is current — not merely created there. A
 //   unique_ptr<column> allocated on GPU0 that destructs on a thread where GPU1 is current
-//   makes RMM free device-0 memory under device 1 -> corruption / CUDA error. A serialized
-//   single-thread version that just flips cudaSetDevice between phases only dodges this by
-//   never letting an object outlive its phase; it does not model the system.
-//
-//   The correct model is a PERSISTENT thread pinned to each GPU that owns that device's
-//   objects for their WHOLE lifetime (alloc -> compute -> free). That is what Dask-cuDF and
-//   every real multi-GPU cuDF deployment do. Each GpuWorker below calls cudaSetDevice(g) once
-//   at startup and then services a task queue; ALL of device g's cuDF and cuVS work — and the
-//   destruction of its objects — happens on that one thread.
+//   makes RMM free device-0 memory under device 1 -> corruption / CUDA error. So each
+//   GpuWorker is a PERSISTENT thread that calls cudaSetDevice(g) once at startup and then
+//   services a task queue; ALL of device g's cuDF and cuVS work — and the destruction of its
+//   objects — happens on that one thread. That is what Dask-cuDF and every real multi-GPU
+//   cuDF deployment do; a single-thread version flipping cudaSetDevice between phases only
+//   dodges the problem by never letting an object outlive its phase.
 //
 //   cuVS is softer (every call takes a raft::resources bound to the current device) but the
-//   same discipline applies, so it rides the same workers. cuVS also ships a native
-//   single-node-multi-GPU path (cuvs::neighbors::mg, NCCL under the hood) — deliberately NOT
+//   same discipline applies, so it rides the same workers. cuVS's native
+//   single-node-multi-GPU path (cuvs::neighbors::mg, NCCL under the hood) is deliberately NOT
 //   used here: it would hide the very cross-GPU exchange this test exists to make visible.
 //
 // THE PIPELINE — a SYMMETRIC EXCHANGE (each worker g runs the identical steps on its device):
@@ -31,8 +27,8 @@
 //   2. EXCHANGE (both directions, each copy issued from the DESTINATION worker):
 //        worker0: cudaMemcpyPeerAsync  B (device 1) --NVLink--> M_remote on device 0
 //        worker1: cudaMemcpyPeerAsync  A (device 0) --NVLink--> M_remote on device 1
-//      Each M_local stays alive on its owner (it is ALSO consumed locally in step 3), so it is
-//      only ever read across the link, never destroyed off-thread.
+//      Each M_local stays alive on its owner (step 3 also consumes it locally), so it is only
+//      ever read across the link, never destroyed off-thread.
 //   3. [cuDF] concatenate into the SAME canonical order [A ; B] on BOTH devices —
 //             device 0 does concat(local=A, remote=B); device 1 does concat(remote=A, local=B)
 //             -> both yield the identical [A;B]. checksum = cuDF sum-reduce of M_full.
@@ -41,10 +37,10 @@
 //   5. Join. Assert checksum(device 0) == checksum(device 1).
 //
 //   WHY THIS CATCHES REAL BUGS: each device's final set depends on data that ORIGINATED ON THE
-//   OTHER device (device 0's full set = A_local + B_received; device 1's = A_received +
-//   B_local), so neither GPU is a passive sink and BOTH copy directions are exercised. The
-//   cross-device checksum equality requires BOTH receptions to be faithful; the per-device
-//   cuVS identity check catches gross garbling of the combined set.
+//   OTHER device (device 0's = A_local + B_received; device 1's = A_received + B_local), so
+//   neither GPU is a passive sink and BOTH copy directions are exercised. The cross-device
+//   checksum equality requires BOTH receptions to be faithful; the per-device cuVS identity
+//   check catches gross garbling of the combined set.
 //
 // LINKING cuVS — READ THIS BEFORE DEBUGGING A LOAD FAILURE (same note as test_tpchv.cpp):
 // libcuvs.so cannot be loaded on its own here. rmm is header-only (no librmm.so), so rmm
@@ -52,9 +48,9 @@
 // REFERENCES it. Loading cuVS alone fails with "undefined symbol: _ZN3rmm6loggerD1Ev"; loading
 // libcudf first and cuVS second works. This binary links both, so link order resolves it.
 //
-// NOT WIRED INTO CI: running this needs two visible GPUs. It is built for compile coverage but
-// left out of the CI test set (no add_test, not installed) until CI grows multi-GPU runner
-// support (a later task). Run it by hand on a >=2-GPU host; it GTEST_SKIPs itself otherwise.
+// NOT WIRED INTO CI: needs two visible GPUs. Built for compile coverage but left out of the CI
+// test set (no add_test, not installed) until CI grows multi-GPU runner support. Run it by hand
+// on a >=2-GPU host; it GTEST_SKIPs itself otherwise.
 
 #include <cudf/aggregation.hpp>
 #include <cudf/binaryop.hpp>
@@ -94,9 +90,7 @@
 
 namespace {
 
-// GpuWorker and the throwing CUDA check now come from the shared test library (multi_gpu.hpp),
-// so this synthetic PoC no longer carries its own copy. MG_CUDA_TRY is that library's macro.
-using peacock_mgpu::GpuWorker;
+using peacock_mgpu::GpuWorker;  // GpuWorker + MG_CUDA_TRY come from multi_gpu.hpp
 
 constexpr int   kHalf   = 2500;   // points per partition (before filtering) -> 5000 total
 constexpr int   kDim    = 16;     // dimensionality of each point
@@ -112,10 +106,9 @@ double checksum(cudf::column_view const& col, rmm::cuda_stream_view stream) {
 }
 
 // Brute-force self-kNN (queries == dataset, k = 1) over a resident row-major [rows x dim]
-// float matrix on the current device; return how many points' nearest neighbour is NOT
-// themselves and the largest self-distance seen. A correct run over distinct points yields
-// {0, ~0} — the nearest neighbour of a point in its own dataset is itself at distance 0. All
-// cuVS/raft objects here are created and destroyed on the calling worker thread.
+// float matrix on the current device. A correct run over distinct points yields {0, ~0} — a
+// point's nearest neighbour in its own dataset is itself at distance 0. All cuVS/raft objects
+// here are created AND destroyed on the calling worker thread.
 struct KnnCheck {
   int64_t violations;     // points whose NN(i) != i
   float   max_self_dist;  // largest returned nearest distance
