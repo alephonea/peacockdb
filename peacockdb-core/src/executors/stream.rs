@@ -28,7 +28,7 @@ use super::executor::NodeMemoryStats;
 use crate::cpu_executor::{assert_type_accountable, batch_allocated_size, ColAccum};
 
 // ---------------------------------------------------------------------------
-// Resident-memory enforcement (Part 2): strict "GPU" memory budget, mid-run.
+// Resident-memory enforcement: strict "GPU" memory budget, mid-run.
 // ---------------------------------------------------------------------------
 
 /// Tracks the modeled concurrently-resident data set during node-by-node
@@ -206,7 +206,7 @@ pub(crate) struct InstrumentedStream {
     row_count: usize,
     max_batch_rows: usize,
     collector: Arc<Mutex<Vec<(usize, NodeMemoryStats)>>>,
-    /// Resident-budget enforcer (Part 2). `None` = no enforcement.
+    /// Resident-budget enforcer. `None` = no enforcement.
     enforcer: Option<Arc<ResidentEnforcer>>,
     done: bool,
 }

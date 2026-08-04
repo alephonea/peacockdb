@@ -116,13 +116,10 @@ pub fn registry_csv_path() -> std::path::PathBuf {
 /// condition to tolerate.
 pub fn load_csv() -> Vec<CsvRow> {
     let path = registry_csv_path();
-    // Name the PROVISIONING requirement, not just the io error. A bare
-    // "No such file or directory" on a remote host reads as "the registry check is
-    // broken" when it actually means "this host was not given the fixture" — that
-    // misdiagnosis has now cost four debug cycles across three provisioning paths
-    // (verda goldens, the shad-gpu runner, and CI's own gpu-tests rsync step). Each
-    // path still names its files by hand, so this message exists to point the next
-    // person straight at the path that needs updating.
+    // Name the PROVISIONING requirement, not just the io error: a bare "No such
+    // file or directory" on a remote host reads as "the registry check is broken"
+    // when it actually means "this host was not given the fixture". Provisioning
+    // paths name their shipped files by hand, so point straight at them.
     let text = std::fs::read_to_string(&path).unwrap_or_else(|e| {
         panic!(
             "cannot read the cost-registry fixture: {e}\n\
@@ -175,15 +172,31 @@ pub fn load_csv() -> Vec<CsvRow> {
         // from the `plan` COLUMN, which records whether a query_plan_test exists.
         // A query can have no plan test and still plan fine, and the widget needs
         // the distinction to decide whether a row renders "plan ✓" or "plan ✗".
-        let plan_status = f[9];
+        // Indices derive from COLUMNS so adding a mode column can't silently shift
+        // plan_status/features/tickets into the wrong field.
+        let plan_status = f[3 + COLUMNS.len()];
         assert!(
             matches!(plan_status, "ok" | "fail"),
             "{}:{}: plan_status must be ok|fail, got {plan_status:?}",
             path.display(),
             i + 2
         );
+        // A query that cannot be physically planned cannot execute in any mode, and
+        // cannot have a passing plan test. Both hold today; asserting keeps a future
+        // edit from producing a row the widget would render incoherently.
+        if plan_status == "fail" {
+            for (col, s) in &states {
+                assert!(
+                    matches!(s.as_str(), "disabled" | "na"),
+                    "{}:{}: plan_status=fail but {col}={s} (a query that fails to plan \
+                     cannot execute)",
+                    path.display(),
+                    i + 2
+                );
+            }
+        }
         let features: Vec<String> =
-            f[10].split_whitespace().map(str::to_string).collect();
+            f[4 + COLUMNS.len()].split_whitespace().map(str::to_string).collect();
         for feat in &features {
             assert!(
                 FEATURE_CODES.contains(&feat.as_str()),
@@ -192,7 +205,7 @@ pub fn load_csv() -> Vec<CsvRow> {
                 i + 2
             );
         }
-        let tickets: Vec<String> = f[11].split_whitespace().map(str::to_string).collect();
+        let tickets: Vec<String> = f[5 + COLUMNS.len()].split_whitespace().map(str::to_string).collect();
         for t in &tickets {
             assert!(
                 t.chars().all(|c| c.is_ascii_digit()),

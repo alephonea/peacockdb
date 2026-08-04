@@ -6,10 +6,6 @@
 //! by what the operators themselves hold plus a few in-flight batches. It also
 //! coalesces to a single partition regardless of `target_partitions`, and owns the
 //! resident-OOM hook the OOM tests exercise.
-//!
-//! The four entry points were free functions named `execute_full_table*`, which
-//! collided with the canonical driver [`super::node_by_node::execute_full_table`].
-//! They are now methods here, so that name has exactly one meaning in the crate.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -203,8 +199,8 @@ fn build_stream(
     // InterleaveExec requires Hash-partitioned children and rejects the
     // StreamSourceExec stubs (UnknownPartitioning(1)); for that one node UnionExec
     // is a semantically-equivalent single-stream substitute. Any *other*
-    // with_new_children failure is a real error and must propagate (master used
-    // `?` here — don't blanket-swallow it).
+    // with_new_children failure is a real error and must propagate — don't
+    // blanket-swallow it.
     let node = match cpu_node.clone().with_new_children(stream_children.clone()) {
         Ok(n) => n,
         Err(_) if cpu_node.as_any().is::<InterleaveExec>() => {
@@ -214,7 +210,8 @@ fn build_stream(
     };
     // Assign this node's post-order sequence *after* its children were built
     // (they incremented the counter first), so children always sort before their
-    // parent regardless of stream-completion/Drop timing (see I2 / LIMIT case).
+    // parent regardless of stream-completion/Drop timing (see the LIMIT note in
+    // `execute_full_table_enforced`).
     let seq = seq_counter.fetch_add(1, Ordering::Relaxed);
     // Register this node's accounting skeleton (seq -> name + child seqs) BEFORE it
     // can complete, so the enforcer can recompute the path-sum peak as nodes finish.

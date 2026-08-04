@@ -1,45 +1,25 @@
-// test_multi_gpu_tpchv.cpp — the SAME TPC-H+V vector queries as test_tpchv.cpp (q9v/q10v/q11v/
-// q12v), but with the cuVS brute-force SEARCH SHARDED across all visible GPUs, checked against
-// the SAME committed DuckDB goldens BYTE-FOR-BYTE (via tpch_golden.hpp). Milestone 3.
+// The same TPC-H+V vector queries as test_tpchv.cpp, with the cuVS brute-force SEARCH
+// sharded across all visible GPUs, checked against the same committed DuckDB goldens.
 //
-// THE PARALLEL WIN IS THE SEARCH. Each vector query restricts a table (partsupp.ps_image_embedding
-// for q11v, part.p_text_embedding for q12v/q10v/q9v) to the rows within distance D of a probe.
-// That distance scan over millions of embeddings is the expensive, embarrassingly parallel part;
-// the relational joins/group-by wrapped around the O(1e5) hit list are small. So we SHARD the
-// embedding table across the GPUs on WHOLE parquet row-group boundaries (exactly as the fact
-// tables are partitioned in M1/M2), build a cuVS brute_force index over each shard, search every
-// shard for the probe's top-K, and MERGE the shards to the EXACT global result. The relational
-// tail then runs on GPU0 and is verbatim the single-GPU plan from test_tpchv.cpp.
+// The search is the parallel win: the distance scan over millions of embeddings is
+// embarrassingly parallel; the relational tail around the O(1e5) hit list is small.
+// The embedding table is sharded on whole parquet row-group boundaries, one cuVS index
+// per shard.
 //
-// WHY SHARDING IS EXACT (the correctness crux):
-//   A globally-top-K point is necessarily top-K within its OWN shard, so the union of the
-//   per-shard top-K lists CONTAINS the true global top-K. Request K from every shard, gather the
-//   G*K (global_key, distance) candidates, sort by distance, take the global top-K — exact. The
-//   SATURATION GUARD generalizes to the GLOBAL K-th distance: if it is < D, more than K rows
-//   globally fall under D and the range answer is truncated -> FAIL loudly (EXPECT_GE), same
-//   spirit as the single-GPU guard. Then range-filter distance < D -> the global hit keys, exactly
-//   the set the single-GPU vector_range_hits returns. Because the shards are contiguous row-group
-//   spans in natural parquet order, a shard-local row index i maps to the GLOBAL row index
-//   row_offset[g] + i — the very row index the single-GPU search returns — so the relational tail
-//   (which gathers a key column at those indices on GPU0) is unchanged.
+// Why sharding is EXACT: a globally-top-K point is top-K within its own shard, so the
+// union of per-shard top-K lists contains the true global top-K; merge and range-filter
+// by D. The saturation guard generalizes globally (see sharded_range_hits). Shards are
+// contiguous row-group spans in natural parquet order, so shard-local index i maps to
+// global index row_offset[g] + i — the same row index the single-GPU search returns,
+// leaving the relational tail unchanged.
 //
-// WHY THE int32 LIST-CHILD CEILING MOTIVATES THIS: a cuDF LIST column's child is capped at 2^31
-// elements, so partsupp.ps_image_embedding (32M x 96 = 3.07e9) EXCEEDS it single-GPU and must be
-// chunk-loaded (see test_tpchv.cpp). Sharding by row groups keeps each shard's child under the
-// cap (at G=2, 16M x 96 = 1.5e9 fits in one read); the shard loader still batches WITHIN a span
-// so the G=1 baseline (whole table on one GPU) stays correct too.
+// Sharding also sidesteps the int32 list-child ceiling: each shard's child stays under
+// the cap (the loader still batches within a span so the G=1 baseline works too).
 //
-// MANUAL sharding — NOT cuvs::neighbors::mg (SNMG): the cross-GPU movement stays explicit and
-// consistent with the rest of the suite (WorkerPool, gather_here, hash_shuffle); mg would hide it.
-// cuVS/raft allocate from the per-device RMM POOL (the current-device resource on each worker IS
-// the pool); the q11v test asserts this empirically (free VRAM unchanged across a search).
-//
-// LINKING cuVS — see the note in test_tpchv.cpp: libcuvs references rmm symbols defined in
-// libcudf, so cudf must link before cuvs (the CMake target orders them).
-//
-// SHARED PROCESS-WIDE WorkerPool: one WorkerPool for the whole binary, owned by MultiGpuEnvironment
-// (now in multi_gpu.hpp, shared with test_multi_gpu_tpch.cpp). PEACOCK_BENCHMARK times the execute
-// (the sharded search + host merge + relational tail), all-device-synced, 2nd-min of 6.
+// MANUAL sharding, not cuvs::neighbors::mg (SNMG): cross-GPU movement stays explicit and
+// consistent with the rest of the suite. cuVS/raft allocate from the per-device RMM pool;
+// the q11v test asserts this empirically. cuVS linking: see test_tpchv.cpp (cudf must
+// link before cuvs). One process-wide WorkerPool, owned by MultiGpuEnvironment.
 
 #include <cudf/aggregation.hpp>
 #include <cudf/binaryop.hpp>
@@ -101,10 +81,8 @@ using namespace peacock_mgpu;   // WorkerPool, shared_pool, partition_row_groups
 
 namespace {
 
-// ===========================================================================
-// Probe loading — identical to test_tpchv.cpp: one (q, D, k) probe resolved from the COMMITTED
-// query_params.jsonl, never hardcoded, so the golden and the GPU side cannot drift apart.
-// ===========================================================================
+// Probe loading — identical to test_tpchv.cpp: probes come from the committed
+// query_params.jsonl, never hardcoded, so golden and GPU side cannot drift.
 struct VecProbe {
   std::string id;
   int k = 0;
@@ -150,24 +128,16 @@ std::string vec_params_path() {
                 "/home/info/peacock-datasets/testdata/tpch-vec-queries/query_params.jsonl");
 }
 
-// K for the top-K-then-filter search — requested from EACH shard. Overridable ONLY so the
-// saturation guard can be exercised (a guard that never fires is not a guard): PEACOCK_TPCHV_K=64
-// makes the per-shard top-K too small to cover the rows under D and must fail loudly. Default is
-// the real value used single-GPU, sized from the measured sf40 counts with generous headroom.
+// K for top-K-then-filter, requested from EACH shard. Overridable (PEACOCK_TPCHV_K=64)
+// only so the saturation guard can be exercised; default matches single-GPU.
 int64_t search_k() {
   return std::strtoll(env_or("PEACOCK_TPCHV_K", "131072").c_str(), nullptr, 10);
 }
 
-// ===========================================================================
-// STAGE PROFILER (measurement only; env-gated by PEACOCK_PROFILE) — a per-stage ms breakdown +
-// per-stage row counts for the EXECUTE path, to settle where the serial GPU0 remainder goes.
-// When `on` is false EVERY method is a no-op, so the committed correctness/benchmark path is
-// byte-for-byte unchanged (the ticks are threaded through execute but cost nothing off-profile).
-// Isolating a stage requires an all-device sync at its boundary; those syncs SERIALIZE work that
-// may otherwise overlap, so the summed breakdown is an UPPER bound and differs from the clean
-// benchmark total — the report prints the sum and the caller compares it to the 2nd-min benchmark.
-// tick() accumulates one ms sample per stage per iteration; report() takes the 2nd-min per stage.
-// ===========================================================================
+// Stage profiler, env-gated by PEACOCK_PROFILE; every method is a no-op when off, so the
+// correctness/benchmark path is unchanged. Stage boundaries need all-device syncs, which
+// serialize otherwise-overlapping work — the summed breakdown is an UPPER bound on the
+// clean benchmark total. report() takes the 2nd-min per stage.
 inline bool profile_enabled() {
   const char* v = std::getenv("PEACOCK_PROFILE");
   return v && *v && std::string(v) != "0";
@@ -228,14 +198,10 @@ struct StageProfiler {
   }
 };
 
-// ===========================================================================
-// SHARD EMBEDDING LOADER — read ONLY a row-group span's embedding column into a resident
-// row-major float matrix on the CURRENT device. Batches WITHIN the span so no single read's list
-// child exceeds the int32 ceiling (the G=1 baseline reads the whole over-ceiling column and must
-// still chunk; at G>=2 each span fits in one read). Exact shard row count comes from summing the
-// batches — parquet does not expose per-row-group counts, so the buffer is assembled, not
-// presized from metadata.
-// ===========================================================================
+// Shard embedding loader — reads one row-group span's embedding column into a resident
+// row-major float matrix on the CURRENT device. Batches within the span so no read's list
+// child exceeds the int32 ceiling (matters for the G=1 baseline). The buffer is assembled
+// from the batches, not presized — parquet does not expose per-row-group counts.
 struct EmbShard {
   rmm::device_uvector<float> buf;  // rows*dim, row-major, on the current device
   int64_t rows;
@@ -255,8 +221,7 @@ EmbShard load_embedding_shard(const std::string& path, const std::string& col, i
   const int64_t max_rows_per_batch = (kListChildCeiling / dim) / 2;
   const int64_t avg_rg_rows = (n_rows_file + n_rg - 1) / std::max(1, n_rg);
 
-  // Read the span's row groups in cap-bounded batches; keep each batch's contiguous child data in
-  // its own device buffer, then assemble once the exact total is known.
+  // read in cap-bounded batches; assemble once the exact total is known
   std::vector<rmm::device_uvector<float>> pieces;
   int64_t total = 0;
   int batches = 0;
@@ -302,9 +267,8 @@ EmbShard load_embedding_shard(const std::string& path, const std::string& col, i
   return m;
 }
 
-// build a cuVS L2Sqrt brute-force index over a resident row-major float matrix — L2SqrtExpanded
-// returns TRUE L2 (DuckDB's array_distance), so D is used as-is with no conversion. Identical to
-// test_tpchv.cpp's build_bf_index.
+// L2SqrtExpanded returns true L2 (DuckDB's array_distance), so D is used as-is.
+// Identical to test_tpchv.cpp's build_bf_index.
 inline auto build_bf_index(raft::resources& handle, const float* data, int64_t rows, int dim) {
   auto dataset = raft::make_device_matrix_view<const float, int64_t>(data, rows, dim);
   cuvs::neighbors::brute_force::index_params ip;
@@ -312,34 +276,27 @@ inline auto build_bf_index(raft::resources& handle, const float* data, int64_t r
   return cuvs::neighbors::brute_force::build(handle, ip, dataset);
 }
 
-// ===========================================================================
-// SHARDED SEARCH — one cuVS brute_force index per GPU over that GPU's embedding shard.
-//
-// A ShardSearcher type-erases the per-GPU raft handle, the shard matrix, and the cuVS index (all
-// device objects that MUST live and die on their owning worker thread) behind two closures:
-//   search(probe, K, host_idx, host_dist) — runs the top-K search on the shard (called ON the
-//     worker), returns the SHARD-LOCAL neighbour indices and their distances to the host.
-//   The captured shared_ptrs keep the device objects alive; clearing `search` on the worker
-//     thread at teardown drops the last reference there (never on the main thread / device 0).
-// ===========================================================================
+// ShardSearcher type-erases the per-GPU raft handle, shard matrix and cuVS index — device
+// objects that MUST live and die on their owning worker thread — behind the `search`
+// closure. The captured shared_ptrs keep them alive; clearing `search` on the worker at
+// teardown drops the last reference there, never on the main thread.
 struct ShardSearcher {
   int64_t rows = 0;           // rows in this shard (0 => empty span, skipped)
   int64_t global_offset = 0;  // number of rows in all earlier shards (natural parquet order)
   std::function<void(VecProbe const&, int64_t, std::vector<int64_t>&, std::vector<float>&)> search;
 };
 
-// Bytes of free VRAM on the current device — used to prove cuVS drew from the pool (a from-pool
-// allocation does not change free VRAM, since the pool reserved it up front; a stray cudaMalloc
-// outside the pool would drop it).
+// Free VRAM on the current device — a from-pool allocation does not change it (the pool
+// reserved up front); a stray cudaMalloc outside the pool would drop it.
 inline size_t free_vram() {
   size_t f = 0, t = 0;
   cudaMemGetInfo(&f, &t);
   return f;
 }
 
-// Build one shard index per worker; return the searchers (with global offsets filled in) and the
-// max per-worker index-build time. Also asserts the shards reassemble to `expect_rows` and that
-// each non-empty shard has >= K rows (cuVS requires K <= shard size; true by miles at sf40/G<=8).
+// Build one shard index per worker; return searchers (global offsets filled) and the max
+// per-worker build time. Asserts shards reassemble to `expect_rows` and each non-empty
+// shard has >= K rows (cuVS requires K <= shard size).
 std::vector<ShardSearcher> build_sharded_index(WorkerPool& pool, const std::string& path,
                                                const std::string& col, int dim, int64_t K,
                                                int64_t expect_rows, double& index_ms_out,
@@ -427,10 +384,9 @@ void release_searchers(WorkerPool& pool, std::vector<ShardSearcher>& sh) {
   for (auto& f : fs) f.get();
 }
 
-// THE SHARDED SEARCH OPERATOR (timed, inside execute): search every shard for K, merge the G*K
-// candidates on the host to the EXACT global result, and range-filter by D. Returns the global
-// row indices (into the table's natural parquet order) of the rows under D — the same set the
-// single-GPU vector_range_hits returns. The GLOBAL saturation guard is load-bearing.
+// The sharded search operator (timed, inside execute): search every shard for K, merge on
+// the host, range-filter by D. Returns global row indices (natural parquet order) — the
+// same set single-GPU vector_range_hits returns.
 std::vector<int32_t> sharded_range_hits(WorkerPool& pool, std::vector<ShardSearcher>& sh,
                                         VecProbe const& probe, int64_t K, const char* tag,
                                         StageProfiler* prof = nullptr) {
@@ -446,18 +402,12 @@ std::vector<int32_t> sharded_range_hits(WorkerPool& pool, std::vector<ShardSearc
   for (auto& f : fs) f.get();
   if (prof) prof->tick("1_search");  // per-shard cuVS distance scan (parallel; wall = max worker)
 
-  // MERGE — O(actual hits), not O(G*K) (Lever A). Each shard returned its K closest neighbours;
-  // collect only those under D from every shard's list. No global nth_element, no G*K candidate
-  // vector: the host work is O(#hits), and the merge no longer grows with G.
-  //
-  // SATURATION GUARD, by COUNT — Σ_g c_g must be < K, where c_g = #{d < D within shard g's top-K}
-  // (and Σ_g c_g == hits.size(), since every under-D neighbour is counted once). This is EXACTLY
-  // the old "global K-th distance >= D" guard: global K-th >= D  <=>  fewer than K points are < D
-  // globally  <=>  Σ c_g < K. If a shard SATURATED (all K of its returned neighbours are < D) it
-  // alone contributes K, so hits.size() >= K and we FAIL — correct, because such a shard may hide
-  // under-D points beyond its K. If hits.size() < K, every shard has c_g < K, so each shard's
-  // top-K captured ALL its under-D points and the union is the EXACT global set. K stays at its
-  // default (PEACOCK_TPCHV_K); the count is the backstop — no correctness margin traded.
+  // Merge is O(#hits), not O(G*K): collect only the under-D entries from each shard's
+  // top-K list.
+  // Saturation guard by COUNT: hits.size() < K  <=>  global K-th distance >= D  <=>  every
+  // shard's top-K captured ALL its under-D points, so the union is the exact global set.
+  // If any shard saturated it alone contributes K hits and the guard fails — correct,
+  // since that shard may hide under-D points beyond its K.
   std::vector<int32_t> hits;
   for (int g = 0; g < G; ++g)
     for (size_t i = 0; i < idx[g].size(); ++i)
@@ -478,8 +428,7 @@ std::vector<int32_t> sharded_range_hits(WorkerPool& pool, std::vector<ShardSearc
   return hits;
 }
 
-// COUNT CORROBORATION — verify path only (reads a golden, kept out of the timed region). Same as
-// single-GPU: pins the row SET the distance predicate selects against DuckDB's own count.
+// Count corroboration — verify path only (reads a golden, kept out of the timed region).
 inline void expect_hit_count(size_t got, const std::string& count_golden, const char* tag,
                              const std::string& id) {
   EXPECT_TRUE(file_exists(count_golden)) << "missing " << count_golden;
@@ -510,8 +459,7 @@ DeviceHits to_device_hits(std::vector<int32_t> const& hits) {
   return d;
 }
 
-// read a set of columns from one parquet file on the CURRENT device (GPU0, for the relational
-// tail) — no predicate, no row selection. Same as test_tpchv.cpp's read_cols.
+// read columns from one parquet file on the CURRENT device — no predicate, no row selection
 cudf::io::table_with_metadata read_cols(const std::string& path, std::vector<std::string> cols) {
   auto o = cudf::io::parquet_reader_options::builder(
                cudf::io::source_info{std::vector<std::string>{path}})
@@ -530,39 +478,25 @@ cudf::timestamp_scalar<cudf::timestamp_D> date_scalar(int y, unsigned mo, unsign
       cudf::timestamp_D{cudf::duration_D{days_since_epoch(y, mo, d)}}, true);
 }
 
-// stream-taking variant, for the worker-side `project` closures (off GPU0 every cudf op needs a
-// device-local stream).
+// stream-taking variant — off GPU0 every cudf op needs a device-local stream
 cudf::timestamp_scalar<cudf::timestamp_D> date_scalar(int y, unsigned mo, unsigned d,
                                                       rmm::cuda_stream_view s) {
   return cudf::timestamp_scalar<cudf::timestamp_D>(
       cudf::timestamp_D{cudf::duration_D{days_since_epoch(y, mo, d)}}, true, s);
 }
 
-// ===========================================================================
-// PARALLEL LINEITEM TAIL — the M4 step that scales the RELATIONAL tail.
-//
-// The sharded search yields a small hit-key set (~1e5 part/partsupp keys under D, resident on
-// GPU0). This BROADCASTS that key column to every GPU (pack once on GPU0, peer-copy via
-// gather_here — keeps the column's native type, so the semi-join key types match; a host int32
-// round-trip silently mistyped int64 keys), PARTITIONS the 240M-row lineitem across the GPUs
-// (whole row groups, as M1/M2 do; the shards are loaded resident once in the LOAD phase), and on
-// each GPU runs `project` — the query's lineitem-LOCAL predicates + a SEMI-JOIN against the
-// broadcast keys + the projection the downstream tail needs. `project` gets (shard_view,
-// hit_keys_column_on_this_device, stream) and must thread the stream through every cudf op
-// (device-local stream required off GPU0). Because the hit-key semi-join is highly selective
-// (~1e5 keys vs 240M rows), each shard's survivors are small, so they are gathered to GPU0
-// (gather_here + concatenate) and the query's remaining dim joins + group-by finish there on the
-// full survivor set — EXACT, no partial-aggregate merge and no dim-table broadcast redundancy
-// needed. That makes the parallelized part the expensive 240M lineitem scan/filter/semi-join; the
-// small tail after it stays on GPU0 (a residual, reported).
-// ===========================================================================
-// GENERAL FORM (Lever B): broadcast a small intermediate to every GPU, run `join_fn` against each
-// GPU's row-group shard of a big table, gather the small results back to GPU0. `bcast` is the small
-// side resident on GPU0 (the hit keys for lineitem; the ~1e5-row survivor set for the dim joins);
-// `shards` is the big table partitioned by disjoint row-group spans. Correctness for the dim joins:
-// the join key (part/partsupp/orders key) is UNIQUE and the spans are disjoint, so each probe key
-// matches at most one row on exactly one shard — gathering matches across shards is the full join,
-// no double-count. `scan_label`/`gather_label` name the profiler stages (each call site distinct).
+// broadcast_join_gather: broadcast a small intermediate (resident on GPU0) to every GPU,
+// run `join_fn` against each GPU's row-group shard of a big table, gather the small
+// results back to GPU0 and concatenate.
+// - The broadcast packs once on GPU0 and peer-copies via gather_here, keeping the
+//   column's NATIVE type so semi-join key types match (a host int32 round-trip once
+//   silently mistyped int64 keys).
+// - `join_fn` must thread the device-local stream through every cudf op (required off
+//   GPU0).
+// - Correctness for unique-key joins: the key is unique and the spans disjoint, so each
+//   probe key matches at most one row on exactly one shard — gathering matches across
+//   shards is the full join, no double-count.
+// `scan_label`/`gather_label` name the profiler stages.
 std::unique_ptr<cudf::table> broadcast_join_gather(
     WorkerPool& pool, std::vector<cudf::io::table_with_metadata>& shards, cudf::table_view bcast,
     std::function<std::unique_ptr<cudf::table>(cudf::table_view, cudf::table_view,
@@ -570,8 +504,6 @@ std::unique_ptr<cudf::table> broadcast_join_gather(
     StageProfiler* prof = nullptr, const char* scan_label = nullptr,
     const char* gather_label = nullptr) {
   const int G = pool.size();
-  // Broadcast the small side: pack once on GPU0, each worker peer-copies it in (gather_here,
-  // native dtypes preserved).
   auto packed_bcast = cudf::pack(bcast, cudf::get_default_stream());
   cudf::get_default_stream().synchronize();
   const PackedPartial bcast_handle = describe_packed(0, packed_bcast);
@@ -621,8 +553,8 @@ std::unique_ptr<cudf::table> broadcast_join_gather(
   return out;
 }
 
-// Load a table's row-group shards resident on each worker (once, in the LOAD phase), so the
-// per-probe execute only does compute over them — same discipline as M1/M2.
+// Load a table's row-group shards resident on each worker once, in the LOAD phase, so the
+// per-probe execute only does compute over them.
 std::vector<cudf::io::table_with_metadata> load_table_shards(
     WorkerPool& pool, std::string const& path, std::vector<std::string> const& cols) {
   const int G = pool.size();
@@ -663,8 +595,8 @@ TEST_F(TpchSf40, Q11VectorBruteForceMultiGpu) {
   const auto dec128_s4 = cudf::data_type{cudf::type_id::DECIMAL128, -4};
 
   // ---------------- LOAD ----------------
-  // Relational (scalar) columns on GPU0; the embedding is SHARDED across all GPUs + per-shard
-  // cuVS index built (the setup phase, timed separately).
+  // Scalar columns on GPU0; embedding sharded across all GPUs + per-shard index (setup,
+  // timed separately).
   const auto ps_path = data_dir() + "/partsupp.parquet";
   auto ps_in  = read_cols(ps_path, {"ps_partkey", "ps_suppkey", "ps_availqty", "ps_supplycost"});
   auto sup_in = read_cols(data_dir() + "/supplier.parquet", {"s_suppkey", "s_nationkey"});
@@ -771,8 +703,8 @@ TEST_F(TpchSf40, Q11VectorBruteForceMultiGpu) {
     }
   }
 
-  // POOL-DRAW PROOF (q11v only): a search must not reduce free VRAM on any worker — that would
-  // mean cuVS allocated OUTSIDE the per-device pool (which reserved its memory at ctor).
+  // Pool-draw proof (q11v only): a search must not change free VRAM on any worker — a
+  // change would mean cuVS allocated outside the per-device pool.
   for (int g = 0; g < G; ++g) {
     if (searchers[g].rows == 0) continue;
     auto delta = pool[g]
@@ -818,8 +750,8 @@ TEST_F(TpchSf40, Q12VectorShipModeCountsMultiGpu) {
   const auto int32   = cudf::data_type{cudf::type_id::INT32};
 
   // ---------------- LOAD ----------------
-  // part-key on GPU0; embedding SHARDED for the search; lineitem AND orders PARTITIONED across the
-  // GPUs (M4 lineitem + M5 Lever B orders — the 60M orders join was 63% of q12v's serial remainder).
+  // part-key on GPU0; embedding sharded for the search; lineitem AND orders partitioned
+  // across the GPUs (the 60M orders join dominated the serial remainder).
   auto ord_shards = load_table_shards(pool, data_dir() + "/orders.parquet",
                                       {"o_orderkey", "o_orderpriority"});
   const auto part_path = data_dir() + "/part.parquet";
@@ -836,9 +768,9 @@ TEST_F(TpchSf40, Q12VectorShipModeCountsMultiGpu) {
 
   auto pk = part_in.tbl->view().column(0);
 
-  // Worker-side project: filter the lineitem shard (shipmode + 3 date predicates) and SEMI-JOIN it
-  // against the broadcast part-hit keys, projecting (l_orderkey, l_shipmode). Every cudf op takes
-  // the device-local stream. Shard cols: 0 orderkey,1 partkey,2 shipmode,3 commit,4 receipt,5 ship.
+  // Worker-side project: filter the lineitem shard (shipmode + 3 date predicates), then
+  // semi-join the broadcast part-hit keys, projecting (l_orderkey, l_shipmode).
+  // Shard cols: 0 orderkey,1 partkey,2 shipmode,3 commit,4 receipt,5 ship.
   auto project = [](cudf::table_view lv, cudf::table_view hkt,
                     rmm::cuda_stream_view s) -> std::unique_ptr<cudf::table> {
     auto hk = hkt.column(0);  // broadcast single-column hit-key table
@@ -876,8 +808,8 @@ TEST_F(TpchSf40, Q12VectorShipModeCountsMultiGpu) {
         map_view(l_map), cudf::out_of_bounds_policy::DONT_CHECK, s);  // (l_orderkey, l_shipmode)
   };
 
-  // Lever B join_fn: each GPU joins its ORDERS shard against the broadcast lineitem survivors on
-  // o_orderkey (unique -> 1 match per survivor, on one shard), producing (l_shipmode, o_orderpriority).
+  // Each GPU joins its orders shard against the broadcast lineitem survivors on
+  // o_orderkey (unique -> 1 match on one shard), producing (l_shipmode, o_orderpriority).
   auto orders_join = [](cudf::table_view ordv /*o_orderkey,o_orderpriority*/,
                         cudf::table_view lpv /*l_orderkey,l_shipmode*/,
                         rmm::cuda_stream_view s) -> std::unique_ptr<cudf::table> {
@@ -899,8 +831,7 @@ TEST_F(TpchSf40, Q12VectorShipModeCountsMultiGpu) {
   StageProfiler prof;  // no-op unless PEACOCK_PROFILE; ticks below cost nothing off-profile
   auto execute = [&]() -> std::unique_ptr<cudf::table> {
     prof.begin();
-    // 1) sharded search -> global hit row indices; 2) materialize the hit part KEYS on GPU0 and
-    // copy to host (to broadcast); 3) parallel lineitem filter+semijoin -> gather survivors to GPU0.
+    // sharded search -> hit part keys on GPU0 -> parallel lineitem filter+semijoin
     auto hits = sharded_range_hits(pool, searchers, probe, K, "q12v-mgpu", &prof);
     auto d_hits = to_device_hits(hits);
     auto sel = cudf::gather(cudf::table_view{{pk}}, d_hits.view());  // the hit part keys, on GPU0
@@ -909,8 +840,7 @@ TEST_F(TpchSf40, Q12VectorShipModeCountsMultiGpu) {
     prof.rowcount("survivors_total", static_cast<long>(lp->num_rows()));
     EXPECT_GT(lp->num_rows(), 0) << "vector predicate and filters left no rows to join";
 
-    // 4) Lever B: join the PARTITIONED orders (each GPU joins its shard against the ~47-row survivor
-    // set) -> (l_shipmode, o_orderpriority); replaces the constant 11.2ms GPU0 orders join.
+    // partitioned orders join -> (l_shipmode, o_orderpriority)
     auto mp = broadcast_join_gather(pool, ord_shards, lp->view(), orders_join, &prof, "5_dim_orders",
                                     "5_dim_orders_gather");
     prof.rowcount("after_orders", static_cast<long>(mp->num_rows()));

@@ -18,12 +18,12 @@ use common::{
     BATCH_STRESS_BUDGET,
 };
 
-/// Lock the routing predicate (reviewer regression guard) — the gate is AGG-KIND
-/// (state-mergeability), not the mere presence of a repartition:
+/// Lock the routing predicate — the gate is AGG-KIND (state-mergeability), not the
+/// mere presence of a repartition:
 ///   - q6 (global additive agg, no shuffle)                    → node13-executable
 ///   - shuffle_additive (GROUP BY + Hash shuffle, SUM/COUNT)   → node13-executable
-///   - q1 (GROUP BY + Hash shuffle, AVG state = sum/count)     → node13-executable (Inc4)
-///   - shuffle_stddev (GROUP BY + Hash shuffle, STDDEV)        → node13-executable (Inc5, M2)
+///   - q1 (GROUP BY + Hash shuffle, AVG state = sum/count)     → node13-executable
+///   - shuffle_stddev (GROUP BY + Hash shuffle, STDDEV M2)     → node13-executable
 /// All are evaluated at tp8-standard so they carry a scan map; the ONLY discriminator
 /// is whether every Final-aggregate is state-mergeable. Fails LOUDLY if the predicate
 /// is narrowed to reject a legitimate mergeable shuffle (sum/count/min/max/avg/stddev/var)
@@ -65,26 +65,24 @@ async fn routing_predicate_gates_on_agg_kind() {
     );
 }
 
-/// I-3 (reviewer), INVERTED for Inc5: a STDDEV Final-agg query driven through the #13
-/// CpuNodeExecutor at a real-partitioning device (tp8-standard) now MERGES CORRECTLY —
-/// its Welford [count, mean, m2] state combines across the 8 hash partitions (each group
-/// lands wholly in one bucket, so the per-bucket Final is exact). This asserts the #13
-/// result matches DataFusion (the oracle); it panicked pre-Inc5 (non-mergeable guard),
-/// so passing here proves the boundary moved. STDDEV/VAR is the last additive family;
-/// an UNKNOWN aggregate still stays on #11 (whitelist fail-safe).
+/// A STDDEV Final-agg query driven through the #13 CpuNodeExecutor at a
+/// real-partitioning device (tp8-standard) MERGES CORRECTLY — its Welford
+/// [count, mean, m2] state combines across the 8 hash partitions (each group lands
+/// wholly in one bucket, so the per-bucket Final is exact). Asserts the #13 result
+/// matches DataFusion (the oracle). An UNKNOWN aggregate still stays on #11
+/// (whitelist fail-safe).
 #[tokio::test]
 async fn inc5_stddev_final_agg_at_tp8_node13_matches_datafusion() {
     // Relative tolerance 1e-12 (the q14/q39 convention): the SOLE divergence from the
-    // DataFusion oracle is float summation reassociation of the Welford M2 across the 8
-    // partitions (~1 ULP; observed rel diff ~3e-14). Exact-string compare can't tolerate
-    // it — stddev/var results are inherently approx (unlike Inc4's exact sum/count avg).
-    // gen=FALSE since the quarantine: this WAS the tp8-standard .result.txt generator
-    // for the golden_approx gpu_test! at shuffle_stddev/tp8-standard (Inc5-iii), but
-    // that consumer is commented out pending #103. Generating it now would write an
-    // ORPHAN golden — written, never read — which is precisely the silent failure the
-    // `gen_result_golden` gate exists to prevent (see tests/common/mod.rs, the
-    // "true-when-should-be-false" note). Flip back to true when #103 re-enables the
-    // gpu_test!. The already-committed .result.txt is deliberately left in place.
+    // DataFusion oracle is float summation reassociation of the Welford M2 across the
+    // 8 partitions (~1 ULP; observed rel diff ~3e-14). Exact-string compare can't
+    // tolerate it.
+    // gen=FALSE while quarantined: the golden_approx gpu_test! consumer at
+    // shuffle_stddev/tp8-standard is commented out pending #103, so generating the
+    // .result.txt would write an ORPHAN golden — written, never read — precisely the
+    // silent failure the `gen_result_golden` gate prevents (see tests/common/mod.rs).
+    // Flip back to true when #103 re-enables the gpu_test!. The already-committed
+    // .result.txt is deliberately left in place.
     common::assert_cpu_results_match_datafusion(
         "tpch", "1", "shuffle-stddev", "tp8-standard", Some(1e-12), true, false,
     )

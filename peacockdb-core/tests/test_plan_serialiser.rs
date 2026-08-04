@@ -122,11 +122,11 @@ async fn test_serialize_group_join_sort() {
 }
 
 // ---------------------------------------------------------------------------
-// Focused synthetic round-trips for the join IR variants (I2 / Component-6).
+// Focused synthetic round-trips for the join IR variants.
 //
 // The corpus round-trip harness (test_query_plan*.rs) SILENTLY SKIPS a plan
-// whose serialize/deserialize returns Err — that is exactly how LeftMark went
-// untested for a while. These tests pin each new IR variant independently of
+// whose serialize/deserialize returns Err — that is how LeftMark once went
+// untested. These tests pin each new IR variant independently of
 // which corpus queries happen to be enabled and independent of the skip path:
 //   - a non-vacuous structural assertion that the variant is actually present
 //     (so the test fails loudly if the planner stops emitting it), and
@@ -347,10 +347,10 @@ async fn test_gpu_scan_no_pruning_without_predicate() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// R3 (Phase 2 Inc1): the explicit RG→batch→partition MAP on GpuScan survives
+/// The explicit RG→batch→partition MAP on GpuScan survives
 /// serialize→deserialize→serialize with POPULATED (non-default) values — the
 /// tp1/empty fixtures can't exercise the map field, so pin the populated path here
-/// (in the same increment that adds the field), mirroring the null_equals_null R3.
+/// (mirroring the null_equals_null test).
 #[tokio::test]
 async fn test_gpu_scan_batch_map_roundtrip() {
     use datafusion::physical_plan::ExecutionPlan;

@@ -145,10 +145,8 @@ pub fn as_operator(plan: &dyn ExecutionPlan) -> Option<&dyn Operator> {
 /// The node the recursive CPU driver should actually execute, plus any batch-size
 /// override the wrapper carried.
 ///
-/// Replaces the old `try_strip!` chain. The behavior is UNCHANGED, including its
-/// asymmetry: five operators return `strips_to_inner() == false` and pass through
-/// wrapped. That was implicit in which lines happened to be in the old macro list;
-/// it is now an explicit per-operator answer with the reason written next to it.
+/// The asymmetry is LOAD-BEARING: five operators return `strips_to_inner() == false`
+/// and pass through wrapped — each per-operator impl documents why.
 pub fn strip_target(plan: &Arc<dyn ExecutionPlan>) -> (Arc<dyn ExecutionPlan>, Option<usize>) {
     match as_operator(plan.as_ref()) {
         // The scan is the only wrapper carrying the memory-budget batch size.

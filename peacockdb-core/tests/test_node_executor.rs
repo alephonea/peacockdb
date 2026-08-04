@@ -1,4 +1,4 @@
-//! Phase-1 (Task #13) validation: the unified node-executor walk with the CPU
+//! #13 validation: the unified node-executor walk with the CPU
 //! backend must produce byte-identical per-node stats AND results to the existing
 //! recursive `execute_node_by_node`. Pure rust-only (no GPU toolchain).
 

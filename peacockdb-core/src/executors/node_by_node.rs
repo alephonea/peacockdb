@@ -1,4 +1,4 @@
-//! The backend-agnostic node-by-node driver (Task #13, Phase 1).
+//! The backend-agnostic node-by-node driver.
 //!
 //! One orchestrator drives a physical plan ONE node at a time: each node is
 //! executed given handles to its already-computed child outputs, and returns a
@@ -11,9 +11,8 @@
 //! session walk nodes in the SAME canonical post-order (children left-to-right,
 //! then the node), so child handles line up.
 //!
-//! This is the canonical `execute_node_by_node`. The recursive/streaming CPU family
-//! that once shared this name now lives on
-//! [`super::full_table_cpu_executor::FullTableCpuExecutor`] as methods.
+//! This is the canonical `execute_node_by_node`; the recursive/streaming CPU family
+//! lives on [`super::full_table_cpu_executor::FullTableCpuExecutor`].
 
 use std::sync::Arc;
 
@@ -32,7 +31,7 @@ pub trait NodeExecutor {
     /// child order). Returns this node's output PARTITION handles + its stats
     /// (stats are Σ-over-partitions, matching the CPU oracle's execute_stream
     /// coalesce). Ordinary ops map over partitions (same count out);
-    /// CoalescePartitions concats M→1; the scan emits N per its map (Phase 2).
+    /// CoalescePartitions concats M→1; the scan emits N per its map.
     async fn execute_node(
         &mut self,
         seq: usize,

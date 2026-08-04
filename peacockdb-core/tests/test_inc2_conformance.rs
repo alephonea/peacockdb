@@ -1,4 +1,4 @@
-//! Inc2 GPU↔CPU murmur3 hash-partition conformance (the linchpin gate).
+//! GPU↔CPU murmur3 hash-partition conformance (the linchpin gate).
 //!
 //! The #13 CpuNodeExecutor and the GPU both must assign each row to the SAME
 //! shuffle partition, else the hash-repartition golden (per-node rows + result)
@@ -8,13 +8,12 @@
 //!     (seed=42, per-column left-to-right running-seed, Spark null-skip, UTF-8 bytes),
 //!     then pmod. cuDF ships only STANDARD murmur3 (proven ≠ Spark by the probe), so we
 //!     own the hash kernel (Route B) and reuse cudf::partition for the scatter.
-//! The `gpu_spark_partition_ids_match_comet_live` gate drives the REAL GPU kernel via
-//! the FFI hook and asserts it is bit-exact against the comet CPU twin in one process.
-//!
-//! BOUNDARY (reviewer I-2): the sample below is STRING-KEY-ONLY (q1's char keys).
-//! Non-string shuffle keys are UNPROVEN until this conformance set is extended.
+//! The `*_match_comet_live` gates drive the REAL GPU kernel via the FFI hook and
+//! assert it is bit-exact against the comet CPU twin in one process. Covered key
+//! shapes: string, int32, int64, int16, date32, composite int, composite mixed —
+//! a key type NOT covered here is unproven on the GPU.
 
-// Step-i dep-confirm: the low-level Spark murmur3 API is PUBLIC (not UDF-only).
+// The low-level Spark murmur3 API is public (not UDF-only).
 use datafusion_comet_spark_expr::hash_funcs::murmur3::{
     create_murmur3_hashes, spark_compatible_murmur3_hash,
 };
@@ -77,7 +76,7 @@ fn cpu_reference_2col_partition_ids_for_probe() {
     eprintln!("  rows: (A,F)(N,F)(N,O)(R,F)(NULL,F)(A,NULL)");
 }
 
-/// I-1 conformance harness: drive the REAL GPU path (peacock::partitioning::
+/// Conformance harness: drive the REAL GPU path (peacock::partitioning::
 /// spark_partition_ids via the FFI hook) and the REAL comet CPU helper, in ONE
 /// process, over the SAME `cols` — assert bit-exact. NOT hardcoded reference values.
 /// Each `(Field, ArrayRef)` is a key column; they seed-chain left-to-right (composite
@@ -125,8 +124,8 @@ fn assert_gpu_matches_comet_live(cols: Vec<(datafusion::arrow::datatypes::Field,
     );
 }
 
-/// PERMANENT I-1 gate (STRING keys — the Inc2 proof shape): 2 string columns
-/// (l_returnflag, l_linestatus) + a NULL in each (multi-key seeding + null-skip).
+/// PERMANENT gate (STRING keys): 2 string columns (l_returnflag, l_linestatus)
+/// + a NULL in each (multi-key seeding + null-skip).
 #[cfg(not(feature = "rust-only"))]
 #[test]
 fn gpu_spark_partition_ids_match_comet_live() {
@@ -146,7 +145,7 @@ fn gpu_spark_partition_ids_match_comet_live() {
     );
 }
 
-/// Inc6 I-1: INT32 key conformance — edge values (0, -1, i32::MAX/MIN) + a NULL.
+/// INT32 key conformance — edge values (0, -1, i32::MAX/MIN) + a NULL.
 /// int32 = one 4-byte LE block, no tail; exercises the generic fixed-width kernel
 /// and the negative/extreme two's-complement encodings + Spark null-skip.
 #[cfg(not(feature = "rust-only"))]
@@ -160,7 +159,7 @@ fn gpu_spark_partition_ids_int32_match_comet_live() {
     assert_gpu_matches_comet_live(vec![(Field::new("k", DataType::Int32, true), k)], 8);
 }
 
-/// Inc6 I-1: INT64 key conformance — the dominant surrogate-key (*_sk) case.
+/// INT64 key conformance — the dominant surrogate-key (*_sk) case.
 /// int64 = two 4-byte LE blocks (low then high), no tail. Edge values + NULL.
 #[cfg(not(feature = "rust-only"))]
 #[test]
@@ -173,7 +172,7 @@ fn gpu_spark_partition_ids_int64_match_comet_live() {
     assert_gpu_matches_comet_live(vec![(Field::new("k", DataType::Int64, true), k)], 8);
 }
 
-/// #18 I-1: INT16 key conformance — the GROUP-BY year case (cudf::extract_year emits
+/// (#18) INT16 key conformance — the GROUP-BY year case (cudf::extract_year emits
 /// INT16, so a year-grouped query repartitions on an INT16 key). Spark widens short→int
 /// (4-byte hash); the GPU casts INT16→INT32 before the fixed kernel, so this proves the
 /// widened hash is bit-exact vs comet. Edge values + NULL.
@@ -188,7 +187,7 @@ fn gpu_spark_partition_ids_int16_match_comet_live() {
     assert_gpu_matches_comet_live(vec![(Field::new("k", DataType::Int16, true), k)], 8);
 }
 
-/// #18 I-1: DATE32 key conformance — the GROUP-BY date case (q3 groups by o_orderdate;
+/// (#18) DATE32 key conformance — the GROUP-BY date case (q3 groups by o_orderdate;
 /// cuDF stores it as TIMESTAMP_DAYS = int32 days-since-epoch). Spark hashes DATE as the
 /// int32 day count (4-byte); the GPU bit-casts TIMESTAMP_DAYS→INT32, so this proves the
 /// days hash is bit-exact vs comet. Epoch, real dates, pre-epoch negative, NULL.
@@ -203,7 +202,7 @@ fn gpu_spark_partition_ids_date32_match_comet_live() {
     assert_gpu_matches_comet_live(vec![(Field::new("k", DataType::Date32, true), k)], 8);
 }
 
-/// Inc6 I-1: COMPOSITE all-INT key conformance — the q17 join-key shape
+/// COMPOSITE all-INT key conformance — the q17 join-key shape
 /// (ss_customer_sk, ss_item_sk, ss_ticket_number are all int surrogate keys).
 /// Proves the seed-chain across multiple int columns, incl per-column NULLs (a null
 /// in ONE column of a row still folds the other columns — Spark skips only that col).
@@ -227,7 +226,7 @@ fn gpu_spark_partition_ids_composite_int_match_comet_live() {
     );
 }
 
-/// Inc6 I-1: COMPOSITE MIXED-type key conformance (int64 + string, nulls in each) —
+/// COMPOSITE MIXED-type key conformance (int64 + string, nulls in each) —
 /// proves the running seed chains correctly across type-heterogeneous columns (the
 /// general case: an int join/group key interleaved with a string dimension key).
 #[cfg(not(feature = "rust-only"))]

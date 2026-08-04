@@ -29,7 +29,7 @@ use datafusion::physical_plan::{ExecutionPlan, Partitioning};
 // ---------------------------------------------------------------------------
 
 // The GPU wrapper nodes, the `gpu_exec_node!` macro and `GpuExtraDisplay` moved to
-// `crate::operators` (Inc3), grouped by family. Re-exported here so every existing
+// `crate::operators`, grouped by family. Re-exported here so every existing
 // `crate::gpu_rule::Gpu*Exec` path keeps resolving.
 pub use crate::operators::aggregate::GpuAggregateExec;
 pub use crate::operators::coalesce::{GpuCoalesceBatchesExec, GpuCoalescePartitionsExec};
@@ -528,23 +528,14 @@ pub fn analyze_memory_nodes(plan: &Arc<dyn ExecutionPlan>) -> Vec<(String, usize
 // GpuMemoryBudgetRule — compute batch size from memory budget, wrap scans
 // ---------------------------------------------------------------------------
 
-/// Minimum GPU memory budget at which a multi-partition scan emits a real
-/// RG→batch→partition map (Phase 2 Inc1). BELOW this, the device is treated as
-/// memory-constrained: the scan stays single-partition (the tp8-mini #11
-/// determinism path), so the plan serializes byte-identically to the legacy
-/// scan and the flatbuffer roundtrip is stable (deserialize does not reconstruct
-/// N partitions, so GpuRepartitionExec.input_partitions does not flip 1→8).
-/// The real-partitioning device (H200, tp8-standard) sits well above this and
-/// gets the map; tp1 never attaches one regardless (target_partitions == 1).
 /// How a target-partitioned plan is realized on the multi-handle node-executor
 /// path. This — NOT the memory budget — is the sole discriminator for whether the
 /// scan gets an RG→batch→partition map and the Hash repartition is lowered into an
 /// explicit GpuCoalescePartitions(M→1) + GpuRepartition(1→N).
 ///
-/// Decoupling real-partitioning from budget (dmitry, replacing the old 16 GiB
-/// `REAL_PARTITION_MIN_BUDGET` threshold) keeps a memory-constrained real-8-way
+/// Decoupling real-partitioning from budget keeps a memory-constrained real-8-way
 /// device (e.g. a genuine 8-way at 2 GiB) EXPRESSIBLE — that execution/enforcer
-/// work is GitHub #91 (post-Phase-2; do not conflate with this policy flag).
+/// work is #91; do not conflate it with this policy flag.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PartitionMode {
     /// Legacy single-partition-coalesced path — tp1 and the tp8-mini #11
@@ -625,12 +616,12 @@ impl PhysicalOptimizerRule for GpuMemoryBudgetRule {
                 && real_partitioning(self.partition_mode, config.execution.target_partitions)
             {
                 // Real-partitioning device only: lower a multi-input Hash repartition
-                // GpuRepartition(Hash, M→N) into the EXPLICIT 2-node form (dmitry's
-                // amendment) — GpuCoalescePartitions(M→1, BUFFERING concat) feeding
+                // GpuRepartition(Hash, M→N) into the EXPLICIT 2-node form —
+                // GpuCoalescePartitions(M→1, BUFFERING concat) feeding
                 // GpuRepartition(Hash, 1→N). This makes the shuffle's concat a visible,
-                // cost-/memory-accounted plan node (Task-A renders it below the Hash),
-                // and gives the CPU/GPU node executors a single 1-partition input to
-                // hash-partition into N via Spark-murmur3 (Inc2). RoundRobin and
+                // cost-/memory-accounted plan node (rendered below the Hash in the
+                // cost golden), and gives the CPU/GPU node executors a single
+                // 1-partition input to hash-partition into N via Spark-murmur3. RoundRobin and
                 // already-1→N repartitions are left untouched. Off the real device
                 // (tp8-mini/tp1) the plan is unchanged → roundtrip byte-stable.
                 let gpu_rp = node.as_any().downcast_ref::<GpuRepartitionExec>().unwrap();

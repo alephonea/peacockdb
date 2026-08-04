@@ -33,7 +33,7 @@ impl GpuExtraDisplay for GpuFilterExec {
 
 
 // ---------------------------------------------------------------------------
-// FlatBuffer wire format (Inc3: moved verbatim from plan_serializer.rs)
+// FlatBuffer wire format
 //
 // STATEMENT ORDER IS THE WIRE FORMAT. FlatBufferBuilder is a no-interning bump
 // arena, so every builder call appends and returns an offset — reordering the

@@ -1,13 +1,11 @@
-//! H200/tp1 CPU-emulated cost goldens (Task #13, Phase 1).
+//! tp1 CPU-emulated cost goldens (#13).
 //!
-//! Device `tp1-standard` = single-partition execution at the H200's 120 GiB
-//! budget. These `.cpu.txt` goldens are produced by the CPU oracle and are the
-//! verification target for the merged GPU test (`test_gpu.rs`): at
-//! tp1 the plan is single-partition, so GPU and CPU emulation share node
-//! structure + per-node row counts exactly. At tp1 there is no float
-//! reassociation (single partition), so exact compare holds even for avg/stddev.
-//!
-//! Rolled out incrementally (tpch first, then tpcds buckets).
+//! Device `tp1-standard` = single-partition execution at the standard budget.
+//! These `.cpu.txt` goldens are produced by the CPU oracle and are the
+//! verification target for the merged GPU test (`test_gpu.rs`): at tp1 the plan
+//! is single-partition, so GPU and CPU emulation share node structure + per-node
+//! row counts exactly. At tp1 there is no float reassociation (single partition),
+//! so exact compare holds even for avg/stddev.
 #[macro_use]
 mod common;
 
@@ -132,12 +130,11 @@ cpu_result_test!(tpcds, 1, q97, tp1_standard, true);
 cpu_result_test!(tpcds, 1, q98, tp1_standard, false);
 cpu_result_test!(tpcds, 1, q99, tp1_standard, true);
 
-// ── registry verification (Inc5) ──────────────────────────────────────────
+// ── registry verification ───────────────────────────────────────────────────
 /// Owns the `ftc_tp1` column outright — every tp1 query is registered here at
 /// tp1-standard, including scan_limit (which is ALSO registered at tp1-mini in
 /// test_cpu_executor.rs; both map to ftc_tp1, so no cross-binary exception is
-/// needed). The `elsewhere` staleness check in registry.rs is what established
-/// that: an entry claiming scan_limit lived only in the other binary failed.
+/// needed).
 #[test]
 fn registry_matches_csv_ftc_tp1_column() {
     common::registry::assert_registry_matches_csv(&["ftc_tp1"], &[]);

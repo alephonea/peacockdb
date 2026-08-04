@@ -63,6 +63,12 @@ if [ $DO_CONFIGURE -eq 1 ]; then
   fi
 
   LAUNCHER_CMAKE_FLAGS=""
+  # Auto-enable ccache when present and no launcher was asked for: C++ rebuilds
+  # dominate this repo's iteration time, and a cold cudf build is expensive.
+  if [ -z "$COMPILER_LAUNCHER" ] && command -v ccache >/dev/null 2>&1; then
+    COMPILER_LAUNCHER=ccache
+    echo "==> ccache found; using it as the C/C++ compiler launcher"
+  fi
   if [ -n "$COMPILER_LAUNCHER" ]; then
     # Wrap the host C/C++ compilers (e.g. with ccache). Left off CUDA/nvcc on
     # purpose: ccache + nvcc is unreliable, and the device compile isn't the bottleneck.
@@ -74,11 +80,15 @@ if [ $DO_CONFIGURE -eq 1 ]; then
     -DCMAKE_CUDA_ARCHITECTURES="${CUDA_ARCHITECTURES}" \
     -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
     -DCMAKE_INSTALL_PREFIX="${INSTALL_DIR}" \
+    "-DCMAKE_JOB_POOLS=link_pool=1" \
+    -DCMAKE_JOB_POOL_LINK=link_pool \
     ${LAUNCHER_CMAKE_FLAGS} \
     ${CUDF_CMAKE_FLAGS}
 fi
 
 if [ $DO_BUILD -eq 1 ]; then
+  # link_pool=1 (configure above) serializes links: at most 1 binary links at a
+  # time — parallel links OOM low-memory hosts; compiles stay fully parallel.
   cmake --build "${BUILD_DIR}" --parallel "$(nproc)"
 fi
 

@@ -26,7 +26,7 @@ impl GpuExtraDisplay for GpuInterleaveExec {}
 
 
 // ---------------------------------------------------------------------------
-// FlatBuffer wire format (Inc3: moved verbatim from plan_serializer.rs)
+// FlatBuffer wire format
 //
 // STATEMENT ORDER IS THE WIRE FORMAT. FlatBufferBuilder is a no-interning bump
 // arena, so every builder call appends and returns an offset — reordering the
@@ -105,7 +105,8 @@ pub(crate) fn deserialize_gpu_union(u: &fb::GpuUnion) -> Result<Arc<dyn Executio
 
 // --- Operator: partition topology + strip behavior ------------------------
 
-/// NOT stripped, same reason. Contrast GpuInterleaveExec, which IS.
+/// NOT stripped, same reason as `GpuCrossJoinExec` in `join.rs`. Contrast
+/// GpuInterleaveExec, which IS.
 impl Operator for GpuUnionExec {
     fn inner(&self) -> &Arc<dyn ExecutionPlan> {
         &self.inner

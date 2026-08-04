@@ -1,5 +1,5 @@
 //! Compatibility facade. The node-by-node driver, its `NodeExecutor` trait, and the
-//! CPU/GPU backends moved to [`crate::executors`] (Inc2). This module keeps the
+//! CPU/GPU backends moved to [`crate::executors`]. This module keeps the
 //! `peacockdb_core::node_executor::…` paths resolving for existing consumers.
 
 pub use crate::executors::node_by_node::{execute_node_by_node, NodeExecutor};

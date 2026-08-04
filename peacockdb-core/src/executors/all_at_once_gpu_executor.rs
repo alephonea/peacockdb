@@ -8,8 +8,8 @@
 //!
 //! [`AllAtOnceGpuExecutor`] implements [`Executor`] ONLY: it makes a single FFI
 //! call and never sees individual nodes, so it has no per-node stats to report.
-//! Slated for retirement once the node-by-node modes cover it —
-//! https://github.com/asymptote-tech/peacockdb/issues/110
+//! Slated for retirement once the node-by-node modes cover it — ticket #110
+//! (llm-wiki/tickets.md).
 
 use std::path::Path;
 
@@ -30,12 +30,11 @@ use peacockdb_ffi::raw::{
     peacock_result_free, PeacockExecutor,
 };
 
-/// TODO(#110): `GpuExecutor` is currently the shared impl behind ALL THREE GPU mode
-/// classes (all_at_once, full_table, partitioned) — deliberate for Inc2/Inc3, since it
-/// is the sole owner of the `*mut PeacockExecutor` and the facades keep old paths
-/// resolving. Revisit when #110 retires the all-at-once path: at that point `execute`
-/// (the one-shot FFI call) goes away and what remains is purely the node-by-node
-/// resource holder, which probably wants a name that says so.
+/// TODO(#110): `GpuExecutor` is the shared impl behind ALL THREE GPU mode classes
+/// (all_at_once, full_table, partitioned) — deliberate: it is the sole owner of the
+/// `*mut PeacockExecutor`, and the facades keep old paths resolving. When #110
+/// retires the all-at-once path, `execute` (the one-shot FFI call) goes away and
+/// what remains is purely the node-by-node resource holder — rename accordingly.
 ///
 /// Executes SQL queries on the GPU via the C++ peacock_gpu library.
 ///

@@ -1,20 +1,12 @@
-// test_tpch.cpp — TPC-H query plans hand-written in BARE cuDF, checked against DuckDB.
+// TPC-H query plans hand-written in bare cuDF (no Rust/DataFusion/SQL), checked against
+// DuckDB over the SAME sf40 parquet files.
 //
-// No Rust, no DataFusion, no SQL: every query below is an explicit sequence of libcudf
-// calls. The point is to exercise the operator chain peacockdb's executor has to produce,
-// against real sf40 data, with an independent oracle (DuckDB over the SAME parquet files)
-// deciding whether the answer is right.
+// Two phases, mirroring peacockdb's load-then-execute model: phase 1 reads COLUMNS only
+// (row filtering is deliberately NOT pushed into the reader); phase 2 runs the operator
+// chain over the resident columns. If a predicate ever migrates into phase 1 this test
+// stops testing what it exists for.
 //
-// TWO VISIBLY SEPARATE PHASES, mirroring peacockdb's load-then-execute model:
-//   PHASE 1 (load)     read the needed COLUMNS from parquet into cudf tables. Column
-//                      selection is expected; ROW filtering is deliberately NOT pushed
-//                      into the reader — no filters, no row-group pruning, no num_rows.
-//   PHASE 2 (execute)  the operator chain runs over those in-memory columns.
-// If a predicate ever migrates into phase 1 this test stops testing what it exists for.
-//
-// DATA: read-only, in place, from an EXISTING tpch.sf40 on the GPU host. Never downloaded,
-// never regenerated, never written to. Absent data => SKIP loudly (see the fixture): a
-// green run that silently tested nothing is the one outcome worse than a red one.
+// Data is read-only, in place; absent data => SKIP loudly (see the fixture).
 #include <cudf/aggregation.hpp>
 #include <cudf/binaryop.hpp>
 #include <cudf/column/column.hpp>
@@ -26,11 +18,8 @@
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/scalar/scalar_factories.hpp>
 #include <cudf/groupby.hpp>
-// cuDF MOVED THIS HEADER between 25.02 and 26.02: cudf/join.hpp -> cudf/join/join.hpp.
-// CI builds both legs, so the source has to satisfy both. Verified against the two local
-// installs — join.hpp is the ONLY header this file includes that moved, and the
-// inner_join signature is byte-identical in both versions (same parameters, same
-// null_equality/stream/mr defaults), so this is purely a path change, not an API change.
+// cudf/join.hpp moved to cudf/join/join.hpp in 26.02; CI builds both legs. Path change
+// only — the inner_join signature is identical in both versions.
 #if __has_include(<cudf/join/join.hpp>)
 #  include <cudf/join/join.hpp>   // cudf >= 26.02
 #else
@@ -72,15 +61,10 @@ using namespace peacock_test;
 //
 // operator chain: scan -> filter(3 predicates) -> project(mul) -> reduce(sum)
 //
-// REPRESENTATION (exact, no tolerance anywhere):
-//   l_quantity / l_extendedprice / l_discount are decimal128(15,2) in the parquet, which
-//   cuDF decodes to DECIMAL64 scale -2 (INT64 physical, precision 15). We cast to
-//   DECIMAL128 at the same scale purely for headroom, then stay fixed-point end to end:
-//   the predicate constants are decimal scalars, so the boundaries 0.05 / 0.07 / 24 have
-//   NO float representation error and cannot include or exclude a row by rounding.
-//   The product lands at scale -4 and the sum accumulates there.
-//   Headroom: worst-case product ~1e7 x 7 = 7e7 scale-4 units, ~1e8 qualifying rows =>
-//   ~1e16, against a DECIMAL128 ceiling of ~1.7e38. Cannot overflow.
+// Exact, no tolerance: money columns decode as DECIMAL64 scale -2, widened to DECIMAL128
+// for headroom, fixed-point end to end. Predicate constants are decimal scalars, so the
+// boundaries 0.05/0.07/24 have no float error. Sum accumulates at scale -4; worst case
+// ~1e16 vs a DECIMAL128 ceiling of ~1.7e38 — cannot overflow.
 // ===========================================================================
 TEST_F(TpchSf40, Q6ExactDecimal) {
   const auto lineitem_path = data_dir() + "/lineitem.parquet";
@@ -91,10 +75,7 @@ TEST_F(TpchSf40, Q6ExactDecimal) {
 
   const auto t0 = std::chrono::steady_clock::now();
 
-  // ---------------- PHASE 1: LOAD ----------------
-  // Columns only. No filter, no row-group selection, no num_rows: every predicate below
-  // is an operator in phase 2, so the reader hands us the full 240M rows of these 4
-  // columns and the GPU does the rest.
+  // ---------------- PHASE 1: LOAD (columns only; predicates stay in phase 2) ----------------
   auto opts = cudf::io::parquet_reader_options::builder(
                   cudf::io::source_info{std::vector<std::string>{lineitem_path}})
                   .columns({"l_quantity", "l_extendedprice", "l_discount", "l_shipdate"})
@@ -112,8 +93,8 @@ TEST_F(TpchSf40, Q6ExactDecimal) {
   auto discount_raw = tbl.column(2);
   auto shipdate = tbl.column(3);
 
-  // Assert the decoded types rather than trusting the mapping — if a future cudf decodes
-  // these differently, the arithmetic below changes meaning and we want to know.
+  // Assert decoded types — if a future cudf decodes differently, the arithmetic below
+  // changes meaning.
   ASSERT_EQ(shipdate.type().id(), cudf::type_id::TIMESTAMP_DAYS);
   for (auto c : {quantity_raw, extprice_raw, discount_raw}) {
     ASSERT_TRUE(c.type().id() == cudf::type_id::DECIMAL64 ||
@@ -127,10 +108,8 @@ TEST_F(TpchSf40, Q6ExactDecimal) {
   const auto dec128_s2 = cudf::data_type{cudf::type_id::DECIMAL128, -2};
 
   // ---------------- PHASE 2: EXECUTE ----------------
-  // Every operator from the resident input columns to the final reduction scalar, wrapped in
-  // a closure so the test verifies it ONCE and the execute-time benchmark (benchmark_execute
-  // in tpch_golden.hpp) times the SAME code. The widening casts are operators too and live
-  // inside the closure, so the timed region covers them.
+  // Closure so the test verifies ONCE and benchmark_execute times the SAME code. The
+  // widening casts are operators and live inside the timed region.
   auto execute = [&]() -> std::unique_ptr<cudf::scalar> {
     auto quantity = cudf::cast(quantity_raw, dec128_s2);
     auto extprice = cudf::cast(extprice_raw, dec128_s2);
@@ -176,7 +155,7 @@ TEST_F(TpchSf40, Q6ExactDecimal) {
                         cudf::data_type{cudf::type_id::DECIMAL128, -4});
   };
 
-  // verify ONCE against the golden (this call is also the benchmark's implicit warm-up)
+  // verify once (also the benchmark's implicit warm-up)
   auto result = execute();
   note_peak();
   auto* fp = dynamic_cast<cudf::fixed_point_scalar<numeric::decimal128>*>(result.get());
@@ -209,8 +188,7 @@ TEST_F(TpchSf40, Q6ExactDecimal) {
   std::fprintf(stderr, "[q6] load %ld ms, execute %ld ms, total %ld ms\n",
                ms(t0, t_loaded), ms(t_loaded, t_done), ms(t0, t_done));
 
-  // EXECUTE-TIME BENCHMARK (no-op unless PEACOCK_BENCHMARK is set): times the SAME execute()
-  // closure the assertions above just verified. Load is excluded — it already happened once.
+  // no-op unless PEACOCK_BENCHMARK is set; times the same closure verified above
   benchmark_execute("q6", execute,
                     std::chrono::duration<double, std::milli>(t_loaded - t0).count());
 }
@@ -228,20 +206,11 @@ TEST_F(TpchSf40, Q6ExactDecimal) {
 //
 // operator chain: scan -> filter -> project(2 derived cols) -> groupby(8 aggs) -> sort
 //
-// REPRESENTATION IS PER COLUMN — a blanket tolerance would hide a real error in the
-// columns that CAN be exact:
-//   sum_qty, sum_base_price, sum_disc_price, sum_charge : DECIMAL128, compared EXACTLY
-//                       (scales -2, -2, -4, -6; DuckDB picks its own scales, and the
-//                        comparison normalizes scale before comparing values)
-//   count_order       : INT64, compared EXACTLY
-//   avg_qty, avg_price, avg_disc : DOUBLE on BOTH sides, RELATIVE TOLERANCE 1e-9.
-//                       Forced, not chosen: DuckDB's AVG over a DECIMAL returns DOUBLE,
-//                       and cuDF's MEAN likewise produces a floating result, so the two
-//                       sums are accumulated in different orders over ~236M values. 1e-9
-//                       is ~4 orders of magnitude above the ~1e-13 relative drift double
-//                       accumulation actually produces at this size, and ~7 orders below
-//                       the smallest error that would indicate a real bug (a wrong row
-//                       set moves an average by percent, not by 1e-9).
+// Per-column comparison semantics (a blanket tolerance would hide errors in columns that
+// CAN be exact): the four SUMs are DECIMAL128 compared exactly (scale-normalized), count
+// is exact; only the three AVGs get a 1e-9 relative tolerance — forced because both
+// DuckDB and cuDF return DOUBLE for AVG and accumulate in different orders. 1e-9 sits ~4
+// orders above the observed ~1e-13 drift and ~7 orders below any real bug's effect.
 // ===========================================================================
 
 TEST_F(TpchSf40, Q1GroupByAggregates) {
@@ -253,9 +222,7 @@ TEST_F(TpchSf40, Q1GroupByAggregates) {
 
   const auto t0 = std::chrono::steady_clock::now();
 
-  // ---------------- PHASE 1: LOAD ----------------
-  // Columns only — no predicate pushdown, no row-group selection. The l_shipdate filter
-  // is an operator in phase 2, below.
+  // ---------------- PHASE 1: LOAD (columns only) ----------------
   auto opts = cudf::io::parquet_reader_options::builder(
                   cudf::io::source_info{std::vector<std::string>{lineitem_path}})
                   .columns({"l_returnflag", "l_linestatus", "l_quantity", "l_extendedprice",
@@ -274,9 +241,7 @@ TEST_F(TpchSf40, Q1GroupByAggregates) {
   auto shipdate = tbl.column(6);
 
   // ---------------- PHASE 2: EXECUTE ----------------
-  // Wrapped in a closure so the test verifies it once and the execute-time benchmark times
-  // the SAME code (benchmark_execute in tpch_golden.hpp). The money-column casts are
-  // operators and live inside, so the timed region covers them.
+  // Closure so verify and benchmark run the SAME code; the casts are inside the timed region.
   auto execute = [&]() -> std::unique_ptr<cudf::table> {
     auto quantity = cudf::cast(tbl.column(2), dec128_s2);
     auto extprice = cudf::cast(tbl.column(3), dec128_s2);
@@ -315,9 +280,8 @@ TEST_F(TpchSf40, Q1GroupByAggregates) {
                                          cudf::binary_operator::MUL,
                                          cudf::data_type{cudf::type_id::DECIMAL128, -6});
 
-    // AVG: DuckDB's AVG over DECIMAL returns DOUBLE, so the cudf side must also be double —
-    // this is the one place a floating representation is unavoidable, and the only place a
-    // tolerance is applied.
+    // AVG must be double on both sides (DuckDB's AVG over DECIMAL returns DOUBLE) — the
+    // one place a tolerance applies
     const auto f64 = cudf::data_type{cudf::type_id::FLOAT64};
     auto qty_f = cudf::cast(k_qty, f64);
     auto price_f = cudf::cast(k_price, f64);
@@ -344,8 +308,7 @@ TEST_F(TpchSf40, Q1GroupByAggregates) {
     auto [keys_tbl, agg_results] = gb.aggregate(reqs);
     note_peak();
 
-    // sort by the two group keys — the same ORDER BY the golden uses. The keys are unique
-    // per group (4 groups), so the ordering is TOTAL: no tie-breaking, rows cannot shift.
+    // sort by the two group keys — unique per group, so the order is total
     auto keys_view = keys_tbl->view();
     std::vector<std::unique_ptr<cudf::column>> agg_cols;
     for (auto& r : agg_results) agg_cols.push_back(std::move(r.results[0]));
@@ -362,10 +325,8 @@ TEST_F(TpchSf40, Q1GroupByAggregates) {
   note_peak();
   const auto t_done = std::chrono::steady_clock::now();
 
-  // ---------------- COMPARE ----------------
-  // Per-column semantics: the four SUMs and the COUNT are EXACT; only the three AVGs are
-  // toleranced, because DuckDB's AVG over DECIMAL returns DOUBLE and cuDF's MEAN likewise.
-  constexpr double kAvgRelTol = 1e-9;  // see the header comment for why 1e-9
+  // ---------------- COMPARE (SUMs and COUNT exact; only AVGs toleranced) ----------------
+  constexpr double kAvgRelTol = 1e-9;  // rationale in the header comment
   const std::vector<ColSpec> kQ1Spec = {
       {"l_returnflag", Cmp::ExactString},
       {"l_linestatus", Cmp::ExactString},
@@ -407,14 +368,10 @@ TEST_F(TpchSf40, Q1GroupByAggregates) {
 //
 // operator chain: scan x3 -> filter x3 -> join -> join -> project -> groupby -> sort -> limit
 //
-// REPRESENTATION: revenue is DECIMAL128 scale -4 throughout and compared EXACTLY — the
-// (1 - l_discount) literal is a decimal scalar, so no float enters. o_orderdate is
-// compared as a date string, l_orderkey / o_shippriority as integers. NO TOLERANCE
-// ANYWHERE in Q3 (unlike Q1, which needs one only because AVG forces a double).
-//
-// TIE-BREAK: the spec's ORDER BY revenue DESC, o_orderdate is not a total order, so
-// l_orderkey is appended here AND in the golden generator. Without it a tie at the LIMIT
-// 10 boundary could return different rows run to run — flaky, not wrong, which is worse.
+// All comparisons EXACT (revenue DECIMAL128 scale -4; no float enters).
+// TIE-BREAK: ORDER BY revenue DESC, o_orderdate is not a total order, so l_orderkey is
+// appended here AND in the golden generator — otherwise ties at the LIMIT 10 boundary
+// would be flaky.
 // ===========================================================================
 TEST_F(TpchSf40, Q3JoinsGroupByTopN) {
   const auto golden_path = golden_dir() + "/duckdb_q3.csv";
@@ -449,19 +406,15 @@ TEST_F(TpchSf40, Q3JoinsGroupByTopN) {
   const auto dec128_s2 = cudf::data_type{cudf::type_id::DECIMAL128, -2};
   const auto dec128_s4 = cudf::data_type{cudf::type_id::DECIMAL128, -4};
 
-  // helper: build a column_view over a join gather map
-  // cudf::inner_join returns a PAIR OF unique_ptr<device_uvector<size_type>> gather maps,
-  // not tables: the join tells you which row indices pair up, and you gather the columns
-  // you actually want. That is why only the needed columns are gathered below.
+  // cudf::inner_join returns gather MAPS, not tables — this wraps one as a column_view so
+  // only the needed columns get gathered.
   auto map_view = [](std::unique_ptr<rmm::device_uvector<cudf::size_type>> const& m) {
     return cudf::column_view(cudf::data_type{cudf::type_id::INT32},
                              static_cast<cudf::size_type>(m->size()), m->data(), nullptr, 0);
   };
 
-  // Everything from the three resident input tables to the fully sorted result, wrapped in a
-  // closure so the test verifies it once and the benchmark times the SAME code. The LIMIT 10
-  // is a zero-copy cudf::slice with no kernel work, so it is applied outside the closure in
-  // the verify path — timing it would add nothing.
+  // Closure so verify and benchmark run the SAME code; LIMIT 10 is a zero-copy slice
+  // applied outside in the verify path.
   auto execute = [&]() -> std::unique_ptr<cudf::table> {
     // filter customer: c_mktsegment = 'BUILDING'
     auto seg = cudf::string_scalar(std::string("BUILDING"));
@@ -546,9 +499,7 @@ TEST_F(TpchSf40, Q3JoinsGroupByTopN) {
   auto top = cudf::slice(sorted->view(), {0, 10})[0];
   const auto t_done = std::chrono::steady_clock::now();
 
-  // ---------------- COMPARE (exact, NO tolerance anywhere in Q3) ----------------
-  // revenue stays DECIMAL128 scale -4 end to end; o_orderdate stays TIMESTAMP_DAYS and is
-  // compared as days, so the column is never cast or formatted just to be checked.
+  // ---------------- COMPARE (exact, no tolerance; o_orderdate compared as days) ----------------
   const std::vector<ColSpec> kQ3Spec = {
       {"l_orderkey", Cmp::ExactInt},
       {"revenue", Cmp::ExactDecimal},
@@ -580,39 +531,16 @@ TEST_F(TpchSf40, Q3JoinsGroupByTopN) {
 //         p_type='ECONOMY ANODIZED STEEL')
 //   GROUP BY o_year ORDER BY o_year
 //
-// JOIN ORDER IS HAND-CHOSEN — there is no optimizer here, so the plan below is the test's
-// own engineering decision. Measured sf40 selectivities drove it:
-//   p_type='ECONOMY ANODIZED STEEL' -> 53,952 of 8,000,000 parts (1 in 148)
-//   o_orderdate in 1995-96          -> 18,230,826 of 60,000,000 orders (30%)
-//   r_name='AMERICA'                -> 1 of 5 regions -> 5 nations
-// Plan, with expected cardinalities:
-//   A1 region(1) |X| nation n1(25)      -> 5
-//   A2   |X| customer(6M)               -> ~1.2M
-//   A3   |X| orders(filtered 18.2M)     -> ~3.65M          [subtree A]
-//   B1 part(53,952) |X| lineitem(240M)  -> ~1.62M          [subtree B]  <- THE DECISIVE STEP
-//   C  A3 |X| B1 on orderkey            -> ~98k
-//   D  |X| supplier(400k) |X| nation n2 -> ~98k
+// Join order is hand-chosen (no optimizer), driven by measured sf40 selectivities.
+// BUSHY plan, not left-deep: subtree A (region |X| n1 |X| customer |X| filtered orders)
+// and subtree B (filtered part |X| lineitem) are built independently and meet on
+// orderkey. B must happen early: lineitem carries no filter of its own, so joining it
+// against the ~54k matching parts cuts 240M -> ~1.6M; the textual order (lineitem |X|
+// orders first) would materialize ~68M rows — 40x larger for the same answer.
 //
-// THIS IS A BUSHY PLAN, NOT A LEFT-DEEP CHAIN. Subtree A (steps A1-A3) and subtree B
-// (step B1) are built independently and only meet at C, so two intermediates coexist —
-// cheap here (3.65M + 1.62M rows) and deliberate. A reader used to left-deep plans will
-// wonder why part|X|lineitem happens "out of order"; that is why.
-// WHY B1 MUST HAPPEN EARLY: lineitem is the only large table and carries NO filter of its
-// own, so its reduction can only come from a join. Joining it against the 53,952 matching
-// parts cuts 240M -> ~1.62M before it ever meets orders. Following the query's textual
-// order instead (lineitem |X| orders first) would materialize ~68M rows and only then
-// filter by part — 40x larger for the same answer.
-//
-// REPRESENTATION, per column:
-//   o_year        : integer (cudf extract_year gives INT16), compared EXACTLY
-//   brazil_volume : DECIMAL128 scale -4, compared EXACTLY
-//   total_volume  : DECIMAL128 scale -4, compared EXACTLY
-//   mkt_share     : DOUBLE, RELATIVE TOLERANCE — forced, not chosen. Verified against
-//                   DuckDB: sum(...) is DECIMAL(38,4) but DECIMAL/DECIMAL division
-//                   returns DOUBLE, so the ratio cannot be exact on either side.
-// The golden carries the two sums as their own columns (the spec's Q8 outputs only
-// o_year and mkt_share) SPECIFICALLY so both can be checked exactly: comparing the ratio
-// alone would let two compensating errors in the sums cancel inside the division.
+// o_year and both volume sums compared EXACTLY; only mkt_share is toleranced (DuckDB's
+// DECIMAL/DECIMAL division returns DOUBLE). The golden carries the two sums as their own
+// columns specifically so compensating errors cannot cancel inside the ratio.
 // ===========================================================================
 TEST_F(TpchSf40, Q8SevenTableJoin) {
   const auto golden_path = golden_dir() + "/duckdb_q8.csv";
@@ -637,10 +565,8 @@ TEST_F(TpchSf40, Q8SevenTableJoin) {
   auto ord_in = read_cols(data_dir() + "/orders.parquet",
                           {"o_orderkey", "o_custkey", "o_orderdate"});
   auto cust_in = read_cols(data_dir() + "/customer.parquet", {"c_custkey", "c_nationkey"});
-  // NATION IS LOADED ONCE AND JOINED TWICE (n1 via customer, n2 via supplier). cudf joins
-  // take key table_views rather than named relations, so the same in-memory table serves
-  // both roles — no second read, no copy. n1 is used only to reach region; n2 supplies the
-  // output nation name.
+  // nation is loaded once and joined twice (n1 via customer reaches region; n2 via
+  // supplier supplies the output nation name) — same in-memory table, no copy.
   auto nation_in = read_cols(data_dir() + "/nation.parquet",
                              {"n_nationkey", "n_name", "n_regionkey"});
   auto region_in = read_cols(data_dir() + "/region.parquet", {"r_regionkey", "r_name"});
@@ -666,8 +592,7 @@ TEST_F(TpchSf40, Q8SevenTableJoin) {
 
   auto nation_v = nation_in.tbl->view();
 
-  // Everything from the seven resident input tables to the fully sorted result, wrapped in a
-  // closure so the test verifies it once and the benchmark times the SAME code.
+  // Closure so verify and benchmark run the SAME code.
   auto execute = [&]() -> std::unique_ptr<cudf::table> {
   // --- subtree A ---
   // A1: region where r_name='AMERICA', then nation n1 on n_regionkey
@@ -770,12 +695,8 @@ TEST_F(TpchSf40, Q8SevenTableJoin) {
       cudf::binary_operation(one_s2, disc->view(), cudf::binary_operator::SUB, dec128_s2);
   auto volume = cudf::binary_operation(price->view(), one_minus_disc->view(),
                                        cudf::binary_operator::MUL, dec128_s4);
-  // extract_datetime_component(..., YEAR), NOT extract_year: 25.02 has both but marks
-  // extract_year [[deprecated]], and 26.02 REMOVED it outright. The generic form exists
-  // with an identical signature and an identical datetime_component enum in both, so this
-  // needs no #if — a portable call beats a conditional include. (Found by compiling the
-  // 26.02 leg locally before handing over, which is the habit the cudf/join.hpp break
-  // taught; this one is a genuine API removal, not just a moved header.)
+  // extract_datetime_component, NOT extract_year — deprecated in 25.02, REMOVED in 26.02;
+  // the generic form is identical in both, so no #if needed.
   auto o_year = cudf::datetime::extract_datetime_component(
       e_date->get_column(0).view(), cudf::datetime::datetime_component::YEAR);
   // CASE WHEN nation='BRAZIL' THEN volume ELSE 0 — copy_if_else against a zero decimal
@@ -801,9 +722,8 @@ TEST_F(TpchSf40, Q8SevenTableJoin) {
   auto brazil_sum = std::move(yaggs[0].results[0]);
   auto total_sum = std::move(yaggs[1].results[0]);
 
-  // mkt_share = brazil / total. DuckDB returns DOUBLE for DECIMAL/DECIMAL, so the division
-  // is done in float64 on BOTH sides — matching semantics rather than inventing a decimal
-  // quotient cuDF and DuckDB would round differently.
+  // mkt_share division in float64 on BOTH sides — DuckDB returns DOUBLE for
+  // DECIMAL/DECIMAL, so a decimal quotient would round differently.
   auto brazil_f = cudf::cast(brazil_sum->view(), f64);
   auto total_f = cudf::cast(total_sum->view(), f64);
   auto mkt_share =
@@ -821,9 +741,7 @@ TEST_F(TpchSf40, Q8SevenTableJoin) {
   note_peak();
   const auto t_done = std::chrono::steady_clock::now();
 
-  // ---------------- COMPARE ----------------
-  // Only mkt_share is toleranced; both sums are EXACT. Tolerance justified by measurement
-  // below (the run prints the observed relative error).
+  // ---------------- COMPARE (sums exact; only mkt_share toleranced) ----------------
   constexpr double kShareRelTol = 1e-9;
   const std::vector<ColSpec> kQ8Spec = {
       {"o_year", Cmp::ExactInt},

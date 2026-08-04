@@ -68,13 +68,13 @@ pub(crate) fn type_structural_size(dt: &DataType, rows: usize) -> usize {
 }
 
 /// Logical `output_bytes` for a node from its output schema, total row count, and
-/// the Σ var-length CONTENT bytes (the data-dependent term). The Part-1 ColAccum
+/// the Σ var-length CONTENT bytes (the data-dependent term). The ColAccum
 /// metric reconstructed from rows+schema+content — the SINGLE source of the
 /// byte-accounting overhead (validity bitmap + fixed-width + var-length offset
 /// buffers). The GPU node-executor calls this with the content bytes measured by
 /// C++, so CPU-emulated and GPU costs are identical whenever rows (and content)
 /// match. (Flat columns only — nested `List` appears at tp>1 two-phase aggregation
-/// and is handled by `ColAccum`/Phase 2.)
+/// and is handled by `ColAccum`.)
 pub fn logical_size_from_schema(schema: &Schema, rows: usize, varlen_content_bytes: usize) -> usize {
     schema
         .fields()
@@ -85,7 +85,7 @@ pub fn logical_size_from_schema(schema: &Schema, rows: usize, varlen_content_byt
 }
 
 /// Σ var-length CONTENT bytes across all columns of one batch — the data-dependent
-/// term of [`logical_size_from_schema`]. Used by the Inc2 CPU hash-repartition to
+/// term of [`logical_size_from_schema`]. Used by the CPU hash-repartition to
 /// compute each output partition's `output_bytes` identically to the map-op
 /// `ColAccum` path (and to the GPU's per-partition `varlen_content_bytes`). Flat
 /// columns only (the repartition input is post-partial-agg group keys + additive

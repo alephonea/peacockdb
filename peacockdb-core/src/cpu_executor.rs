@@ -1,5 +1,5 @@
 //! Compatibility facade. The memory-accounting helpers moved to [`crate::memory`]
-//! and the executors to [`crate::executors`] (Inc2/Inc3); this keeps every
+//! and the executors to [`crate::executors`]; this keeps every
 //! `peacockdb_core::cpu_executor::…` path resolving for existing consumers.
 
 pub use crate::executors::executor::{NodeMemoryStats, PartitionStat};

@@ -1,18 +1,11 @@
-// test_tpchv.cpp — TPC-H+V (vector-augmented) query in BARE cuDF + cuVS brute force,
-// checked against DuckDB.
+// TPC-H+V (vector-augmented) queries in bare cuDF + cuVS brute force, checked against
+// DuckDB. Same rules as test_tpch.cpp: two separate phases; every predicate — including
+// the distance predicate — is a phase-2 operator, never pushed into the reader.
 //
-// Same rules as test_tpch.cpp: no Rust, no DataFusion, no SQL; two visibly separate
-// phases; every predicate is an operator in phase 2, never pushed into the reader —
-// INCLUDING the distance predicate, which is the whole point of the exercise.
-//
-// LINKING cuVS — READ THIS BEFORE DEBUGGING A LOAD FAILURE:
-// libcuvs.so cannot be dlopen'd on its own in this environment. rmm is header-only here
-// (there is no librmm.so), so rmm symbols are compiled INTO consumers: libcudf.so DEFINES
-// rmm::logger::~logger (_ZN3rmm6loggerD1Ev) and libcuvs.so REFERENCES it. Loading cuVS
-// alone therefore fails with "undefined symbol: _ZN3rmm6loggerD1Ev", while loading libcudf
-// first and cuVS second works. This binary links both, so the link order resolves it — but
-// note that `ldd libcuvs.so` reports NO missing dependencies and is thus misleading; only
-// an actual dlopen/link exposes it.
+// cuVS linking gotcha: rmm is header-only here, so libcudf.so DEFINES rmm::logger::~logger
+// and libcuvs.so only references it. Loading cuVS alone fails with "undefined symbol:
+// _ZN3rmm6loggerD1Ev"; libcudf must be loaded/linked first. `ldd libcuvs.so` reports no
+// missing deps, so only an actual dlopen/link exposes this.
 #include <cudf/aggregation.hpp>
 #include <cudf/binaryop.hpp>
 #include <cudf/column/column.hpp>
@@ -60,8 +53,8 @@ using namespace peacock_test;
 
 namespace {
 
-// One (q, D) probe resolved from the COMMITTED query_params.jsonl — never hardcoded here,
-// so the golden and the GPU side cannot drift apart.
+// One (q, D) probe from the committed query_params.jsonl — never hardcoded, so the golden
+// and the GPU side cannot drift apart.
 struct VecProbe {
   std::string id;
   int k = 0;
@@ -69,15 +62,13 @@ struct VecProbe {
   std::vector<float> q;
 };
 
-// Minimal extraction of the three fields we need. The file is one JSON object per line
-// with no nested objects, so a full parser would be more machinery than the format needs.
+// Minimal field extraction; the file is one flat JSON object per line.
 std::vector<VecProbe> load_probes(const std::string& path, std::vector<std::string> const& want) {
   std::vector<VecProbe> out;
   std::ifstream f(path);
   std::string line;
-  // The file is written by json.dump, so there IS a space after each colon
-  // ("id": "img_000"). Skip any whitespace rather than assuming a fixed offset — that
-  // assumption silently found zero probes on the first run.
+  // json.dump puts a space after each colon — skip whitespace rather than assuming a
+  // fixed offset (that assumption silently found zero probes once).
   auto field = [](const std::string& s, const std::string& key) -> std::string {
     auto p = s.find("\"" + key + "\":");
     if (p == std::string::npos) return {};
@@ -112,44 +103,20 @@ std::string vec_params_path() {
                 "/home/info/peacock-datasets/testdata/tpch-vec-queries/query_params.jsonl");
 }
 
-// ===========================================================================
-// EMBEDDING LOAD — AN EMBEDDING COLUMN MAY NOT BE READABLE IN ONE CALL. READ THIS
-// BEFORE "SIMPLIFYING" THE LOOP BELOW BACK INTO A SINGLE read_parquet.
-//
-// A cuDF LIST column stores its values in ONE contiguous child column whose length is a
-// cudf::size_type, i.e. INT32. That caps the child at 2,147,483,647 elements:
-//     96-wide image embeddings  -> max 22,369,621 rows  (~tpch.sf27)
-//     100-wide text embeddings  -> max 21,474,836 rows  (~tpch.sf26)
-// This is a real architectural limit for anything that stores embeddings as cuDF lists,
-// and it is worth more than these tests. At sf40 the two columns fall on OPPOSITE SIDES
-// of it:
-//     partsupp.ps_image_embedding  32,000,000 x 96  = 3.072e9  -> 1.43x OVER, must chunk
-//     part.p_text_embedding         8,000,000 x 100 = 0.800e9  -> 0.37x, one read
-// A single read of the over-ceiling column fails in about one second with
-//     std::bad_alloc: out_of_memory: cudaErrorMemoryAllocation
-// WHICH IS A LIE: the device had 137 GB free and the column needs 12.3 GB. The message is
-// the symptom of an overflowed size computation, not a real allocation shortfall.
-// Verified three ways: the arithmetic above; an isolated repro in plain cuDF Python
-// (cudf.read_parquet(..., columns=['ps_image_embedding']) alone fails); and a bisect that
-// reads OK at 22,241,280 rows (0.99x the limit) and fails at 23,592,960 (1.05x).
-//
-// WHAT THE BATCHING IS NOT:
-//   NOT a memory optimisation — there is 11x more device memory than needed.
-//   NOT predicate pushdown — every row group is read, no rows are skipped or filtered,
-//     and the distance predicate still runs in phase 2. The reader batches I/O; it does
-//     not select data.
-// The load-then-execute boundary is unchanged: every row is resident before any operator
-// runs. cuVS/raft use INT64 extents (probed directly: build + search over a 32M x 96
-// matrix succeed), which is why the reassembled buffer is representable even though a
-// cuDF list column of the same data is not.
-//
-// ONE FUNCTION FOR BOTH REGIMES, deliberately: the batch size is derived from the ceiling
-// and the width, so a 100-wide column at sf40 comes back in ONE batch through exactly the
-// code that assembles the 96-wide one in several. Each caller asserts which regime it
-// expects, so a change that silently moved a column across the boundary fails loudly.
-// It always copies into an owning buffer, even in the one-batch case where the list
-// child could be pointed at directly — 3.2 GB to keep one lifetime rule instead of two.
-// ===========================================================================
+// EMBEDDING LOAD — do NOT "simplify" the loop back into a single read_parquet.
+// A cuDF LIST column's child length is int32, capping it at 2^31-1 elements. At sf40:
+//   partsupp.ps_image_embedding  32M x 96  = 3.07e9 -> OVER the ceiling, must chunk
+//   part.p_text_embedding         8M x 100 = 0.80e9 -> one read
+// A single read of the over-ceiling column fails with "std::bad_alloc: out_of_memory:
+// cudaErrorMemoryAllocation" — misleading: it is an overflowed size computation, not a
+// real allocation shortfall (device had 11x the needed memory; bisect confirms the
+// boundary). The batching is NOT a memory optimisation and NOT predicate pushdown: every
+// row group is read, every row is resident before any operator runs. cuVS/raft use int64
+// extents, so the reassembled flat buffer is representable even though a cuDF list column
+// of the same data is not.
+// One function for both regimes: batch size derives from ceiling/width, and each caller
+// asserts which regime it expects, so a column silently crossing the boundary fails
+// loudly. Always copies into an owning buffer — one lifetime rule instead of two.
 struct EmbeddingMatrix {
   rmm::device_uvector<float> buf;
   int64_t rows;
@@ -167,9 +134,8 @@ EmbeddingMatrix load_embedding_column(const std::string& path, const std::string
   EmbeddingMatrix m{rmm::device_uvector<float>(static_cast<size_t>(n_rows) * dim, stream),
                     n_rows, dim, 0};
 
-  // Half the ceiling, so no single batch can approach it even if the row groups are very
-  // uneven — the loop can only bound a batch by the file-average row-group size, since
-  // exact per-group counts are not exposed.
+  // Half the ceiling: the loop can only bound a batch by the file-average row-group size
+  // (exact per-group counts are not exposed), so leave headroom for uneven groups.
   constexpr int64_t kListChildCeiling = 2147483647;
   const int64_t max_rows_per_batch = (kListChildCeiling / dim) / 2;
   const int64_t avg_rg_rows = (n_rows + n_rg - 1) / n_rg;
@@ -202,8 +168,7 @@ EmbeddingMatrix load_embedding_column(const std::string& path, const std::string
     copied += chunk.tbl->num_rows();
     ++m.batches;
   }
-  // COMPLETENESS: a dropped or double-counted batch would silently shorten the dataset and
-  // change every distance result. Assert the reassembly, do not assume it.
+  // A dropped or double-counted batch would silently change every distance result.
   EXPECT_EQ(copied, n_rows) << col << ": chunked load reassembled " << copied
                             << " rows but the file has " << n_rows
                             << " — a batch was dropped or double-counted";
@@ -212,34 +177,18 @@ EmbeddingMatrix load_embedding_column(const std::string& path, const std::string
   return m;
 }
 
-// ===========================================================================
-// RANGE-VS-TOP-K, the semantic gap every query here has to bridge.
+// RANGE-VS-TOP-K: cuVS brute_force has only a top-K search, no range/radius API, but the
+// queries need every row with distance < D. So: search top-K with K well above the rows
+// that can fall under D, then filter by D. Exact ONLY if the top-K did not saturate — the
+// saturation guard (K'th neighbour still inside D => truncated answer) is load-bearing.
 //
-// cuVS 25.02 brute_force exposes only a TOP-K search; there is no range/radius API (I read
-// the header — no range, radius or epsilon entry point exists). The queries need a RANGE:
-// every row with distance < D. Resolution: search top-K with K chosen well above the
-// number of rows that can fall under D, then filter by D. That is exact ONLY IF the top-K
-// did not saturate, so the saturation guard is load-bearing, not decorative: if the K'th
-// returned neighbour is still inside D, the answer was truncated and the test FAILS rather
-// than silently returning a subset. That is the silent-wrong-answer shape this suite keeps
-// finding, so it gets an explicit check.
+// Distance space: cuVS defaults to L2Expanded (SQUARED L2); DuckDB's array_distance is the
+// root. The index is built with L2SqrtExpanded so D is used as-is on both sides.
 //
-// DISTANCE SPACE: cuVS defaults to L2Expanded, which returns SQUARED L2, whereas DuckDB's
-// array_distance returns the root. Comparing those directly would be a silent factor-level
-// error. Rather than square D or sqrt the results by hand, the index is built with
-// L2SqrtExpanded, which returns true L2 — the same quantity DuckDB computes, so D is used
-// as-is on both sides with no conversion to get wrong.
-//
-// CORROBORATION: the returned row count is checked against a DuckDB count over the same
-// parquet BEFORE any join runs. That pins the row SET the distance predicate selects,
-// independent of everything the joins and aggregations do afterwards. A final result can
-// coincidentally match while the search returned the wrong neighbours; the count cannot.
-// ===========================================================================
-// vector_range_hits is the SEARCH — top-K, host copy, saturation guard, range filter. It is
-// the timed operator, so it reads NO golden file: the count corroboration is a separate step
-// (expect_hit_count below) run only in the verify path, never inside the benchmark's timed
-// region. Both the verify and the benchmark call THIS function for the search itself, so the
-// timed code and the verified code are identical.
+// The count corroboration against DuckDB (expect_hit_count) pins the row SET the distance
+// predicate selects before any join can mask a discrepancy; it runs only in the verify
+// path, so vector_range_hits itself reads no golden and both verify and benchmark time the
+// same code.
 template <typename Index>
 std::vector<int32_t> vector_range_hits(raft::resources& handle, Index const& index,
                                        VecProbe const& probe, int dim, int64_t K,
@@ -253,8 +202,7 @@ std::vector<int32_t> vector_range_hits(raft::resources& handle, Index const& ind
                                        neighbors.view(), distances.view());
   raft::resource::sync_stream(handle);
 
-  // pull the hit list back and range-filter it on the host: K is O(1e5), trivial next to
-  // the multi-million-row search that produced it
+  // range-filter on the host: K is O(1e5), trivial next to the search
   std::vector<int64_t> h_nb(K);
   std::vector<float> h_di(K);
   raft::copy(h_nb.data(), neighbors.data_handle(), K, raft::resource::get_cuda_stream(handle));
@@ -262,8 +210,7 @@ std::vector<int32_t> vector_range_hits(raft::resources& handle, Index const& ind
   raft::resource::sync_stream(handle);
 
   std::vector<int32_t> hits;
-  // SATURATION GUARD — see above. If the furthest neighbour cuVS returned is still inside
-  // D, then rows beyond K also qualify and the range answer is TRUNCATED.
+  // saturation guard — see file header note
   EXPECT_GE(static_cast<double>(h_di[K - 1]), probe.D)
       << tag << "/" << probe.id << ": top-K SATURATED (K=" << K << ", furthest distance "
       << h_di[K - 1] << " < D=" << probe.D
@@ -277,9 +224,7 @@ std::vector<int32_t> vector_range_hits(raft::resources& handle, Index const& ind
   return hits;
 }
 
-// COUNT CORROBORATION — verify path only (reads a golden file, so kept out of the timed
-// region). Pins the row SET the distance predicate selects against DuckDB's own count over
-// the same parquet, before any join can mask a discrepancy.
+// Count corroboration — verify path only (reads a golden, so kept out of the timed region).
 inline void expect_hit_count(size_t got, const std::string& count_golden, const char* tag,
                              const std::string& id) {
   EXPECT_TRUE(file_exists(count_golden)) << "missing " << count_golden;
@@ -332,20 +277,15 @@ cudf::timestamp_scalar<cudf::timestamp_D> date_scalar(int y, unsigned mo, unsign
       cudf::timestamp_D{cudf::duration_D{days_since_epoch(y, mo, d)}}, true);
 }
 
-// K for the top-K-then-filter search. Overridable ONLY so the saturation guard can be
-// exercised: a guard that has never fired is not a guard. Setting PEACOCK_TPCHV_K=64 makes
-// the top-K too small to cover the rows under D, which must produce a loud failure rather
-// than a truncated answer. Default is the real value, sized from the measured sf40 counts
-// (307/3237/40413 image, ~400/4000/40000 text) with generous headroom.
+// K for top-K-then-filter. Overridable (PEACOCK_TPCHV_K=64) only so the saturation guard
+// can be exercised. Default sized from measured sf40 hit counts with generous headroom.
 int64_t search_k() {
   return std::strtoll(env_or("PEACOCK_TPCHV_K", "131072").c_str(), nullptr, 10);
 }
 
-// build a cuVS L2Sqrt brute-force index over a resident row-major float matrix. This is the
-// SETUP phase for a vector query — timed separately from load (parquet->VRAM) and execute
-// (the per-query operators), because it is a one-time O(n) preprocess (norms) amortised
-// across probes, the GPU equivalent of a hash-table build. L2SqrtExpanded == DuckDB's
-// array_distance; see the distance-space note on vector_range_hits.
+// cuVS brute-force index build — the SETUP phase, timed separately from load and execute:
+// a one-time O(n) preprocess amortised across probes. L2SqrtExpanded == DuckDB's
+// array_distance (see distance-space note above).
 inline auto build_bf_index(raft::resources& handle, const float* data, int64_t rows, int dim) {
   auto dataset = raft::make_device_matrix_view<const float, int64_t>(data, rows, dim);
   cuvs::neighbors::brute_force::index_params ip;
@@ -353,10 +293,8 @@ inline auto build_bf_index(raft::resources& handle, const float* data, int64_t r
   return cuvs::neighbors::brute_force::build(handle, ip, dataset);
 }
 
-// THE VECTOR OPERATOR, for the execute closure: search part under D, then gather the
-// surviving p_partkey values. Single source — the verify path and the benchmark both reach
-// the search through here. The count corroboration is separate (expect_hit_count), run once
-// in the verify path so no golden file is read inside the timed region.
+// The vector operator for the execute closures: search part under D, gather surviving
+// p_partkey values. Verify path and benchmark both go through here.
 template <typename Index>
 std::unique_ptr<cudf::table> parts_under_d(raft::resources& handle, Index const& index,
                                            cudf::column_view partkey, VecProbe const& probe,
@@ -368,8 +306,7 @@ std::unique_ptr<cudf::table> parts_under_d(raft::resources& handle, Index const&
 
 }  // namespace
 
-// ===========================================================================
-// TPC-H+V q11 — national market value, restricted to a vector neighbourhood
+// TPC-H+V q11 — national market value, restricted to a vector neighbourhood.
 //
 //   SELECT ps_partkey, sum(ps_supplycost*ps_availqty) AS value
 //   FROM partsupp, supplier, nation
@@ -379,23 +316,13 @@ std::unique_ptr<cudf::table> parts_under_d(raft::resources& handle, Index const&
 //   HAVING sum(ps_supplycost*ps_availqty) > (same sum over ALL German rows) * 0.000002
 //   ORDER BY value DESC
 //
-// NOTE the HAVING subquery deliberately does NOT carry the vector predicate: its threshold
-// is computed over every German partsupp row. So the join is needed twice over — once
-// unfiltered for the threshold, once vector-filtered for the groups — from ONE join.
+// The HAVING subquery deliberately does NOT carry the vector predicate: its threshold is
+// over every German partsupp row, so one join serves both the unfiltered threshold and the
+// vector-filtered groups.
 //
-// The range-vs-top-K gap, the distance space, the saturation guard and the count
-// corroboration are all handled by vector_range_hits() above — see its comment block.
-//
-// REPRESENTATION, per column:
-//   ps_partkey : integer, EXACT
-//   value      : sum(ps_supplycost*ps_availqty), DECIMAL128 scale -4, EXACT (both inputs
-//                are decimal(15,2); no float enters the aggregate)
-//   row count under D : integer, EXACT — corroboration against DuckDB's own count
-// No tolerance anywhere. The distances themselves are float32 on both sides, but they are
-// only ever COMPARED to D, never asserted; what is asserted is which rows that comparison
-// selects, which is exact as long as the boundary margin holds (measured: 1.14e-4 / 3.0e-5
-// / 4.47e-6 for the three probes, against ~5e-7 expected float32 disagreement).
-// ===========================================================================
+// All comparisons EXACT (value is DECIMAL128 scale -4; no float enters the aggregate).
+// Distances are float32 but only ever COMPARED to D; the selected row set is exact as long
+// as the boundary margin (measured >= 4.5e-6) exceeds float32 disagreement (~5e-7).
 TEST_F(TpchSf40, Q11VectorBruteForce) {
   const auto params_path = vec_params_path();
   if (!file_exists(params_path)) {
@@ -411,10 +338,8 @@ TEST_F(TpchSf40, Q11VectorBruteForce) {
   const auto t0 = std::chrono::steady_clock::now();
 
   // ---------------- PHASE 1: LOAD ----------------
-  // Columns only. In particular the embedding column is loaded IN FULL for all 32M rows —
-  // the distance predicate is NOT pushed into the reader, which is the constraint under
-  // test. 32M x 96 x 4B = 12.3 GB of vectors before a single operator runs.
-  // Scalar columns in one read — 32M fixed-width rows are nowhere near any limit.
+  // Columns only; the embedding column is loaded IN FULL (12.3 GB) — the distance
+  // predicate is not pushed into the reader, which is the constraint under test.
   auto ps_in = read_cols(data_dir() + "/partsupp.parquet",
                          {"ps_partkey", "ps_suppkey", "ps_availqty", "ps_supplycost"});
   auto sup_in = read_cols(data_dir() + "/supplier.parquet", {"s_suppkey", "s_nationkey"});
@@ -422,10 +347,8 @@ TEST_F(TpchSf40, Q11VectorBruteForce) {
   raft::resources handle;
   auto emb = load_embedding_column(data_dir() + "/partsupp.parquet", "ps_image_embedding", 96,
                                    raft::resource::get_cuda_stream(handle));
-  // OVER the int32 list-child ceiling at sf40, so this column MUST come back in >1 batch.
-  // If it ever comes back in one, either the scale factor shrank or cuDF changed its
-  // representation — and the arithmetic in load_embedding_column needs revisiting rather
-  // than silently no longer being exercised.
+  // Over the int32 list-child ceiling at sf40 — must chunk. One batch would mean the
+  // ceiling arithmetic in load_embedding_column is no longer exercised.
   ASSERT_GT(emb.batches, 1) << "ps_image_embedding at sf40 must need chunking";
   const auto t_loaded = std::chrono::steady_clock::now();
   note_peak();
@@ -499,22 +422,19 @@ TEST_F(TpchSf40, Q11VectorBruteForce) {
 
   const auto t_setup = std::chrono::steady_clock::now();
 
-  // --- per-probe: cuVS search -> range filter -> intersect with the German rows ---
-  // Each probe's execute is the PER-PROBE operator chain: search -> range filter -> intersect
-  // with the (shared, probe-independent) German rows -> groupby -> HAVING -> sort. The
-  // GERMAN join and the index build above are done ONCE and reused across all 3 probes, so
-  // they are setup, not per-probe execute — see the benchmark note.
+  // Per-probe execute: search -> range filter -> intersect with the (shared) German rows
+  // -> groupby -> HAVING -> sort. The German join and index build are setup, reused across
+  // all 3 probes.
   const int64_t K = search_k();
   ASSERT_LE(K, n_ps);
   for (auto const& probe : probes) {
-    // EXECUTE closure — the test verifies its output once and the benchmark times the SAME
-    // code. The cuVS search (with its host copy + range filter, intrinsic to building a range
-    // query on top of cuVS's top-K) is inside; the golden reads are not.
+    // Execute closure — verified once, then the benchmark times the SAME code. The cuVS
+    // search is inside; golden reads are not.
     auto execute = [&]() -> std::unique_ptr<cudf::table> {
       auto hits = vector_range_hits(handle, bf_index, probe, 96, K, "q11v");
 
-      // intersect the vector hits with the German rows: de column 3 is each German row's
-      // ORIGINAL partsupp index, so the intersection is an inner join against the hit list.
+      // de column 3 is each German row's ORIGINAL partsupp index, so intersecting with the
+      // vector hits is an inner join against the hit list.
       auto d_hits = to_device_hits(hits);
       auto [de_map, hit_map] = cudf::inner_join(
           cudf::table_view{{de->get_column(3).view()}}, cudf::table_view{{d_hits.view()}});
@@ -550,16 +470,15 @@ TEST_F(TpchSf40, Q11VectorBruteForce) {
           order->view());
     };
 
-    // CORROBORATION #1 (verify path only): the row count under D vs DuckDB's own count.
+    // corroboration #1 (verify path only): row count under D vs DuckDB
     auto count_hits = vector_range_hits(handle, bf_index, probe, 96, K, "q11v");
     expect_hit_count(count_hits.size(),
                      golden_dir() + "/duckdb_psimage_" + probe.id + ".count.csv", "q11v",
                      probe.id);
 
-    // verify ONCE against the golden
     auto sorted = execute();
     note_peak();
-    // CORROBORATION #2: the final grouped result, exact on both columns
+    // corroboration #2: the final grouped result, exact on both columns
     const std::vector<ColSpec> spec = {
         {"ps_partkey", Cmp::ExactInt},
         {"value", Cmp::ExactDecimal},
@@ -569,9 +488,8 @@ TEST_F(TpchSf40, Q11VectorBruteForce) {
     std::fprintf(stderr, "[q11v] %s: %ld result rows matched\n", probe.id.c_str(),
                  static_cast<long>(sorted->num_rows()));
 
-    // BENCHMARK this probe's execute (search + operators). index-build is amortised across
-    // the 3 probes, so for the DuckDB comparison the per-probe cuDF cost is
-    // execute + index_ms/3 (DuckDB has no index and computes distances inline every query).
+    // index-build is amortised across the 3 probes: per-probe cuDF cost for the DuckDB
+    // comparison is execute + index_ms/3.
     benchmark_execute(("q11v/" + probe.id).c_str(), execute,
                       std::chrono::duration<double, std::milli>(t_loaded - t0).count(),
                       index_ms);
@@ -585,26 +503,10 @@ TEST_F(TpchSf40, Q11VectorBruteForce) {
                ms(t0, t_loaded), ms(t_loaded, t_setup), ms(t_setup, t_done), ms(t0, t_done));
 }
 
-// ===========================================================================
-// SHARED SETUP FOR THE THREE p_text_embedding QUERIES
-//
-// q12v, q10v and q9v all restrict `part` by the SAME predicate — p_text_embedding within
-// D of q — and differ only in what they join and aggregate afterwards. This helper does
-// the common half: load part's key + embedding, build the cuVS index, run the range
-// search, corroborate the count against DuckDB, and hand back the surviving p_partkey
-// values as a column.
-//
-// THE ONE-READ SIDE OF THE CEILING, and the reason these three exist as a set:
-// part at sf40 is 8,000,000 x 100 = 800,000,000 child elements, 0.37x the int32 list-child
-// ceiling, so this column comes back in ONE read where partsupp's 96-wide column needs
-// several. Same function, both regimes; the assertion below pins which one applies here so
-// that a future scale factor crossing the boundary fails loudly instead of quietly
-// changing the code path under test.
-//
-// NOTE the ORDER: the search runs over ALL 8M part rows. The distance predicate is not
-// pushed into the reader and no part row is skipped before it — which is the constraint
-// the whole exercise is about.
-// ===========================================================================
+// q12v, q10v and q9v all restrict `part` by the same p_text_embedding predicate (via
+// parts_under_d) and differ only in what they join and aggregate afterwards. part at sf40
+// is under the list-child ceiling, so its embedding loads in ONE read (asserted per test,
+// so a scale factor crossing the boundary fails loudly).
 
 // ===========================================================================
 // TPC-H+V q12v — shipping-mode SLA counts inside a vector neighbourhood.
@@ -620,32 +522,13 @@ TEST_F(TpchSf40, Q11VectorBruteForce) {
 //     AND p_text_embedding <-> ${q} < ${D}
 //   GROUP BY l_shipmode ORDER BY l_shipmode
 //
-// WHAT THIS COVERS THAT NOTHING ELSE HERE DOES:
-//  * COLUMN-TO-COLUMN DATE COMPARISON. Q1/Q3/Q6/Q8/q11v all compare a date to a LITERAL.
-//    Here two of the three date predicates compare one TIMESTAMP_DAYS column to another.
-//    That matters because o_orderdate's type id (12, TIMESTAMP_DAYS) has already produced
-//    one silent-zero bug in this suite when a reader assumed an integer; a column-column
-//    compare is the same trap in operator form.
-//  * NO DECIMAL ANYWHERE. Both outputs are integer counters, so the whole result is
-//    exactly comparable and no tolerance is even representable.
-//  * A STRING GROUP KEY.
+// Unique coverage: column-to-column TIMESTAMP_DAYS comparisons (elsewhere dates are only
+// compared to literals — the same type-id trap that once produced a silent-zero bug when a
+// reader assumed an integer); all-integer outputs; a string group key.
 //
-// JOIN ORDER — hand-chosen, no optimizer:
-//   1. part restricted by the vector predicate            8,000,000 -> ~400 (txt_000)
-//   2. lineitem restricted by shipmode + the three dates  240,000,000 -> ~2.4M
-//   3. (2) |X| (1) on partkey                             -> ~120 rows
-//   4. (3) |X| orders on orderkey                         -> ~120 rows
-// The lineitem filter runs BEFORE the join because it is a local predicate on the largest
-// table; the part join runs before orders because it is by far the more selective of the
-// two.
-//
-// REPRESENTATION, per column:
-//   l_shipmode       : string, EXACT
-//   high_line_count  : cudf SUM over INT32 -> INT64; DuckDB sum(INTEGER) -> HUGEINT. Both
-//                      print as plain integers and the values are ~1e2-1e4 here, nowhere
-//                      near either width's limit. EXACT.
-//   low_line_count   : same
-// No tolerance anywhere.
+// Join order (hand-chosen): filter lineitem locally first (largest table), join the
+// vector-restricted part before orders (far more selective). All comparisons EXACT
+// (cudf SUM over INT32 -> INT64 vs DuckDB HUGEINT, both far from any limit).
 // ===========================================================================
 TEST_F(TpchSf40, Q12VectorShipModeCounts) {
   const auto params_path = vec_params_path();
@@ -663,7 +546,6 @@ TEST_F(TpchSf40, Q12VectorShipModeCounts) {
   const auto t0 = std::chrono::steady_clock::now();
 
   // ---------------- PHASE 1: LOAD ----------------
-  // Columns only, every row. No predicate reaches the reader.
   auto ord_in = read_cols(data_dir() + "/orders.parquet", {"o_orderkey", "o_orderpriority"});
   auto line_in = read_cols(data_dir() + "/lineitem.parquet",
                            {"l_orderkey", "l_partkey", "l_shipmode", "l_commitdate",
@@ -697,9 +579,8 @@ TEST_F(TpchSf40, Q12VectorShipModeCounts) {
   auto lv = line_in.tbl->view();
   auto pk = part_in.tbl->view().column(0);
 
-  // Wrapped in a closure so the test verifies it once and the benchmark times the SAME code.
-  // The vector search (parts_under_d) is the FIRST operator inside — it is an operator, so it
-  // is timed as part of execute; only the index build above is setup.
+  // Closure so the test verifies once and the benchmark times the SAME code. The vector
+  // search is an operator, timed inside execute; only the index build is setup.
   auto execute = [&]() -> std::unique_ptr<cudf::table> {
     auto sel_partkeys = parts_under_d(handle, index, pk, probe, 100, K, "q12v");
 
@@ -711,8 +592,7 @@ TEST_F(TpchSf40, Q12VectorShipModeCounts) {
     auto mode_ok = cudf::binary_operation(is_mail->view(), is_ship->view(),
                                           cudf::binary_operator::LOGICAL_OR, boolean);
 
-    // THE COLUMN-TO-COLUMN COMPARISONS: both operands are TIMESTAMP_DAYS columns, not
-    // scalars. Nothing is cast; the types stay what the reader produced.
+    // column-to-column TIMESTAMP_DAYS comparisons — no casts, types stay as read
     auto commit_lt_receipt = cudf::binary_operation(lv.column(3), lv.column(4),
                                                     cudf::binary_operator::LESS, boolean);
     auto ship_lt_commit = cudf::binary_operation(lv.column(5), lv.column(3),
@@ -760,9 +640,8 @@ TEST_F(TpchSf40, Q12VectorShipModeCounts) {
                                           cudf::binary_operator::EQUAL, boolean);
     auto is_hi = cudf::binary_operation(is_urgent->view(), is_high->view(),
                                         cudf::binary_operator::LOGICAL_OR, boolean);
-    // low is the exact complement: DuckDB writes it as <> AND <>, which is NOT is_hi by De
-    // Morgan. o_orderpriority is NOT NULL in TPC-H so the two forms agree; computing it as
-    // a negation rather than restating the comparisons keeps them from drifting apart.
+    // low = NOT is_hi: DuckDB writes <> AND <>, equivalent here because o_orderpriority is
+    // NOT NULL in TPC-H; negation keeps the two counters from drifting apart.
     auto is_lo = cudf::unary_operation(is_hi->view(), cudf::unary_operator::NOT);
     auto hi_i = cudf::cast(is_hi->view(), int32);
     auto lo_i = cudf::cast(is_lo->view(), int32);
@@ -837,35 +716,18 @@ TEST_F(TpchSf40, Q12VectorShipModeCounts) {
 //   GROUP BY c_custkey, c_name, c_acctbal, c_phone, n_name, c_address, c_comment
 //   ORDER BY revenue DESC, c_custkey LIMIT 20
 //
-// WHAT THIS COVERS THAT NOTHING ELSE HERE DOES:
-//  * GROUP BY SEVEN COLUMNS, FIVE OF THEM STRINGS, one of which (c_comment) runs to ~72
-//    characters. Every other groupby in this suite keys on integers, decimals or a single
-//    short string, so the variable-width hash path is otherwise untested.
-//  * A TOP-N WITH A WIDE STRING PAYLOAD: the sort gathers six string columns along with
-//    the decimals.
+// Unique coverage: GROUP BY seven columns (five strings, c_comment ~72 chars) — the
+// variable-width hash path is otherwise untested — and a top-N gathering six string
+// columns.
 //
-// TIE-BREAK: TPC-H Q10 orders by revenue alone, which is not a total order, so LIMIT 20
-// could return different rows run to run. c_custkey is appended — unique per group — on
-// BOTH sides. Without it this test would be flaky rather than wrong, which is worse.
+// TIE-BREAK: Q10's ORDER BY revenue alone is not a total order, so LIMIT 20 would be
+// flaky; c_custkey (unique per group) is appended on BOTH sides.
 //
-// JOIN ORDER — hand-chosen:
-//   1. part restricted by the vector predicate       8,000,000 -> ~4,000 (txt_017)
-//   2. lineitem restricted by l_returnflag='R'       240,000,000 -> ~59M
-//   3. (2) |X| (1) on partkey                        -> ~30k
-//   4. orders restricted to the 3-month window       60,000,000 -> ~1.8M
-//   5. (3) |X| (4) on orderkey                       -> ~900
-//   6. |X| customer |X| nation                       -> ~900
-// Step 3 before step 5 for the same reason as Q8: the part join is the only thing that can
-// cut lineitem down, and doing it first keeps the orders join small.
-//
-// REPRESENTATION, per column:
-//   c_custkey  : integer, EXACT
-//   c_name     : string, EXACT
-//   revenue    : sum(l_extendedprice*(1-l_discount)), DECIMAL128 scale -4, EXACT
-//   c_acctbal  : DECIMAL, EXACT — carried through the groupby as a KEY, never re-derived
-//   n_name, c_address, c_phone, c_comment : strings, EXACT
-// No tolerance anywhere. c_address and c_comment contain commas, so DuckDB quotes those
-// fields in the golden — read_csv_golden parses RFC4180 quoting for exactly this reason.
+// Join order (hand-chosen): part join first — it is the only thing that cuts lineitem
+// down, keeping the orders join small. All comparisons EXACT (revenue DECIMAL128 scale
+// -4; c_acctbal carried through the groupby as a KEY, never re-derived). c_address and
+// c_comment contain commas, so the golden uses RFC4180 quoting, which read_csv_golden
+// parses.
 // ===========================================================================
 TEST_F(TpchSf40, Q10VectorCustomerTopN) {
   const auto params_path = vec_params_path();
@@ -925,8 +787,8 @@ TEST_F(TpchSf40, Q10VectorCustomerTopN) {
   auto lv = line_in.tbl->view();
   auto pk = part_in.tbl->view().column(0);
 
-  // Wrapped in a closure so the test verifies it once and the benchmark times the SAME code.
-  // The LIMIT 20 is a zero-copy slice, applied outside the closure in the verify path.
+  // Closure so verify and benchmark run the SAME code; LIMIT 20 is a zero-copy slice
+  // applied outside, in the verify path.
   auto execute = [&]() -> std::unique_ptr<cudf::table> {
     auto sel_partkeys = parts_under_d(handle, index, pk, probe, 100, K, "q10v");
 
@@ -1090,32 +952,15 @@ TEST_F(TpchSf40, Q10VectorCustomerTopN) {
 //           AND p_text_embedding <-> ${q} < ${D})
 //   GROUP BY nation, o_year ORDER BY nation, o_year DESC
 //
-// WHAT THIS COVERS THAT NOTHING ELSE HERE DOES:
-//  * A COMPOSITE TWO-COLUMN JOIN. partsupp is joined to lineitem on BOTH ps_partkey and
-//    ps_suppkey. Every other join in this suite is single-key. A multi-key inner_join is
-//    the shape most likely to be quietly wrong — pair up on one column and the row counts
-//    still look plausible while every supplycost is drawn from the wrong supplier.
-//  * A SUBSTRING PREDICATE. p_name LIKE '%green%' is strings::contains, not a prefix or an
-//    equality; nothing else here does substring matching.
-//  * A DECIMAL SUBTRACTION of two products, rather than a sum of one. Both products land
-//    at scale -4 and the difference stays there, so the arithmetic is still exact — but it
-//    is the first place the scales of two independently derived decimals have to agree.
-//  * A TWO-KEY GROUP BY with a DESCENDING secondary sort.
+// Unique coverage: the suite's only COMPOSITE two-column join (partsupp |X| lineitem on
+// partkey+suppkey — the shape most likely to be quietly wrong: match on one column and
+// row counts still look plausible while every supplycost comes from the wrong supplier);
+// a substring predicate (strings::contains); a decimal subtraction of two products; a
+// two-key GROUP BY with descending secondary sort.
 //
-// JOIN ORDER — hand-chosen:
-//   1. part restricted by the vector predicate AND '%green%'   8,000,000 -> ~2,100
-//   2. (1) |X| lineitem on partkey                             240,000,000 -> ~63k
-//   3. (2) |X| partsupp on (partkey, suppkey)   <- THE COMPOSITE JOIN     -> ~63k
-//   4. |X| orders on orderkey, |X| supplier |X| nation on suppkey/nationkey
-// part is filtered first because it carries both selective predicates; everything after it
-// operates on tens of thousands of rows rather than hundreds of millions.
-//
-// REPRESENTATION, per column:
-//   nation     : string, EXACT
-//   o_year     : cudf extract_datetime_component(YEAR) -> INT16; DuckDB extract() -> BIGINT.
-//                Compared as integers, EXACT (int64_at reads either width).
-//   sum_profit : DECIMAL128 scale -4, EXACT — no float enters the expression at any point
-// No tolerance anywhere.
+// Join order (hand-chosen): part filtered first — it carries both selective predicates;
+// everything after operates on ~1e4 rows instead of 1e8. All comparisons EXACT
+// (o_year INT16 vs DuckDB BIGINT, compared as integers; sum_profit DECIMAL128 scale -4).
 // ===========================================================================
 TEST_F(TpchSf40, Q9VectorCompositeJoin) {
   const auto params_path = vec_params_path();
@@ -1176,13 +1021,12 @@ TEST_F(TpchSf40, Q9VectorCompositeJoin) {
   auto pk = part_name_in.tbl->view().column(0);
   auto pname = part_name_in.tbl->view().column(1);
 
-  // Wrapped in a closure so the test verifies it once and the benchmark times the SAME code.
+  // Closure so verify and benchmark run the SAME code.
   auto execute = [&]() -> std::unique_ptr<cudf::table> {
     auto sel_partkeys = parts_under_d(handle, index, pk, probe, 100, K, "q9v");
 
-    // p_name LIKE '%green%' — a SUBSTRING match over the whole part table, then intersected
-    // with the vector hits. Both predicates are on part; running contains() over 8M short
-    // strings is cheap next to the 8M x 100 distance scan the search already did.
+    // p_name LIKE '%green%' — substring match over all of part, then intersected with the
+    // vector hits; contains() over 8M short strings is cheap next to the distance scan.
     auto green = cudf::string_scalar(std::string("green"));
     auto green_mask = cudf::strings::contains(cudf::strings_column_view(pname), green);
     auto green_parts = cudf::apply_boolean_mask(cudf::table_view{{pk}}, green_mask->view());
@@ -1208,11 +1052,9 @@ TEST_F(TpchSf40, Q9VectorCompositeJoin) {
     note_peak();
     EXPECT_GT(li->num_rows(), 0);
 
-    // join 2: THE COMPOSITE JOIN. Two key columns on each side, matched positionally:
-    // (l_partkey, l_suppkey) against (ps_partkey, ps_suppkey). Joining on partkey alone
-    // would multiply every lineitem row by the four suppliers that stock the part and
-    // silently charge it the wrong supplycost — the row count would grow 4x, which is why
-    // the assertion below pins it against the left input rather than merely checking >0.
+    // join 2: THE COMPOSITE JOIN — (l_partkey, l_suppkey) vs (ps_partkey, ps_suppkey),
+    // matched positionally. Joining on partkey alone would grow the row count ~4x with
+    // wrong supplycosts, hence the exact row-count assertion below.
     auto [li_map, psx_map] = cudf::inner_join(
         cudf::table_view{{li->get_column(1).view(), li->get_column(2).view()}},
         cudf::table_view{{ps_in.tbl->view().column(0), ps_in.tbl->view().column(1)}});
@@ -1225,9 +1067,8 @@ TEST_F(TpchSf40, Q9VectorCompositeJoin) {
     auto cost_j = cudf::gather(cudf::table_view{{ps_in.tbl->view().column(2)}},  // ps_supplycost
                                map_view(psx_map));
     note_peak();
-    // (partkey, suppkey) is UNIQUE in partsupp, so the composite join must be row-preserving
-    // on the lineitem side: every lineitem row has exactly one matching partsupp row.
-    // A single-key join here would return ~4x this. That is the whole point of the test.
+    // (partkey, suppkey) is UNIQUE in partsupp -> the join must preserve the lineitem row
+    // count exactly. That is the point of the test.
     EXPECT_EQ(li_j->num_rows(), li->num_rows())
         << "composite join changed the lineitem row count — (ps_partkey, ps_suppkey) is "
            "unique in partsupp, so an inner join on both keys must preserve it exactly. "
@@ -1269,13 +1110,12 @@ TEST_F(TpchSf40, Q9VectorCompositeJoin) {
     note_peak();
     EXPECT_GT(vals_n->num_rows(), 0);
 
-    // o_year — extract_datetime_component, not the 25.02-only extract_year (deleted in
-    // 26.02). Returns INT16.
+    // extract_datetime_component (returns INT16), not extract_year — deleted in cudf 26.02
     auto o_year = cudf::datetime::extract_datetime_component(
         date_n->get_column(0).view(), cudf::datetime::datetime_component::YEAR);
 
-    // amount = l_extendedprice*(1-l_discount) - ps_supplycost*l_quantity, all exact decimal:
-    // both products are (scale -2) x (scale -2) -> scale -4, and the difference stays at -4.
+    // amount = l_extendedprice*(1-l_discount) - ps_supplycost*l_quantity, exact decimal:
+    // both products are scale -4 and the difference stays there.
     auto price = cudf::cast(vals_n->get_column(0).view(), dec128_s2);
     auto disc = cudf::cast(vals_n->get_column(1).view(), dec128_s2);
     auto qty = cudf::cast(vals_n->get_column(2).view(), dec128_s2);

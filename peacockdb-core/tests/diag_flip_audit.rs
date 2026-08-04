@@ -35,8 +35,8 @@ fn mergeable(f: &str) -> bool {
         |"var"|"var_samp"|"var_pop"|"variance")
 }
 
-// Inc6 GPU spark_hash_partition kernel supports STRING + INT32 + INT64 (+ composite/
-// null). Everything else (Date32/Timestamp/Decimal/Float/...) is unsupported → a
+// The GPU spark_hash_partition kernel supports STRING + INT32 + INT64 (+ composite/
+// null). Everything else (Timestamp/Decimal/Float/...) is unsupported → a
 // repartition on such a key fails the GPU kernel even though comet (CPU) handles it.
 fn murmur3_supported(t: &DataType) -> bool {
     matches!(t, DataType::Utf8 | DataType::LargeUtf8 | DataType::Int32 | DataType::Int64)
@@ -67,7 +67,7 @@ async fn audit(dataset: &str, query: &str) {
         }
         // EVERY repartition key (join-key AND group-by-key Hash repartitions) must be a
         // murmur3-supported type on the GPU — CPU comet handles all types, so this is
-        // the check CPU-conformance can't make. (The gap that let q7/q8/q9 through.)
+        // the check CPU-conformance can't make.
         let rp = p.as_any().downcast_ref::<GpuRepartitionExec>()
             .and_then(|g| g.inner().as_any().downcast_ref::<RepartitionExec>())
             .or_else(|| p.as_any().downcast_ref::<RepartitionExec>());

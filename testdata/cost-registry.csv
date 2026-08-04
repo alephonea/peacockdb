@@ -36,8 +36,8 @@ tpcds,1,q34,enabled,enabled,enabled,na,enabled,na,ok,corr_subquery,
 tpcds,1,q35,enabled,enabled,enabled,na,enabled,na,ok,semi_join corr_subquery avg top_n,97
 tpcds,1,q36,enabled,na,enabled,na,na,na,ok,window_functions top_n,32
 tpcds,1,q37,enabled,enabled,enabled,na,enabled,na,ok,top_n,
-tpcds,1,q38,enabled,na,enabled,na,na,na,ok,corr_subquery top_n,
-tpcds,1,q39,enabled,na,enabled,na,na,na,ok,corr_subquery stddev_var avg,
+tpcds,1,q38,enabled,na,enabled,na,na,na,ok,corr_subquery top_n,115
+tpcds,1,q39,enabled,na,enabled,na,na,na,ok,corr_subquery stddev_var avg,57
 tpcds,1,q40,enabled,enabled,enabled,na,enabled,na,ok,top_n outer_join,97
 tpcds,1,q41,enabled,enabled,enabled,na,enabled,na,ok,top_n,
 tpcds,1,q42,enabled,enabled,enabled,na,enabled,na,ok,corr_subquery top_n,
@@ -74,7 +74,7 @@ tpcds,1,q72,disabled,na,disabled,na,na,na,fail,corr_subquery top_n outer_join,23
 tpcds,1,q73,enabled,enabled,enabled,na,enabled,na,ok,corr_subquery,
 tpcds,1,q74,enabled,enabled,enabled,na,enabled,na,ok,corr_subquery top_n,
 tpcds,1,q75,enabled,enabled,enabled,na,enabled,na,ok,corr_subquery top_n outer_join,97
-tpcds,1,q76,enabled,na,enabled,na,na,na,ok,top_n,
+tpcds,1,q76,enabled,na,enabled,na,na,na,ok,top_n,115
 tpcds,1,q77,enabled,na,enabled,na,na,na,ok,rollup corr_subquery top_n outer_join,47 65 97
 tpcds,1,q78,enabled,na,enabled,na,na,na,ok,top_n outer_join,60 97
 tpcds,1,q79,enabled,enabled,enabled,na,enabled,na,ok,corr_subquery top_n,
@@ -85,7 +85,7 @@ tpcds,1,q83,enabled,enabled,enabled,na,enabled,na,ok,semi_join corr_subquery top
 tpcds,1,q84,enabled,enabled,enabled,na,enabled,na,ok,top_n,
 tpcds,1,q85,enabled,enabled,enabled,na,enabled,na,ok,corr_subquery avg top_n,
 tpcds,1,q86,disabled,na,disabled,na,na,na,fail,window_functions rollup top_n,23 32 65
-tpcds,1,q87,enabled,na,enabled,na,na,na,ok,corr_subquery,
+tpcds,1,q87,enabled,na,enabled,na,na,na,ok,corr_subquery,115 80
 tpcds,1,q88,enabled,enabled,enabled,na,enabled,na,ok,,
 tpcds,1,q89,enabled,enabled,enabled,na,enabled,na,ok,window_functions avg top_n,32
 tpcds,1,q90,enabled,enabled,enabled,na,enabled,na,ok,top_n,
@@ -124,10 +124,10 @@ tpch,1,aggregate_groupby,enabled,enabled,enabled,na,enabled,na,ok,,
 tpch,1,anti_join,enabled,enabled,enabled,enabled,enabled,enabled,ok,anti_join semi_join,
 tpch,1,cross_join,enabled,enabled,enabled,na,enabled,na,ok,cross_join,
 tpch,1,filter_project,enabled,enabled,enabled,na,enabled,na,ok,,
-tpch,1,hash_join,enabled,na,enabled,na,na,na,ok,,
-tpch,1,join_int,na,na,na,enabled,na,enabled,ok,,
+tpch,1,hash_join,enabled,na,enabled,na,na,na,ok,,116
+tpch,1,join_int,na,na,na,enabled,na,enabled,ok,,116
 tpch,1,left_join,enabled,na,enabled,enabled,na,enabled,ok,outer_join,97
-tpch,1,mixed_join,enabled,na,enabled,na,na,na,ok,,
+tpch,1,mixed_join,enabled,na,enabled,na,na,na,ok,,116
 tpch,1,nested_loop_join,enabled,enabled,enabled,na,enabled,na,ok,nested_loop_join,
 tpch,1,scan_limit,enabled,enabled,na,na,enabled,na,ok,top_n,
 tpch,1,semi_join,enabled,enabled,enabled,enabled,enabled,enabled,ok,semi_join,
