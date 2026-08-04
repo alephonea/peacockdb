@@ -1,3 +1,276 @@
+# Archived task specs
+
+Specs for tasks whose PR has merged, newest first. Each is the contract the work was
+done against, kept verbatim -- including the amendments and corrections made mid-task,
+since those are the part a later reader cannot reconstruct from the diff.
+
+Merged 2026-08-04 as PRs #112 / #115 / #114.
+
+
+---
+
+<!-- archived from llm-wiki/tasks/build-test-flags.md -->
+
+# Task: build-test.sh flag surface, failure semantics, and the regen guard
+
+On `ENS-test-exec-mode`. Touches `scripts/build-test.sh`, `scripts/build-test-shadgpu.sh`,
+`peacockdb-core/tests/test_plan_bytes.rs`, `llm-wiki/build-test.md`. The rules this
+implements are already in `coding-style.md` ("Bash: the flag set is an interface, and
+failure is fatal", b05a631) — that bullet was written from this script's defects.
+
+No golden may move. No test may be added, removed or re-tiered.
+
+## A — flag surface
+
+1. **Delete `--cpu`.** It sets the default and has no callers anywhere in the repo.
+
+2. **`--gpu` and `--rust-only` are mutually exclusive** and must be *rejected*, not
+   resolved by argument order. Today:
+   - `--rust-only --gpu` → `MODE=gpu` with `RUST_ONLY=1` still live, so the run branch
+     sets `LD_ENV=":"` and the GPU binaries never get `LD_LIBRARY_PATH` — they fail to
+     resolve `libpeacock_gpu` and it reads as a product fault.
+   - `--gpu --rust-only` → the reverse, GPU silently ignored.
+   Same two flags, opposite outcomes, no warning. Error naming the contradiction.
+
+3. **Replace `--push-testdata` / `--pull-testdata KIND[,KIND]`** with per-kind flags:
+
+       --push-{parquet,queries,goldens,duckdb-profiles,duckdb-dynfilters}
+       --pull-{parquet,queries,goldens,duckdb-profiles,duckdb-dynfilters}
+
+   The point is structural, not cosmetic: the argument parser *becomes* the validator.
+   No comma splitting, no kind lookup at the call site, and an unknown kind is just an
+   unknown flag caught by the existing `*) usage` arm before any side effect. The
+   multi-kind form is generality nobody uses — every documented invocation moves exactly
+   one kind. `testdata_dirs_for_kind` stays as the kind→dirs map; only its use as a
+   validator goes.
+
+4. **`--fetch-goldens` → `--pull-goldens`.** A rename, not an alias. Today it appends
+   `goldens` to `PULL_TESTDATA`, so passing it alongside `--pull-testdata goldens` pulls
+   twice. Keep the current ordering property: the flag must be resolved *before* the
+   `--host` requirement check, so `--pull-goldens` alone still demands `--host`.
+
+5. **`--rsync` → `--push-binaries`, in BOTH scripts.** `--rsync` names the tool rather
+   than the intent. `build-test.sh`'s own first line says it mirrors
+   `build-test-shadgpu.sh`, so renaming one and not the other breaks the parallel that
+   makes either readable after time away.
+   - It **still pushes goldens.** They are part of the payload, not an optional kind:
+     binaries shipped without the fixtures they assert against is the trap that produced
+     110/110 "canonical file not found". Requiring `--push-goldens` alongside would
+     replace a footgun with a guarded footgun.
+   - `--push-goldens` remains useful and is not redundant with it — it is the subset
+     operation, refreshing fixtures without rebuilding or reshipping binaries.
+
+6. **Require an action.** `--host x` with no `--build`/`--push-binaries`/`--run`/push/pull
+   currently does nothing and exits 0.
+
+7. **Value-taking flags check their value exists.**
+
+8. **`usage()` states what is deliberately absent**, so the next reader does not file it
+   as a gap:
+   - no `--pull-binaries` — binaries flow one way, built locally and shipped;
+   - `embeddings-cache` is a per-host intermediate for the tpch vector datasets
+     (`fetch_embeddings.sh`, ~1.8 GB, gitignored) and is deliberately not syncable.
+   Also state the mode ladder: rust-only ⊂ cpu ⊂ gpu, and that a mode which builds more
+   never runs less.
+
+## B — failure semantics
+
+1. **`set -euo pipefail`.** `pipefail` is load-bearing: `cargo test --no-run … | python3`
+   currently takes python's status, so a cargo failure is caught only by the explicit
+   emptiness check afterwards.
+
+2. **An empty derived suite is an error.** Verified: `mapfile -t A < <(helper)` with a
+   helper that outputs nothing yields a zero-length array, the `for` body never runs, and
+   the script exits 0. A typo in the derivation would silently run no tests and report
+   success.
+
+3. **All validation before the first side effect** — a bad flag must fail before anything
+   is built, shipped or deleted.
+
+4. **The remote heredoc keeps its deliberate `set -e` omission.** Running every test
+   binary and accumulating `rc` is correct: a failing C++ test must not skip the Rust
+   ones. This is the stated exception `coding-style.md` allows; keep the comment that
+   says why, and keep the non-zero exit at the end.
+
+## C — deduplicate the sync layer
+
+1. **One `sync_goldens()`.** "Push goldens" exists twice with different flags: the
+   `--push-binaries` block uses `rsync -r --delete`, `--push-goldens` uses
+   `rsync -a --delete`. Same intent, different metadata handling, no shared code.
+
+2. **Push mirrors (`--delete`) uniformly; pull is additive uniformly** — and the
+   asymmetry is deliberate, so document it rather than "fixing" it. The remote is a
+   *partial* mirror: `testdata/goldens/` contains `tpch.sf40/` (16 CSVs) and sf40 lives
+   on shad-gpu, so mirroring downward from verda would delete fixtures that host never
+   had. The destination is a git working tree.
+
+   Known consequence, accepted: a regen deletes a `.result.txt` when a result exceeds
+   256 KB (`maybe_write_result_golden`), and an additive pull cannot propagate that. The
+   deletion is already announced on stderr and reaches the operator through the ssh
+   heredoc — that is the handling, not a `--delete` flag armed for one rare case.
+
+3. **Drop the `*.txt` filter on the goldens pull** — after A/B and D, not before. Its real
+   job is keeping `plan_bytes.sha256` out of the round trip, which becomes the self-guard's
+   job in D; keeping both would be two mechanisms for one invariant with the weaker one in
+   the wrong place. Removing it also stops silently dropping the 16 sf40 CSVs.
+
+4. **Clear `cpp/install/rust-tests` before staging**, matching `build-test-shadgpu.sh`.
+   `build-test.sh` does not, so orphaned binaries from a previous mode accumulate;
+   today that is mitigated only by running binaries by explicit name.
+
+## D — move the regen guard into the test
+
+`--update-canonical` exports `UPDATE_CANONICAL=1` to every staged binary, so the run set
+doubles as the regen set and `regen_excluded()` subtracts `test_plan_bytes` back out.
+That protects one invocation path only: `UPDATE_CANONICAL=1 cargo test --features
+rust-only -p peacockdb-core --test test_plan_bytes` — the exact command the golden's own
+header prints — still rewrites `plan_bytes.sha256` silently.
+
+Move the refusal into `test_plan_bytes.rs`: under `UPDATE_CANONICAL`, refuse unless a
+dedicated override (`PEACOCK_REGEN_PLAN_BYTES=1`) is also set, panicking with the reason —
+the digests are the wire-format guard, the C++ side reads those bytes, and regenerating
+rewrites the evidence instead of failing. Then **delete `regen_excluded()`**; the script
+stops carrying knowledge about a test's internals.
+
+`test_cost_model` stays in the regen set. That inclusion is a fix, not a risk: `.cost.txt`
+derives from `.cpu.txt`, which a regen rewrites, so the old six-target list left every
+`.cost.txt` stale and `test_cost_model` went red immediately after a "successful" regen.
+
+## E — comments and docs
+
+- Header comment says "Two suites" and then lists three.
+- The `PUSH_TESTDATA` comment lists four kinds; `usage()` lists five (`duckdb-dynfilters`).
+- The goldens-push comment justifies itself entirely in verify terms and disposes of the
+  regen case in a parenthetical, which reads as "this push is redundant when
+  regenerating" — the opposite of what is true. State both reasons: for a verify run the
+  binaries assert against these files; for a regen the push establishes the baseline, so
+  the pulled-back set is local-committed ∪ regenerated rather than remote-leftovers ∪
+  regenerated, and `--delete` is the mechanism.
+- `build-test-shadgpu.sh:176` references "the goldens that build-test.sh's --rust-only
+  mode used to skip" — check it still says something true.
+- `llm-wiki/build-test.md`: the verda row, the shad-gpu row (`--rsync` → `--push-binaries`),
+  the golden-regen bullet, and a line recording that `embeddings-cache` is not syncable.
+
+## Sequencing
+
+**A+B → D → C → E.** A/B is the interface and the failure model and touches everything
+later; D must land before C3; C is mechanical once D is in; E last, so the docs describe
+the final state rather than an intermediate one.
+
+## Verification
+
+- `bash -n` on both scripts.
+- A flag matrix: for each mode, print the derived suite and assert it matches; for each
+  rejected combination, assert it errors non-zero. Include `--gpu --rust-only` in both
+  orders, `--host` with no action, and a value-taking flag with no value.
+- Prove the empty-suite error fires (temporarily break the derivation, confirm non-zero,
+  restore).
+- One real `--rust-only --build` to prove staging still produces binaries.
+- `git status --porcelain testdata/goldens` must be empty at the end.
+
+## Out of scope
+
+`maybe_write_result_golden`'s discarded `remove_file` result and its unconditional "no
+golden" message — a ticket, not this task. The `--cpu`/`--rust-only` naming axis is
+resolved by A1/A2 and needs no further rename.
+
+
+---
+
+<!-- archived from llm-wiki/tasks/widget-golden-links.md -->
+
+# Task: link CPU ✓ cells to their goldens; small-font Query and Σout columns
+
+Branch `ENS-widget-golden-links` (off `ENS-test-exec-mode`). Cost-report widget only —
+`cost-report/src/main.rs`. No changes to the registry CSV, the test suite, or any golden.
+
+## 1. The premise, verified
+
+Every `enabled` cell in `ftc_tp1`, `ftc_tp8` and `partitioned_cpu` **has a committed
+`.cpu.txt`**. `assert_cpu_cost_canonical` runs unconditionally on every CPU macro
+invocation (`common/mod.rs:847`), before and independent of the `ResultGolden` keyword —
+that keyword gates only `.result.txt`. So a `✓` in those three columns always has a
+golden to point at.
+
+This does *not* extend to the GPU columns: those read the CPU golden rather than owning
+one, so leave `full_table_gpu` / `partitioned_gpu` cells alone.
+
+## 2. Which golden each ✓ points at
+
+The device label is **not** in the CSV, and it is not one-per-column:
+
+| Column | Golden label |
+|---|---|
+| `ftc_tp8` | `full_table-tp8-mini` |
+| `partitioned_cpu` | `partitioned-tp8-standard` |
+| `ftc_tp1` | `full_table-tp1-standard` |
+
+**Corrected 2026-08-04.** This section originally said `ftc_tp1` is tp1-standard "except
+`scan_limit`, which is `full_table-tp1-mini`". That is wrong, and the developer caught it:
+`scan_limit` has **both** goldens. It is registered twice — `tp1_mini` at
+`test_cpu_full_table.rs:24` and `tp1_standard` at `:188` — and `column_for` keys on the tp
+count, not the memory tier, so both land in the single `ftc_tp1` cell. It is not the
+exception to the column's label; it is the one query whose cell aggregates two runs.
+
+**Decision: one label per column, `full_table-tp1-standard`.** It is the label every tp1
+row uses including `scan_limit`, so the link target is predictable from the column alone.
+Drop the tp1-mini candidate rather than carrying config that nothing can reach — this repo
+already treats unreachable config as a hazard in its own right (`GOLDEN_INVARIANT_EXEMPT`
+and `INTENTIONALLY_NOT_IN_CI` both carry staleness assertions for exactly that).
+
+What a cell aggregating two runs should render is a real question, but a hyperlink cannot
+express it and the answer would change the cell shape. Out of scope here; raise it as its
+own task if the tp1-mini run ever needs to be reachable from the widget.
+
+The fail-loud check below is what makes dropping the candidate safe: a future query
+registered ONLY at tp1-mini has no golden under the single label, so the widget fails
+naming it instead of rendering a dead link. That is strictly better than a silent second
+candidate, because it forces the decision rather than guessing.
+
+Link target: the same `links.golden_url(canon_rel, stem, "<label>.cpu.txt")` helper the
+Σout cell uses, so dry runs with no sha degrade to plain text exactly as they do today.
+
+Only `✓` becomes a link. `~`, `✗` and `—` stay plain — there is no golden behind them.
+
+## 3. Small font
+
+- **Query column:** non-numeric queries only — `aggregate_groupby`, `scan_limit`,
+  `shuffle_stddev`, `hash_join`, … The discriminator already exists: `Row::number` is
+  `None` for exactly these (it is `Some(n)` for `q<N>`). Numbered queries keep today's
+  size.
+- **PeacockDB Σout and DuckDB Σout:** small font for **both the header and the values**.
+  The Ratio column is not in scope.
+
+Both renders. They use different mechanisms and the difference is load-bearing: the HTML
+report can use a CSS class (`th.modeh` is the precedent), while the PR-comment table must
+use `<sub>` because GitHub strips `class`/`style` — see the `mode_cells_md` doc comment.
+
+## 4. Watch for
+
+- `MODE_COLUMNS` and `registry.rs::COLUMNS` are the CSV header contract. This task is
+  display-only: do not touch either, and do not change any cell value.
+- `ftc_cell()` currently renders `tp1✓ tp8✓` as one string inside a single `<td>`. Both
+  glyphs need to become independently linkable, so that function has to return markup
+  rather than a plain label — check its callers in both renders before changing its shape.
+- `CPU_DEVICE` is the const the Σout cells resolve through. The new per-column labels are
+  related but not the same thing; do not fold them together in a way that makes a Σout
+  change silently move a mode link.
+
+## 5. Verification
+
+- `cargo test -p cost-report` — the widget's own unit tests, including the
+  `mode_cells_md` shape asserts.
+- `scripts/cost-report-preview.sh` and eyeball the generated HTML: a linked `✓` per
+  enabled CPU cell, `scan_limit`'s tp1 link resolving to `full_table-tp1-mini`, small-font
+  micro-query names, small-font Σout headers and values.
+- Confirm the PR-comment render still parses as HTML on GitHub (`<sub>`, no class/style).
+- No golden, CSV or test-suite file appears in `git status`.
+
+
+---
+
+<!-- archived from llm-wiki/tasks/test-exec-mode.md -->
+
 # Task: execution mode explicit in test macros and golden filenames
 
 Branch `ENS-test-exec-mode` (off `ENS-llm-wiki`). Pure refactor: **no behavior change, no

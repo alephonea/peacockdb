@@ -74,7 +74,9 @@ arrive from the human one at a time.
   on your own judgment, however green CI is and however satisfied the reviewer. The
   instruction covers only the PR or chain it names and does not carry forward to the
   next one — "merge #114" is not standing permission to merge #118. Merge a chain
-  oldest-first, so each child retargets as its base lands.
+  oldest-first, and **never with `--delete-branch`**: deleting a base that an open PR
+  still targets CLOSES that PR, and it cannot be reopened while the base is gone.
+  Retarget each child to master yourself before merging it; tidy branches afterwards.
 - **After a merge, archive the task specs in a master-only commit.** No branch, no PR:
   on master, move each merged PR's spec out of `llm-wiki/tasks/` and into
   `llm-wiki/archive/archived-tasks.md` — ONE file holding every archived task, newest
