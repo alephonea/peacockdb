@@ -52,14 +52,14 @@ PATCH=0
 RUN=0
 
 if [ $# -eq 0 ]; then
-  echo "Usage: $0 [--build] [--rsync] [--patch] [--run] [--all]"
+  echo "Usage: $0 [--build] [--push-binaries] [--patch] [--run] [--all]"
   exit 1
 fi
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --build) BUILD=1 ;;
-    --rsync) RSYNC=1 ;;
+    --push-binaries) RSYNC=1 ;;
     --patch) PATCH=1 ;;
     --run)   RUN=1 ;;
     --all)   BUILD=1; RSYNC=1; PATCH=1; RUN=1 ;;
@@ -172,8 +172,9 @@ if [ "$RSYNC" -eq 1 ]; then
   # The cost-registry CSV is a committed fixture the registry tests READ (they assert
   # it against the suite's link-time inventory). Goldens alone are not enough: without
   # this the registry test fails on "cannot read cost-registry.csv" — a
-  # mis-provisioned run, not a product fault. Same trap as the goldens that
-  # build-test.sh's --rust-only mode used to skip.
+  # mis-provisioned run, not a product fault. Same class as shipping binaries without
+  # the goldens they assert against: every provisioning path names its files by hand,
+  # so a new committed fixture has to be added to each one independently.
   resilient_rsync -a testdata/cost-registry.csv shad-gpu:/home/info/peacockdb/testdata/
   # Ship our setup-glibc.sh (with patch_rust_dir) so --patch uses the
   # version that knows about cpp/install/rust-tests/.

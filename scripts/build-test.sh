@@ -1,6 +1,9 @@
 #!/bin/bash
 
-set -e
+# pipefail is load-bearing here, not boilerplate: the staging step pipes
+# `cargo test --no-run … | python3`, and without it the pipeline takes python's
+# status, so a cargo failure is invisible until the emptiness check downstream.
+set -euo pipefail
 
 # Build the test suite locally and run it on a remote host. Mirrors
 # build-test-shadgpu.sh (build here, ship binaries, run there). Two suites,
@@ -34,8 +37,9 @@ REMOTE_DIR="/home/dmitry/peacockdb"                           # repo dir on the 
 LOCAL_CUDF_ROOT="/home/dmitry/data/miniforge3/envs/rapids"    # local cuDF (26.02) to build against
 REMOTE_CUDF_ROOT="/home/dmitry/miniforge3/envs/rapids-26.02"  # cuDF runtime libs on the remote
 GCC_VERSION=14                                                # gcc-N for the C++/cmake build (cuDF 26.02 / CUDA 12.x accepts 14)
-MODE=cpu                                                      # cpu | gpu (set via --cpu / --gpu)
+MODE=cpu                                                      # cpu | gpu (set via --gpu); cpu is the default
 RUST_ONLY=0                                                   # --rust-only: build cpu/plan test bins with --features rust-only (NO C++/FFI); for golden regen + cpu/plan verify on verda
+MODE_FLAG=""                                                  # which mode flag was actually passed, for the conflict message
 
 # Dedicated 26.02 C++ build dir, separate from the default cpp/build (which is
 # kept at 25.02 on purpose). Using a distinct dir also avoids the find_package
@@ -47,22 +51,82 @@ CUDA_ARCHITECTURES="80;90"
 RUST_TESTS_STAGING="$INSTALL_DIR/rust-tests"
 
 BUILD=0
-RSYNC=0
+PUSH_BINARIES=0  # --push-binaries: ship cpp/install (lib + C++ bins + staged rust bins) + goldens
 RUN=0
 UPDATE_CANON=0   # --update-canonical: regen goldens during the remote run (UPDATE_CANONICAL=1)
-FETCH_GOLDENS=0  # --fetch-goldens: pull the remote goldens back into the local repo after the run
-PUSH_TESTDATA="" # --push-testdata KIND[,KIND]: rsync local testdata kinds -> remote
-PULL_TESTDATA="" # --pull-testdata KIND[,KIND]: rsync remote testdata kinds -> local
-# Per-kind testdata sync. KIND in {parquet,goldens,duckdb-profiles,queries}; each
-# maps to one or more dirs under testdata/. Used to move datasets generated once on
-# verda to local/shad-gpu (parquet), or pull regenerated goldens back, without
-# touching the (separately shipped) test binaries.
+
+# Per-kind testdata sync, one flag per kind in each direction. The parser IS the
+# validator: an unknown kind is an unknown flag, caught by the `*) usage` arm before
+# any side effect. The old --push-testdata KIND[,KIND] form validated inside a $(…),
+# where `exit 1` ends only the subshell — the error printed and the script carried on.
+PUSH_KINDS=()
+PULL_KINDS=()
 
 usage() {
-  echo "Usage: $0 --host <ssh-dest> [--cpu|--gpu|--rust-only] [--remote-dir <path>] [--local-cudf-root <path>] [--remote-cudf-root <path>] [--gcc-version <n>] [--build] [--rsync] [--run] [--all] [--update-canonical] [--fetch-goldens] [--push-testdata KIND[,KIND]] [--pull-testdata KIND[,KIND]]"
-  echo "  --rust-only: cpu/plan goldens via --features rust-only (no C++/FFI); regen with --update-canonical, fetch with --fetch-goldens, verify by re-running without --update-canonical"
-  echo "  testdata KIND: parquet | goldens | duckdb-profiles | duckdb-dynfilters | queries"
+  cat >&2 <<'USAGE'
+Usage: build-test.sh --host <ssh-dest> [mode] <action...> [options]
+
+  mode      (default cpu)
+    --rust-only    every Rust target that builds WITHOUT cmake. Golden regen + verify.
+    --gpu          the GPU-runtime targets; needs a GPU on the remote.
+    (no --cpu flag: cpu IS the default, and a flag whose only effect is the default
+     is noise. --gpu and --rust-only are mutually exclusive and rejected, not ordered.)
+
+  MODE LADDER: rust-only ⊂ cpu ⊂ gpu-capable. A mode that BUILDS more never RUNS less —
+  the three suites are derived from the sources, not listed, so they cannot drift apart.
+
+  actions (at least one required)
+    --build              build C++ (unless --rust-only) + stage the Rust test binaries
+    --push-binaries      ship cpp/install + the goldens the binaries assert against
+    --run                run the suite on the remote
+    --all                --build --push-binaries --run
+    --push-<kind>        parquet | queries | goldens | duckdb-profiles | duckdb-dynfilters
+    --pull-<kind>        same kinds, remote -> local
+    --update-canonical   regen goldens during --run instead of asserting
+    (--push-binaries always ships goldens: binaries without the fixtures they assert
+     against is what produced 110/110 "canonical file not found". --push-goldens is the
+     subset operation — refresh fixtures without rebuilding or reshipping binaries.)
+
+  options
+    --remote-dir <path> --local-cudf-root <path> --remote-cudf-root <path>
+    --gcc-version <n>
+
+  DELIBERATELY ABSENT, so these do not get filed as gaps:
+    no --pull-binaries      binaries flow one way: built locally, shipped to the remote.
+    no embeddings-cache     a per-host INTERMEDIATE for the tpch vector datasets
+                            (fetch_embeddings.sh, ~1.8 GB, gitignored). Regenerate it
+                            where you need it; syncing it would ship a derived artifact.
+USAGE
   exit 1
+}
+
+# The ONE goldens push. It existed twice — the --push-binaries block used
+# `rsync -r --delete`, --push-goldens used `rsync -a --delete` — same intent, different
+# metadata handling, no shared code.
+#
+# PUSH MIRRORS (--delete); PULL IS ADDITIVE. The asymmetry is deliberate and must not be
+# "fixed": the remote is a PARTIAL mirror. testdata/goldens/ contains tpch.sf40/ (16
+# CSVs) and sf40 lives on shad-gpu, so mirroring downward from verda would DELETE
+# fixtures that host never had — out of a git working tree.
+#
+# Accepted consequence: a regen that deletes a .result.txt (result over 256 KB, see
+# maybe_write_result_golden) cannot propagate that deletion back through an additive
+# pull. The deletion is announced on stderr and reaches the operator through the ssh
+# heredoc; that is the handling, not a --delete armed for one rare case.
+sync_goldens() {
+  case "$1" in
+    push)
+      echo "==> push goldens -> $HOST:$REMOTE_DIR/testdata/goldens"
+      ssh "$HOST" "mkdir -p '$REMOTE_DIR/testdata/goldens'"
+      rsync -a --delete testdata/goldens/ "$HOST:$REMOTE_DIR/testdata/goldens/"
+      ;;
+    pull)
+      echo "==> pull $HOST:$REMOTE_DIR/testdata/goldens -> testdata/goldens (additive)"
+      mkdir -p testdata/goldens
+      rsync -a "$HOST:$REMOTE_DIR/testdata/goldens/" testdata/goldens/
+      ;;
+    *) echo "sync_goldens: bad direction '$1'" >&2; exit 1 ;;
+  esac
 }
 
 # Map a testdata KIND to its repo-relative dir(s) under testdata/.
@@ -79,25 +143,52 @@ testdata_dirs_for_kind() {
 
 if [ $# -eq 0 ]; then usage; fi
 
+# A value-taking flag must be given a value: `--host` at the end of the line would
+# otherwise consume nothing and leave HOST empty, which reads downstream as "no --host".
+need_value() {
+  [ -n "${2:-}" ] || { echo "error: $1 requires a value" >&2; exit 1; }
+}
+
+# --gpu and --rust-only are mutually exclusive, and REJECTED rather than resolved by
+# order. Resolving by order made the same two flags mean different things depending on
+# how they were typed, and one order was half-applied: MODE=gpu with RUST_ONLY still
+# live left LD_LIBRARY_PATH unset for the GPU binaries, so they could not resolve
+# libpeacock_gpu and failed as if the product were broken.
+set_mode() {
+  if [ -n "$MODE_FLAG" ] && [ "$MODE_FLAG" != "$1" ]; then
+    echo "error: $MODE_FLAG and $1 are mutually exclusive — they select different" >&2
+    echo "       build configurations (rust-only builds without cmake; gpu needs the" >&2
+    echo "       linked executor and a GPU at runtime). Pass one." >&2
+    exit 1
+  fi
+  MODE_FLAG="$1"
+}
+
 while [ $# -gt 0 ]; do
   case "$1" in
-    --host)             HOST="$2"; shift ;;
-    --remote-dir)       REMOTE_DIR="$2"; shift ;;
-    --local-cudf-root)  LOCAL_CUDF_ROOT="$2"; shift ;;
-    --remote-cudf-root) REMOTE_CUDF_ROOT="$2"; shift ;;
-    --gcc-version)      GCC_VERSION="$2"; shift ;;
-    --cpu)              MODE=cpu ;;
-    --gpu)              MODE=gpu ;;
-    --rust-only)        MODE=cpu; RUST_ONLY=1 ;;
+    --host)             need_value "$1" "${2:-}"; HOST="$2"; shift ;;
+    --remote-dir)       need_value "$1" "${2:-}"; REMOTE_DIR="$2"; shift ;;
+    --local-cudf-root)  need_value "$1" "${2:-}"; LOCAL_CUDF_ROOT="$2"; shift ;;
+    --remote-cudf-root) need_value "$1" "${2:-}"; REMOTE_CUDF_ROOT="$2"; shift ;;
+    --gcc-version)      need_value "$1" "${2:-}"; GCC_VERSION="$2"; shift ;;
+    --gpu)              set_mode "$1"; MODE=gpu ;;
+    --rust-only)        set_mode "$1"; MODE=cpu; RUST_ONLY=1 ;;
     --build)            BUILD=1 ;;
-    --rsync)            RSYNC=1 ;;
+    --push-binaries)    PUSH_BINARIES=1 ;;
     --run)              RUN=1 ;;
-    --all)              BUILD=1; RSYNC=1; RUN=1 ;;
+    --all)              BUILD=1; PUSH_BINARIES=1; RUN=1 ;;
     --update-canonical) UPDATE_CANON=1 ;;
-    --fetch-goldens)    FETCH_GOLDENS=1 ;;
-    --push-testdata)    PUSH_TESTDATA="$2"; shift ;;
-    --pull-testdata)    PULL_TESTDATA="$2"; shift ;;
-    *) echo "Unknown flag: $1"; usage ;;
+    --push-parquet)           PUSH_KINDS+=(parquet) ;;
+    --push-queries)           PUSH_KINDS+=(queries) ;;
+    --push-goldens)           PUSH_KINDS+=(goldens) ;;
+    --push-duckdb-profiles)   PUSH_KINDS+=(duckdb-profiles) ;;
+    --push-duckdb-dynfilters) PUSH_KINDS+=(duckdb-dynfilters) ;;
+    --pull-parquet)           PULL_KINDS+=(parquet) ;;
+    --pull-queries)           PULL_KINDS+=(queries) ;;
+    --pull-goldens)           PULL_KINDS+=(goldens) ;;
+    --pull-duckdb-profiles)   PULL_KINDS+=(duckdb-profiles) ;;
+    --pull-duckdb-dynfilters) PULL_KINDS+=(duckdb-dynfilters) ;;
+    *) echo "Unknown flag: $1" >&2; usage ;;
   esac
   shift
 done
@@ -163,27 +254,6 @@ needs_cmake_targets() {
   printf '%s\n' "peacockdb-ffi:test_ffi"
 }
 
-# Targets that must NOT be swept into a regen run. --update-canonical exports
-# UPDATE_CANONICAL=1 for EVERY staged binary, so membership here is the only thing
-# standing between a bulk regen and a golden that is supposed to move deliberately.
-#
-#   test_plan_bytes  its digests ARE the wire-format guard: a diff means the FlatBuffer
-#                    layout moved, and the C++ side reads those bytes. Its own header
-#                    says "regenerate deliberately". Auto-regenerating it would convert
-#                    the guard into a rubber stamp — it would rewrite the evidence
-#                    instead of failing. It stays in the VERIFY set, just not the regen.
-#
-# Deliberately NOT excluded: test_cost_model. .cost.txt is derived from .cpu.txt, which
-# a regen DOES rewrite, so leaving it out is what makes a regen self-inconsistent —
-# today's list regenerates .cpu.txt and leaves every .cost.txt stale, so test_cost_model
-# goes red immediately after a "successful" regen. Including it fixes that.
-regen_excluded() {
-  case "$1" in
-    *:test_plan_bytes) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
 if [ "$MODE" = "gpu" ]; then
   # GPU-runtime set. Kept in step with build-test-shadgpu.sh:RUST_TESTS and
   # pipeline.yml's gpu-tests staging array — three runners had three lists and this
@@ -209,39 +279,50 @@ else
   CPP_TEST_BIN=peacock_cpu_tests
 fi
 
-# Drop the regen-excluded targets when this run is a regen.
-if [ "$UPDATE_CANON" -eq 1 ]; then
-  _kept=()
-  for spec in "${RUST_TESTS[@]}"; do
-    if regen_excluded "$spec"; then
-      echo "==> --update-canonical: skipping $spec (must be regenerated deliberately, not swept)"
-    else
-      _kept+=("$spec")
-    fi
-  done
-  RUST_TESTS=("${_kept[@]}")
+# ---- validation: EVERYTHING below runs before the first side effect ----------
+# A typo must fail before anything is built, shipped or deleted — not halfway through.
+
+# An invocation that does nothing and exits 0 is indistinguishable from a successful
+# one. `--host x` alone used to be exactly that.
+if [ "$BUILD" -eq 0 ] && [ "$PUSH_BINARIES" -eq 0 ] && [ "$RUN" -eq 0 ] \
+   && [ ${#PUSH_KINDS[@]} -eq 0 ] && [ ${#PULL_KINDS[@]} -eq 0 ]; then
+  echo "error: no action requested — nothing would happen and the script would exit 0." >&2
+  echo "       Pass at least one of --build / --push-binaries / --run / --all /" >&2
+  echo "       --push-<kind> / --pull-<kind>." >&2
+  usage
 fi
 
-# --fetch-goldens is shorthand for --pull-testdata goldens.
-if [ "$FETCH_GOLDENS" -eq 1 ]; then
-  PULL_TESTDATA="${PULL_TESTDATA:+$PULL_TESTDATA,}goldens"
+if { [ "$PUSH_BINARIES" -eq 1 ] || [ "$RUN" -eq 1 ] || [ ${#PUSH_KINDS[@]} -gt 0 ] \
+     || [ ${#PULL_KINDS[@]} -gt 0 ]; } && [ -z "$HOST" ]; then
+  echo "error: --host is required for --push-binaries/--run/--push-<kind>/--pull-<kind>" >&2
+  echo "       (e.g. --host dmitry@86.38.182.185)" >&2
+  exit 1
 fi
 
-if { [ "$RSYNC" -eq 1 ] || [ "$RUN" -eq 1 ] || [ -n "$PUSH_TESTDATA" ] || [ -n "$PULL_TESTDATA" ]; } && [ -z "$HOST" ]; then
-  echo "error: --host is required for --rsync/--run/--push-testdata/--pull-testdata (e.g. --host dmitry@86.38.182.185)" >&2
+# A derived suite that comes back EMPTY must be an error. `mapfile` from a helper that
+# prints nothing yields a zero-length array, every `for` body over it vanishes, and the
+# script exits 0 having run no tests — a derivation typo would report success.
+if [ ${#RUST_TESTS[@]} -eq 0 ]; then
+  echo "error: the derived Rust suite is EMPTY for mode '${MODE_FLAG:---cpu}'." >&2
+  echo "       This is a bug in the derivation (see rust_only_targets/needs_cmake_targets)," >&2
+  echo "       not a valid configuration: a run with no targets would exit 0 having" >&2
+  echo "       verified nothing." >&2
   exit 1
 fi
 
 # Push named testdata kinds local -> remote (before any --run that consumes them).
 # --delete keeps the remote subtree exact (drops files removed locally).
-if [ -n "$PUSH_TESTDATA" ]; then
-  IFS=',' read -ra _kinds <<< "$PUSH_TESTDATA"
-  for kind in "${_kinds[@]}"; do
+if [ ${#PUSH_KINDS[@]} -gt 0 ]; then
+  for kind in "${PUSH_KINDS[@]}"; do
     for d in $(testdata_dirs_for_kind "$kind"); do
-      [ -d "testdata/$d" ] || { echo "--push-testdata: skip missing testdata/$d"; continue; }
-      echo "==> push testdata/$d -> $HOST:$REMOTE_DIR/testdata/$d"
-      ssh "$HOST" "mkdir -p '$REMOTE_DIR/testdata/$d'"
-      rsync -a --delete "testdata/$d/" "$HOST:$REMOTE_DIR/testdata/$d/"
+      [ -d "testdata/$d" ] || { echo "--push-$kind: skip missing testdata/$d"; continue; }
+      if [ "$kind" = "goldens" ]; then
+        sync_goldens push
+      else
+        echo "==> push testdata/$d -> $HOST:$REMOTE_DIR/testdata/$d"
+        ssh "$HOST" "mkdir -p '$REMOTE_DIR/testdata/$d'"
+        rsync -a --delete "testdata/$d/" "$HOST:$REMOTE_DIR/testdata/$d/"
+      fi
     done
   done
 fi
@@ -254,6 +335,10 @@ if [ "$BUILD" -eq 1 ]; then
     # Uses the default ./target so it stays warm alongside plain `cargo test`.
     echo "==> build rust-only test binaries (no C++/FFI)"
     CARGO_FEATURES="--features rust-only"
+    # Stage from EMPTY, as build-test-shadgpu.sh does: a binary left by a previous
+    # mode is otherwise shipped alongside this mode's, and only the run-by-explicit-name
+    # loop keeps it from executing. Renaming a target makes the orphan permanent.
+    rm -rf "$RUST_TESTS_STAGING"
     mkdir -p "$RUST_TESTS_STAGING"
   else
     # cudf (default-feature) build: isolate it in its OWN target dir so it doesn't
@@ -303,6 +388,8 @@ if [ "$BUILD" -eq 1 ]; then
     cmake --install "$BUILD_DIR"
 
     echo "==> stage Rust $MODE test binaries"
+    # Stage from EMPTY here too — see the rust-only branch above.
+    rm -rf "$RUST_TESTS_STAGING"
     mkdir -p "$RUST_TESTS_STAGING"
     export CUDF_ROOT="$LOCAL_CUDF_ROOT"
     # The FFI crate builds its own libpeacock_gpu via the cmake crate in cargo's
@@ -346,7 +433,7 @@ for line in sys.stdin:
   done
 fi
 
-if [ "$RSYNC" -eq 1 ]; then
+if [ "$PUSH_BINARIES" -eq 1 ]; then
   # Strip the rust test binaries before shipping: unstripped debug builds link
   # the whole DataFusion/Arrow stack and are huge. --strip-debug drops only the
   # debug sections, keeping the dynamic symbol table intact.
@@ -363,7 +450,12 @@ if [ "$RSYNC" -eq 1 ]; then
     # the just-built binaries — version-controlled fixtures, run-independent of the
     # remote's checked-out commit. Heavy parquet datasets are generated on the
     # remote, untouched.
-    # (For an --update-canonical run the remote regenerates these in place.)
+    # TWO reasons, and the regen one is not a footnote:
+    #   VERIFY  the binaries assert against exactly these files.
+    #   REGEN   the push establishes the BASELINE. --delete makes the remote tree equal
+    #           the local committed set, so what comes back is
+    #           (local-committed ∪ regenerated) rather than (remote-leftovers ∪
+    #           regenerated). Without it a regen inherits whatever a previous run left.
     #
     # EVERY mode ships them; there is no exclusion here, and both exclusions this
     # line used to carry were bugs of the same shape:
@@ -375,8 +467,7 @@ if [ "$RSYNC" -eq 1 ]; then
     # In both cases the run verified the new binaries against whatever stale goldens
     # the remote happened to have — a device-label skew alone produced 110/110
     # "canonical file not found".
-    echo "==> rsync goldens testdata/goldens"
-    rsync -r --delete testdata/goldens/ "$HOST:$REMOTE_DIR/testdata/goldens/"
+    sync_goldens push
   fi
 fi
 
@@ -457,17 +548,20 @@ fi
 # (set -e). For goldens we pull only *.txt (the cost/plan goldens); other kinds
 # (e.g. parquet generated once on verda) sync in full. Opt-in so a plain run never
 # overwrites local data.
-if [ -n "$PULL_TESTDATA" ]; then
-  IFS=',' read -ra _kinds <<< "$PULL_TESTDATA"
-  for kind in "${_kinds[@]}"; do
+if [ ${#PULL_KINDS[@]} -gt 0 ]; then
+  for kind in "${PULL_KINDS[@]}"; do
     for d in $(testdata_dirs_for_kind "$kind"); do
-      echo "==> pull $HOST:$REMOTE_DIR/testdata/$d -> testdata/$d"
-      mkdir -p "testdata/$d"
       if [ "$kind" = "goldens" ]; then
-        rsync -r --include='*/' --include='*.txt' --exclude='*' \
-          "$HOST:$REMOTE_DIR/testdata/$d/" "testdata/$d/"
+        # No *.txt filter any more. Its real job was keeping plan_bytes.sha256 out of
+        # the round trip, and that is now the TEST's job (test_plan_bytes refuses to
+        # regenerate without PEACOCK_REWRITE_PLAN_BYTES). Two mechanisms for one
+        # invariant, with the weaker one in the wrong layer, is how they drift. The
+        # filter also silently dropped the 16 sf40 CSVs.
+        sync_goldens pull
       else
-        rsync -a --delete "$HOST:$REMOTE_DIR/testdata/$d/" "testdata/$d/"
+        echo "==> pull $HOST:$REMOTE_DIR/testdata/$d -> testdata/$d (additive)"
+        mkdir -p "testdata/$d"
+        rsync -a "$HOST:$REMOTE_DIR/testdata/$d/" "testdata/$d/"
       fi
     done
   done

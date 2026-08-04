@@ -152,7 +152,7 @@ Rules that keep this healthy:
 
 | Host | Use | Managed by |
 |---|---|---|
-| **shad-gpu** (most used) | GPU test suite (cudf 25.02, H200-class; old glibc → patch step) | `scripts/build-test-shadgpu.sh` (`--build --rsync --patch --run` / `--all`); resilient rsync + retries — the link is flaky |
+| **shad-gpu** (most used) | GPU test suite (cudf 25.02, H200-class; old glibc → patch step) | `scripts/build-test-shadgpu.sh` (`--build --push-binaries --patch --run` / `--all`); resilient rsync + retries — the link is flaky |
 | **verda** (when available) | large CPU runs, golden regen | `scripts/build-test.sh --host verda` |
 | **verda-gpu** (least used) | same root volume as verda, with a GPU attached | `scripts/build-test.sh --gpu` |
 | **nebius** | large CPU-only VM for benchmarking | manual |
@@ -162,10 +162,17 @@ Rules that keep this healthy:
 - Rented hosts change SSH host keys on reprovision: `ssh-keygen -R <host>` + re-keyscan
   rather than fighting the mismatch.
 - **Golden regen**: on verda via `scripts/build-test.sh --host verda --rust-only
-  --update-canonical`, then `--pull-testdata goldens` (shorthand `--fetch-goldens`) to
-  bring regenerated goldens back; or locally with `UPDATE_CANONICAL=1 cargo test
-  --features rust-only ...`. `--push-testdata <kind>` / `--pull-testdata <kind>` move
+  --update-canonical`, then `--pull-goldens` to bring regenerated goldens back; or
+  locally with `UPDATE_CANONICAL=1 cargo test --features rust-only ...`. Sync is one
+  flag per kind per direction — `--push-<kind>` / `--pull-<kind>` for
   `parquet | goldens | duckdb-profiles | duckdb-dynfilters | queries`.
+  **Pushes mirror (`--delete`), pulls are additive**, deliberately: the remote is a
+  PARTIAL mirror (`testdata/goldens/` holds `tpch.sf40/`, which lives only on shad-gpu),
+  so mirroring downward would delete fixtures the source host never had, out of a git
+  working tree. `plan_bytes.sha256` rides along safely because `test_plan_bytes` itself
+  refuses to regenerate without `PEACOCK_REWRITE_PLAN_BYTES=1`.
+  The tpch **embeddings cache is NOT syncable** — a per-host intermediate
+  (`fetch_embeddings.sh`, ~1.8 GB, gitignored); regenerate it where you need it.
 - Remote CPU runs ship built binaries + goldens + data only — never source. The CPU test
   crates bake the testdata path at compile time (#49), so the remote needs a
   `/media/data/peacockdb` symlink.

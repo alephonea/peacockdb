@@ -6,7 +6,7 @@ anchor that the cost widget links to. Names reflect the post-refactor tree: devi
 `tp<N>-<tier>` (micro=100MiB, mini=2GiB, standard=12GiB); C++ in `cpp/src/operators/*.cpp`,
 `expr.cpp`, `node_session.cpp`, `dispatch.cpp`; Rust modes in `peacockdb-core/src/executors/`.
 
-New tickets take the next free number (currently 126).
+New tickets take the next free number (currently 127).
 
 ## Critical correctness
 
@@ -301,6 +301,17 @@ already provisions parquet. Accepted risk until then: stale ✗ cells after an u
 plain inner joins plus an aggregate; mixed_join adds a residual range filter) and
 `join_int` (tp8-only oracle test, no tp1 row). Either add the missing GPU test rows or
 mark the cells intentionally-na with a reason.
+
+<a id="t126"></a>
+### #126 — maybe_write_result_golden discards its removal result
+`peacockdb-core/tests/common/mod.rs` (~L566): when a result exceeds
+`RESULT_GOLDEN_MAX_BYTES` the golden is deleted so the GPU test falls back to the live
+oracle, but `let _ = std::fs::remove_file(...)` discards the outcome and the message
+prints unconditionally. A failed removal is therefore reported as "no golden" while the
+stale golden is still on disk, and the message cannot distinguish "deleted a stale one"
+from "there was nothing here". Narrow, but it is a regen path: the operator's next move
+is to trust the log and commit. Same shape as #119. Check the result, and say which of
+the two things happened.
 
 <a id="t124"></a>
 ### #124 — common/mod.rs is over the 1000-line bar
