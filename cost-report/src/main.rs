@@ -138,21 +138,27 @@ impl Registry {
     }
 }
 
-/// The CPU columns whose `✓` links to a golden, and the `<mode>-<tp>-<tier>` labels to
-/// probe for each, in order — first one present on disk wins.
+/// The CPU columns whose `✓` links to a golden, and the single `<mode>-<tp>-<tier>`
+/// label each links at.
 ///
-/// Two labels for `ftc_tp1` is not defensiveness, it is the actual layout: every tp1
-/// query is canonized at tp1-standard EXCEPT `scan_limit`, which is canonized at
-/// tp1-mini (LIMIT without a total order has no partition-invariant row set, so it
-/// moves to the deterministic single-stream tier — see test_cpu_full_table.rs). A
-/// single hardcoded label would give exactly that one query a dead link.
+/// ONE label per column, so the link target is predictable from the column alone.
+/// `scan_limit` is the query that makes this worth stating: it is registered at BOTH
+/// tp1_mini and tp1_standard and `column_for` keys on the tp count rather than the
+/// memory tier, so its single `ftc_tp1` cell aggregates two runs and it owns two
+/// goldens. It links at tp1-standard like every other tp1 row; a hyperlink cannot
+/// express "two runs" and inventing a second candidate for it would add config that
+/// nothing else can reach.
+///
+/// The existence check in `build_dataset` plus the gate in `main` is what makes one
+/// label safe: a query registered ONLY at some other tier has no golden here and
+/// fails by name, rather than rendering a dead link.
 ///
 /// Deliberately NOT derived from `CPU_DEVICE`: that const is the Σout cells' golden,
 /// and folding the two together would let a Σout retarget silently move these links.
-const CPU_GOLDEN_CANDIDATES: [(&str, &[&str]); 3] = [
-    ("ftc_tp1", &["full_table-tp1-standard", "full_table-tp1-mini"]),
-    ("ftc_tp8", &["full_table-tp8-mini"]),
-    ("partitioned_cpu", &["partitioned-tp8-standard"]),
+const CPU_GOLDEN_LABEL: [(&str, &str); 3] = [
+    ("ftc_tp1", "full_table-tp1-standard"),
+    ("ftc_tp8", "full_table-tp8-mini"),
+    ("partitioned_cpu", "partitioned-tp8-standard"),
 ];
 
 /// Render a cell state as its glyph. `enabled` means the mode runs AND its result is
@@ -181,11 +187,10 @@ struct Row {
     tickets: Vec<String>,
     peacockdb: Option<u64>,
     duckdb: Option<u64>,
-    /// CPU column -> the `<mode>-<tp>-<tier>` golden label whose `.cpu.txt` exists on
-    /// disk for this query, for the ✓ links. Resolved by probing (see
-    /// [`CPU_GOLDEN_CANDIDATES`]) because the label is NOT derivable from the column
-    /// alone: ftc_tp1 is tp1-standard for every query except scan_limit, which is
-    /// canonized at tp1-mini. Absent for non-`enabled` cells, which never link.
+    /// CPU column -> the `<mode>-<tp>-<tier>` golden label ([`CPU_GOLDEN_LABEL`])
+    /// whose `.cpu.txt` exists on disk for this query, for the ✓ links. Absent for
+    /// non-`enabled` cells, which never link, and for an `enabled` cell whose golden
+    /// is missing — which `main` then reports rather than rendering unlinked.
     cpu_golden: BTreeMap<String, String>,
 }
 
@@ -411,14 +416,14 @@ fn main() {
     // EVERY CPU macro invocation, independent of the ResultGolden keyword (which gates
     // only .result.txt). That invariant is the whole premise of these links, so a cell
     // that resolves to nothing is a real breakage — a new device label, or a golden
-    // renamed without updating CPU_GOLDEN_CANDIDATES — and must be loud rather than a
+    // renamed without updating CPU_GOLDEN_LABEL — and must be loud rather than a
     // silently unlinked ✓.
     let mut unlinked: Vec<String> = Vec::new();
     for d in &datasets {
         for r in &d.rows {
-            for (col, candidates) in CPU_GOLDEN_CANDIDATES {
+            for (col, label) in CPU_GOLDEN_LABEL {
                 if r.state(col) == "enabled" && !r.cpu_golden.contains_key(col) {
-                    unlinked.push(format!("{} {} [{col}] (tried {})", d.label, r.query, candidates.join(", ")));
+                    unlinked.push(format!("{} {} [{col}] (expected {label})", d.label, r.query));
                 }
             }
         }
@@ -427,8 +432,8 @@ fn main() {
         eprintln!(
             "cost-report: {} enabled CPU cell(s) have no .cpu.txt golden under any known \
              label. Every enabled CPU cell owns one (assert_cpu_cost_canonical is \
-             unconditional), so this means a new device label or a golden rename that \
-             CPU_GOLDEN_CANDIDATES has not caught up with:\n  {}",
+             unconditional), so this means a query registered at a tier CPU_GOLDEN_LABEL \
+             does not name, or a golden rename it has not caught up with:\n  {}",
             unlinked.len(),
             unlinked.join("\n  ")
         );
@@ -492,19 +497,15 @@ fn build_dataset(
                     "peacockdb_cost=",
                 ),
                 duckdb: read_total(&canon.join(format!("{stem}.duckdb_cost.txt")), "duckdb_cost="),
-                // Probe on disk rather than compute: see CPU_GOLDEN_CANDIDATES. Only
-                // `enabled` cells are resolved — the others never render a link, and
-                // probing them would make the main() gate below fire on cells that
-                // legitimately have no golden.
-                cpu_golden: CPU_GOLDEN_CANDIDATES
+                // Check the golden exists rather than assuming it: see
+                // CPU_GOLDEN_LABEL. Only `enabled` cells are resolved — the others
+                // never render a link, and checking them would make the main() gate
+                // below fire on cells that legitimately have no golden.
+                cpu_golden: CPU_GOLDEN_LABEL
                     .iter()
                     .filter(|(col, _)| r.states.get(*col).map(String::as_str) == Some("enabled"))
-                    .filter_map(|(col, candidates)| {
-                        candidates
-                            .iter()
-                            .find(|label| canon.join(format!("{stem}.{label}.cpu.txt")).exists())
-                            .map(|label| (col.to_string(), label.to_string()))
-                    })
+                    .filter(|(_, label)| canon.join(format!("{stem}.{label}.cpu.txt")).exists())
+                    .map(|(col, label)| (col.to_string(), label.to_string()))
                     .collect(),
             }
         })
@@ -1423,11 +1424,14 @@ mod tests {
         assert_eq!(r.ftc_cell(&dry_links(), "testdata/goldens/tpch.sf1"), "tp1✓ tp8✗");
     }
 
-    /// The ✓ links, and they resolve PER QUERY rather than per column.
+    /// The ✓ links, resolved PER COLUMN from [`CPU_GOLDEN_LABEL`].
     ///
-    /// scan_limit is the case that motivates the whole probe: every other tp1 query is
-    /// canonized at full_table-tp1-standard, but scan_limit is at full_table-tp1-mini,
-    /// so a hardcoded column label would give exactly that one query a dead link.
+    /// scan_limit earns a case here because it is the one query where the answer is
+    /// not obvious: it owns TWO tp1 goldens (registered at tp1_mini and tp1_standard,
+    /// both mapping to the single ftc_tp1 cell), yet that cell shows one link, at
+    /// tp1-standard like every other tp1 row. Pinning it stops a future reader from
+    /// "fixing" the link to tp1-mini on the theory that the mini golden is unreachable
+    /// by mistake — it is unreachable by decision (see the task spec).
     #[test]
     fn enabled_cpu_glyphs_link_to_their_own_golden() {
         let canon = "testdata/goldens/tpch.sf1";
@@ -1440,11 +1444,13 @@ mod tests {
         assert!(cell.contains(&format!("{canon}/q1.full_table-tp8-mini.cpu.txt")), "{cell}");
         assert_eq!(cell.matches("<a href=").count(), 2, "both glyphs link: {cell}");
 
-        // scan_limit: tp1 resolves to the MINI label, and the stem is hyphenated.
+        // scan_limit owns BOTH tp1 goldens (registered at tp1_mini and tp1_standard,
+        // one ftc_tp1 cell). It links at tp1-standard like every other tp1 row — the
+        // decision recorded in the task spec — and its stem is hyphenated.
         let mut sl = test_row("scan_limit", &[("ftc_tp1", "enabled"), ("ftc_tp8", "disabled")], None, None);
-        sl.cpu_golden.insert("ftc_tp1".into(), "full_table-tp1-mini".into());
+        sl.cpu_golden.insert("ftc_tp1".into(), "full_table-tp1-standard".into());
         let cell = sl.ftc_cell(&sha_links(), canon);
-        assert!(cell.contains(&format!("{canon}/scan-limit.full_table-tp1-mini.cpu.txt")), "{cell}");
+        assert!(cell.contains(&format!("{canon}/scan-limit.full_table-tp1-standard.cpu.txt")), "{cell}");
 
         // Only ✓ links: a disabled cell has no golden behind it, so it stays plain
         // even when a sha is present.
