@@ -32,7 +32,7 @@ both + their sum):
   - duckdb_cost = materialization_total + storage_read_total.
 bytes_read (decoded Arrow, read basis) and out_bytes/materialization (DuckDB
 result_set_size, output basis) are DIFFERENT measurement bases, so bytes_read < out_bytes
-can legitimately occur on small scans and is NOT clamped (dmitry, option c). out_rows IS
+can legitimately occur on small scans and is NOT clamped. out_rows IS
 capped at rows_read (same basis = row counts). threads=1 throughout for reproducibility.
 """
 
@@ -481,7 +481,7 @@ def scan_cost(node: Node) -> dict:
     read size; out_bytes / materialization use DuckDB's result_set_size (output basis).
     Because these are DIFFERENT bases, bytes_read < out_bytes can LEGITIMATELY occur on
     small (dim-table) scans — an artifact of comparing two systems' byte accounting, NOT
-    a bug, left UNCLAMPED (dmitry, option c). read>=output is a real invariant only
+    a bug, left UNCLAMPED. read>=output is a real invariant only
     WITHIN one basis, so it is NOT asserted across the read(Arrow)/output(DuckDB) seam.
 
     out_rows IS capped at rows_read — that cap is within ONE basis (row counts), so it's
