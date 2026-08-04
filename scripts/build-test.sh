@@ -6,11 +6,12 @@
 set -euo pipefail
 
 # Build the test suite locally and run it on a remote host. Mirrors
-# build-test-shadgpu.sh (build here, ship binaries, run there). Two suites,
-# selected by --cpu (default) or --gpu:
+# build-test-shadgpu.sh (build here, ship binaries, run there). Three suites,
+# selected by the mode flags below (cpu is the default):
 #
-#   --cpu        C++ peacock_cpu_tests + every Rust target that builds with cmake
-#                (a SUPERSET of --rust-only, plus test_ffi).
+#   cpu (default)  C++ peacock_cpu_tests + every Rust target that builds with cmake
+#                (a SUPERSET of --rust-only, plus test_ffi). No flag selects it —
+#                see usage(): a flag whose only effect is the default is noise.
 #   --rust-only   every Rust target that builds WITHOUT cmake — see build-test.md's
 #                "What rust-only means". Golden regen + cpu/plan verify.
 #   --gpu        C++ peacock_plan_tests + the GPU-runtime Rust targets, run
@@ -269,6 +270,11 @@ rust_only_targets() {
       case "$base" in
         test_ffi|diag_flip_audit) continue ;;
       esac
+      # Needs a GPU at RUNTIME even where it compiles fine — subtracted as a SET, not
+      # by name. See gpu_runtime_targets.
+      if gpu_runtime_targets | grep -qx "$pkg:$base"; then
+        continue
+      fi
       # SECOND AXIS: what does the target verify — the RUNTIME, or the REPO?
       # A test that reads the checkout (.github/workflows, the tests/ tree) cannot be
       # verified from a shipped binary: none of that travels with it. Running
@@ -284,6 +290,28 @@ rust_only_targets() {
       printf '%s:%s\n' "$pkg" "$base"
     done
   done
+}
+
+# The GPU-RUNTIME set: targets that need a GPU when they RUN, whatever they need to
+# compile. Declared once here and subtracted wherever a mode cannot satisfy it, rather
+# than filtered by name — `grep -v ':test_gpu_'` was the last name-convention dependency
+# in this file, and it let test_inc2_conformance through because the name does not match
+# the prefix.
+#
+# test_inc2_conformance is the case that exposed it. It is the ONLY test file that gates
+# per ITEM (`#[cfg(...)]`, 7 of them) instead of per FILE (`#![cfg(...)]`), so the
+# file-level membership test below cannot see it: with the full feature set its seven
+# live-GPU tests are ACTIVE and call peacock_spark_partition_ids through the FFI, which
+# on a CPU-only remote fails for want of a device — a red run that says nothing about the
+# code. Under --rust-only those same seven compile out and 3 pure-CPU comet checks
+# remain, which is harmless but still not this suite's job.
+gpu_runtime_targets() {
+  cat <<'GPUSET'
+peacockdb-core:test_gpu_full_table
+peacockdb-core:test_gpu_partitioned
+peacockdb-core:test_inc2_conformance
+peacockdb-core:test_gpu_executor_misc
+GPUSET
 }
 
 # Targets that need cmake to compile at all, in dependency-name order.
@@ -307,11 +335,10 @@ if [ "$MODE" = "gpu" ]; then
   # GPU-runtime set. Kept in step with build-test-shadgpu.sh:RUST_TESTS and
   # pipeline.yml's gpu-tests staging array — three runners had three lists and this
   # one was short by test_inc2_conformance, the GPU<->comet bit-exact murmur3 gate.
-  RUST_TESTS=(
-    peacockdb-core:test_gpu_full_table
-    peacockdb-core:test_gpu_partitioned
-    peacockdb-core:test_inc2_conformance
-  )
+  # test_gpu_executor_misc is in the GPU-runtime set but is NOT staged: it needs the
+  # linked C++/CUDA executor and is not built for the GPU job (see test_ci_coverage's
+  # exemption table, which records the same fact).
+  mapfile -t RUST_TESTS < <(gpu_runtime_targets | grep -v ':test_gpu_executor_misc$')
   CPP_TEST_BIN=peacock_plan_tests
 elif [ "$RUST_ONLY" -eq 1 ]; then
   # Golden regen / cpu+plan verify: no C++, no FFI.
@@ -323,7 +350,7 @@ else
   # what --gpu is for.
   mapfile -t RUST_TESTS < <(
     rust_only_targets
-    needs_cmake_targets | grep -v ':test_gpu_'
+    needs_cmake_targets | grep -vxF -f <(gpu_runtime_targets)
   )
   CPP_TEST_BIN=peacock_cpu_tests
 fi
@@ -352,7 +379,9 @@ fi
 # prints nothing yields a zero-length array, every `for` body over it vanishes, and the
 # script exits 0 having run no tests — a derivation typo would report success.
 if [ ${#RUST_TESTS[@]} -eq 0 ]; then
-  echo "error: the derived Rust suite is EMPTY for mode '${MODE_FLAG:---cpu}'." >&2
+  # Print the MODE, not a flag string: there is no --cpu flag, and naming one in an
+  # error message sends a reader who is already stuck to "Unknown flag: --cpu".
+  echo "error: the derived Rust suite is EMPTY for mode '${MODE_FLAG:-default (cpu)}'." >&2
   echo "       This is a bug in the derivation (see rust_only_targets/needs_cmake_targets)," >&2
   echo "       not a valid configuration: a run with no targets would exit 0 having" >&2
   echo "       verified nothing." >&2
