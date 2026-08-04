@@ -6,7 +6,7 @@ anchor that the cost widget links to. Names reflect the post-refactor tree: devi
 `tp<N>-<tier>` (micro=100MiB, mini=2GiB, standard=12GiB); C++ in `cpp/src/operators/*.cpp`,
 `expr.cpp`, `node_session.cpp`, `dispatch.cpp`; Rust modes in `peacockdb-core/src/executors/`.
 
-New tickets take the next free number (currently 124).
+New tickets take the next free number (currently 126).
 
 ## Critical correctness
 
@@ -301,6 +301,24 @@ already provisions parquet. Accepted risk until then: stale ✗ cells after an u
 plain inner joins plus an aggregate; mixed_join adds a residual range filter) and
 `join_int` (tp8-only oracle test, no tp1 row). Either add the missing GPU test rows or
 mark the cells intentionally-na with a reason.
+
+<a id="t124"></a>
+### #124 — common/mod.rs is over the 1000-line bar
+`peacockdb-core/tests/common/mod.rs` is 1410 lines against coding-style.md's "under 1000".
+Pre-existing; the exec-mode refactor moved it the right way (`common/exec_mode.rs` split
+out) but added net lines. Next extraction is the obvious one: ~250 lines of
+`macro_rules!` (the test-macro definitions) into `common/macros.rs`, which puts the file
+under on its own. Deliberately not done inside the refactor — the same page forbids
+scope-creep refactors.
+
+<a id="t125"></a>
+### #125 — `elsewhere` parameter in assert_registry_matches_csv is dead
+`peacockdb-core/tests/common/registry.rs`: after the by-mode file split every CSV column
+is owned wholly by one binary, so all four callers pass `&[]` and the ~20 lines of
+staleness checking can no longer fire. Reviewer's read is DELETE (coding-style.md: no
+fallbacks the task didn't ask for); the parameter was kept only to hold branch scope, and
+its doc paragraph was rewritten to stop justifying it with a now-false example. Re-add it
+in the commit that actually splits a column across binaries again.
 
 <a id="t13"></a>
 ### #13 — Hermetic builds: system-library whitelist + CI audit

@@ -235,3 +235,55 @@ Do **not** run the full CPU or GPU suite.
 
 CSV column renames; `ftc` as a kind name; porting the resident-OOM enforcer to the
 partitioned driver (#91); regenerating any golden; re-tiering any test.
+
+## 10. Follow-up (added 2026-08-04): fold the approx variants into an oracle argument
+
+Human's instruction, on this same task rather than a new one.
+
+The `_approx_` macros exist only to pass `Some(1e-12)` instead of `None` for `rel_tol`.
+That is a property of how the result is compared, not a different kind of test, and
+spelling it in the macro name means two names per mode where one plus an argument says
+more. Delete `cpu_full_table_result_approx_test!` and `cpu_partitioned_result_approx_test!`
+and add a **second-to-last** argument to the two surviving macros:
+
+    cpu_full_table_result_test!(tpch, 1, q1, tp8_mini, data_fusion_exact, no_result_golden);
+    cpu_partitioned_result_test!(tpcds, 1, q17, tp8_standard, data_fusion_approximate, result_golden);
+
+Backed by a real enum in `common/exec_mode.rs`, keyword-mapped like `ResultGolden` and
+`gpu_result_mode` (unknown keyword panics naming the accepted set):
+
+    pub enum CpuOracle { DataFusionExact, DataFusionApproximate }
+
+`DataFusionExact` → `rel_tol = None`, `DataFusionApproximate` → `Some(1e-12)`.
+
+The name states what the oracle IS, which the old name did not: **both** variants compare
+against a live plain-DataFusion run at `target_partitions = 1` (`build_session_state(1)`);
+only the float tolerance differs. Nothing about the oracle changes — this is a rename of
+an existing bool-in-disguise.
+
+Move the 1e-12 rationale — float summation reassociates across partitions at tp>1, ~1 ULP,
+while the `output_bytes` cost golden stays exact because a ULP does not change byte width —
+onto the `DataFusionApproximate` variant, where `ResultGolden` and `GpuResultMode` keep
+theirs. Do not leave it stranded on a deleted macro.
+
+**The five call sites that become `data_fusion_approximate`** (every other CPU call site
+takes `data_fusion_exact`):
+
+| File | Query |
+|---|---|
+| `test_cpu_full_table.rs:65` | tpch `shuffle_stddev` @ tp8-mini |
+| `test_cpu_full_table.rs:85` | tpcds `q14` @ tp8-mini |
+| `test_cpu_full_table.rs:109` | tpcds `q39` @ tp8-mini |
+| `test_cpu_full_table.rs:226` | tpch `shuffle_stddev` @ tp1-standard |
+| `test_cpu_partitioned.rs:38` | tpcds `q17` @ tp8-standard |
+
+Note `tpcds q14 @ tp1-standard` is **exact** today and stays exact — at tp1 there is no
+reassociation. Converting it along with its tp8-mini sibling would silently loosen a check.
+
+**Test-fn names do not change.** The approx macros already generated the same
+`cpu_<mode>_<ds>_sf<sf>_<query>_<device>` pattern as the exact ones, so the 259/259
+correspondence must still hold exactly. Re-run the `--list` comparison and say so; a
+changed count here means something other than the intended edit happened.
+
+Verification is §9 unchanged, and no golden may move: `rel_tol` affects only the result
+compare, never `assert_cpu_cost_canonical`.
