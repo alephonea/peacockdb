@@ -190,7 +190,7 @@ if [ "$RUN" -eq 1 ]; then
   #   PEACOCK_GPU_DEBUG=1    enable PCK_TRACE + per-node cudaStreamSynchronize
   #                          in src/expr.cpp (localizes async errors).
   #   PCK_TEST_FILTER=<sub>  cargo-test name filter forwarded to the rust
-  #                          binary (e.g. gpu_tpch_sf1_q13_H200). Empty = run all.
+  #                          binary (e.g. gpu_full_table_tpch_sf1_q13_full_table_tp1_standard). Empty = run all.
   #   PCK_RUN_CPP=0          skip peacock_plan_tests (default: run them).
   : "${PEACOCK_GPU_DEBUG:=}"
   : "${PCK_TEST_FILTER:=}"

@@ -108,7 +108,7 @@ Rules that keep this healthy:
   build script (zstd-sys, bzip2-sys, lzma-sys, psm, blake3) and rebuilds the whole
   DataFusion stack above them — before this, alternating between the two entry points
   thrashed the cache each way:
-  `CUDF_ROOT=~/data/miniforge3/envs/rapids scripts/cargo-cudf.sh test -p peacockdb-core --test test_gpu --no-run`
+  `CUDF_ROOT=~/data/miniforge3/envs/rapids scripts/cargo-cudf.sh test -p peacockdb-core --test test_gpu_full_table --no-run`
   For anything more than a one-off command, use `build-test.sh` / `build-test-shadgpu.sh`
   instead — they handle build, staging, shipping and running.
 - The FFI crate caches its cmake `cudf_DIR` in OUT_DIR; both build-test scripts clean it

@@ -159,7 +159,7 @@ query_plan_test!(tpcds, 1, q99, tp8_mini);
 
 // ── registry verification ───────────────────────────────────────────────────
 /// This binary owns the `plan` column of testdata/cost-registry.csv. `inventory`
-/// collects per binary, so each suite verifies its own columns; together the four
+/// collects per binary, so each suite verifies its own columns; together the five
 /// suites cover all six. See common/registry.rs.
 #[test]
 fn registry_matches_csv_plan_column() {

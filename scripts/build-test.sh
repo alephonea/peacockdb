@@ -264,18 +264,23 @@ if [ "$RSYNC" -eq 1 ]; then
   ssh "$HOST" "mkdir -p '$REMOTE_DIR/cpp/install'"
   rsync -r -P "$INSTALL_DIR"/* "$HOST:$REMOTE_DIR/cpp/install/"
 
-  if [ "$MODE" = "cpu" ] && [ -d testdata/goldens ]; then
+  if [ -d testdata/goldens ]; then
     # Ship the committed goldens (testdata/goldens/<dataset>.sf<N>/) so they match
     # the just-built binaries — version-controlled fixtures, run-independent of the
     # remote's checked-out commit. Heavy parquet datasets are generated on the
-    # remote, untouched. The GPU suite uses no goldens, so skip in --gpu mode.
+    # remote, untouched.
     # (For an --update-canonical run the remote regenerates these in place.)
     #
-    # This deliberately does NOT exclude --rust-only. It used to, and that was a
-    # trap: --rust-only IS the golden/plan verify mode, so it needs the goldens
-    # more than the C++ path does. With the exclusion in place a --rust-only run
-    # verified the new binaries against whatever stale goldens the remote happened to
-    # have — a device-label skew alone produced 110/110 "canonical file not found".
+    # EVERY mode ships them; there is no exclusion here, and both exclusions this
+    # line used to carry were bugs of the same shape:
+    #   --rust-only IS the golden/plan verify mode, so it needs them most.
+    #   --gpu was skipped on the claim that "the GPU suite uses no goldens". False:
+    #     assert_gpu_query verifies the per-node cost tree against the .cpu.txt on
+    #     EVERY run, and the final result against the .result.txt in the three
+    #     golden_* modes.
+    # In both cases the run verified the new binaries against whatever stale goldens
+    # the remote happened to have — a device-label skew alone produced 110/110
+    # "canonical file not found".
     echo "==> rsync goldens testdata/goldens"
     rsync -r --delete testdata/goldens/ "$HOST:$REMOTE_DIR/testdata/goldens/"
   fi
