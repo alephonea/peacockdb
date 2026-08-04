@@ -25,10 +25,12 @@
   argument order, which makes the same two flags mean different things depending on how
   they were typed. Validate every argument, and that the run will actually do something,
   *before* the first side effect: a typo should fail before it ships files, not halfway
-  through. Prefer `set -euo pipefail`, and remember what it does not cover — an `exit`
-  inside `$(…)` ends the subshell only, and an empty list makes a `for` body vanish
+  through. Prefer `set -euo pipefail`, and remember what it does not cover: an `exit`
+  inside `$(…)` ends the subshell only; an empty list makes a `for` body vanish
   silently, so a derived-but-empty work set must be an explicit error rather than a
-  green no-op. Where execution genuinely must continue past a failure (running every
+  green no-op; and a failing `&&` list is ignored at statement level but becomes the
+  return value when it is a function's LAST command, so `[ -f x ] && do_thing` written
+  at the end of a function silently fails the caller. Where execution genuinely must continue past a failure (running every
   test binary before reporting), say why at the site and accumulate the status so the
   script still exits non-zero.
 - **No defensive code for impossible scenarios**; trust internal invariants and framework
