@@ -1,0 +1,22 @@
+GpuCoalesceBatchesExec
+  GpuHashJoinExec: join_type=RightSemi, on=[(c_custkey@0, o_custkey@1)]
+    GpuCoalesceBatchesExec
+      GpuRepartitionExec: partitioning=Hash([c_custkey@0], 8), input_partitions=8
+        GpuCoalesceBatchesExec
+          GpuFilterExec: predicate=c_mktsegment@1 = BUILDING, projection=[0]
+            GpuScanExec: table=customer, projections=[c_custkey, c_mktsegment]
+    GpuCoalesceBatchesExec
+      GpuRepartitionExec: partitioning=Hash([o_custkey@1], 8), input_partitions=8
+        GpuScanExec: table=orders, projections=[o_orderkey, o_custkey, o_orderstatus, o_totalprice, o_orderdate, o_orderpriority, o_clerk, o_shippriority, o_comment]
+--- memory ---
+total_estimate_cost=1656
+GpuCoalesceBatchesExec: row_width=168, subtree_max_row_bytes=344, estimate_input_bytes=168, estimate_output_bytes=168, estimate_cost=336
+  GpuHashJoinExec: row_width=168, subtree_max_row_bytes=344, estimate_input_bytes=176, estimate_output_bytes=168, estimate_cost=344
+    GpuCoalesceBatchesExec: row_width=8, subtree_max_row_bytes=48, estimate_input_bytes=8, estimate_output_bytes=8, estimate_cost=16
+      GpuRepartitionExec: row_width=8, subtree_max_row_bytes=48, estimate_input_bytes=8, estimate_output_bytes=8, estimate_cost=16
+        GpuCoalesceBatchesExec: row_width=8, subtree_max_row_bytes=48, estimate_input_bytes=8, estimate_output_bytes=8, estimate_cost=16
+          GpuFilterExec: row_width=8, subtree_max_row_bytes=48, estimate_input_bytes=40, estimate_output_bytes=8, estimate_cost=48
+            GpuScanExec: row_width=40, subtree_max_row_bytes=40, estimate_input_bytes=0, estimate_output_bytes=40, estimate_cost=40
+    GpuCoalesceBatchesExec: row_width=168, subtree_max_row_bytes=168, estimate_input_bytes=168, estimate_output_bytes=168, estimate_cost=336
+      GpuRepartitionExec: row_width=168, subtree_max_row_bytes=168, estimate_input_bytes=168, estimate_output_bytes=168, estimate_cost=336
+        GpuScanExec: row_width=168, subtree_max_row_bytes=168, estimate_input_bytes=0, estimate_output_bytes=168, estimate_cost=168

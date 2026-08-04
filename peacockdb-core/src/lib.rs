@@ -1,6 +1,10 @@
+pub mod config;
+pub mod executors;
 pub mod gpu_rule;
 pub mod cpu_executor;
 pub mod gpu_rowgroup_prune;
+pub mod memory;
+pub mod operators;
 #[cfg(not(feature = "rust-only"))]
 pub mod gpu_executor;
 #[allow(unused_imports, dead_code, clippy::all)]
@@ -24,7 +28,8 @@ use datafusion::execution::context::SessionContext;
 use datafusion::execution::SessionStateBuilder;
 use datafusion::error::Result;
 
-use cpu_executor::{execute_node_by_node, NodeMemoryStats};
+use executors::executor::NodeMemoryStats;
+use executors::full_table_cpu_executor::execute_full_table;
 use gpu_rule::{GpuExecutionRule, GpuMemoryBudgetRule};
 pub use gpu_rule::PartitionMode;
 
@@ -51,7 +56,7 @@ pub fn build_session_state_with_gpu_rules_mode(
     SessionContext::new_with_state(state)
 }
 
-/// Single-partition convenience wrapper (the common case: tp1 and the tp8-mem2gib
+/// Single-partition convenience wrapper (the common case: tp1 and the tp8-mini
 /// determinism device). Real N-way partitioning callers use
 /// [`build_session_state_with_gpu_rules_mode`] with [`PartitionMode::RealMultiPartition`].
 pub fn build_session_state_with_gpu_rules(
@@ -152,7 +157,7 @@ pub async fn create_context_with_tables(
 // ---------------------------------------------------------------------------
 
 /// Executes SQL queries on CPU by building a GPU-annotated physical plan
-/// and running it through [`execute_node_by_node`].
+/// and running it through [`execute_full_table`].
 ///
 /// This is the idiomatic entry point: callers only see SQL in and
 /// `Vec<RecordBatch>` out — the GPU plan construction, node stripping, and
@@ -209,10 +214,10 @@ impl CpuExecutor {
     /// Steps (all hidden from the caller):
     /// 1. `ctx.sql(sql)` → DataFusion `DataFrame` (SQL parse + logical plan)
     /// 2. `.create_physical_plan()` → GPU-annotated `ExecutionPlan` tree
-    /// 3. `execute_node_by_node` → strip GPU wrappers, run each CPU node bottom-up
+    /// 3. `execute_full_table` → strip GPU wrappers, run each CPU node bottom-up
     pub async fn execute(&self, sql: &str) -> Result<Vec<RecordBatch>> {
         let plan = self.ctx.sql(sql).await?.create_physical_plan().await?;
-        execute_node_by_node(plan, self.ctx.task_ctx(), &mut |_, _| {}).await
+        execute_full_table(plan, self.ctx.task_ctx(), &mut |_, _| {}).await
     }
 
     /// Like [`execute`] but also returns the physical plan and per-node memory stats
@@ -224,7 +229,7 @@ impl CpuExecutor {
     ) -> Result<(Vec<RecordBatch>, Arc<dyn ExecutionPlan>, Vec<NodeMemoryStats>)> {
         let plan = self.ctx.sql(sql).await?.create_physical_plan().await?;
         let mut stats = Vec::new();
-        let batches = execute_node_by_node(plan.clone(), self.ctx.task_ctx(), &mut |_, s| {
+        let batches = execute_full_table(plan.clone(), self.ctx.task_ctx(), &mut |_, s| {
             stats.push(s.clone());
         })
         .await?;

@@ -10,15 +10,18 @@ use peacockdb_core::gpu_executor::GpuExecutor;
 
 use common::{testdata_dir, total_rows, GPU_BUDGET};
 
+// All-at-once GPU executor (peacock_execute): final-result-only fast path, slated for
+// retirement once the node-by-node full_table/partitioned executors cover these.
+// See https://github.com/asymptote-tech/peacockdb/issues/110
 #[tokio::test]
-async fn test_gpu_scan_nation() {
+async fn test_all_at_once_executor_scan_nation() {
     let exec = GpuExecutor::new(&testdata_dir(), 1, GPU_BUDGET).await.unwrap();
     let batches = exec.execute("SELECT * FROM nation").await.unwrap();
     println!("nation rows from GPU: {}", total_rows(&batches));
 }
 
 #[tokio::test]
-async fn test_gpu_filter_nation() {
+async fn test_all_at_once_executor_filter_nation() {
     let exec = GpuExecutor::new(&testdata_dir(), 1, GPU_BUDGET).await.unwrap();
     let batches = exec
         .execute("SELECT n_name FROM nation WHERE CAST(n_nationkey AS BIGINT) > 5")
@@ -28,7 +31,7 @@ async fn test_gpu_filter_nation() {
 }
 
 #[tokio::test]
-async fn test_gpu_aggregate_count() {
+async fn test_all_at_once_executor_aggregate_count() {
     let exec = GpuExecutor::new(&testdata_dir(), 1, GPU_BUDGET).await.unwrap();
     // COUNT(*) alone triggers DataFusion's PlaceholderRowExec (metadata-only
     // row count, no scan). Use SUM to force a real GPU scan + aggregate.
@@ -37,7 +40,7 @@ async fn test_gpu_aggregate_count() {
 }
 
 #[tokio::test]
-async fn test_gpu_join_nation_region() {
+async fn test_all_at_once_executor_join_nation_region() {
     let exec = GpuExecutor::new(&testdata_dir(), 1, GPU_BUDGET).await.unwrap();
     let batches = exec
         .execute(
@@ -50,7 +53,7 @@ async fn test_gpu_join_nation_region() {
 }
 
 #[tokio::test]
-async fn test_gpu_sort_nation() {
+async fn test_all_at_once_executor_sort_nation() {
     let exec = GpuExecutor::new(&testdata_dir(), 1, GPU_BUDGET).await.unwrap();
     let batches = exec.execute("SELECT n_name FROM nation ORDER BY n_name ASC").await.unwrap();
     println!("sorted nation rows from GPU: {}", total_rows(&batches));

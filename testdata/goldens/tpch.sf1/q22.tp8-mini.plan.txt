@@ -1,0 +1,52 @@
+GpuSortPreservingMergeExec: [cntrycode@0 ASC NULLS LAST]
+  GpuSortExec: expr=[cntrycode@0 ASC NULLS LAST]
+    GpuProjectExec: expr=[cntrycode@0 as cntrycode, count(*)@1 as numcust, sum(custsale.c_acctbal)@2 as totacctbal]
+      GpuAggregateExec: group_by=[cntrycode], aggr=[count(*), sum(custsale.c_acctbal)]
+        GpuCoalesceBatchesExec
+          GpuRepartitionExec: partitioning=Hash([cntrycode@0], 8), input_partitions=8
+            GpuAggregateExec: group_by=[cntrycode], aggr=[count(*), sum(custsale.c_acctbal)]
+              GpuProjectExec: expr=[substr(c_phone@0, 1, 2) as cntrycode, c_acctbal@1 as c_acctbal]
+                GpuNestedLoopJoinExec: join_type=Inner, filter=CAST(c_acctbal@0 AS Decimal128(19, 6)) > avg(customer.c_acctbal)@1, projection=[1, 2]
+                  GpuAggregateExec: group_by=[], aggr=[avg(customer.c_acctbal)]
+                    GpuCoalescePartitionsExec
+                      GpuAggregateExec: group_by=[], aggr=[avg(customer.c_acctbal)]
+                        GpuCoalesceBatchesExec
+                          GpuFilterExec: predicate=c_acctbal@1 > Some(0),15,2 AND (substr(c_phone@0, 1, 2) = 13 OR substr(c_phone@0, 1, 2) = 31 OR substr(c_phone@0, 1, 2) = 23 OR substr(c_phone@0, 1, 2) = 29 OR substr(c_phone@0, 1, 2) = 30 OR substr(c_phone@0, 1, 2) = 18 OR substr(c_phone@0, 1, 2) = 17), projection=[1]
+                            GpuScanExec: table=customer, projections=[c_phone, c_acctbal]
+                  GpuCoalesceBatchesExec
+                    GpuHashJoinExec: join_type=LeftAnti, on=[(c_custkey@0, o_custkey@0)], projection=[1, 2]
+                      GpuCoalesceBatchesExec
+                        GpuRepartitionExec: partitioning=Hash([c_custkey@0], 8), input_partitions=8
+                          GpuCoalesceBatchesExec
+                            GpuFilterExec: predicate=substr(c_phone@1, 1, 2) = 13 OR substr(c_phone@1, 1, 2) = 31 OR substr(c_phone@1, 1, 2) = 23 OR substr(c_phone@1, 1, 2) = 29 OR substr(c_phone@1, 1, 2) = 30 OR substr(c_phone@1, 1, 2) = 18 OR substr(c_phone@1, 1, 2) = 17
+                              GpuScanExec: table=customer, projections=[c_custkey, c_phone, c_acctbal]
+                      GpuCoalesceBatchesExec
+                        GpuRepartitionExec: partitioning=Hash([o_custkey@0], 8), input_partitions=8
+                          GpuScanExec: table=orders, projections=[o_custkey]
+--- memory ---
+total_estimate_cost=2008
+GpuSortPreservingMergeExec: row_width=56, subtree_max_row_bytes=112, estimate_input_bytes=56, estimate_output_bytes=56, estimate_cost=112
+  GpuSortExec: row_width=56, subtree_max_row_bytes=112, estimate_input_bytes=56, estimate_output_bytes=56, estimate_cost=112
+    GpuProjectExec: row_width=56, subtree_max_row_bytes=112, estimate_input_bytes=56, estimate_output_bytes=56, estimate_cost=112
+      GpuAggregateExec: row_width=56, subtree_max_row_bytes=112, estimate_input_bytes=56, estimate_output_bytes=56, estimate_cost=112
+        GpuCoalesceBatchesExec: row_width=56, subtree_max_row_bytes=112, estimate_input_bytes=56, estimate_output_bytes=56, estimate_cost=112
+          GpuRepartitionExec: row_width=56, subtree_max_row_bytes=112, estimate_input_bytes=56, estimate_output_bytes=56, estimate_cost=112
+            GpuAggregateExec: row_width=56, subtree_max_row_bytes=112, estimate_input_bytes=48, estimate_output_bytes=56, estimate_cost=104
+              GpuProjectExec: row_width=48, subtree_max_row_bytes=112, estimate_input_bytes=48, estimate_output_bytes=48, estimate_cost=96
+                GpuNestedLoopJoinExec: row_width=48, subtree_max_row_bytes=112, estimate_input_bytes=64, estimate_output_bytes=48, estimate_cost=112
+                  GpuAggregateExec: row_width=16, subtree_max_row_bytes=64, estimate_input_bytes=24, estimate_output_bytes=16, estimate_cost=40
+                    GpuCoalescePartitionsExec: row_width=24, subtree_max_row_bytes=64, estimate_input_bytes=24, estimate_output_bytes=24, estimate_cost=48
+                      GpuAggregateExec: row_width=24, subtree_max_row_bytes=64, estimate_input_bytes=16, estimate_output_bytes=24, estimate_cost=40
+                        GpuCoalesceBatchesExec: row_width=16, subtree_max_row_bytes=64, estimate_input_bytes=16, estimate_output_bytes=16, estimate_cost=32
+                          GpuFilterExec: row_width=16, subtree_max_row_bytes=64, estimate_input_bytes=48, estimate_output_bytes=16, estimate_cost=64
+                            GpuScanExec: row_width=48, subtree_max_row_bytes=48, estimate_input_bytes=0, estimate_output_bytes=48, estimate_cost=48
+                  GpuCoalesceBatchesExec: row_width=48, subtree_max_row_bytes=112, estimate_input_bytes=48, estimate_output_bytes=48, estimate_cost=96
+                    GpuHashJoinExec: row_width=48, subtree_max_row_bytes=112, estimate_input_bytes=64, estimate_output_bytes=48, estimate_cost=112
+                      GpuCoalesceBatchesExec: row_width=56, subtree_max_row_bytes=112, estimate_input_bytes=56, estimate_output_bytes=56, estimate_cost=112
+                        GpuRepartitionExec: row_width=56, subtree_max_row_bytes=112, estimate_input_bytes=56, estimate_output_bytes=56, estimate_cost=112
+                          GpuCoalesceBatchesExec: row_width=56, subtree_max_row_bytes=112, estimate_input_bytes=56, estimate_output_bytes=56, estimate_cost=112
+                            GpuFilterExec: row_width=56, subtree_max_row_bytes=112, estimate_input_bytes=56, estimate_output_bytes=56, estimate_cost=112
+                              GpuScanExec: row_width=56, subtree_max_row_bytes=56, estimate_input_bytes=0, estimate_output_bytes=56, estimate_cost=56
+                      GpuCoalesceBatchesExec: row_width=8, subtree_max_row_bytes=8, estimate_input_bytes=8, estimate_output_bytes=8, estimate_cost=16
+                        GpuRepartitionExec: row_width=8, subtree_max_row_bytes=8, estimate_input_bytes=8, estimate_output_bytes=8, estimate_cost=16
+                          GpuScanExec: row_width=8, subtree_max_row_bytes=8, estimate_input_bytes=0, estimate_output_bytes=8, estimate_cost=8

@@ -1,0 +1,41 @@
+GpuSortExec: expr=[am_pm_ratio@0 ASC NULLS LAST], fetch=100, partitions=1, output_rows=1, output_bytes=17
+  GpuProjectExec: expr=[CASE WHEN pmc@1 = 0 THEN None,23,8 ELSE CAST(amc@0 AS Decimal128(15, 4)) / CAST(pmc@1 AS Decimal128(15, 4)) END as am_pm_ratio], partitions=1, output_rows=1, output_bytes=17
+    GpuCrossJoinExec, partitions=1, output_rows=1, output_bytes=18
+      GpuProjectExec: expr=[count(*)@0 as amc], partitions=1, output_rows=1, output_bytes=9
+        GpuAggregateExec: group_by=[], aggr=[count(*)], partitions=1, output_rows=1, output_bytes=9
+          GpuProjectExec: expr=[], partitions=1, output_rows=113, output_bytes=0
+            GpuCoalesceBatchesExec, partitions=1, output_rows=113, output_bytes=1838
+              GpuHashJoinExec: join_type=Inner, on=[(wp_web_page_sk@0, ws_web_page_sk@0)], partitions=1, output_rows=113, output_bytes=1838
+                GpuCoalesceBatchesExec, partitions=1, output_rows=1, output_bytes=9
+                  GpuFilterExec: predicate=wp_char_count@1 >= 5000 AND wp_char_count@1 <= 5200, projection=[0], partitions=1, output_rows=1, output_bytes=9
+                    GpuScanExec: table=web_page, projections=[wp_web_page_sk, wp_char_count], partitions=1, output_rows=60, output_bytes=976
+                GpuCoalesceBatchesExec, partitions=1, output_rows=6360, output_bytes=51675
+                  GpuHashJoinExec: join_type=Inner, on=[(t_time_sk@0, ws_sold_time_sk@0)], projection=[2], partitions=1, output_rows=6360, output_bytes=51675
+                    GpuCoalesceBatchesExec, partitions=1, output_rows=7200, output_bytes=58500
+                      GpuFilterExec: predicate=t_hour@1 >= 8 AND t_hour@1 <= 9, projection=[0], partitions=1, output_rows=7200, output_bytes=58500
+                        GpuScanExec: table=time_dim, projections=[t_time_sk, t_hour], partitions=1, output_rows=86400, output_bytes=1404000
+                    GpuCoalesceBatchesExec, partitions=1, output_rows=70709, output_bytes=1149022
+                      GpuHashJoinExec: join_type=Inner, on=[(hd_demo_sk@0, ws_ship_hdemo_sk@1)], projection=[1, 3], partitions=1, output_rows=70709, output_bytes=1149022
+                        GpuCoalesceBatchesExec, partitions=1, output_rows=720, output_bytes=5850
+                          GpuFilterExec: predicate=hd_dep_count@1 = 6, projection=[0], partitions=1, output_rows=720, output_bytes=5850
+                            GpuScanExec: table=household_demographics, projections=[hd_demo_sk, hd_dep_count], partitions=1, output_rows=7200, output_bytes=117000
+                        GpuScanExec: table=web_sales, projections=[ws_sold_time_sk, ws_ship_hdemo_sk, ws_web_page_sk], partitions=1, output_rows=719384, output_bytes=17534985
+      GpuProjectExec: expr=[count(*)@0 as pmc], partitions=1, output_rows=1, output_bytes=9
+        GpuAggregateExec: group_by=[], aggr=[count(*)], partitions=1, output_rows=1, output_bytes=9
+          GpuProjectExec: expr=[], partitions=1, output_rows=201, output_bytes=0
+            GpuCoalesceBatchesExec, partitions=1, output_rows=201, output_bytes=3268
+              GpuHashJoinExec: join_type=Inner, on=[(wp_web_page_sk@0, ws_web_page_sk@0)], partitions=1, output_rows=201, output_bytes=3268
+                GpuCoalesceBatchesExec, partitions=1, output_rows=1, output_bytes=9
+                  GpuFilterExec: predicate=wp_char_count@1 >= 5000 AND wp_char_count@1 <= 5200, projection=[0], partitions=1, output_rows=1, output_bytes=9
+                    GpuScanExec: table=web_page, projections=[wp_web_page_sk, wp_char_count], partitions=1, output_rows=60, output_bytes=976
+                GpuCoalesceBatchesExec, partitions=1, output_rows=10728, output_bytes=87165
+                  GpuHashJoinExec: join_type=Inner, on=[(t_time_sk@0, ws_sold_time_sk@0)], projection=[2], partitions=1, output_rows=10728, output_bytes=87165
+                    GpuCoalesceBatchesExec, partitions=1, output_rows=7200, output_bytes=58500
+                      GpuFilterExec: predicate=t_hour@1 >= 19 AND t_hour@1 <= 20, projection=[0], partitions=1, output_rows=7200, output_bytes=58500
+                        GpuScanExec: table=time_dim, projections=[t_time_sk, t_hour], partitions=1, output_rows=86400, output_bytes=1404000
+                    GpuCoalesceBatchesExec, partitions=1, output_rows=70709, output_bytes=1149022
+                      GpuHashJoinExec: join_type=Inner, on=[(hd_demo_sk@0, ws_ship_hdemo_sk@1)], projection=[1, 3], partitions=1, output_rows=70709, output_bytes=1149022
+                        GpuCoalesceBatchesExec, partitions=1, output_rows=720, output_bytes=5850
+                          GpuFilterExec: predicate=hd_dep_count@1 = 6, projection=[0], partitions=1, output_rows=720, output_bytes=5850
+                            GpuScanExec: table=household_demographics, projections=[hd_demo_sk, hd_dep_count], partitions=1, output_rows=7200, output_bytes=117000
+                        GpuScanExec: table=web_sales, projections=[ws_sold_time_sk, ws_ship_hdemo_sk, ws_web_page_sk], partitions=1, output_rows=719384, output_bytes=17534985

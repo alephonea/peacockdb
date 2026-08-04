@@ -1,3 +1,0 @@
-GpuCoalesceBatchesExec: target_batch_size=2684354560, partitions=1, output_rows=2402187, output_bytes=58253036
-  GpuFilterExec: predicate=l_quantity@1 > Some(3000),15,2, partitions=1, output_rows=2402187, output_bytes=58253036
-    GpuScanExec: table=lineitem, projections=[l_orderkey, l_quantity], batch_size=2684354560, partitions=1, output_rows=6001215, output_bytes=145529464

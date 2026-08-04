@@ -96,6 +96,11 @@ jobs:
         run: |
           cargo test --no-run -p peacockdb-core --test test_plan_serialiser --test test_query_plan --test test_cpu_executor
           cargo test --no-run -p peacockdb-ffi --test test_ffi
+          # Separate line because of --features rust-only: cargo's fingerprint
+          # includes the feature set, so this cannot share the invocation above.
+          # The feature only reaches peacockdb-ffi/peacockdb-core, not the
+          # DataFusion/Arrow graph, so the extra compile is small.
+          cargo test --no-run --features rust-only -p peacockdb-core --test test_plan_bytes
         env:
           CMAKE_GENERATOR: Ninja
           LD_LIBRARY_PATH: /opt/conda/lib
@@ -116,7 +121,30 @@ jobs:
           cargo test -p peacockdb-core --test test_plan_serialiser
           cargo test -p peacockdb-core --test test_query_plan
           cargo test -p peacockdb-core --test test_cpu_executor
+          # Named-not-globbed, so these four were invisible to CI until the
+          # test_ci_coverage meta-test surfaced them. They need the dataset + the
+          # linked executor, so they belong in this tier rather than the golden one.
+          cargo test -p peacockdb-core --test test_cpu_executor_misc
+          cargo test -p peacockdb-core --test test_cpu_oom
+          cargo test -p peacockdb-core --test test_node_executor
+          cargo test -p peacockdb-core --test test_query_plan_misc
+          # Despite the H200 name this needs NO GPU (~25s): the tp1-standard goldens
+          # are CPU-emulated. It also owns the reverse half of the cost-registry
+          # check for the ftc_tp1 column, so without it a CSV row could claim
+          # coverage that no test provides.
+          cargo test -p peacockdb-core --test test_cpu_h200
           cargo test -p peacockdb-ffi --test test_ffi
+          # The FlatBuffer wire-format guard lives HERE, not in the golden-only
+          # cost-report tier where it was first wired. It NEEDS the sf1 parquet,
+          # because it builds real physical plans before serializing them — the
+          # old rationale ("pure text/bytes over committed artifacts, no executor,
+          # no dataset, no GPU") was wrong on "no dataset" and would invite someone
+          # to move it straight back. It does NOT need a GPU or the linked C++
+          # executor (it runs under rust-only), so the parquet CPU tier is its home.
+          # It MUST run in CI: the C++ side consumes these bytes, so a write-order
+          # shift that only went red locally would reach master green.
+          # See tests/test_plan_bytes.rs and goldens/plan_bytes.sha256.
+          cargo test --features rust-only -p peacockdb-core --test test_plan_bytes
         env:
           CMAKE_GENERATOR: Ninja
           LD_LIBRARY_PATH: /opt/conda/lib
@@ -175,7 +203,7 @@ jobs:
           mkdir -p cpp/install/rust-tests
           # test_gpu = the MERGED per-query GPU verify (Phase 2 C2): one GPU run
           # per query asserts BOTH per-node rows + rows+schema cost vs the H200/tp1
-          # *.tp1-mem120gib.cpu.txt goldens AND the final result. The node-by-node
+          # *.tp1-standard.cpu.txt goldens AND the final result. The node-by-node
           # half is what catches intermediate divergences a whole-result check
           # misses (e.g. q14's INTERSECT NULL-semantics regression), so it MUST gate.
           # test_inc2_conformance = the live GPU↔CPU Spark-murmur3 partition-id gate
@@ -266,13 +294,24 @@ jobs:
           # Fresh binaries — --delete keeps cpp/install/ clean across runs.
           rsync -a --delete cpp/install/ gpu:$REMOTE_DIR/cpp/install/
           # Query SQL + minimal dataset + testdata generator + committed goldens.
-          # testdata/goldens carries the *.tp1-mem120gib.cpu.txt H200/tp1 node-by-node
+          # testdata/goldens carries the *.tp1-standard.cpu.txt H200/tp1 node-by-node
           # goldens (29 tpch + 78 tpcds) that test_gpu asserts against; without
           # them the node-by-node verify cannot run.
+          # cost-registry.csv is a committed fixture the registry test READS (it
+          # asserts the CSV against the suite's link-time inventory); without it the
+          # test dies on a missing file, which reads as a broken check rather than an
+          # unprovisioned host.
+          #
+          # NOTE this hand-maintained list is the standing trap — every new committed
+          # fixture must be remembered in EVERY provisioning path independently, and
+          # that has now bitten four times. A sweep of git-tracked testdata files
+          # would end the class; kept as a named entry here only to keep this push
+          # small and low-risk. See the follow-up.
           rsync -a testdata/tpch-queries testdata/tpcds-queries testdata/tpch.minimal \
             testdata/goldens \
             testdata/tpch-vec-queries \
             testdata/generate_testdata.sh \
+            testdata/cost-registry.csv \
             gpu:$REMOTE_DIR/testdata/
           # Ship the updated setup-glibc.sh so its patch_rust_dir step is
           # present on the host (not just the older /home/info/ copy).
@@ -445,6 +484,15 @@ jobs:
       # dataset, no GPU — so it stays in this cheap golden-only tier.
       - name: Cost goldens match plan-golden regeneration (Rust)
         run: cargo test --features rust-only -p peacockdb-core --test test_cost_model
+
+      # Every peacockdb-core integration test target must be NAMED by some workflow
+      # step above. CI does not sweep them as a set, so a new tests/test_*.rs is
+      # invisible here until someone remembers to add it — which is exactly how
+      # test_plan_bytes shipped as a guard that could not go red at the merge gate,
+      # and how peacock_tpchv_tests was built+shipped+patched but never run (see the
+      # C++ glob note in the gpu-tests job). This asserts the coverage instead.
+      - name: Every rust test target is wired into CI
+        run: cargo test --features rust-only -p peacockdb-core --test test_ci_coverage
 
       - name: Generate report
         env:

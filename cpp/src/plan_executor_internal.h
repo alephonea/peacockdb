@@ -1,7 +1,7 @@
 #pragma once
 //
 // Internal (non-public) declarations of pure, host-only helpers defined in
-// plan_executor.cpp. Exposed solely so the Tier-1b CPU unit tests can exercise
+// src/expr.cpp. Exposed solely so the Tier-1b CPU unit tests can exercise
 // the decimal-scale and AST-routing rules without a GPU — these run on every
 // push, unlike the GPU result tests. Not part of the stable FFI surface
 // (peacock_gpu.h); do not depend on this from outside the test suite.

@@ -1,5 +1,3 @@
-use std::any::Any;
-use std::fmt;
 use std::sync::Arc;
 
 use datafusion::arrow::datatypes::SchemaRef;
@@ -7,7 +5,6 @@ use datafusion::common::config::ConfigOptions;
 use datafusion::common::tree_node::{Transformed, TreeNode};
 use datafusion::common::Result;
 use datafusion::datasource::physical_plan::ParquetExec;
-use datafusion::execution::TaskContext;
 use datafusion::physical_optimizer::PhysicalOptimizerRule;
 use datafusion::physical_plan::coalesce_batches::CoalesceBatchesExec;
 use datafusion::physical_plan::coalesce_partitions::CoalescePartitionsExec;
@@ -25,430 +22,26 @@ use datafusion::physical_plan::windows::{BoundedWindowAggExec, WindowAggExec};
 use datafusion::physical_plan::PhysicalExpr;
 use datafusion::physical_expr::expressions::{BinaryExpr, InListExpr, NotExpr};
 use datafusion::logical_expr::Operator;
-use datafusion::physical_plan::{
-    DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, PlanProperties,
-    SendableRecordBatchStream,
-};
+use datafusion::physical_plan::{ExecutionPlan, Partitioning};
 
 // ---------------------------------------------------------------------------
 // GPU exec node stubs (delegate to inner CPU node)
 // ---------------------------------------------------------------------------
 
-/// Optional extra display info appended after the node name in plan output.
-/// Implement with a non-empty string to annotate a specific GPU node type.
-trait GpuExtraDisplay {
-    fn extra_display_info(&self) -> String {
-        String::new()
-    }
-}
-
-macro_rules! gpu_exec_node {
-    ($name:ident) => {
-        #[derive(Debug)]
-        pub struct $name {
-            inner: Arc<dyn ExecutionPlan>,
-        }
-
-        impl $name {
-            pub fn new(inner: Arc<dyn ExecutionPlan>) -> Self {
-                Self { inner }
-            }
-            pub fn inner(&self) -> &Arc<dyn ExecutionPlan> {
-                &self.inner
-            }
-        }
-
-        impl DisplayAs for $name {
-            fn fmt_as(&self, _t: DisplayFormatType, f: &mut fmt::Formatter) -> fmt::Result {
-                let extra = self.extra_display_info();
-                if extra.is_empty() {
-                    write!(f, "{}", stringify!($name))
-                } else {
-                    write!(f, "{}: {}", stringify!($name), extra)
-                }
-            }
-        }
-
-        impl ExecutionPlan for $name {
-            fn as_any(&self) -> &dyn Any {
-                self
-            }
-            fn schema(&self) -> SchemaRef {
-                self.inner.schema()
-            }
-            fn properties(&self) -> &PlanProperties {
-                self.inner.properties()
-            }
-            fn children(&self) -> Vec<&Arc<dyn ExecutionPlan>> {
-                self.inner.children()
-            }
-            fn with_new_children(
-                self: Arc<Self>,
-                children: Vec<Arc<dyn ExecutionPlan>>,
-            ) -> Result<Arc<dyn ExecutionPlan>> {
-                let new_inner = self.inner.clone().with_new_children(children)?;
-                Ok(Arc::new(Self::new(new_inner)))
-            }
-            fn name(&self) -> &str {
-                stringify!($name)
-            }
-            fn execute(
-                &self,
-                partition: usize,
-                context: Arc<TaskContext>,
-            ) -> Result<SendableRecordBatchStream> {
-                self.inner.execute(partition, context)
-            }
-        }
-    };
-}
-
-gpu_exec_node!(GpuFilterExec);
-impl GpuExtraDisplay for GpuFilterExec {
-    fn extra_display_info(&self) -> String {
-        let fe = self.inner.as_any().downcast_ref::<FilterExec>().unwrap();
-        let mut s = format!("predicate={}", fe.predicate());
-        if let Some(proj) = fe.projection() {
-            let cols: Vec<String> = proj.iter().map(|i| i.to_string()).collect();
-            s.push_str(&format!(", projection=[{}]", cols.join(", ")));
-        }
-        s
-    }
-}
-
-gpu_exec_node!(GpuProjectExec);
-impl GpuExtraDisplay for GpuProjectExec {
-    fn extra_display_info(&self) -> String {
-        let pe = self.inner.as_any().downcast_ref::<ProjectionExec>().unwrap();
-        let exprs: Vec<String> = pe
-            .expr()
-            .iter()
-            .map(|(e, alias)| format!("{e} as {alias}"))
-            .collect();
-        format!("expr=[{}]", exprs.join(", "))
-    }
-}
-
-gpu_exec_node!(GpuAggregateExec);
-impl GpuExtraDisplay for GpuAggregateExec {
-    fn extra_display_info(&self) -> String {
-        let agg = self.inner.as_any().downcast_ref::<AggregateExec>().unwrap();
-        let groups: Vec<&str> = agg.group_expr().expr().iter()
-            .map(|(_, name): &(_, String)| name.as_str())
-            .collect();
-        let aggrs: Vec<&str> = agg.aggr_expr().iter()
-            .map(|e| e.name())
-            .collect();
-        format!("group_by=[{}], aggr=[{}]", groups.join(", "), aggrs.join(", "))
-    }
-}
-
-gpu_exec_node!(GpuHashJoinExec);
-impl GpuExtraDisplay for GpuHashJoinExec {
-    fn extra_display_info(&self) -> String {
-        let hj = self.inner.as_any().downcast_ref::<HashJoinExec>().unwrap();
-        let on: Vec<String> = hj
-            .on()
-            .iter()
-            .map(|(l, r)| format!("({l}, {r})"))
-            .collect();
-        let mut s = format!("join_type={:?}, on=[{}]", hj.join_type(), on.join(", "));
-        if let Some(jf) = hj.filter() {
-            s.push_str(&format!(", filter={}", jf.expression()));
-        }
-        if let Some(proj) = hj.projection.as_ref() {
-            let cols: Vec<String> = proj.iter().map(|i| i.to_string()).collect();
-            s.push_str(&format!(", projection=[{}]", cols.join(", ")));
-        }
-        s
-    }
-}
-
-gpu_exec_node!(GpuCrossJoinExec);
-impl GpuExtraDisplay for GpuCrossJoinExec {}
-
-gpu_exec_node!(GpuNestedLoopJoinExec);
-impl GpuExtraDisplay for GpuNestedLoopJoinExec {
-    fn extra_display_info(&self) -> String {
-        let nlj = self
-            .inner
-            .as_any()
-            .downcast_ref::<NestedLoopJoinExec>()
-            .unwrap();
-        let mut s = format!("join_type={:?}", nlj.join_type());
-        if let Some(jf) = nlj.filter() {
-            s.push_str(&format!(", filter={}", jf.expression()));
-        }
-        if let Some(proj) = nlj.projection() {
-            let cols: Vec<String> = proj.iter().map(|i| i.to_string()).collect();
-            s.push_str(&format!(", projection=[{}]", cols.join(", ")));
-        }
-        s
-    }
-}
-
-gpu_exec_node!(GpuSortExec);
-impl GpuExtraDisplay for GpuSortExec {
-    fn extra_display_info(&self) -> String {
-        let se = self.inner.as_any().downcast_ref::<SortExec>().unwrap();
-        let mut s = format!("expr=[{}]", se.expr());
-        if let Some(f) = se.fetch() {
-            s.push_str(&format!(", fetch={f}"));
-        }
-        s
-    }
-}
-
-gpu_exec_node!(GpuCoalesceBatchesExec);
-impl GpuExtraDisplay for GpuCoalesceBatchesExec {
-    fn extra_display_info(&self) -> String {
-        let cb = self.inner.as_any().downcast_ref::<CoalesceBatchesExec>().unwrap();
-        format!("target_batch_size={}", cb.target_batch_size())
-    }
-}
-
-gpu_exec_node!(GpuCoalescePartitionsExec);
-impl GpuExtraDisplay for GpuCoalescePartitionsExec {}
-
-gpu_exec_node!(GpuRepartitionExec);
-impl GpuExtraDisplay for GpuRepartitionExec {
-    fn extra_display_info(&self) -> String {
-        let rp = self.inner.as_any().downcast_ref::<RepartitionExec>().unwrap();
-        let partitioning = rp.partitioning();
-        let input_partitions = rp.input().properties().output_partitioning().partition_count();
-        format!("partitioning={partitioning}, input_partitions={input_partitions}")
-    }
-}
-
-gpu_exec_node!(GpuSortPreservingMergeExec);
-impl GpuExtraDisplay for GpuSortPreservingMergeExec {
-    fn extra_display_info(&self) -> String {
-        let spm = self.inner.as_any().downcast_ref::<SortPreservingMergeExec>().unwrap();
-        format!("[{}]", spm.expr())
-    }
-}
-
-gpu_exec_node!(GpuUnionExec);
-impl GpuExtraDisplay for GpuUnionExec {}
-
-gpu_exec_node!(GpuInterleaveExec);
-impl GpuExtraDisplay for GpuInterleaveExec {}
-
-gpu_exec_node!(GpuGlobalLimitExec);
-impl GpuExtraDisplay for GpuGlobalLimitExec {
-    fn extra_display_info(&self) -> String {
-        let gl = self.inner.as_any().downcast_ref::<GlobalLimitExec>().unwrap();
-        match gl.fetch() {
-            Some(f) => format!("skip={}, fetch={}", gl.skip(), f),
-            None => format!("skip={}, fetch=None", gl.skip()),
-        }
-    }
-}
-
-gpu_exec_node!(GpuWindowExec);
-impl GpuExtraDisplay for GpuWindowExec {
-    fn extra_display_info(&self) -> String {
-        // Window exprs live on either WindowAggExec or BoundedWindowAggExec.
-        let names: Vec<String> = if let Some(w) =
-            self.inner.as_any().downcast_ref::<WindowAggExec>()
-        {
-            w.window_expr().iter().map(|e| e.name().to_string()).collect()
-        } else if let Some(w) = self.inner.as_any().downcast_ref::<BoundedWindowAggExec>() {
-            w.window_expr().iter().map(|e| e.name().to_string()).collect()
-        } else {
-            vec![]
-        };
-        format!("wdw=[{}]", names.join(", "))
-    }
-}
-
-// ---------------------------------------------------------------------------
-// GpuScanExec — wraps ParquetExec to override batch_size at execution time
-// ---------------------------------------------------------------------------
-
-/// One entry of the scan's explicit row-group→batch→partition MAP (Phase 2 Inc1):
-/// a group of WHOLE row groups read as one batch, landing in output `partition`.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ScanBatchMap {
-    pub row_groups: Vec<u32>,
-    pub partition: u32,
-}
-
-/// Build the RG→batch→partition map (Phase 2 Inc1): split the row groups to read
-/// (`rgs`) into `n_parts` CONTIGUOUS chunks, one batch each, chunk p → partition p.
-/// Deterministic + reader-independent (explicit RG indices). At a large budget each
-/// partition is one batch (>per-partition-budget multi-batch splitting is deferred).
-/// Returns EMPTY (= legacy single-partition) when there's nothing to split N-way
-/// (n_parts<=1, no RGs, or fewer RGs than would yield >1 partition) — so tp1 and
-/// tiny single-RG scans stay byte-identical.
-pub fn build_scan_map(rgs: &[u32], n_parts: usize) -> Vec<ScanBatchMap> {
-    if rgs.is_empty() || n_parts <= 1 {
-        return Vec::new();
-    }
-    let n = n_parts.min(rgs.len());
-    if n <= 1 {
-        return Vec::new();
-    }
-    let per = rgs.len() / n;
-    let rem = rgs.len() % n;
-    let mut map = Vec::with_capacity(n);
-    let mut idx = 0usize;
-    for p in 0..n {
-        let cnt = per + if p < rem { 1 } else { 0 };
-        map.push(ScanBatchMap { row_groups: rgs[idx..idx + cnt].to_vec(), partition: p as u32 });
-        idx += cnt;
-    }
-    map
-}
-
-#[derive(Debug)]
-pub struct GpuScanExec {
-    inner: Arc<dyn ExecutionPlan>,
-    pub gpu_batch_size: usize,
-    /// Explicit surviving row-group override. Set ONLY when reconstructed from a
-    /// flatbuffer (deserialize), so re-serialization emits the SAME indices and the
-    /// serialize -> deserialize -> serialize bytes stay equal (the reconstructed
-    /// ParquetExec has no predicate to recompute from). None for a fresh plan, where
-    /// the serializer computes survivors from the ParquetExec pushdown predicate.
-    row_groups: Option<Vec<u32>>,
-    /// Explicit RG→batch→partition MAP (Phase 2 Inc1). EMPTY = legacy
-    /// single-partition read (tp1, byte-unchanged). When set, the scan emits one
-    /// batch per entry into its `partition` — both the CPU golden generator and
-    /// the GPU replay this identical map. Set on a deserialized plan (carried
-    /// verbatim) or by the tp8 partitioning optimizer step.
-    batches: Vec<ScanBatchMap>,
-}
-
-impl GpuScanExec {
-    pub fn new(inner: Arc<dyn ExecutionPlan>, gpu_batch_size: usize) -> Self {
-        Self {
-            inner,
-            gpu_batch_size,
-            row_groups: None,
-            batches: Vec::new(),
-        }
-    }
-    /// Reconstruction constructor (deserialize): carries the stored row-group override.
-    pub fn with_row_groups(
-        inner: Arc<dyn ExecutionPlan>,
-        gpu_batch_size: usize,
-        row_groups: Option<Vec<u32>>,
-    ) -> Self {
-        Self {
-            inner,
-            gpu_batch_size,
-            row_groups,
-            batches: Vec::new(),
-        }
-    }
-    /// Builder: attach the explicit RG→batch→partition map (deserialize / optimizer).
-    pub fn with_batches(mut self, batches: Vec<ScanBatchMap>) -> Self {
-        self.batches = batches;
-        self
-    }
-    pub fn inner(&self) -> &Arc<dyn ExecutionPlan> {
-        &self.inner
-    }
-    /// Explicit survivor override (Some only on a deserialized plan); None => the
-    /// serializer computes survivors from the predicate.
-    pub fn row_groups_override(&self) -> Option<&Vec<u32>> {
-        self.row_groups.as_ref()
-    }
-    /// The explicit RG→batch→partition map (empty = legacy single-partition).
-    pub fn batches_map(&self) -> &[ScanBatchMap] {
-        &self.batches
-    }
-}
-
-/// Scanned table name for a parquet scan = its file stem
-/// (`.../lineitem.parquet` -> `lineitem`).
-pub fn parquet_table_name(parquet: &ParquetExec) -> Option<String> {
-    let file = parquet.base_config().file_groups.first()?.first()?;
-    file.object_meta
-        .location
-        .to_string()
-        .rsplit('/')
-        .next()?
-        .strip_suffix(".parquet")
-        .map(String::from)
-}
-
-// Scan annotation flows through GpuExtraDisplay so the `.txt` plan goldens and the
-// `.cpu.txt` cost tree label the scan identically (one shared source). We surface
-// table + projections (both round-trip through serialization) and batch_size; the
-// pushed-down parquet predicate is deliberately NOT shown here because GpuScan
-// serialization doesn't carry it, so it would break the flatbuffer roundtrip's
-// plan_str equality after deserialize.
-impl GpuExtraDisplay for GpuScanExec {
-    fn extra_display_info(&self) -> String {
-        let Some(parquet) = self.inner.as_any().downcast_ref::<ParquetExec>() else {
-            return format!("batch_size={}", self.gpu_batch_size);
-        };
-        let config = parquet.base_config();
-        let mut parts = Vec::new();
-        if let Some(t) = parquet_table_name(parquet) {
-            parts.push(format!("table={t}"));
-        }
-        let names: Vec<String> = match &config.projection {
-            Some(p) => p.iter().map(|&i| config.file_schema.field(i).name().clone()).collect(),
-            None => config.file_schema.fields().iter().map(|f| f.name().clone()).collect(),
-        };
-        parts.push(format!("projections=[{}]", names.join(", ")));
-        parts.push(format!("batch_size={}", self.gpu_batch_size));
-        parts.join(", ")
-    }
-}
-
-impl DisplayAs for GpuScanExec {
-    fn fmt_as(&self, _t: DisplayFormatType, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "GpuScanExec: {}", self.extra_display_info())
-    }
-}
-
-impl ExecutionPlan for GpuScanExec {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-    fn schema(&self) -> SchemaRef {
-        self.inner.schema()
-    }
-    fn properties(&self) -> &PlanProperties {
-        self.inner.properties()
-    }
-    fn children(&self) -> Vec<&Arc<dyn ExecutionPlan>> {
-        self.inner.children()
-    }
-    fn with_new_children(
-        self: Arc<Self>,
-        children: Vec<Arc<dyn ExecutionPlan>>,
-    ) -> Result<Arc<dyn ExecutionPlan>> {
-        let new_inner = self.inner.clone().with_new_children(children)?;
-        Ok(Arc::new(Self::new(new_inner, self.gpu_batch_size)))
-    }
-    fn name(&self) -> &str {
-        "GpuScanExec"
-    }
-    fn execute(
-        &self,
-        partition: usize,
-        context: Arc<TaskContext>,
-    ) -> Result<SendableRecordBatchStream> {
-        let new_config = context
-            .session_config()
-            .clone()
-            .with_batch_size(self.gpu_batch_size);
-        let new_ctx = Arc::new(TaskContext::new(
-            context.task_id(),
-            context.session_id(),
-            new_config,
-            context.scalar_functions().clone(),
-            context.aggregate_functions().clone(),
-            context.window_functions().clone(),
-            context.runtime_env(),
-        ));
-        self.inner.execute(partition, new_ctx)
-    }
-}
+// The GPU wrapper nodes, the `gpu_exec_node!` macro and `GpuExtraDisplay` moved to
+// `crate::operators` (Inc3), grouped by family. Re-exported here so every existing
+// `crate::gpu_rule::Gpu*Exec` path keeps resolving.
+pub use crate::operators::aggregate::GpuAggregateExec;
+pub use crate::operators::coalesce::{GpuCoalesceBatchesExec, GpuCoalescePartitionsExec};
+pub use crate::operators::filter::GpuFilterExec;
+pub use crate::operators::join::{GpuCrossJoinExec, GpuHashJoinExec, GpuNestedLoopJoinExec};
+pub use crate::operators::limit::GpuGlobalLimitExec;
+pub use crate::operators::project::GpuProjectExec;
+pub use crate::operators::repartition::GpuRepartitionExec;
+pub use crate::operators::scan::{build_scan_map, GpuScanExec, ScanBatchMap};
+pub use crate::operators::sort::{GpuSortExec, GpuSortPreservingMergeExec};
+pub use crate::operators::union::{GpuInterleaveExec, GpuUnionExec};
+pub use crate::operators::window::GpuWindowExec;
 
 // ---------------------------------------------------------------------------
 // GpuExecutionRule — replace CPU nodes with GPU wrappers
@@ -937,11 +530,11 @@ pub fn analyze_memory_nodes(plan: &Arc<dyn ExecutionPlan>) -> Vec<(String, usize
 
 /// Minimum GPU memory budget at which a multi-partition scan emits a real
 /// RG→batch→partition map (Phase 2 Inc1). BELOW this, the device is treated as
-/// memory-constrained: the scan stays single-partition (the tp8-mem2gib #11
+/// memory-constrained: the scan stays single-partition (the tp8-mini #11
 /// determinism path), so the plan serializes byte-identically to the legacy
 /// scan and the flatbuffer roundtrip is stable (deserialize does not reconstruct
 /// N partitions, so GpuRepartitionExec.input_partitions does not flip 1→8).
-/// The real-partitioning device (H200, tp8-mem120gib) sits well above this and
+/// The real-partitioning device (H200, tp8-standard) sits well above this and
 /// gets the map; tp1 never attaches one regardless (target_partitions == 1).
 /// How a target-partitioned plan is realized on the multi-handle node-executor
 /// path. This — NOT the memory budget — is the sole discriminator for whether the
@@ -954,11 +547,11 @@ pub fn analyze_memory_nodes(plan: &Arc<dyn ExecutionPlan>) -> Vec<(String, usize
 /// work is GitHub #91 (post-Phase-2; do not conflate with this policy flag).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PartitionMode {
-    /// Legacy single-partition-coalesced path — tp1 and the tp8-mem2gib #11
+    /// Legacy single-partition-coalesced path — tp1 and the tp8-mini #11
     /// determinism device. No scan map, no repartition lowering (byte-identical
     /// serialized plan, stable flatbuffer roundtrip).
     SinglePartition,
-    /// Real N-way partitioning (H200 / tp8-mem120gib): the scan emits N partitions
+    /// Real N-way partitioning (H200 / tp8-standard): the scan emits N partitions
     /// per its map and a Hash repartition is lowered + Spark-murmur3 partitioned.
     RealMultiPartition,
 }
@@ -1004,7 +597,7 @@ impl PhysicalOptimizerRule for GpuMemoryBudgetRule {
                 // the explicit RG→batch→partition map so the scan emits N partitions
                 // (dissolving RoundRobin into the scan). The RGs to read = #12 survivors
                 // if a static predicate prunes, else all groups. tp1 OR the single-
-                // partition mode (tp8-mem2gib) gets an empty map = legacy single-
+                // partition mode (tp8-mini) gets an empty map = legacy single-
                 // partition scan, keeping the serialized plan / roundtrip byte-stable.
                 let n_parts = config.execution.target_partitions;
                 let batches = if real_partitioning(self.partition_mode, n_parts) {
@@ -1039,7 +632,7 @@ impl PhysicalOptimizerRule for GpuMemoryBudgetRule {
                 // and gives the CPU/GPU node executors a single 1-partition input to
                 // hash-partition into N via Spark-murmur3 (Inc2). RoundRobin and
                 // already-1→N repartitions are left untouched. Off the real device
-                // (tp8-mem2gib/tp1) the plan is unchanged → roundtrip byte-stable.
+                // (tp8-mini/tp1) the plan is unchanged → roundtrip byte-stable.
                 let gpu_rp = node.as_any().downcast_ref::<GpuRepartitionExec>().unwrap();
                 let rp = gpu_rp.inner().as_any().downcast_ref::<RepartitionExec>().unwrap();
                 let input_parts = rp.input().properties().output_partitioning().partition_count();
@@ -1089,6 +682,50 @@ mod tests {
             input_row_bytes: 0,
             output_row_bytes: 0,
         }
+    }
+
+    // Pins the EXACT batch-size arithmetic (gpu_memory_budget / subtree_max_row_bytes,
+    // floored, min 1). `batch_size` is no longer rendered into any golden — it is
+    // budget-derived and vestigial for observable output — so this is the only place
+    // the formula's output is fixed rather than merely bounded. Without it, a change
+    // to the divisor or the rounding would pass the whole suite silently.
+    #[test]
+    fn batch_size_is_budget_over_subtree_max_row_bytes() {
+        // GpuCoalesceBatchesExec is the observable carrier: the rule rewrites its
+        // inner CoalesceBatchesExec with the computed batch size, so target_batch_size()
+        // reads back exactly what the formula produced.
+        let leaf = empty(vec![Field::new("a", DataType::Int64, false)]);
+        let plan: Arc<dyn ExecutionPlan> = Arc::new(GpuCoalesceBatchesExec::new(Arc::new(
+            CoalesceBatchesExec::new(leaf, 8192),
+        )));
+        let row_bytes = analyze_memory(&plan).subtree_max_row_bytes;
+        assert!(row_bytes > 0, "plan should carry a non-zero row width");
+
+        let batch_size_for = |budget: usize| -> usize {
+            let optimized = GpuMemoryBudgetRule::new(budget, PartitionMode::SinglePartition)
+                .optimize(plan.clone(), &ConfigOptions::default())
+                .expect("optimize");
+            optimized
+                .as_any()
+                .downcast_ref::<GpuCoalesceBatchesExec>()
+                .unwrap()
+                .inner()
+                .as_any()
+                .downcast_ref::<CoalesceBatchesExec>()
+                .unwrap()
+                .target_batch_size()
+        };
+
+        // Exact quotient, floored — not rounded up.
+        assert_eq!(batch_size_for(row_bytes * 100), 100);
+        assert_eq!(batch_size_for(row_bytes * 100 + row_bytes - 1), 100);
+        // A budget under one row still yields a usable batch of 1, never 0.
+        assert_eq!(batch_size_for(row_bytes - 1), 1);
+        // The 10x tier gap that motivated the strip: 120 GiB really is 10x 12 GiB.
+        assert_eq!(
+            batch_size_for(120 * 1024 * 1024 * 1024),
+            10 * batch_size_for(12 * 1024 * 1024 * 1024)
+        );
     }
 
     // Focused coverage of the CrossJoin/NestedLoopJoin cost arm in

@@ -1,0 +1,40 @@
+GpuProjectExec: expr=[sum(CASE WHEN ssci.customer_sk IS NOT NULL AND csci.customer_sk IS NULL THEN Int64(1) ELSE Int64(0) END)@0 as store_only, sum(CASE WHEN ssci.customer_sk IS NULL AND csci.customer_sk IS NOT NULL THEN Int64(1) ELSE Int64(0) END)@1 as catalog_only, sum(CASE WHEN ssci.customer_sk IS NOT NULL AND csci.customer_sk IS NOT NULL THEN Int64(1) ELSE Int64(0) END)@2 as store_and_catalog], partitions=1, output_rows=1, output_bytes=27
+  GpuGlobalLimitExec: skip=0, fetch=100, partitions=1, output_rows=1, output_bytes=27
+    GpuAggregateExec: group_by=[], aggr=[sum(CASE WHEN ssci.customer_sk IS NOT NULL AND csci.customer_sk IS NULL THEN Int64(1) ELSE Int64(0) END), sum(CASE WHEN ssci.customer_sk IS NULL AND csci.customer_sk IS NOT NULL THEN Int64(1) ELSE Int64(0) END), sum(CASE WHEN ssci.customer_sk IS NOT NULL AND csci.customer_sk IS NOT NULL THEN Int64(1) ELSE Int64(0) END)], partitions=1, output_rows=1, output_bytes=27
+      GpuCoalescePartitionsExec, partitions=1, output_rows=1, output_bytes=27
+        GpuAggregateExec: group_by=[], aggr=[sum(CASE WHEN ssci.customer_sk IS NOT NULL AND csci.customer_sk IS NULL THEN Int64(1) ELSE Int64(0) END), sum(CASE WHEN ssci.customer_sk IS NULL AND csci.customer_sk IS NOT NULL THEN Int64(1) ELSE Int64(0) END), sum(CASE WHEN ssci.customer_sk IS NOT NULL AND csci.customer_sk IS NOT NULL THEN Int64(1) ELSE Int64(0) END)], partitions=1, output_rows=1, output_bytes=27
+          GpuProjectExec: expr=[customer_sk@1 IS NOT NULL as __common_expr_1, customer_sk@1 as customer_sk, customer_sk@0 as customer_sk], partitions=1, output_rows=835090, output_bytes=13778988
+            GpuCoalesceBatchesExec, partitions=1, output_rows=835090, output_bytes=13570214
+              GpuHashJoinExec: join_type=Full, on=[(customer_sk@0, customer_sk@0), (item_sk@1, item_sk@1)], projection=[0, 2], partitions=1, output_rows=835090, output_bytes=13570214
+                GpuProjectExec: expr=[cs_bill_customer_sk@0 as customer_sk, cs_item_sk@1 as item_sk], partitions=1, output_rows=287503, output_bytes=4671924
+                  GpuAggregateExec: group_by=[cs_bill_customer_sk, cs_item_sk], aggr=[], partitions=1, output_rows=287503, output_bytes=4671924
+                    GpuCoalesceBatchesExec, partitions=1, output_rows=287503, output_bytes=4671924
+                      GpuRepartitionExec: partitioning=Hash([cs_bill_customer_sk@0, cs_item_sk@1], 8), input_partitions=8, partitions=1, output_rows=287503, output_bytes=4671924
+                        GpuAggregateExec: group_by=[cs_bill_customer_sk, cs_item_sk], aggr=[], partitions=1, output_rows=287503, output_bytes=4671924
+                          GpuCoalesceBatchesExec, partitions=1, output_rows=287563, output_bytes=4672900
+                            GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, cs_sold_date_sk@0)], projection=[2, 3], partitions=1, output_rows=287563, output_bytes=4672900
+                              GpuCoalesceBatchesExec, partitions=1, output_rows=366, output_bytes=2974
+                                GpuRepartitionExec: partitioning=Hash([d_date_sk@0], 8), input_partitions=8, partitions=1, output_rows=366, output_bytes=2974
+                                  GpuCoalesceBatchesExec, partitions=1, output_rows=366, output_bytes=2974
+                                    GpuFilterExec: predicate=d_month_seq@1 >= 1200 AND d_month_seq@1 <= 1211, projection=[0], partitions=1, output_rows=366, output_bytes=2974
+                                      GpuRepartitionExec: partitioning=RoundRobinBatch(8), input_partitions=1, partitions=1, output_rows=73049, output_bytes=1187048
+                                        GpuScanExec: table=date_dim, projections=[d_date_sk, d_month_seq], partitions=1, output_rows=73049, output_bytes=1187048
+                              GpuCoalesceBatchesExec, partitions=1, output_rows=1441548, output_bytes=35137734
+                                GpuRepartitionExec: partitioning=Hash([cs_sold_date_sk@0], 8), input_partitions=8, partitions=1, output_rows=1441548, output_bytes=35137734
+                                  GpuScanExec: table=catalog_sales, projections=[cs_sold_date_sk, cs_bill_customer_sk, cs_item_sk], partitions=1, output_rows=1441548, output_bytes=35137734
+                GpuProjectExec: expr=[ss_customer_sk@0 as customer_sk, ss_item_sk@1 as item_sk], partitions=1, output_rows=547758, output_bytes=8901068
+                  GpuAggregateExec: group_by=[ss_customer_sk, ss_item_sk], aggr=[], partitions=1, output_rows=547758, output_bytes=8901068
+                    GpuCoalesceBatchesExec, partitions=1, output_rows=547758, output_bytes=8901068
+                      GpuRepartitionExec: partitioning=Hash([ss_customer_sk@0, ss_item_sk@1], 8), input_partitions=8, partitions=1, output_rows=547758, output_bytes=8901068
+                        GpuAggregateExec: group_by=[ss_customer_sk, ss_item_sk], aggr=[], partitions=1, output_rows=547758, output_bytes=8901068
+                          GpuCoalesceBatchesExec, partitions=1, output_rows=553970, output_bytes=9002014
+                            GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ss_sold_date_sk@0)], projection=[2, 3], partitions=1, output_rows=553970, output_bytes=9002014
+                              GpuCoalesceBatchesExec, partitions=1, output_rows=366, output_bytes=2974
+                                GpuRepartitionExec: partitioning=Hash([d_date_sk@0], 8), input_partitions=8, partitions=1, output_rows=366, output_bytes=2974
+                                  GpuCoalesceBatchesExec, partitions=1, output_rows=366, output_bytes=2974
+                                    GpuFilterExec: predicate=d_month_seq@1 >= 1200 AND d_month_seq@1 <= 1211, projection=[0], partitions=1, output_rows=366, output_bytes=2974
+                                      GpuRepartitionExec: partitioning=RoundRobinBatch(8), input_partitions=1, partitions=1, output_rows=73049, output_bytes=1187048
+                                        GpuScanExec: table=date_dim, projections=[d_date_sk, d_month_seq], partitions=1, output_rows=73049, output_bytes=1187048
+                              GpuCoalesceBatchesExec, partitions=1, output_rows=2880404, output_bytes=70209849
+                                GpuRepartitionExec: partitioning=Hash([ss_sold_date_sk@0], 8), input_partitions=8, partitions=1, output_rows=2880404, output_bytes=70209849
+                                  GpuScanExec: table=store_sales, projections=[ss_sold_date_sk, ss_item_sk, ss_customer_sk], partitions=1, output_rows=2880404, output_bytes=70209849

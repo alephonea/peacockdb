@@ -9,12 +9,13 @@ use datafusion::arrow::array::Int64Array;
 use datafusion::physical_plan::ExecutionPlan;
 
 use peacockdb_core::create_context_with_tables_mode;
-use peacockdb_core::cpu_executor::{execute_node_by_node_instrumented, NodeMemoryStats};
+use peacockdb_core::cpu_executor::NodeMemoryStats;
+use peacockdb_core::executors::full_table_cpu_executor::execute_full_table_instrumented;
 
 use common::{
     all_node_names, data_dir_for, device_config, fmt_plan, has_gpu_node, make_ctx,
     partition_mode, plan_is_node13_executable, queries_dir_for, scan_batch_sizes, FULL_BUDGET,
-    TIGHT_BUDGET,
+    BATCH_STRESS_BUDGET,
 };
 
 /// Lock the routing predicate (reviewer regression guard) — the gate is AGG-KIND
@@ -23,7 +24,7 @@ use common::{
 ///   - shuffle_additive (GROUP BY + Hash shuffle, SUM/COUNT)   → node13-executable
 ///   - q1 (GROUP BY + Hash shuffle, AVG state = sum/count)     → node13-executable (Inc4)
 ///   - shuffle_stddev (GROUP BY + Hash shuffle, STDDEV)        → node13-executable (Inc5, M2)
-/// All are evaluated at tp8-mem120gib so they carry a scan map; the ONLY discriminator
+/// All are evaluated at tp8-standard so they carry a scan map; the ONLY discriminator
 /// is whether every Final-aggregate is state-mergeable. Fails LOUDLY if the predicate
 /// is narrowed to reject a legitimate mergeable shuffle (sum/count/min/max/avg/stddev/var)
 /// — an UNKNOWN aggregate still defaults to NON-mergeable (whitelist fail-safe).
@@ -31,7 +32,7 @@ use common::{
 async fn routing_predicate_gates_on_agg_kind() {
     async fn plan_for(query: &str, device: &str) -> Arc<dyn ExecutionPlan> {
         let (parts, budget) = device_config(device);
-        // Real-partitioning mode at tp8-mem120gib so the scan carries its map (the
+        // Real-partitioning mode at tp8-standard so the scan carries its map (the
         // predicate keys on has_scan_map); the enum — not the budget — is the gate.
         let ctx = create_context_with_tables_mode(
             &data_dir_for("tpch", "1"),
@@ -45,19 +46,19 @@ async fn routing_predicate_gates_on_agg_kind() {
             std::fs::read_to_string(queries_dir_for("tpch").join(format!("{query}.sql"))).unwrap();
         ctx.sql(&sql).await.unwrap().create_physical_plan().await.unwrap()
     }
-    let q6 = plan_for("q6", "tp8-mem120gib").await;
+    let q6 = plan_for("q6", "tp8-standard").await;
     assert!(plan_is_node13_executable(&q6), "q6 (additive global agg) must route to #13");
-    let shuffle = plan_for("shuffle-additive", "tp8-mem120gib").await;
+    let shuffle = plan_for("shuffle-additive", "tp8-standard").await;
     assert!(
         plan_is_node13_executable(&shuffle),
         "shuffle_additive (SUM/COUNT over a Hash shuffle) must route to #13"
     );
-    let q1 = plan_for("q1", "tp8-mem120gib").await;
+    let q1 = plan_for("q1", "tp8-standard").await;
     assert!(
         plan_is_node13_executable(&q1),
         "q1 (AVG = additive sum/count state) must route to #13 (Inc4)"
     );
-    let stddev = plan_for("shuffle-stddev", "tp8-mem120gib").await;
+    let stddev = plan_for("shuffle-stddev", "tp8-standard").await;
     assert!(
         plan_is_node13_executable(&stddev),
         "shuffle_stddev (STDDEV = Welford count/mean/m2 state) must route to #13 (Inc5)"
@@ -65,7 +66,7 @@ async fn routing_predicate_gates_on_agg_kind() {
 }
 
 /// I-3 (reviewer), INVERTED for Inc5: a STDDEV Final-agg query driven through the #13
-/// CpuNodeExecutor at a real-partitioning device (tp8-mem120gib) now MERGES CORRECTLY —
+/// CpuNodeExecutor at a real-partitioning device (tp8-standard) now MERGES CORRECTLY —
 /// its Welford [count, mean, m2] state combines across the 8 hash partitions (each group
 /// lands wholly in one bucket, so the per-bucket Final is exact). This asserts the #13
 /// result matches DataFusion (the oracle); it panicked pre-Inc5 (non-mergeable guard),
@@ -77,10 +78,15 @@ async fn inc5_stddev_final_agg_at_tp8_node13_matches_datafusion() {
     // DataFusion oracle is float summation reassociation of the Welford M2 across the 8
     // partitions (~1 ULP; observed rel diff ~3e-14). Exact-string compare can't tolerate
     // it — stddev/var results are inherently approx (unlike Inc4's exact sum/count avg).
-    // gen=true: this IS the tp8-mem120gib .result.txt generator, consumed by the
-    // golden_approx gpu_test! for shuffle_stddev at tp8-mem120gib (Inc5-iii).
+    // gen=FALSE since the quarantine: this WAS the tp8-standard .result.txt generator
+    // for the golden_approx gpu_test! at shuffle_stddev/tp8-standard (Inc5-iii), but
+    // that consumer is commented out pending #103. Generating it now would write an
+    // ORPHAN golden — written, never read — which is precisely the silent failure the
+    // `gen_result_golden` gate exists to prevent (see tests/common/mod.rs, the
+    // "true-when-should-be-false" note). Flip back to true when #103 re-enables the
+    // gpu_test!. The already-committed .result.txt is deliberately left in place.
     common::assert_cpu_results_match_datafusion(
-        "tpch", "1", "shuffle-stddev", "tp8-mem120gib", Some(1e-12), true, true,
+        "tpch", "1", "shuffle-stddev", "tp8-standard", Some(1e-12), true, false,
     )
     .await;
 }
@@ -100,7 +106,7 @@ async fn test_execution_strips_gpu_nodes() {
     assert!(has_gpu_node(&plan), "expected GPU nodes in plan, got: {:?}", all_node_names(&plan));
 
     let mut stats: Vec<NodeMemoryStats> = vec![];
-    execute_node_by_node_instrumented(plan, ctx.task_ctx(), &mut stats).await.unwrap();
+    execute_full_table_instrumented(plan, ctx.task_ctx(), &mut stats).await.unwrap();
 
     assert!(!stats.is_empty(), "no nodes were executed");
     let gpu_names: Vec<&str> =
@@ -115,11 +121,11 @@ async fn test_memory_boundary_preserved_tight_budget() {
     let ctx_full = make_ctx(FULL_BUDGET).await;
     let plan_full = ctx_full.sql(query).await.unwrap().create_physical_plan().await.unwrap();
 
-    let ctx_tight = make_ctx(TIGHT_BUDGET).await;
+    let ctx_tight = make_ctx(BATCH_STRESS_BUDGET).await;
     let plan_tight = ctx_tight.sql(query).await.unwrap().create_physical_plan().await.unwrap();
 
     eprintln!("\n=== FULL BUDGET ({} GiB) plan ===\n{}", FULL_BUDGET / (1024 * 1024 * 1024), fmt_plan(&plan_full));
-    eprintln!("=== TIGHT BUDGET ({} KiB) plan ===\n{}", TIGHT_BUDGET / 1024, fmt_plan(&plan_tight));
+    eprintln!("=== TIGHT BUDGET ({} KiB) plan ===\n{}", BATCH_STRESS_BUDGET / 1024, fmt_plan(&plan_tight));
 
     let tight_scan_sizes = scan_batch_sizes(&plan_tight);
     assert!(
@@ -140,7 +146,7 @@ async fn test_memory_boundary_preserved_tight_budget() {
 
     let mut stats: Vec<NodeMemoryStats> = vec![];
     let batches =
-        execute_node_by_node_instrumented(plan_tight, ctx_tight.task_ctx(), &mut stats).await.unwrap();
+        execute_full_table_instrumented(plan_tight, ctx_tight.task_ctx(), &mut stats).await.unwrap();
 
     let count = batches[0].column(0).as_any().downcast_ref::<Int64Array>().unwrap().value(0);
     assert_eq!(count, 150_000, "customer table must have 150 000 rows");
@@ -184,7 +190,7 @@ async fn test_instrumented_stats_are_populated() {
 
     let mut stats: Vec<NodeMemoryStats> = vec![];
     let batches =
-        execute_node_by_node_instrumented(plan, ctx.task_ctx(), &mut stats).await.unwrap();
+        execute_full_table_instrumented(plan, ctx.task_ctx(), &mut stats).await.unwrap();
 
     let final_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
     let root_stat = stats.last().unwrap();

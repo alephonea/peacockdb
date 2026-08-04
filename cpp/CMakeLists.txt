@@ -114,7 +114,28 @@ add_custom_target(gpu_plan_fbs DEPENDS ${FBS_GENERATED_HEADER})
 # ---------------------------------------------------------------------------
 # libpeacock_gpu
 # ---------------------------------------------------------------------------
-add_library(peacock_gpu SHARED src/gpu_executor.cpp src/plan_executor.cpp src/spark_hash_partition.cu)
+# src/plan_executor.cpp was a 3271-line monolith; Inc4b split it into the units
+# below. The private headers it grew (src/peacock/*.h) stay under src/ on purpose —
+# install(DIRECTORY include/) would otherwise ship executor internals as public API
+# alongside the stable C FFI surface in peacock_gpu.h.
+add_library(peacock_gpu SHARED
+  src/gpu_executor.cpp
+  src/expr.cpp
+  src/execute_plan.cpp
+  src/node_session.cpp
+  src/operators/dispatch.cpp
+  src/operators/scan.cpp
+  src/operators/filter.cpp
+  src/operators/project.cpp
+  src/operators/aggregate.cpp
+  src/operators/join.cpp
+  src/operators/sort.cpp
+  src/operators/union.cpp
+  src/operators/limit.cpp
+  src/operators/window.cpp
+  src/operators/coalesce.cpp
+  src/operators/repartition.cpp
+  src/spark_hash_partition.cu)
 add_dependencies(peacock_gpu gpu_plan_fbs)
 target_include_directories(peacock_gpu PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>

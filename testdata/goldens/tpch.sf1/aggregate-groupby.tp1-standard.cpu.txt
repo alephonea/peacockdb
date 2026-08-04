@@ -1,0 +1,2 @@
+GpuAggregateExec: group_by=[l_returnflag], aggr=[sum(lineitem.l_quantity)], partitions=1, output_rows=3, output_bytes=69
+  GpuScanExec: table=lineitem, projections=[l_quantity, l_returnflag], partitions=1, output_rows=6001215, output_bytes=127525823

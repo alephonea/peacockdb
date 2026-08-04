@@ -1,8 +1,0 @@
-GpuCrossJoinExec
-  GpuScanExec: table=region, projections=[r_regionkey, r_name, r_comment], batch_size=29826161
-  GpuScanExec: table=nation, projections=[n_nationkey, n_name, n_regionkey, n_comment], batch_size=29826161
---- memory ---
-total_estimate_cost=420
-GpuCrossJoinExec: row_width=140, subtree_max_row_bytes=72, estimate_input_bytes=140, estimate_output_bytes=140, estimate_cost=280
-  GpuScanExec: row_width=68, subtree_max_row_bytes=68, estimate_input_bytes=0, estimate_output_bytes=68, estimate_cost=68
-  GpuScanExec: row_width=72, subtree_max_row_bytes=72, estimate_input_bytes=0, estimate_output_bytes=72, estimate_cost=72

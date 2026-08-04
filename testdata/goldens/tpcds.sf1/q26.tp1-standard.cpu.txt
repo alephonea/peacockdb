@@ -1,0 +1,23 @@
+GpuSortExec: expr=[i_item_id@0 ASC NULLS LAST], fetch=100, partitions=1, output_rows=100, output_bytes=7669
+  GpuProjectExec: expr=[i_item_id@0 as i_item_id, avg(catalog_sales.cs_quantity)@1 as agg1, avg(catalog_sales.cs_list_price)@2 as agg2, avg(catalog_sales.cs_coupon_amt)@3 as agg3, avg(catalog_sales.cs_sales_price)@4 as agg4], partitions=1, output_rows=3201, output_bytes=245285
+    GpuAggregateExec: group_by=[i_item_id], aggr=[avg(catalog_sales.cs_quantity), avg(catalog_sales.cs_list_price), avg(catalog_sales.cs_coupon_amt), avg(catalog_sales.cs_sales_price)], partitions=1, output_rows=3201, output_bytes=245285
+      GpuCoalesceBatchesExec, partitions=1, output_rows=4032, output_bytes=308956
+        GpuHashJoinExec: join_type=Inner, on=[(p_promo_sk@0, cs_promo_sk@0)], projection=[2, 3, 4, 5, 6], partitions=1, output_rows=4032, output_bytes=308956
+          GpuCoalesceBatchesExec, partitions=1, output_rows=299, output_bytes=2430
+            GpuFilterExec: predicate=p_channel_email@1 = N OR p_channel_event@2 = N, projection=[0], partitions=1, output_rows=299, output_bytes=2430
+              GpuScanExec: table=promotion, projections=[p_promo_sk, p_channel_email, p_channel_event], partitions=1, output_rows=300, output_bytes=5513
+          GpuProjectExec: expr=[cs_promo_sk@1 as cs_promo_sk, cs_quantity@2 as cs_quantity, cs_list_price@3 as cs_list_price, cs_sales_price@4 as cs_sales_price, cs_coupon_amt@5 as cs_coupon_amt, i_item_id@0 as i_item_id], partitions=1, output_rows=4050, output_bytes=343246
+            GpuCoalesceBatchesExec, partitions=1, output_rows=4050, output_bytes=343246
+              GpuHashJoinExec: join_type=Inner, on=[(i_item_sk@0, cs_item_sk@0)], projection=[1, 3, 4, 5, 6, 7], partitions=1, output_rows=4050, output_bytes=343246
+                GpuScanExec: table=item, projections=[i_item_sk, i_item_id], partitions=1, output_rows=18000, output_bytes=508504
+                GpuCoalesceBatchesExec, partitions=1, output_rows=4050, output_bytes=294642
+                  GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, cs_sold_date_sk@0)], projection=[2, 3, 4, 5, 6, 7], partitions=1, output_rows=4050, output_bytes=294642
+                    GpuCoalesceBatchesExec, partitions=1, output_rows=366, output_bytes=2974
+                      GpuFilterExec: predicate=d_year@1 = 2000, projection=[0], partitions=1, output_rows=366, output_bytes=2974
+                        GpuScanExec: table=date_dim, projections=[d_date_sk, d_year], partitions=1, output_rows=73049, output_bytes=1187048
+                    GpuCoalesceBatchesExec, partitions=1, output_rows=20280, output_bytes=1640145
+                      GpuHashJoinExec: join_type=Inner, on=[(cd_demo_sk@0, cs_bill_cdemo_sk@1)], projection=[1, 3, 4, 5, 6, 7, 8], partitions=1, output_rows=20280, output_bytes=1640145
+                        GpuCoalesceBatchesExec, partitions=1, output_rows=27440, output_bytes=222950
+                          GpuFilterExec: predicate=cd_gender@1 = M AND cd_marital_status@2 = S AND cd_education_status@3 = College, projection=[0], partitions=1, output_rows=27440, output_bytes=222950
+                            GpuScanExec: table=customer_demographics, projections=[cd_demo_sk, cd_gender, cd_marital_status, cd_education_status], partitions=1, output_rows=1920800, output_bytes=61602812
+                        GpuScanExec: table=catalog_sales, projections=[cs_sold_date_sk, cs_bill_cdemo_sk, cs_item_sk, cs_promo_sk, cs_quantity, cs_list_price, cs_sales_price, cs_coupon_amt], partitions=1, output_rows=1441548, output_bytes=128297776

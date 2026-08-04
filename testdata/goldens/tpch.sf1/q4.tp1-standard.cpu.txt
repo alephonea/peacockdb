@@ -1,0 +1,11 @@
+GpuSortExec: expr=[o_orderpriority@0 ASC NULLS LAST], partitions=1, output_rows=5, output_bytes=108
+  GpuProjectExec: expr=[o_orderpriority@0 as o_orderpriority, count(*)@1 as order_count], partitions=1, output_rows=5, output_bytes=108
+    GpuAggregateExec: group_by=[o_orderpriority], aggr=[count(*)], partitions=1, output_rows=5, output_bytes=108
+      GpuCoalesceBatchesExec, partitions=1, output_rows=52523, output_bytes=658325
+        GpuHashJoinExec: join_type=LeftSemi, on=[(o_orderkey@0, l_orderkey@0)], projection=[1], partitions=1, output_rows=52523, output_bytes=658325
+          GpuCoalesceBatchesExec, partitions=1, output_rows=57218, output_bytes=1182021
+            GpuFilterExec: predicate=o_orderdate@1 >= 1993-07-01 AND o_orderdate@1 < 1993-10-01, projection=[0, 2], partitions=1, output_rows=57218, output_bytes=1182021
+              GpuScanExec: table=orders, projections=[o_orderkey, o_orderdate, o_orderpriority], partitions=1, output_rows=245760, output_bytes=6088034
+          GpuCoalesceBatchesExec, partitions=1, output_rows=3793296, output_bytes=30820530
+            GpuFilterExec: predicate=l_receiptdate@2 > l_commitdate@1, projection=[0], partitions=1, output_rows=3793296, output_bytes=30820530
+              GpuScanExec: table=lineitem, projections=[l_orderkey, l_commitdate, l_receiptdate], partitions=1, output_rows=6001215, output_bytes=98269896

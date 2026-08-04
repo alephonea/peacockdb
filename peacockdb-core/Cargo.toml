@@ -25,6 +25,13 @@ datafusion-comet-spark-expr = { version = "0.6.0", default-features = false }
 [dev-dependencies]
 datafusion = "45"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+sha2 = "0.10"   # plan-bytes wire-format digests (already in the graph via DataFusion)
 paste = "1"   # derive test fn idents from the unified (dataset, sf, query, device) macros
+# Link-time test registry (Inc5). Each test macro submits a RegistryEntry at its
+# invocation site, so testdata/cost-registry.csv can be checked against what the
+# suite ACTUALLY declares instead of scraping test_gpu.rs as text. Note inventory
+# collects PER BINARY, so each test binary verifies the columns it owns — see
+# common::assert_registry_matches_csv.
+inventory = "0.3"
 
 # No [patch] section needed

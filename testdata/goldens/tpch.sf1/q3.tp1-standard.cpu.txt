@@ -1,0 +1,16 @@
+GpuSortExec: expr=[revenue@1 DESC, o_orderdate@2 ASC NULLS LAST], fetch=10, partitions=1, output_rows=10, output_bytes=328
+  GpuProjectExec: expr=[l_orderkey@0 as l_orderkey, sum(lineitem.l_extendedprice * Int64(1) - lineitem.l_discount)@3 as revenue, o_orderdate@1 as o_orderdate, o_shippriority@2 as o_shippriority], partitions=1, output_rows=11620, output_bytes=377652
+    GpuAggregateExec: group_by=[l_orderkey, o_orderdate, o_shippriority], aggr=[sum(lineitem.l_extendedprice * Int64(1) - lineitem.l_discount)], partitions=1, output_rows=11620, output_bytes=377652
+      GpuCoalesceBatchesExec, partitions=1, output_rows=30519, output_bytes=1483987
+        GpuHashJoinExec: join_type=Inner, on=[(o_orderkey@0, l_orderkey@0)], projection=[1, 2, 3, 4, 5], partitions=1, output_rows=30519, output_bytes=1483987
+          GpuCoalesceBatchesExec, partitions=1, output_rows=147126, output_bytes=2409189
+            GpuHashJoinExec: join_type=Inner, on=[(c_custkey@0, o_custkey@1)], projection=[1, 3, 4], partitions=1, output_rows=147126, output_bytes=2409189
+              GpuCoalesceBatchesExec, partitions=1, output_rows=30142, output_bytes=244904
+                GpuFilterExec: predicate=c_mktsegment@1 = BUILDING, projection=[0], partitions=1, output_rows=30142, output_bytes=244904
+                  GpuScanExec: table=customer, projections=[c_custkey, c_mktsegment], partitions=1, output_rows=150000, output_bytes=3187114
+              GpuCoalesceBatchesExec, partitions=1, output_rows=727305, output_bytes=17818976
+                GpuFilterExec: predicate=o_orderdate@2 < 1995-03-15, partitions=1, output_rows=727305, output_bytes=17818976
+                  GpuScanExec: table=orders, projections=[o_orderkey, o_custkey, o_orderdate, o_shippriority], partitions=1, output_rows=737280, output_bytes=18063360
+          GpuCoalesceBatchesExec, partitions=1, output_rows=3241776, output_bytes=130886706
+            GpuFilterExec: predicate=l_shipdate@3 > 1995-03-15, projection=[0, 1, 2], partitions=1, output_rows=3241776, output_bytes=130886706
+              GpuScanExec: table=lineitem, projections=[l_orderkey, l_extendedprice, l_discount, l_shipdate], partitions=1, output_rows=3297855, output_bytes=146754548

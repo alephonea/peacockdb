@@ -12,7 +12,7 @@ use peacockdb_core::{CpuExecutor, PartitionMode};
 
 use common::{
     assert_plan_matches_canonical, count, find_node, scan_batch_sizes, test_ctx,
-    testdata_minimal_dir, TEST_TARGET_PARTITIONS,
+    testdata_minimal_dir, BATCH_STRESS_BUDGET, TEST_TARGET_PARTITIONS,
 };
 
 // ── Inc5: mergeable_agg_state flag serialization ─────────────────────────
@@ -24,7 +24,7 @@ use common::{
 /// serialize→deserialize→reserialize roundtrip unchanged. Rust-only; no GPU.
 #[tokio::test]
 async fn inc5_mergeable_agg_state_serializes_per_partition_mode() {
-    let plan = common::plan_for("tpch", "1", "shuffle-stddev", "tp8-mem120gib").await;
+    let plan = common::plan_for("tpch", "1", "shuffle-stddev", "tp8-standard").await;
 
     let real = serialize_plan_mode(&plan, PartitionMode::RealMultiPartition).expect("ser real");
     let single = serialize_plan_mode(&plan, PartitionMode::SinglePartition).expect("ser single");
@@ -167,7 +167,7 @@ async fn test_memory_cost_leaf_and_filter() {
 // ── Memory budget tests ──────────────────────────────────────────────────
 #[tokio::test]
 async fn test_memory_budget_reduces_batch_size() {
-    let ctx = create_context_with_tables(&testdata_minimal_dir(), TEST_TARGET_PARTITIONS, 10 * 1024)
+    let ctx = create_context_with_tables(&testdata_minimal_dir(), TEST_TARGET_PARTITIONS, BATCH_STRESS_BUDGET)
         .await
         .unwrap();
     let query = "

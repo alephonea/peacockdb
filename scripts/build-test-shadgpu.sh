@@ -161,6 +161,12 @@ if [ "$RSYNC" -eq 1 ]; then
   # exact mirror so removed/renamed goldens don't linger. (Cheap: goldens are small.)
   ssh shad-gpu "mkdir -p /home/info/peacockdb/testdata/goldens"
   resilient_rsync -r --delete testdata/goldens/ shad-gpu:/home/info/peacockdb/testdata/goldens/
+  # The cost-registry CSV is a committed fixture the registry tests READ (they assert
+  # it against the suite's link-time inventory). Goldens alone are not enough: without
+  # this the registry test fails on "cannot read cost-registry.csv" — a
+  # mis-provisioned run, not a product fault. Same trap as the goldens that
+  # build-test.sh's --rust-only mode used to skip.
+  resilient_rsync -a testdata/cost-registry.csv shad-gpu:/home/info/peacockdb/testdata/
   # Ship our setup-glibc.sh (with patch_rust_dir) so --patch uses the
   # version that knows about cpp/install/rust-tests/.
   ssh shad-gpu "mkdir -p /home/info/peacockdb/scripts"
@@ -174,7 +180,7 @@ fi
 if [ "$RUN" -eq 1 ]; then
   # Optional knobs (set in the caller's env, not via flags):
   #   PEACOCK_GPU_DEBUG=1    enable PCK_TRACE + per-node cudaStreamSynchronize
-  #                          in plan_executor.cpp (localizes async errors).
+  #                          in src/expr.cpp (localizes async errors).
   #   PCK_TEST_FILTER=<sub>  cargo-test name filter forwarded to the rust
   #                          binary (e.g. gpu_tpch_sf1_q13_H200). Empty = run all.
   #   PCK_RUN_CPP=0          skip peacock_plan_tests (default: run them).
@@ -185,26 +191,114 @@ if [ "$RUN" -eq 1 ]; then
   # Note the heredoc uses no quoting on the EOF marker, so $VARS expand
   # *locally* before being sent to the remote shell. Escape with \$ for
   # any var that should be expanded remotely (e.g. \$LD_LIBRARY_PATH).
+  # Deliberately NO 'set -e' around the test runs, matching the CI gpu-tests job:
+  # run EVERY binary even when an earlier one fails, OR each exit code into rc, and
+  # fail at the end. Under set -e a single crashing test aborted the whole remote
+  # script — a SIGSEGV in test_gpu silently cost us all 10 test_inc2_conformance
+  # results, which read as "not run" but looked like "fine". One flaky test must not
+  # be able to hide every later binary's result.
   ssh shad-gpu bash <<EOF
-    set -e
-
+    # Superset env, mirroring CI: every binary gets every variable it might need,
+    # unused ones are ignored. Without PEACOCK_TPCH_{SF40_DIR,GOLDEN_DIR,VEC_PARAMS}
+    # the sf40 suites fall back to a RELATIVE golden path, miss it, and fail — which
+    # is not a product fault, just a mis-provisioned run. The sf40 dataset lives
+    # OUTSIDE the repo tree and is read in place; nothing here writes to it.
     export PEACOCK_TESTDATA_DIR=/home/info/peacockdb/testdata
+    export PEACOCK_TPCH_SF40_DIR=/home/info/peacock-datasets/testdata/tpch.sf40
+    export PEACOCK_TPCH_GOLDEN_DIR=/home/info/peacockdb/testdata/goldens/tpch.sf40
+    export PEACOCK_TPCH_VEC_PARAMS=/home/info/peacockdb/testdata/tpch-vec-queries/query_params.jsonl
     export PEACOCK_GPU_DEBUG='$PEACOCK_GPU_DEBUG'
     # cpp/install/lib first so libpeacock_gpu.so resolves for the rust test
     # binary (its baked-in rpath points at the build host's cargo target).
     export LD_LIBRARY_PATH=/home/info/peacockdb/cpp/install/lib:/usr/local/cuda-12.5/compat:/home/info/glibc-2.35/lib:\$HOME/miniforge3/envs/rapids-cuda-12.2/lib:\$LD_LIBRARY_PATH
 
+    rc=0
+
+    # GLOB peacock_*_tests, matching CI (pipeline.yml). Hardcoding peacock_plan_tests
+    # meant peacock_cpu_tests / peacock_gpu_tests / peacock_tpch_tests NEVER ran
+    # locally, so a "C++ green" sign-off here covered one binary out of four. Two
+    # guards, also from CI: a per-binary "0 tests" check (a suite that skips
+    # everything exits 0 and reads green having verified nothing) and a ran_any
+    # check (if the glob matches nothing, every C++ test vanishes silently).
     if [ '$PCK_RUN_CPP' = '1' ]; then
-      echo "==> peacock_plan_tests (C++)"
-      /home/info/peacockdb/cpp/install/bin/peacock_plan_tests
+      ran_any=0
+      for t in /home/info/peacockdb/cpp/install/bin/peacock_*_tests; do
+        [ -x "\$t" ] || continue
+        tname=\${t##*/}
+        # Multi-GPU suites are MANUAL-ONLY — they are EXCLUDE_FROM_ALL in CMake and
+        # need two visible GPUs, so they are neither built by default nor run here or
+        # in CI. Skip them explicitly: if someone builds them locally they land in
+        # install/bin and this glob would otherwise sweep them into the gate, where
+        # they fail for want of a second GPU and read as a regression.
+        case "\$tname" in peacock_multi_gpu_*) echo "==> \$tname (skipped: multi-GPU is manual-only)"; continue ;; esac
+        echo "==> \$tname (C++)"
+        tlog=/tmp/\$tname.log
+        "\$t" > "\$tlog" 2>&1
+        trc=\$?
+        [ "\$trc" -eq 0 ] || { echo "!!! \$tname FAILED (exit \$trc)"; rc=1; }
+        tzero=0
+        while IFS= read -r line; do
+          printf '%s\n' "\$line"
+          case "\$line" in *"[  PASSED  ] 0 tests"*) tzero=1 ;; esac
+        done < "\$tlog"
+        if [ "\$tzero" -eq 1 ]; then
+          echo "!!! \$tname ran 0 tests (all skipped) — nothing was verified"
+          rc=1
+        fi
+        ran_any=\$((ran_any + 1))
+      done
+      if [ "\$ran_any" -eq 0 ]; then
+        echo "!!! no peacock_*_tests binaries found — every C++ test vanished"
+        rc=1
+      fi
+      echo "==> ran \$ran_any C++ test binaries"
     fi
 
+    # Same two guards as the C++ loop above, and they matter MORE here: PCK_TEST_FILTER
+    # is human-typed, so a typo matches nothing, libtest reports "0 passed" and exits 0,
+    # and the run reads GREEN having verified nothing. A zero-test outcome must be red.
     echo "==> rust GPU integration tests (filter='$PCK_TEST_FILTER')"
+    rust_ran=0
     for t in /home/info/peacockdb/cpp/install/rust-tests/*; do
       [ -x "\$t" ] || continue
-      echo "--- \$(basename "\$t")"
+      tname=\${t##*/}
+      echo "--- \$tname"
+      rlog=/tmp/\$tname.rustlog
       # --test-threads=1: GPU/RMM context is process-wide, parallel tests OOM.
-      "\$t" --nocapture --test-threads=1 '$PCK_TEST_FILTER'
+      "\$t" --nocapture --test-threads=1 '$PCK_TEST_FILTER' > "\$rlog" 2>&1
+      status=\$?
+      # Zero-tests is only a FAULT when nothing was filtered out. With a filter set,
+      # every OTHER binary legitimately matches nothing and reports "0 passed" —
+      # flagging that would hand a human debugging one test a red "GPU test run
+      # FAILED" for a run that did exactly what they asked, which is how people learn
+      # to ignore the banner. The ran_any check below stays unconditional.
+      rzero=0
+      while IFS= read -r line; do
+        printf '%s\n' "\$line"
+        case "\$line" in *"test result:"*" 0 passed"*) rzero=1 ;; esac
+      done < "\$rlog"
+      if [ "\$status" -ne 0 ]; then
+        # 139 = SIGSEGV. Name it explicitly: a bare non-zero code here has already
+        # been mistaken for an assertion failure.
+        echo "!!! \$tname FAILED (exit \$status)"
+        rc=1
+      elif [ "\$rzero" -eq 1 ] && [ -z '$PCK_TEST_FILTER' ]; then
+        echo "!!! \$tname ran 0 tests (filter '$PCK_TEST_FILTER' matched nothing?) — nothing was verified"
+        rc=1
+      fi
+      rust_ran=\$((rust_ran + 1))
     done
+    if [ "\$rust_ran" -eq 0 ]; then
+      echo "!!! no rust test binaries found in cpp/install/rust-tests — every rust GPU test vanished"
+      rc=1
+    fi
+    echo "==> ran \$rust_ran rust test binaries"
+
+    if [ "\$rc" -ne 0 ]; then
+      echo "==> GPU test run FAILED (see '!!!' lines above)"
+    else
+      echo "==> GPU test run OK"
+    fi
+    exit "\$rc"
 EOF
 fi

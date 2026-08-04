@@ -1,0 +1,11 @@
+GpuAggregateExec: group_by=[], aggr=[count(*), sum(l.l_quantity), sum(o.o_totalprice)], partitions=1, output_rows=1, output_bytes=43
+  GpuCoalescePartitionsExec, partitions=1, output_rows=1, output_bytes=43
+    GpuAggregateExec: group_by=[], aggr=[count(*), sum(l.l_quantity), sum(o.o_totalprice)], partitions=1, output_rows=1, output_bytes=43
+      GpuCoalesceBatchesExec, partitions=1, output_rows=4464071, output_bytes=143966290
+        GpuHashJoinExec: join_type=Inner, on=[(o_orderkey@0, l_orderkey@0)], filter=l_shipdate@1 >= o_orderdate@0 AND l_shipdate@1 <= o_orderdate@0 + IntervalMonthDayNano { months: 0, days: 90, nanoseconds: 0 }, projection=[1, 4], partitions=1, output_rows=4464071, output_bytes=143966290
+          GpuCoalesceBatchesExec, partitions=1, output_rows=1500000, output_bytes=42562500
+            GpuRepartitionExec: partitioning=Hash([o_orderkey@0], 8), input_partitions=8, partitions=1, output_rows=1500000, output_bytes=42562500
+              GpuScanExec: table=orders, projections=[o_orderkey, o_totalprice, o_orderdate], partitions=1, output_rows=1500000, output_bytes=42562500
+          GpuCoalesceBatchesExec, partitions=1, output_rows=6001215, output_bytes=170284476
+            GpuRepartitionExec: partitioning=Hash([l_orderkey@0], 8), input_partitions=8, partitions=1, output_rows=6001215, output_bytes=170284476
+              GpuScanExec: table=lineitem, projections=[l_orderkey, l_quantity, l_shipdate], partitions=1, output_rows=6001215, output_bytes=170284476
