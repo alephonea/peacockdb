@@ -1,5 +1,3 @@
-// Split out of the former src/plan_executor.cpp monolith.
-//
 // The public entry points: execute_plan (the recursive production fast path) and
 // varlen_content_bytes.
 
@@ -20,8 +18,7 @@ uint64_t varlen_content_bytes(const cudf::table_view& table) {
   uint64_t total = 0;
   for (cudf::size_type i = 0; i < table.num_columns(); ++i) {
     auto col = table.column(i);
-    // Only flat string columns carry var-length content at tp1 (no nested List
-    // until two-phase aggregation at tp>1 — handled in Phase 2). Matches the Rust
+    // Flat string columns only — no nested List types reach here. Matches the Rust
     // ColAccum content term (Σ value byte lengths = offsets[n]-offsets[0]).
     if (col.type().id() == cudf::type_id::STRING) {
       total += static_cast<uint64_t>(
@@ -30,10 +27,6 @@ uint64_t varlen_content_bytes(const cudf::table_view& table) {
   }
   return total;
 }
-
-// ============================================================================
-// Public API
-// ============================================================================
 
 TableResult execute_plan(const uint8_t* plan_bytes, uint64_t plan_len) {
   auto* gpu_plan = fb::GetGpuPlan(plan_bytes);

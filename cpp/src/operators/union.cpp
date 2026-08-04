@@ -1,5 +1,3 @@
-// Split out of the former src/plan_executor.cpp monolith.
-//
 // Union (UNION ALL / interleave) -- concatenate the rows of all inputs.
 
 #include "peacock/operators.h"
@@ -15,10 +13,6 @@
 
 namespace peacock {
 
-// ============================================================================
-// Union (UNION ALL / interleave): concatenate the rows of all inputs
-// ============================================================================
-
 TableResult execute_union(const fb::GpuUnion* u, NodeInputs* in) {
   if (!u->inputs() || u->inputs()->size() == 0)
     throw std::runtime_error("GpuUnion has no inputs");
@@ -33,13 +27,11 @@ TableResult execute_union(const fb::GpuUnion* u, NodeInputs* in) {
   // A single input needs no copy.
   if (inputs.size() == 1) return std::move(inputs[0]);
 
-  // Each branch is planned independently, so a column can land a different cuDF
-  // type per branch even though DataFusion declares one union output type: q5's
-  // inner UNION pairs a real decimal measure in one branch against a `0` literal
-  // (materialized as FLOAT64) at the same position in the other, and cuDF's SUM
-  // also drifts the fixed_point scale per branch. cudf::concatenate requires
-  // identical column types, so cast every branch column to the union's declared
-  // output type (id + decimal scale) before stacking.
+  // Branches are planned independently, so one column can land a different cuDF
+  // type per branch despite the single declared union output type (q5 pairs a
+  // decimal measure against a `0` literal materialized as FLOAT64; cuDF's SUM also
+  // drifts fixed_point scale per branch). cudf::concatenate requires identical
+  // types, so retype every branch column to the declared output first.
   if (u->output_schema() && u->output_schema()->fields()) {
     auto* fields = u->output_schema()->fields();
     for (auto& in : inputs) {

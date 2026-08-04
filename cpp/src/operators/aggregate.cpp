@@ -1,5 +1,3 @@
-// Split out of the former src/plan_executor.cpp monolith.
-//
 // GpuAggregate -- group-by and scalar (whole-table) aggregation.
 
 #include "peacock/operators.h"
@@ -22,10 +20,6 @@
 #include <string>
 
 namespace peacock {
-
-// ============================================================================
-// GpuAggregate — group-by aggregation
-// ============================================================================
 
 // DataFusion lowers stddev_samp/stddev → "stddev" and stddev_pop → "stddev_pop"
 // (variance variants likewise). cuDF's STD aggregation takes a ddof: sample std
@@ -51,14 +45,12 @@ static cudf::size_type stddev_ddof(const std::string& f) {
              : 1;
 }
 
-// Aggregate execution phase — THREE-WAY (Inc4). The old `is_final` bool
-// (mode==Final||FinalPartitioned) collapses Single AND Partial into one branch,
-// but the two-phase AVG state re-impl needs to tell them apart:
-//   Single  = one pass over raw rows (tp1)           -> AVG = plain MEAN (1 col)
-//   Partial = first pass, emits per-partition STATE  -> AVG = [sum, count] (2 cols)
-//   Final   = merges partial STATE across the shuffle-> AVG = Σsum / Σcount
-// Getting this wrong regresses tp1 (Single would emit 2-col state with no Final to
-// divide it). SUM/COUNT/MIN/MAX are phase-insensitive except count-Final -> sum.
+// Aggregate execution phase. MUST stay three-way: the `is_final` bool below
+// collapses Single and Partial, which two-phase AVG state has to tell apart.
+//   Single  = one pass over raw rows                  -> AVG = plain MEAN (1 col)
+//   Partial = first pass, emits per-partition STATE   -> AVG = [sum, count] (2 cols)
+//   Final   = merges partial STATE across the shuffle -> AVG = Σsum / Σcount
+// SUM/COUNT/MIN/MAX are phase-insensitive except count-Final -> sum.
 enum class AggPhase { Single, Partial, Final };
 static AggPhase agg_phase(fb::AggregateMode m) {
   switch (m) {
@@ -92,26 +84,20 @@ static std::unique_ptr<cudf::groupby_aggregation> make_agg(
     return cudf::make_max_aggregation<cudf::groupby_aggregation>();
   if (func_name == "avg" || func_name == "AVG" ||
       func_name == "mean" || func_name == "MEAN") {
-    // GpuRepartition executes as passthrough, so the Partial stage already
-    // groups the full input (one row per key); the Final stage then regroups
-    // those unique keys, making MEAN-of-singleton an identity. So a plain
-    // groupby MEAN is correct in both Partial and Final modes here.
-    // NOTE: correct only while Partial output is one-row-per-key. Multi-
-    // partition repartition breaks this (mean-of-means); execute_aggregate
-    // guards against it at runtime — see the has_avg_final check there.
-    // Decompose AVG into SUM+COUNT to lift this restriction:
-    // https://github.com/asymptote-tech/peacockdb/issues/25
+    // Valid ONLY while Partial output is one row per key (GpuRepartition as
+    // passthrough): the Final regroup is then a MEAN-of-singleton identity.
+    // Multi-partition repartition breaks it (mean-of-means) — execute_aggregate
+    // guards at runtime; decomposing AVG into SUM+COUNT lifts the restriction,
+    // ticket #25 (llm-wiki/tickets.md).
     return cudf::make_mean_aggregation<cudf::groupby_aggregation>();
   }
   if (is_stddev_name(func_name) || is_var_name(func_name)) {
-    // SINGLE-PARTITION stddev/var (this make_agg path). The Partial stage computes
-    // the real per-group std/var over the raw rows; with passthrough repartition
-    // that output is one row per key, so the Final regroup is an identity — model
-    // it as a singleton-identity (MEAN over the lone partial row), exactly as AVG.
-    // The grouped guard in execute_aggregate fails loudly if a real multi-row merge
-    // is attempted on THIS path. Real cross-partition merging (RealMultiPartition)
-    // takes the separate 3-col Welford M2-state path (mergeable_agg_state), NOT
-    // this make_agg call — see execute_aggregate. #25.
+    // SINGLE-PARTITION stddev/var only. Partial computes the real per-group
+    // std/var; with passthrough repartition that is one row per key, so Final is
+    // a singleton identity (MEAN of the lone partial row), exactly as AVG. The
+    // grouped guard in execute_aggregate fails loudly on a real multi-row merge;
+    // real cross-partition merging takes the 3-col Welford M2 path instead
+    // (mergeable_agg_state), NOT this call. #25.
     if (is_final)
       return cudf::make_mean_aggregation<cudf::groupby_aggregation>();
     if (is_var_name(func_name))
@@ -146,15 +132,11 @@ TableResult execute_aggregate(const fb::GpuAggregate* agg, NodeInputs* in) {
   bool is_final = (agg->mode() == fb::AggregateMode_Final ||
                    agg->mode() == fb::AggregateMode_FinalPartitioned);
 
-  // DISTINCT aggregates (e.g. count(DISTINCT x)) carry AggregateFuncNode.distinct
-  // and need cuDF's nunique / distinct aggregations, which this executor does not
-  // implement yet — make_agg silently computes the NON-distinct value. The CPU
-  // oracle honours the flag (AggregateExprBuilder.distinct()), so a distinct-
-  // flagged aggregate would diverge silently. Fail loudly instead. Today no
-  // enabled query reaches this: DataFusion's SingleDistinctToGroupBy rewrites a
-  // standalone count(DISTINCT x) into a GROUP BY + plain count (no flag at the
-  // GPU); the flag only survives when DISTINCT is mixed with other aggregates on
-  // one node (e.g. TPC-DS q28, parked) — see #62.
+  // make_agg would silently compute the NON-distinct value for a DISTINCT
+  // aggregate (needs cuDF nunique/distinct, unimplemented), while the CPU oracle
+  // honours the flag — a silent divergence, so fail loudly. Unreachable today:
+  // DataFusion rewrites a standalone count(DISTINCT x) into GROUP BY + count; the
+  // flag only survives when DISTINCT is mixed with other aggregates (#62).
   if (agg->aggr_funcs()) {
     for (flatbuffers::uoffset_t i = 0; i < agg->aggr_funcs()->size(); ++i) {
       if (agg->aggr_funcs()->Get(i)->distinct())
@@ -197,14 +179,11 @@ TableResult execute_aggregate(const fb::GpuAggregate* agg, NodeInputs* in) {
                             size_t agg_idx) -> cudf::column_view {
     cudf::column_view base;
     if (is_final) {
-      // Final/FinalPartitioned: this stage's input is the Partial stage's OUTPUT
-      // (group keys + one accumulator column per aggregate), NOT the original
-      // ungrouped data. func->args() index the original input (aggr_input_schema)
-      // and are therefore meaningless here, so resolve the value positionally:
-      // the aggregate columns sit right after the group keys (whose count already
-      // includes __grouping_id for the grouping-set Final). With single-partition
-      // passthrough repartition there is one Partial row per key, so re-running
-      // the aggregation over this column is the documented singleton-identity.
+      // Final's input is the Partial stage's OUTPUT (group keys + one accumulator
+      // per aggregate), so func->args() — which index the original input — are
+      // meaningless here. Resolve positionally: aggregate columns sit right after
+      // the group keys (whose count already includes __grouping_id for a
+      // grouping-set Final).
       base = tv.column(
           static_cast<cudf::size_type>(key_indices.size() + agg_idx));
     } else if (func->args() && func->args()->size() > 0) {
@@ -255,12 +234,11 @@ TableResult execute_aggregate(const fb::GpuAggregate* agg, NodeInputs* in) {
 
         bool is_avg = is_avg_name(name);
         bool is_std = is_stddev_name(name);
-        // Same shortcut/guard as the grouped path: a Final-stage global AVG (or
-        // STDDEV) reduces over the Partial outputs. With passthrough repartition
-        // there is exactly one partial row, so MEAN/STDDEV-of-one is an identity.
-        // More than one row means a multi-partition merge → silently-wrong
-        // mean-of-means / std-of-stds (decompose AVG into SUM+COUNT to lift this:
-        // https://github.com/asymptote-tech/peacockdb/issues/25).
+        // Same guard as the grouped path: a Final-stage global AVG/STDDEV reduces
+        // over the Partial outputs, and with passthrough repartition there is
+        // exactly one partial row (identity). More than one row means a
+        // multi-partition merge → silently-wrong mean-of-means / std-of-stds.
+        // Decomposing AVG into SUM+COUNT lifts this: ticket #25 (llm-wiki/tickets.md).
         if (is_final && (is_avg || is_std) && values_col.size() > 1) {
           throw std::runtime_error(
               "Final-stage AVG/STDDEV merged multiple partial rows "
@@ -272,12 +250,10 @@ TableResult execute_aggregate(const fb::GpuAggregate* agg, NodeInputs* in) {
         std::unique_ptr<cudf::column> result_col;
         if (is_count) {
           if (is_final) {
-            // #100: a GLOBAL (ungrouped) count at the Final stage merges the
-            // per-partition PARTIAL counts — it must SUM them (values_col holds one
-            // partial-count per partition), NOT re-count the partial rows. Mirrors
-            // the grouped make_agg count→sum-at-Final. (Bug: a global count(*) at
-            // real 8-way was counting the 8 partial rows = 8 instead of Σ = the true
-            // total.) The partial count column is INT64; reduce-sum to INT64.
+            // #100: a GLOBAL count at Final must SUM the per-partition partial
+            // counts (one per row of values_col), NOT re-count the partial rows —
+            // else 8-way gives 8. Mirrors the grouped count→sum-at-Final. The
+            // partial count column is INT64; reduce-sum to INT64.
             auto ragg = cudf::make_sum_aggregation<cudf::reduce_aggregation>();
             auto s = cudf::reduce(values_col, *ragg,
                                   cudf::data_type{cudf::type_id::INT64});
@@ -345,23 +321,16 @@ TableResult execute_aggregate(const fb::GpuAggregate* agg, NodeInputs* in) {
   }
 
   // ---- ROLLUP / CUBE / GROUPING SETS ----
-  // DataFusion's Partial AggregateExec expands ROLLUP/CUBE/GROUPING SETS into N
-  // grouping sets and appends a `__grouping_id` column (right after the group
-  // columns); the downstream Final AggregateExec then re-groups by
-  // [group cols..., __grouping_id] as a plain GROUP BY (its own grouping_sets is
-  // empty), and the outer projection drops __grouping_id. cuDF has no native
-  // ROLLUP/CUBE, so for each set we substitute the per-position NULL placeholder
-  // (null_exprs[i]) for the masked group columns, run the same aggregations, tag
-  // the rows with a distinct grouping id, and concatenate every set. Only per-set
-  // DISTINCTNESS of the id matters — it lets the Final keep sets apart even when a
-  // placeholder NULL collides with a natural NULL — so the exact bit encoding is
-  // irrelevant (the column never reaches the query output).
-  // Detect a REAL grouping-set aggregate by null_exprs being non-empty:
-  // DataFusion populates null_expr() only for ROLLUP/CUBE/GROUPING SETS. A plain
-  // GROUP BY — and the Final stage of a grouping-set agg, which re-groups
-  // [cols..., __grouping_id] as a single set — still serializes grouping_sets as
-  // one all-false mask but leaves null_exprs EMPTY, and must take the normal
-  // single-groupby path below (no __grouping_id appended).
+  // DataFusion's Partial expands these into N grouping sets and appends a
+  // `__grouping_id` column after the group columns; the Final then re-groups by
+  // [group cols..., __grouping_id] as a plain GROUP BY and the outer projection
+  // drops the id. cuDF has no native ROLLUP/CUBE, so per set we substitute the
+  // per-position NULL placeholder (null_exprs[i]) for masked group columns, run
+  // the same aggregations, tag rows with a distinct id, and concatenate.
+  //
+  // NON-EMPTY null_exprs is the discriminator, not grouping_sets: a plain GROUP BY
+  // — and the Final of a grouping-set agg — still serializes one all-false mask
+  // but leaves null_exprs EMPTY, and must take the single-groupby path below.
   if (agg->null_exprs() && agg->null_exprs()->size() > 0 &&
       agg->grouping_sets() && agg->grouping_sets()->size() > 0) {
     auto* sets = agg->grouping_sets();
@@ -406,13 +375,10 @@ TableResult execute_aggregate(const fb::GpuAggregate* agg, NodeInputs* in) {
 
       std::vector<cudf::column_view> set_keys;
       set_keys.reserve(nkeys);
-      // NOTE: this gid is only required to be DISTINCT per grouping set so the
-      // Final stage can keep sets apart (a placeholder NULL must not collide
-      // with a natural NULL). It does NOT match DataFusion's __grouping_id bit
-      // convention (which encodes column position/order for GROUPING()), and no
-      // currently-enabled query projects or orders by GROUPING(), so the exact
-      // encoding is unobservable. A future query that SELECTs/ORDER BYs
-      // GROUPING(col) must first make this encoding match DataFusion. See #65.
+      // gid only has to be DISTINCT per set (so Final keeps sets apart when a
+      // placeholder NULL collides with a natural NULL). It does NOT match
+      // DataFusion's __grouping_id bit convention; unobservable while no enabled
+      // query projects/orders by GROUPING(col). Make it match before one does (#65).
       int32_t gid = 0;
       for (cudf::size_type i = 0; i < nkeys; ++i) {
         if (mask->Get(i)) {  // masked -> NULL placeholder; record the bit
@@ -483,16 +449,14 @@ TableResult execute_aggregate(const fb::GpuAggregate* agg, NodeInputs* in) {
     return tv.column(0);  // count(*) / no args: dummy column
   };
 
-  // Build aggregation requests. AVG is the only multi-column case (Inc4): its
-  // two-phase STATE is (sum, count), which — unlike a pre-divided mean — IS
-  // additive, so the per-bucket Final merges Σsum/Σcount = correct AVG. Threaded
-  // THREE-WAY on `phase` (Single/Partial/Final), never the 2-way is_final:
-  //   Single-avg  -> 1 req [mean] over the out-scale-cast value          (1 out col)
-  //   Partial-avg -> 1 req [sum, count] over the raw value               (2 out cols: STATE)
-  //   Final-avg   -> 2 reqs [sum(partial_sum)], [sum(partial_count)]     (1 out col: Σsum/Σcount)
-  // A running Final-input cursor (`in_off`) is SYMMETRIC with the Partial output
-  // assembly: avg emits 2 state cols, so it shifts every downstream agg's input
-  // index by 2 (not 1) — the subtle bug the reviewer flagged.
+  // Build aggregation requests. AVG's two-phase STATE is (sum, count) — unlike a
+  // pre-divided mean it IS additive, so Final merges Σsum/Σcount. Branch on the
+  // THREE-way `phase`, never the 2-way is_final:
+  //   Single-avg  -> 1 req [mean] over the out-scale-cast value      (1 out col)
+  //   Partial-avg -> 1 req [sum, count] over the raw value           (2 out cols: STATE)
+  //   Final-avg   -> 2 reqs [sum(partial_sum)], [sum(partial_count)] (1 out col)
+  // The Final-input cursor `in_off` must advance by each agg's STATE WIDTH (avg
+  // = 2, not 1), symmetrically with the Partial output assembly.
   struct OutBuild {
     std::string name;
     int req;          // request index producing the (primary) result
@@ -502,9 +466,8 @@ TableResult execute_aggregate(const fb::GpuAggregate* agg, NodeInputs* in) {
     bool avg_div;     // Final-avg: out = Σsum / Σcount
     int32_t out_scale;      // decimal out scale for the avg divide
     uint8_t out_precision;  // 0 => float avg
-    // Final-stddev/var (Inc5): the request result is a MERGE_M2 struct
-    // {count, mean, m2}; finalize to var = m2/(count-ddof) (or NULL when
-    // count-ddof<=0), stddev = sqrt(var). Defaulted so existing inits are unchanged.
+    // Final-stddev/var: the request result is a MERGE_M2 struct {count, mean, m2};
+    // finalize to var = m2/(count-ddof) (NULL when count-ddof<=0), stddev = √var.
     bool std_finalize = false;
     bool is_variance = false;  // finalize as variance (skip the sqrt)
     int ddof = 1;              // divisor n-ddof (0 = population, 1 = sample)
@@ -514,23 +477,21 @@ TableResult execute_aggregate(const fb::GpuAggregate* agg, NodeInputs* in) {
   bool has_stddev_or_var_final = false;
   size_t in_off = key_indices.size();  // Final positional input cursor
 
-  // True when this run merges partial state across REAL hash partitions
-  // (RealMultiPartition device, e.g. tp8-standard): the serializer set it iff so.
-  // Drives the STDDEV/VAR state shape — 3-col Welford [count,mean,m2] + MERGE_M2
-  // when set, else the 1-col make_std singleton (byte-stable at tp1/tp8-mini,
-  // protecting the existing exact goldens, e.g. tpcds q17 tp1). AVG is unaffected.
+  // Set by the serializer iff this run merges partial state across REAL hash
+  // partitions. Drives the STDDEV/VAR state shape: 3-col Welford [count,mean,m2]
+  // + MERGE_M2 when set, else the 1-col make_std singleton (byte-stable for the
+  // single-partition goldens, e.g. tpcds q17). AVG is unaffected.
   const bool mergeable = agg->mergeable_agg_state();
   // Per-agg Final STRIDE (input columns consumed): count/sum/min/max = 1;
-  // avg = 2 [sum,count] (Inc4) or 1 (grouping-set/ROLLUP mean); stddev/var = 3
-  // Welford cols when `mergeable`, else 1 (singleton). q17 interleaves all three.
+  // avg = 2 [sum,count] or 1 (grouping-set/ROLLUP mean); stddev/var = 3 Welford
+  // cols when `mergeable`, else 1 (singleton). q17 interleaves all three.
   const size_t stddev_stride = mergeable ? 3 : 1;
 
   // Recover avg's 2-vs-1 stride from the RESIDUAL after removing keys + the
-  // flag-known stddev strides + the 1-col others — NOT from the total column count,
-  // which stddev's variable stride would confound (coordinator's sharpening). A
-  // grouping-set/ROLLUP Partial emits 1 MEAN col per avg and its Final re-groups
-  // [keys,__grouping_id] as a plain GROUP BY, landing HERE; reading 2 cols for such
-  // a 1-col avg over-runs the input (the q18/q22 tp1 OOB regression fixed in Inc4).
+  // flag-known stddev strides + the 1-col others — NOT from the total column
+  // count, which stddev's variable stride would confound. A grouping-set/ROLLUP
+  // Partial emits 1 MEAN col per avg and its Final lands here; reading 2 cols for
+  // such a 1-col avg over-runs the input (q18/q22 OOB).
   bool avg_state_2col = true;
   if (phase == AggPhase::Final && agg->aggr_funcs()) {
     size_t n_funcs = agg->aggr_funcs()->size();
@@ -582,10 +543,9 @@ TableResult execute_aggregate(const fb::GpuAggregate* agg, NodeInputs* in) {
         requests.push_back(std::move(req));
       } else if (is_avg && phase == AggPhase::Final && !avg_state_2col) {
         // Grouping-set (ROLLUP/CUBE) Partial emitted a 1-col MEAN, not [sum,count]
-        // state. Its Final lands here (re-groups [keys,__grouping_id] as a plain
-        // GROUP BY); with one partial row per key, mean-of-singleton is the exact
-        // identity. Consume ONE input column (in_off += 1, below), NOT two — the
-        // fix for the q18/q22 tp1 over-read. Real ROLLUP-avg state merge is #18.
+        // state; with one partial row per key, mean-of-singleton is exact. Consume
+        // ONE input column (the shared in_off += 1 below), NOT two. Real
+        // ROLLUP-avg state merge is #18.
         cudf::groupby::aggregation_request req;
         req.values = tv.column(static_cast<cudf::size_type>(in_off));
         req.aggregations.push_back(cudf::make_mean_aggregation<cudf::groupby_aggregation>());
@@ -613,7 +573,7 @@ TableResult execute_aggregate(const fb::GpuAggregate* agg, NodeInputs* in) {
       } else if ((is_stddev_name(name) || is_var_name(name)) &&
                  phase == AggPhase::Partial && mergeable) {
         // Welford STATE [count, mean, m2] over the value cast to FLOAT64 (stddev/
-        // var are float-valued in DataFusion). One request, three aggregations —
+        // var are float-valued in DataFusion). Three aggregations in one request,
         // matching DataFusion's 3-col Partial state schema so the Final can
         // MERGE_M2 across real hash partitions (#25). count -> INT64.
         computed_args.push_back(
@@ -631,13 +591,12 @@ TableResult execute_aggregate(const fb::GpuAggregate* agg, NodeInputs* in) {
       } else if ((is_stddev_name(name) || is_var_name(name)) &&
                  phase == AggPhase::Final && mergeable) {
         // Merge Welford state across partitions: pack the 3 partial cols
-        // [count, mean, m2] at [in_off, in_off+1, in_off+2] into a struct and
-        // MERGE_M2 per group (Welford-Chan). The finalize (var / stddev, ddof,
-        // count-ddof<=0 -> NULL) happens in the assembly. Consumes THREE Final cols.
-        // Child ORDER + TYPES are fixed by cuDF's group_merge_m2 (verified against
-        // the 25.02 runtime source): child(0)=valid_count INT32, child(1)=mean f64,
-        // child(2)=M2 f64. Count MUST be INT32 here (25.02 rejects INT64; 25.10
-        // relaxed it, which is why it compiled but failed the 25.02 GPU-remote run).
+        // [count, mean, m2] at [in_off .. in_off+2] into a struct and MERGE_M2 per
+        // group (Welford-Chan); the finalize happens in the assembly below.
+        // Consumes THREE Final cols. Child ORDER + TYPES are fixed by cuDF's
+        // group_merge_m2: child(0)=valid_count INT32, child(1)=mean f64,
+        // child(2)=M2 f64. Count MUST be INT32 — cuDF 25.02 rejects INT64 at
+        // runtime (25.10 relaxed it), so an INT64 here compiles and then fails.
         auto cnt = cudf::cast(tv.column(static_cast<cudf::size_type>(in_off)),
                               cudf::data_type{cudf::type_id::INT32});
         auto mean = std::make_unique<cudf::column>(
@@ -685,12 +644,10 @@ TableResult execute_aggregate(const fb::GpuAggregate* agg, NodeInputs* in) {
           req.values = base;
         } else if ((is_stddev_name(name) || is_var_name(name)) &&
                    phase != AggPhase::Final) {
-          // SINGLE-PARTITION stddev/var (make_std/make_variance singleton path):
-          // stddev/var are FLOAT64 in DataFusion, but cuDF's make_std/make_variance
-          // keep the input (e.g. DECIMAL l_quantity) type → a narrow/decimal result
-          // that mismatches the f64 golden. Cast to FLOAT64 first, exactly as the
-          // mergeable M2 path does. (Final here is the singleton MEAN over the
-          // already-f64 partial, so no cast needed on that leg.)
+          // SINGLE-PARTITION stddev/var: cuDF's make_std/make_variance keep the
+          // input type (e.g. DECIMAL l_quantity), but DataFusion's stddev/var are
+          // FLOAT64 — cast first, as the mergeable M2 path does. (Final on this leg
+          // is a singleton MEAN over the already-f64 partial, so it needs no cast.)
           computed_args.push_back(
               cudf::cast(arg_col(func), cudf::data_type{cudf::type_id::FLOAT64}));
           req.values = computed_args.back()->view();
@@ -708,12 +665,11 @@ TableResult execute_aggregate(const fb::GpuAggregate* agg, NodeInputs* in) {
 
   auto [group_keys, agg_results] = gb.aggregate(requests);
 
-  // STDDEV/VAR still can't merge partial moment-state across the shuffle (that's
-  // Inc5's M2 combine) — a Final that actually merges >1 partial row per key would
-  // silently produce std-of-stds. Fail loudly. AVG is NO LONGER guarded here: its
-  // (sum,count) state merges correctly above (Inc4, #25). The GLOBAL/ungrouped avg
-  // guard (execute_aggregate's reduce path) stays throwing separately — out of
-  // Inc4 scope.
+  // Guards the NON-mergeable stddev/var Final only (has_stddev_or_var_final is
+  // set only there): merging >1 partial row per key on that path would silently
+  // produce std-of-stds. AVG is deliberately unguarded — its (sum,count) state
+  // merges correctly above (#25); the global/ungrouped avg has its own guard in
+  // the reduce path.
   if (has_stddev_or_var_final &&
       group_keys->num_rows() < static_cast<cudf::size_type>(tv.num_rows())) {
     throw std::runtime_error(
@@ -734,7 +690,7 @@ TableResult execute_aggregate(const fb::GpuAggregate* agg, NodeInputs* in) {
       // with DataFusion's sample-NULL semantics: count-ddof <= 0 (a single-row
       // sample group, or an empty group) -> NULL, not NaN/inf.
       auto merged = agg_results[b.req].results[b.res]->view();  // struct
-      auto count_v = merged.child(0);  // INT64
+      auto count_v = merged.child(0);  // valid count
       auto m2_v = merged.child(2);     // FLOAT64
       auto count_f = cudf::cast(count_v, cudf::data_type{cudf::type_id::FLOAT64});
       cudf::numeric_scalar<double> ddof_s(static_cast<double>(b.ddof), true);

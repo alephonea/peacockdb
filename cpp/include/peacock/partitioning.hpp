@@ -1,14 +1,13 @@
-// Inc2: Spark-compatible (comet-identical) hash partitioning on the GPU.
+// Spark-compatible (comet-identical) hash partitioning on the GPU.
 //
-// cuDF exposes only STANDARD murmur3 (cudf::hashing::murmurhash3_x86_32) +
-// hash_partition(HASH_MURMUR3); neither matches Spark's murmur3 (different
-// multi-column combine + null handling — proven by the Inc2 conformance probe).
-// The #13 CPU twin uses comet's create_murmur3_hashes (Spark spec). To make the
-// GPU partition assignment match the CPU twin by construction, we own a small
+// cuDF offers only STANDARD murmur3 (murmurhash3_x86_32 / hash_partition), which
+// does NOT match Spark's murmur3 — different multi-column combine and null
+// handling. The CPU twin uses comet's create_murmur3_hashes (Spark spec), so to
+// make the GPU partition assignment agree by construction we own a small
 // Spark-murmur3 hash kernel and REUSE cuDF for the expensive scatter.
 //
-// API mirrors cudf::hash_partition exactly (table_view in, (table, offsets) out),
-// but in the peacock:: namespace — a drop-in at the call site.
+// The API mirrors cudf::hash_partition exactly (table_view in, (table, offsets)
+// out) but in the peacock:: namespace — a drop-in at the call site.
 #pragma once
 
 #include <cudf/column/column.hpp>
@@ -32,7 +31,7 @@ namespace peacock::partitioning {
 /// num_partitions), as an INT32 column of length `input.num_rows()`. This is the
 /// single source of truth the conformance test asserts against comet's CPU twin
 /// (seed=42, per-column left-to-right running-seed, Spark null-skip, UTF-8 bytes).
-/// Inc2 boundary: STRING key columns only (asserts otherwise).
+/// Unsupported key column types assert rather than hash a wrong encoding.
 std::unique_ptr<cudf::column> spark_partition_ids(
     cudf::table_view const& input,
     std::vector<cudf::size_type> const& key_cols,

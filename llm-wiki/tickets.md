@@ -6,7 +6,7 @@ anchor that the cost widget links to. Names reflect the post-refactor tree: devi
 `tp<N>-<tier>` (micro=100MiB, mini=2GiB, standard=12GiB); C++ in `cpp/src/operators/*.cpp`,
 `expr.cpp`, `node_session.cpp`, `dispatch.cpp`; Rust modes in `peacockdb-core/src/executors/`.
 
-New tickets take the next free number (currently 118).
+New tickets take the next free number (currently 121).
 
 ## Critical correctness
 
@@ -52,6 +52,31 @@ per-node row counts. q77 full_table_gpu stays off.
 3-CTE anti-join (`LEFT JOIN … IS NULL`) + multi-key DESC LIMIT 100. `round` is proven
 fine (q54). The isolated diff harness segfaults under GPU memory pressure on a shared
 H200 — re-check on a free GPU to separate wrong-result from memory-induced.
+
+<a id="t118"></a>
+### #118 — SortPreservingMerge concat fallback ignores fetch (LIMIT dropped)
+`cpp/src/node_session.cpp` (~L208): the k-way-merge branch applies `spm->fetch()` after
+merging, but the fallback branch — taken when the SPM has no sort keys **or only one
+input partition** — is a plain `cudf::concatenate` with no fetch applied. A
+single-partition SortPreservingMerge carrying a fetch therefore returns **all** rows
+instead of the top-N, i.e. a silently dropped LIMIT. Apply the same slice in both
+branches. Found during the comment audit; not yet reproduced against a corpus query
+(most SPMs arrive multi-partition), so severity depends on whether any enabled plan hits
+the single-partition path.
+
+<a id="t119"></a>
+### #119 — Unchecked cudaMemcpy in peacock_spark_partition_ids
+`cpp/src/gpu_executor.cpp` (~L250): the device→host `cudaMemcpy` return value is
+discarded, so a failed copy still returns success with `out_pids` holding garbage. Check
+it and surface the error.
+
+<a id="t120"></a>
+### #120 — peacock_spark_partition_ids' documented error path is unreachable
+`cpp/include/peacock_gpu.h` documents retrieving the failure message via
+`peacock_last_error(NULL)`, but `gpu_executor.cpp` returns `""` for a null executor and
+the implementation only `fprintf`s to stderr — the message cannot be obtained through the
+documented API. Either store it where `peacock_last_error(NULL)` can return it, or fix
+the doc.
 
 <a id="t117"></a>
 ### #117 — register_tables_for silently mis-handles non-parquet files

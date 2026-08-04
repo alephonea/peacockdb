@@ -15,11 +15,10 @@ struct TableResult {
   std::vector<std::string> column_names;
 };
 
-/// Per-node actual costs returned across the FFI. Rust applies the single-source
-/// `ColAccum` overhead (validity bitmap + fixed-width + var-length OFFSET buffers,
-/// all schema+row derived) and ADDS `varlen_content_bytes` — the byte formula
-/// lives ONLY in Rust (no CPU/GPU drift); C++ supplies just the data-dependent
-/// term it alone can measure on the resident table.
+/// Per-node actual costs returned across the FFI. The byte formula lives ONLY in
+/// Rust (no CPU/GPU drift): Rust applies the schema+row-derived `ColAccum`
+/// overhead and adds `varlen_content_bytes`, the one data-dependent term that only
+/// C++ can measure on the resident table.
 struct NodeStats {
   uint64_t rows = 0;
   /// Σ over var-length (string) output columns of content bytes
@@ -55,15 +54,13 @@ class NodeSession {
   /// Number of plan nodes (post-order positions 0..count-1).
   size_t node_count() const;
 
-  /// Execute the node at post-order `seq` (multi-handle model, Phase 2). Each
-  /// child contributes a VECTOR of partition handles: `input_handles` is the
-  /// flattened concatenation grouped by child, `input_child_counts[c]` = child
-  /// c's partition count, `n_children` = number of children. The node's output
-  /// partition handles are written to `out_handles[0..*out_count]` (caller buffer
-  /// of `out_cap`; partition count is bounded by target_partitions), and
-  /// `out_stats[0..*out_count]` is filled with PER-PARTITION stats (parallel to
-  /// out_handles) so Rust can sum the ColAccum overhead per partition — the cost is
-  /// Σ_p ColAccum(rows_p), NOT ColAccum(Σ rows). Input handles are CONSUMED.
+  /// Execute the node at post-order `seq`. Each child contributes a VECTOR of
+  /// partition handles: `input_handles` is the flattened concatenation grouped by
+  /// child, `input_child_counts[c]` = child c's partition count. Output handles go
+  /// to `out_handles[0..*out_count]` (caller buffer of `out_cap`) and
+  /// `out_stats[0..*out_count]` is filled PER PARTITION, so Rust can sum the
+  /// ColAccum overhead per partition: Σ_p ColAccum(rows_p), NOT ColAccum(Σ rows).
+  /// Input handles are CONSUMED.
   void execute_node(uint64_t seq, const uint64_t* input_handles,
                     const uint64_t* input_child_counts, size_t n_children,
                     uint64_t* out_handles, size_t out_cap, size_t* out_count,

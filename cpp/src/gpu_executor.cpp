@@ -27,8 +27,8 @@
 struct peacock_executor {
   uint64_t memory_limit;
   std::string last_error;
-  // Node-by-node session (unified node-executor interface). Holds the parsed
-  // plan + resident intermediate handles for the current plan; null otherwise.
+  // Holds the parsed plan + resident intermediate handles for node-by-node
+  // execution; null when no plan is loaded.
   std::unique_ptr<peacock::NodeSession> session;
 };
 
@@ -232,9 +232,9 @@ int peacock_spark_partition_ids(const void* schema, const void* array,
                                 int32_t* out_pids, uint64_t out_cap, uint64_t* out_n) {
   if (!schema || !array || !key_cols || !out_pids || !out_n) return 1;
   try {
-    // Import the Arrow C-Data struct array (= the key table) into cuDF. The C
-    // Data Interface ABI is stable, so arrow-rs's FFI_ArrowSchema/FFI_ArrowArray
-    // reinterpret directly to cuDF's ArrowSchema/ArrowArray.
+    // Import the Arrow C-Data struct array (= the key table) into cuDF. The ABI is
+    // stable, so arrow-rs's FFI_ArrowSchema/FFI_ArrowArray reinterpret directly to
+    // cuDF's ArrowSchema/ArrowArray.
     auto table = cudf::from_arrow(reinterpret_cast<const ArrowSchema*>(schema),
                                   reinterpret_cast<const ArrowArray*>(array));
     std::vector<cudf::size_type> keys;

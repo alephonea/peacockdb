@@ -1,5 +1,3 @@
-// Split out of the former src/plan_executor.cpp monolith.
-//
 // GpuFilter -- apply a boolean predicate.
 
 #include "peacock/operators.h"
@@ -14,10 +12,6 @@
 #include <string>
 
 namespace peacock {
-
-// ============================================================================
-// GpuFilter — apply boolean predicate
-// ============================================================================
 
 TableResult execute_filter(const fb::GpuFilter* filter, NodeInputs* in) {
   auto input = execute_node(filter->input(), in);
@@ -34,10 +28,9 @@ TableResult execute_filter(const fb::GpuFilter* filter, NodeInputs* in) {
   }
   auto filtered = cudf::apply_boolean_mask(input.table->view(), mask->view());
 
-  // Optional projection (set when the planner fused a downstream
-  // ProjectionExec into the filter). Without this, all input columns survive
-  // and downstream column indices are wrong by exactly the number of dropped
-  // columns.
+  // Optional projection, set when the planner fused a downstream ProjectionExec
+  // into the filter. Skipping it leaves every input column in place and shifts all
+  // downstream column indices by the number of columns that should have dropped.
   if (filter->projection() && filter->projection()->size() > 0) {
     auto fv = filtered->view();
     std::vector<std::unique_ptr<cudf::column>> proj_cols;

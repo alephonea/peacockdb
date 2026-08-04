@@ -1,5 +1,3 @@
-// Split out of the former src/plan_executor.cpp monolith.
-//
 // Expression evaluation: the AST fast path (build_expr) and the column-producing
 // path (build_column), plus the shared debug/trace definitions.
 
@@ -39,12 +37,9 @@
 
 namespace peacock {
 
-// ---------------------------------------------------------------------------
-// Debug instrumentation (PEACOCK_GPU_DEBUG=1 to enable)
-// ---------------------------------------------------------------------------
-// Prints each plan node + expression as it executes and synchronizes the
-// default cuDF stream after each step so async CUDA errors surface at the
-// call site instead of cascading several ops later.
+// Debug instrumentation (PEACOCK_GPU_DEBUG=1): traces each plan node/expression
+// and syncs the default cuDF stream after each step, so async CUDA errors surface
+// at the call site instead of cascading several ops later.
 
 bool debug_enabled() {
   static const bool e = []() {
@@ -55,8 +50,7 @@ bool debug_enabled() {
 }
 
 
-// Synchronize the default stream and check for errors. When debug is on,
-// we always sync (to localize errors); when off, this is a no-op.
+// No-op unless debug is on; otherwise sync + check, to localize async errors.
 void debug_sync(const char* tag) {
   if (!debug_enabled()) return;
   auto err = cudaStreamSynchronize(cudf::get_default_stream().value());
@@ -68,20 +62,14 @@ void debug_sync(const char* tag) {
   }
 }
 
-// File-internal forward declarations. These lived in the monolith's shared
-// forward-declaration block; the ones that stay private to this TU have to be
-// re-declared here or the mutually-recursive expression builders below do not
-// resolve. (The cross-TU ones are declared in peacock/expr.h instead.)
+// TU-private forward declarations: the expression builders below are mutually
+// recursive. (Cross-TU declarations live in peacock/expr.h.)
 static bool is_predicate_op(fb::BinaryOp op);
 static cudf::type_id infer_expr_type(const fb::Expr* expr,
                                      cudf::table_view const& table);
 static std::unique_ptr<cudf::column> build_column_binary(
     const fb::Expr* expr, cudf::table_view const& table);
 
-
-// ============================================================================
-// FlatBuffer DataType → cuDF type_id
-// ============================================================================
 
 cudf::type_id fb_to_type_id(fb::DataType dt) {
   switch (dt) {
@@ -123,15 +111,10 @@ static cudf::ast::ast_operator fb_to_ast_op(fb::BinaryOp op) {
     case fb::BinaryOp_Multiply: return cudf::ast::ast_operator::MUL;
     case fb::BinaryOp_Divide: return cudf::ast::ast_operator::DIV;
     case fb::BinaryOp_Modulo: return cudf::ast::ast_operator::MOD;
-    // SQL three-valued logic: `TRUE OR NULL` is TRUE and `FALSE AND NULL` is
-    // FALSE, whereas cuDF's plain LOGICAL_AND/OR propagate the null (so
-    // `TRUE OR NULL` → NULL). For a top-level filter, AND is unaffected (a NULL
-    // mask and a FALSE mask both drop the row), but plain OR silently DROPS rows
-    // a disjunctive predicate should keep — e.g. `p_channel_email = 'N' OR
-    // p_channel_event = 'N'` when one channel is NULL (TPC-DS q7/q15/q26/q79).
-    // NULL_LOGICAL_* match the peacock CPU oracle's SQL semantics and reduce to
-    // LOGICAL_* when both operands are non-null, so non-null predicates (the
-    // whole passing suite) are unchanged.
+    // MUST be NULL_LOGICAL_*, not LOGICAL_*: SQL three-valued logic says
+    // `TRUE OR NULL` = TRUE, but plain LOGICAL_OR propagates the null and thus
+    // silently DROPS rows a disjunctive predicate should keep (TPC-DS
+    // q7/q15/q26/q79). Reduces to LOGICAL_* when both operands are non-null.
     case fb::BinaryOp_And:    return cudf::ast::ast_operator::NULL_LOGICAL_AND;
     case fb::BinaryOp_Or:     return cudf::ast::ast_operator::NULL_LOGICAL_OR;
     case fb::BinaryOp_BitwiseAnd: return cudf::ast::ast_operator::BITWISE_AND;
@@ -330,14 +313,10 @@ cudf::ast::expression& build_expr(const fb::Expr* expr, ExprContext& ctx,
 // Column-producing expression evaluator
 // ============================================================================
 //
-// cuDF AST has no operators for LIKE, substr, date_part (extract), or CASE
-// WHEN. Expressions that contain any of these nodes are evaluated outside the
-// AST: each subexpression produces a `cudf::column`, which we combine via
-// cudf row-wise APIs (binary_operation, copy_if_else, strings::like, ...).
-//
-// AST-able subtrees still go through `compute_column` for fusion; the
-// column-path is a recursive fallback that calls into the AST evaluator
-// whenever it encounters a fully AST-able subexpression.
+// cuDF AST has no LIKE / substr / date_part / CASE WHEN. Expressions containing
+// those are evaluated outside the AST: each subexpression becomes a
+// `cudf::column`, combined via row-wise cuDF APIs. AST-able subtrees still route
+// back through `compute_column` for fusion.
 
 // String/binary literal types whose AST evaluation isn't supported by cuDF
 // (compute_column allocates fixed-width output, so a string compare aborts).
@@ -434,18 +413,14 @@ bool is_ast_able(const fb::Expr* expr, cudf::table_view const& table) {
       // column path (cudf::binary_operation, which does support strings).
       if (is_string_like_literal(b->left()) || is_string_like_literal(b->right()))
         return false;
-      // cuDF AST requires both operands to be the identical type and has no
-      // decimal support at all (it only auto-promotes nothing — unlike the
-      // binaryop API). DataFusion emits matched decimal operands and same-type
-      // comparisons, but our AST literal path promotes decimal literals to
-      // float64, and int widths can differ. Any decimal operand, or a type
-      // mismatch between the two sides, routes to the column path, where
-      // cudf::binary_operation coerces (and handles fixed_point) natively.
+      // cuDF AST never coerces: operands must be the identical type, and it has
+      // no decimal support. So any decimal operand or type mismatch goes to the
+      // column path, where cudf::binary_operation coerces (and handles
+      // fixed_point) natively.
       auto lt = infer_expr_type(b->left(), table);
       auto rt = infer_expr_type(b->right(), table);
-      // Un-inferrable operand → route to the column path conservatively. (Two
-      // EMPTYs would otherwise compare equal below and be treated as AST-able,
-      // the opposite of the intended fallback.)
+      // Un-inferrable operand → column path. Checked BEFORE the lt != rt test,
+      // which two EMPTYs would otherwise pass as "AST-able".
       if (lt == cudf::type_id::EMPTY || rt == cudf::type_id::EMPTY)
         return false;
       if (lt == cudf::type_id::DECIMAL128 || rt == cudf::type_id::DECIMAL128)
@@ -528,10 +503,8 @@ static cudf::binary_operator fb_to_binop(fb::BinaryOp op) {
     case fb::BinaryOp_Multiply: return cudf::binary_operator::MUL;
     case fb::BinaryOp_Divide:   return cudf::binary_operator::DIV;
     case fb::BinaryOp_Modulo:   return cudf::binary_operator::MOD;
-    // SQL three-valued logic (see fb_to_ast_op): use the NULL_LOGICAL_* variants
-    // so a disjunction with a NULL operand keeps the row when the other side is
-    // TRUE. This column path handles OR over string comparisons / IN-lists
-    // (e.g. q15's `ca_state IN (...)`, which the AST path can't express).
+    // NULL_LOGICAL_* for SQL three-valued logic — see fb_to_ast_op. This path
+    // carries OR over string comparisons / IN-lists (q15's `ca_state IN (...)`).
     case fb::BinaryOp_And:      return cudf::binary_operator::NULL_LOGICAL_AND;
     case fb::BinaryOp_Or:       return cudf::binary_operator::NULL_LOGICAL_OR;
     case fb::BinaryOp_BitwiseAnd: return cudf::binary_operator::BITWISE_AND;
@@ -543,7 +516,6 @@ static cudf::binary_operator fb_to_binop(fb::BinaryOp op) {
   }
 }
 
-// Forward declaration.
 std::unique_ptr<cudf::column> build_column(
     const fb::Expr* expr, cudf::table_view const& table);
 
@@ -594,9 +566,7 @@ cudf::data_type binop_output_type(
     }
     return cudf::data_type{cudf::type_id::DECIMAL128, out_scale};
   }
-  // Fall back to lhs type — adequate for the queries we care about
-  // (arithmetic in projections is rare in this code path; the heavy
-  // arithmetic still goes through AST).
+  // Otherwise echo lhs; the heavy arithmetic goes through the AST path anyway.
   (void)rhs;
   return lhs;
 }
@@ -607,12 +577,10 @@ static std::unique_ptr<cudf::column> build_column_binary(
   auto* rhs = bin->right();
   auto op = fb_to_binop(bin->op());
 
-  // Decimal division: cuDF's fixed_point DIV yields scale s_l-s_r (e.g. 0 for
-  // two scale-4 sums → truncates to 0), but DataFusion boosts the scale (its
-  // declared value rides on out_decimal_precision/scale). Reproduce it by
-  // pre-scaling the numerator so DIV lands on DataFusion's scale: with output
-  // exponent e_o = −out_scale and denominator exponent e_r, set numerator
-  // exponent e_l = e_o + e_r (since DIV gives e_l − e_r = e_o).
+  // Decimal division: cuDF's fixed_point DIV yields scale s_l-s_r (0 for two
+  // scale-4 sums → truncation), but DataFusion declares a boosted scale on
+  // out_decimal_precision/scale. Pre-scale the numerator to hit it: with output
+  // exponent e_o = −out_scale and denominator exponent e_r, set e_l = e_o + e_r.
   if (bin->op() == fb::BinaryOp_Divide && bin->out_decimal_precision() != 0) {
     auto lcol = build_column(lhs, table);
     auto rcol = build_column(rhs, table);
@@ -727,12 +695,10 @@ static std::unique_ptr<cudf::column> build_column_scalar_fn(
     return cudf::unary_operation(col->view(), cudf::unary_operator::ABS);
   }
 
-  // round(x [, places]) — DataFusion's round coerces its argument to FLOAT64 and
-  // rounds half away from zero (Rust f64::round), which is cuDF's
-  // rounding_method::HALF_UP. cudf::round has no DECIMAL128 overload (and our
-  // scan widens every decimal to DECIMAL128), so evaluate in FLOAT64 — that also
-  // matches the FLOAT64 result the peacock CPU oracle produces for `round`.
-  // The optional second argument (decimal places) is an integer literal.
+  // round(x [, places]) — evaluate in FLOAT64 with HALF_UP: that is DataFusion's
+  // semantics (f64::round, half away from zero), and cudf::round has no
+  // DECIMAL128 overload though our scan widens every decimal to DECIMAL128.
+  // `places`, when given, must be an integer literal.
   if (name == "round") {
     if (args->size() < 1 || args->size() > 2)
       throw std::runtime_error("round expects 1 or 2 args");
@@ -801,17 +767,10 @@ static std::unique_ptr<cudf::column> build_column_scalar_fn(
 
 static std::unique_ptr<cudf::column> build_column_case(
     const fb::CaseExprNode* c, cudf::table_view const& table) {
-  // Search-form CASE only. Value-form (`CASE x WHEN v THEN t ... END`) is NOT
-  // rewritten away by DataFusion — it survives to the physical plan and
-  // plan_serializer.rs forwards `case.expr()` as the comparand — so it does
-  // reach here for e.g. TPC-DS q39 (`CASE mean WHEN 0 THEN NULL/0 ELSE
-  // stdev/mean END`). A column-path implementation (comparand + per-branch
-  // `comparand == when` + copy_if_else fold) was attempted but produced
-  // incorrect results on the GPU (every output row came back 0/null — #57), so
-  // it is withheld rather than shipped unverified. q39 is the only value-form
-  // user and is already disabled (stddev ULP, #54); this throw is therefore
-  // unreachable from the enabled suite. Re-implement, with a direct GPU test,
-  // when q39 is enabled (#57).
+  // Search-form CASE only. Value-form (`CASE x WHEN v THEN t END`) survives
+  // DataFusion's rewrites and does reach here (only TPC-DS q39, itself disabled
+  // for stddev ULP, #54), but a copy_if_else fold on the comparand came back
+  // wrong on the GPU, so it is withheld: implement with a GPU test under #57.
   if (c->expr())
     throw std::runtime_error("value-form CASE not supported in column path");
   auto* whens = c->when_thens();
@@ -947,14 +906,11 @@ std::unique_ptr<cudf::column> build_column(
       auto* cast = expr->node_as_CastExprNode();
       auto inner = build_column(cast->expr(), table);
       auto target_id = fb_to_type_id(cast->target_type());
-      // String->string cast is a no-op: cuDF represents every Arrow string
-      // variant (Utf8 / Utf8View / LargeUtf8 / Dictionary<Utf8>) as the single
-      // STRING type, so DataFusion's coercion of two char keys to a common
-      // string type (e.g. q24's `s_zip = ca_zip` join) has nothing to convert.
-      // cudf::cast has no STRING overload and would otherwise throw "Unary cast
-      // type must be fixed-width" (#45). Same precedent as execute_union, where
-      // STRING/EMPTY columns are left untouched. A genuine non-string -> STRING
-      // conversion isn't producible by cudf::cast; reject it clearly.
+      // String->string cast is a no-op: cuDF maps every Arrow string variant to
+      // the single STRING type, so DataFusion's coercion of two char keys has
+      // nothing to convert. cudf::cast has no STRING overload and would throw
+      // "Unary cast type must be fixed-width" (#45); a genuine non-string ->
+      // STRING conversion isn't producible by cudf::cast at all.
       if (target_id == cudf::type_id::STRING) {
         if (inner->type().id() == cudf::type_id::STRING)
           return inner;

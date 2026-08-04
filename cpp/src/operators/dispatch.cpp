@@ -1,10 +1,6 @@
-// Split out of the former src/plan_executor.cpp monolith.
-//
 // The plan-node dispatch switch (run_op) and its two drivers, execute_node
 // (recursive) and execute_one (single-node). Co-located deliberately: they are one
-// dispatch mechanism. Before Inc4a they ALSO shared a pair of anonymous-namespace
-// thread_locals, which made separating them silently catastrophic -- that coupling
-// is gone, but the co-location stays.
+// dispatch mechanism.
 
 #include "peacock/operators.h"
 #include "peacock/expr.h"
@@ -16,10 +12,6 @@
 #include <vector>
 
 namespace peacock {
-
-// ============================================================================
-// Plan node dispatcher
-// ============================================================================
 
 static const char* plan_node_kind_name(fb::PlanNodeKind k) {
   switch (k) {
@@ -122,23 +114,18 @@ TableResult execute_one(const fb::PlanNode* node, std::vector<TableResult> input
 
   // INVARIANT: a node handed inputs must consume ALL of them.
   //
-  // Zero consumption is the exact signature of the failure this explicit channel
-  // exists to prevent: execute_node not seeing the caller's inputs, falling through
-  // to run_op, and re-executing the entire child subtree from parquet. That produces
-  // CORRECT ANSWERS at exponential cost, so goldens, byte digests, round-trip and
-  // result comparison all pass — nothing else we have can see it. Asserting here
-  // makes every test that drives NodeSession a detector.
+  // Under-consumption means execute_node did not see the caller's inputs, fell
+  // through to run_op, and re-executed that child subtree from parquet — CORRECT
+  // ANSWERS at exponential cost, so goldens, byte digests and result comparison
+  // all still pass. This check is the only detector.
   //
-  // Safe for every dispatch case: scans take no inputs (leaf, provided == 0), and
-  // every other op resolves its children unconditionally — filter/project/aggregate/
-  // sort/limit/window/passthrough once, the three joins twice, union once per child.
+  // Safe for every dispatch case: scans are leaves (provided == 0) and every other
+  // op resolves its children unconditionally.
   //
-  // Deliberately `!= provided`, NOT `> 0 && idx == 0`. The weaker form is full
-  // coverage only for SINGLE-child ops; for a multi-child op it misses the
-  // expensive half. A hash join threading `in` to its left child but nullptr to
-  // its right consumes 1 of 2 — idx == 1, the weak check passes, and the entire
-  // right subtree re-executes from parquet. That is precisely the bug this
-  // invariant exists to catch, in its costliest form.
+  // Deliberately `!= provided`, NOT `> 0 && idx == 0`: the weaker form covers only
+  // single-child ops. A hash join threading `in` to its left child but nullptr to
+  // its right consumes 1 of 2, passes the weak check, and re-executes the whole
+  // right subtree — the costliest form of exactly this bug.
   if (in.idx != provided) {
     throw std::runtime_error(
         "execute_one: node was given " + std::to_string(provided) +
