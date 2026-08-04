@@ -32,6 +32,40 @@ fn repo_root() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..")
 }
 
+/// Join backslash-continued shell lines into one logical line.
+///
+/// A shell command in a workflow may be split across `\` continuations, and YAML makes
+/// that idiomatic for long `cargo test` invocations. [`line_runs_target`] decides
+/// `--no-run` per line, so an unfolded build invocation hands it continuation lines
+/// that carry `--test` flags but not the `--no-run` that disqualifies them — they read
+/// as run steps and the guard reports coverage that does not exist.
+///
+/// Folding here rather than requiring one physical line per invocation: continuations
+/// are legitimate YAML and the next person will reintroduce them.
+fn fold_continuations(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut acc = String::new();
+    for line in text.lines() {
+        let trimmed = line.trim_end();
+        match trimmed.strip_suffix('\\') {
+            // Keep a separator, or `--test a \` + `--test b` would fuse into one token.
+            Some(head) => {
+                acc.push_str(head);
+                acc.push(' ');
+            }
+            None => {
+                acc.push_str(trimmed);
+                out.push(std::mem::take(&mut acc));
+            }
+        }
+    }
+    // A trailing continuation with no terminating line still has to be emitted.
+    if !acc.is_empty() {
+        out.push(acc);
+    }
+    out
+}
+
 /// Does this workflow line actually RUN `--test <name>`?
 ///
 /// Matching is line-wise and deliberately strict, because a coverage guard that
@@ -48,8 +82,11 @@ fn repo_root() -> std::path::PathBuf {
 ///     executing — precisely the built-but-never-run hole (peacock_tpchv_tests) that
 ///     this guard exists to close. Fixed by skipping those lines entirely.
 ///
-/// Both are safe to check line-wise: every `--no-run` invocation in the workflows
-/// carries its `--test` flags on the SAME line.
+/// `--no-run` is detected per LINE, so callers MUST pass lines that have already been
+/// through [`fold_continuations`]. A build invocation split across `\` continuations
+/// carries `--no-run` only on its first physical line, and the continuation lines then
+/// read as genuine run steps — which is exactly how this guard silently weakened once
+/// (five targets were counted as run by a build continuation).
 fn line_runs_target(line: &str, name: &str) -> bool {
     if line.contains("--no-run") {
         return false;
@@ -98,6 +135,29 @@ fn line_matcher_rejects_both_false_coverage_modes() {
         "cargo test -p x --test test_query_plan --test test_ffi",
         "test_query_plan"
     ));
+
+    // (3) LINE CONTINUATION — the mode that actually shipped. A --no-run build split
+    // across `\` carries the flag only on its first physical line, so every target
+    // named on a continuation looked like a run step. Five real targets were counted
+    // that way; coverage survived only because each ALSO had a genuine run line, i.e.
+    // the guard had stopped guarding while still reporting green.
+    let build_continued = "          cargo test --no-run -p peacockdb-core --test test_a \\\n\
+                           --test test_b --test test_c";
+    let folded = fold_continuations(build_continued);
+    assert_eq!(folded.len(), 1, "the continuation must fold into ONE logical line: {folded:?}");
+    for t in ["test_a", "test_b", "test_c"] {
+        assert!(
+            !folded.iter().any(|l| line_runs_target(l, t)),
+            "{t} is BUILT, not run — a continuation must not count as coverage"
+        );
+    }
+    // ...while a continued RUN step still counts, on any of its physical lines.
+    let run_continued = "          cargo test -p peacockdb-core --test test_a \\\n\
+                         --test test_b";
+    let folded = fold_continuations(run_continued);
+    for t in ["test_a", "test_b"] {
+        assert!(folded.iter().any(|l| line_runs_target(l, t)), "{t} IS run");
+    }
 }
 
 #[test]
@@ -124,7 +184,10 @@ fn every_rust_test_target_is_named_by_ci() {
         let path = entry.expect("dir entry").path();
         if matches!(path.extension().and_then(|e| e.to_str()), Some("yml") | Some("yaml")) {
             let text = std::fs::read_to_string(&path).expect("read workflow");
-            workflow_lines.extend(text.lines().map(str::to_string));
+            // Folded, NOT raw: see fold_continuations — a build invocation split
+            // across `\` would otherwise contribute continuation lines that look
+            // like run steps.
+            workflow_lines.extend(fold_continuations(&text));
         }
     }
     assert!(!workflow_lines.is_empty(), "no workflow files found under .github/workflows");
