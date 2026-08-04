@@ -78,6 +78,7 @@ Style: `llm-wiki/coding-style.md`.
   **One exception — flaky tests:** if you hit a flaky test, prove it is flaky (repeated
   runs / signature analysis), disable it, and add a ticket to `llm-wiki/tickets.md`. No
   human authorization needed for that.
+- **Follow `llm-wiki/coding-style.md`** in everything you write.
 - Definition of done: CPU tests green (locally or on verda), GPU tests green on shad-gpu,
   clean build with no new warnings, plan goldens regenerated iff plan shape changed, no
   leftover debug prints or scratch files, and a final message (≤10 lines) naming files
@@ -99,6 +100,7 @@ reasoning. Anchors: `llm-wiki/architecture.md` (invariants) and `llm-wiki/build-
   `--test-threads=1`); two-engine correctness (CPU and GPU consume the same plan IR — no
   engine-specific plan nodes); deterministic cost (no wall-clock in the fast tier);
   `rust-only` is the tier boundary (no FFI types reachable from rust-only paths).
+- **Verify the diff against `llm-wiki/coding-style.md`** and flag violations.
 - Then a standard correctness pass: logic bugs, API misuse, races, over-broad golden
   regenerations, restating comments, dead code.
 - Findings format: severity (`blocking`/`important`/`nit`), file:line, one-sentence
