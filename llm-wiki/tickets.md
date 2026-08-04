@@ -12,11 +12,11 @@ New tickets take the next free number (currently 124).
 
 <a id="t103"></a>
 ### #103 — GPU SIGSEGV: shuffle_stddev tp8-standard (Welford N-way merge)
-`gpu_tpch_sf1_shuffle_stddev_tp8_standard` segfaults (139) or fails as a contained
+`gpu_partitioned_tpch_sf1_shuffle_stddev_partitioned_tp8_standard` segfaults (139) or fails as a contained
 `vector::reserve` Err on shad-gpu. Nondeterministic; reproduces at 12 GiB and 120 GiB, so
 not budget-related. Inside `execute_instrumented`, upstream of golden compares; tp1 never
 crashes. Suspect the 8-way Welford M2 merge (`cpp/src/operators/aggregate.cpp`).
-**Test quarantined** 2026-07-31 (commented out in `test_gpu.rs`) — it was the only
+**Test quarantined** 2026-07-31 (commented out in `test_gpu_partitioned.rs`) — it was the only
 coverage of the 8-way M2 merge; tp8 goldens kept. Has already caused one wrongly
 diagnosed "regression" + rollback: check this ticket before blaming your change.
 
@@ -297,9 +297,9 @@ already provisions parquet. Accepted risk until then: stale ✗ cells after an u
 
 <a id="t116"></a>
 ### #116 — Registry rows with no GPU coverage and no blocker
-`hash_join` and `mixed_join` (full_table_gpu=na, no `gpu_test!` entry, no known blocker —
+`hash_join` and `mixed_join` (full_table_gpu=na, no `gpu_full_table_test!` entry, no known blocker —
 plain inner joins plus an aggregate; mixed_join adds a residual range filter) and
-`join_int` (tp8-only oracle test, no tp1 row). Either add the missing `gpu_test!` rows or
+`join_int` (tp8-only oracle test, no tp1 row). Either add the missing GPU test rows or
 mark the cells intentionally-na with a reason.
 
 <a id="t13"></a>
@@ -333,7 +333,8 @@ drop/normalize the thread-sensitive field.
 
 <a id="t29"></a>
 ### #29 — Track skipped TPC-DS GPU execution tests
-Superseded: enablement now lives in `test_gpu.rs` plus `testdata/cost-registry.csv`, and
+Superseded: enablement now lives in `test_gpu_full_table.rs` / `test_gpu_partitioned.rs`
+plus `testdata/cost-registry.csv`, and
 each surviving bucket has its own ticket (#32, #62, #57, #55, #56, #63, #45, #46, #47,
 #60, #115). Close.
 

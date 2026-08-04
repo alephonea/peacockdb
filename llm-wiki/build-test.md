@@ -11,16 +11,24 @@ Code and tests are authoritative; this page maps them.
   `testdata/goldens/<ds>.sf<sf>/<query>.<device>.plan.txt`. Wire-format guard:
   `tests/test_plan_bytes.rs` vs `goldens/plan_bytes.sha256`. Round-trip:
   `tests/test_plan_serialiser.rs`.
-- **CPU execution tests** — `tests/test_cpu_executor.rs` (+ `_misc`, `test_cpu_oom.rs`,
-  `test_node_executor.rs`, `test_cpu_h200.rs`): run DataFusion ground truth and the CPU
-  executor, assert results and the per-node cost tree against `<query>.<device>.cpu.txt`;
-  derived `.cost.txt` and frozen `.result.txt` goldens ride alongside. Device labels:
-  `tp1-standard`, `tp8-standard`, `tp8-mini`, `tp1-mini`, OOM budget `micro`.
-- **GPU execution tests** — `tests/test_gpu.rs` (`gpu_test!`), two modes of execution:
-  **full-table** (`tp1_standard`, single partition) and **partitioned**
-  (`tp8_standard`, real 8-way with per-partition asserts). One GPU run checks per-node
-  rows+cost vs the `.cpu.txt` golden AND the final result (golden_exact / golden_approx /
-  oracle / skip). Conformance: `test_inc2_conformance.rs` (GPU↔comet murmur3 bit-exact).
+- **CPU execution tests** — split by EXECUTION MODE, not memory tier:
+  `tests/test_cpu_full_table.rs` (`cpu_full_table_result_test!`, tp8-mini / tp1-mini /
+  tp1-standard) and `tests/test_cpu_partitioned.rs` (`cpu_partitioned_result_test!`,
+  tp8-standard, real 8-way), plus `test_cpu_executor_misc.rs`, `test_cpu_oom.rs`,
+  `test_node_executor.rs`. They run DataFusion ground truth and the CPU executor and
+  assert results + the per-node cost tree against
+  `<query>.<mode>-<tp>-<tier>.cpu.txt`; derived `.cost.txt` and frozen `.result.txt`
+  goldens ride alongside. Mode is `full_table` | `partitioned` and comes from the macro
+  name, never from the device label. Device labels: `tp1-standard`, `tp8-standard`,
+  `tp8-mini`, `tp1-mini`, OOM budget `micro`.
+- **GPU execution tests** — one file per execution mode:
+  `tests/test_gpu_full_table.rs` (`gpu_full_table_test!`, single partition) and
+  `tests/test_gpu_partitioned.rs` (`gpu_partitioned_test!`, real 8-way with
+  per-partition asserts). Their device argument is the combined golden label
+  (`full_table_tp1_standard`, `partitioned_tp8_standard`), so the golden filename is
+  reconstructible from the call site. One GPU run checks per-node rows+cost vs the
+  `.cpu.txt` golden AND the final result (golden_exact / golden_approx / oracle / skip).
+  Conformance: `test_inc2_conformance.rs` (GPU↔comet murmur3 bit-exact).
 - **C++ tests** (`cpp/tests/`): `peacock_cpu_tests`, `peacock_gpu_tests`,
   `peacock_plan_tests` run in CI. **Special manual plan tests**: `gpu/test_tpch.cpp`
   (`peacock_tpch_tests`) and `gpu/test_tpchv.cpp` (`peacock_tpchv_tests`) run bare-cudf
@@ -81,15 +89,25 @@ dir below.
 
 Rules that keep this healthy:
 
+- **A refactor that must not change behavior is verified with a representative subset**
+  — one query per mode/tier per binary, plus the full rust-only tier — not a full
+  CPU/GPU suite run: the goldens are the invariant, so unchanged golden bytes and a
+  green rust-only tier prove more per minute than re-running everything.
 - **Day-to-day iteration is the rust-only loop** — plain cargo into `./target`, no
   wrapper, no C++/CUDA:
   `cargo test --features rust-only -p peacockdb-core --test test_query_plan`
 - **Never run cudf-feature cargo builds in `./target`** — they would evict the rust-only
   cache and vice versa (the `ffi` feature and `cudf_ROOT` both change fingerprints, and
   the cudf side recompiles the DataFusion stack at opt-3). For one-off cudf/FFI cargo
-  commands use `scripts/cargo-cudf.sh`, which requires `CUDF_ROOT` and derives
-  `CARGO_TARGET_DIR=target-cudf-$(basename "$CUDF_ROOT")` — the same dir the build-test
-  scripts use, so it shares their warm cache:
+  commands use `scripts/cargo-cudf.sh`, which requires `CUDF_ROOT` and derives BOTH
+  `CARGO_TARGET_DIR=target-cudf-$(basename "$CUDF_ROOT")` AND `CC`/`CXX` from that same
+  basename (25.02 → gcc-12, 26.02 → gcc-14; an unknown root fails and asks for
+  `GCC_VERSION`) — the same dir and the same compiler the build-test scripts use, so it
+  shares their warm cache. Both halves matter: cc-rs emits `rerun-if-env-changed` on
+  `CC`/`CXX`, so entering a target dir with a different C compiler re-runs every native
+  build script (zstd-sys, bzip2-sys, lzma-sys, psm, blake3) and rebuilds the whole
+  DataFusion stack above them — before this, alternating between the two entry points
+  thrashed the cache each way:
   `CUDF_ROOT=~/data/miniforge3/envs/rapids scripts/cargo-cudf.sh test -p peacockdb-core --test test_gpu --no-run`
   For anything more than a one-off command, use `build-test.sh` / `build-test-shadgpu.sh`
   instead — they handle build, staging, shipping and running.

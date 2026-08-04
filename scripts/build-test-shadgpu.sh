@@ -43,7 +43,7 @@ fi
 # Rust integration tests that link libpeacock_gpu.so and need to run on the GPU host.
 # After build, each binary is staged under cpp/install/rust-tests/<name> so the
 # existing rsync step picks them up alongside the C++ binaries.
-RUST_TESTS=(test_gpu test_inc2_conformance)
+RUST_TESTS=(test_gpu_full_table test_gpu_partitioned test_inc2_conformance)
 RUST_TESTS_STAGING=cpp/install/rust-tests
 
 BUILD=0
@@ -122,6 +122,14 @@ if [ "$BUILD" -eq 1 ]; then
     echo "--- peacockdb-ffi: cuDF root unchanged ($CUDF_ROOT); skipping clean (reuse cmake _deps)"
   fi
 
+  # Stage from EMPTY. The remote runner globs cpp/install/rust-tests/* rather than
+  # reading RUST_TESTS, so any binary left here by an earlier run gets shipped and
+  # EXECUTED — including one whose target no longer exists. A renamed target (test_gpu
+  # -> test_gpu_full_table/test_gpu_partitioned) is the case that bites: the orphan
+  # still runs, against goldens that were renamed out from under it, and fails as if
+  # the change were broken. rsync's --delete only cleans the REMOTE, so it cannot
+  # help — the stale copy is here.
+  rm -rf "$RUST_TESTS_STAGING"
   mkdir -p "$RUST_TESTS_STAGING"
   for t in "${RUST_TESTS[@]}"; do
     # cargo test --no-run prints a json artifact line per built target; the
@@ -194,7 +202,7 @@ if [ "$RUN" -eq 1 ]; then
   # Deliberately NO 'set -e' around the test runs, matching the CI gpu-tests job:
   # run EVERY binary even when an earlier one fails, OR each exit code into rc, and
   # fail at the end. Under set -e a single crashing test aborted the whole remote
-  # script — a SIGSEGV in test_gpu silently cost us all 10 test_inc2_conformance
+  # script — a SIGSEGV in a GPU test binary silently cost us all 10 test_inc2_conformance
   # results, which read as "not run" but looked like "fine". One flaky test must not
   # be able to hide every later binary's result.
   ssh shad-gpu bash <<EOF

@@ -145,7 +145,7 @@ WorkerPool, `hash_shuffle`, `gather_here`):
   bytes) + `storage_read_total` (decoded Arrow bytes of surviving row-groups' referenced
   columns after static ∩ dynamic pruning — deliberately the same units as `GpuScanExec`
   output_bytes so the ratio is apples-to-apples).
-- **Widget:** the cost report compares peacock Σout (from the `tp8-mini` `.cost.txt`
+- **Widget:** the cost report compares peacock Σout (from the `full_table-tp8-mini` `.cost.txt`
   footer) vs duckdb Σout; ratio ≤ 1.4 renders green. Directional signal only, not a
   benchmark. Per-query mode enablement comes from `testdata/cost-registry.csv` (the
   registry the inventory tests verify), tickets from `llm-wiki/tickets.md`.

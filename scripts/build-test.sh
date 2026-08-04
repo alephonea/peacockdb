@@ -7,9 +7,10 @@ set -e
 # selected by --cpu (default) or --gpu:
 #
 #   --cpu  C++ peacock_cpu_tests + the Rust CPU integration tests
-#          (test_plan_serialiser, test_query_plan, test_cpu_executor, test_ffi).
-#   --gpu  C++ peacock_plan_tests + the Rust GPU integration test
-#          (test_gpu, TPC-H + TPC-DS), run one-at-a-time on the GPU.
+#          (test_plan_serialiser, test_query_plan, test_cpu_full_table, test_ffi).
+#   --gpu  C++ peacock_plan_tests + the Rust GPU integration tests
+#          (test_gpu_full_table + test_gpu_partitioned, TPC-H + TPC-DS), run
+#          one-at-a-time on the GPU.
 #
 # The remote host is NOT hardcoded — pass it with --host. We build locally
 # against a cuDF that matches the remote's ABI (default: a local cudf-26.02
@@ -101,25 +102,27 @@ done
 # Suite selection. Each entry is <package>:<test-name>; each binary is staged
 # under <install>/rust-tests/<name> so the rsync step ships it.
 if [ "$MODE" = "gpu" ]; then
-  RUST_TESTS=(peacockdb-core:test_gpu)
+  RUST_TESTS=(peacockdb-core:test_gpu_full_table peacockdb-core:test_gpu_partitioned)
   CPP_TEST_BIN=peacock_plan_tests
 elif [ "$RUST_ONLY" -eq 1 ]; then
-  # rust-only golden regen / cpu+plan verify: no C++, no FFI. The two suites that own
+  # rust-only golden regen / cpu+plan verify: no C++, no FFI. The suites that own
   # goldens (UPDATE_CANONICAL regenerates .plan.txt + .cpu.txt) + their companions.
+  # Both CPU execution modes are listed: they own disjoint golden sets
+  # (full_table-* vs partitioned-*), so a regen missing either is a silent gap.
   RUST_TESTS=(
     peacockdb-core:test_query_plan
     peacockdb-core:test_query_plan_misc
-    peacockdb-core:test_cpu_executor
+    peacockdb-core:test_cpu_full_table
+    peacockdb-core:test_cpu_partitioned
     peacockdb-core:test_cpu_executor_misc
     peacockdb-core:test_cpu_oom
-    peacockdb-core:test_cpu_h200
   )
   CPP_TEST_BIN=""
 else
   RUST_TESTS=(
     peacockdb-core:test_plan_serialiser
     peacockdb-core:test_query_plan
-    peacockdb-core:test_cpu_executor
+    peacockdb-core:test_cpu_full_table
     peacockdb-ffi:test_ffi
   )
   CPP_TEST_BIN=peacock_cpu_tests
@@ -315,7 +318,7 @@ if [ "$RUN" -eq 1 ]; then
 
   # Run only this mode's binaries by explicit name — globbing rust-tests/* would
   # also pick up stale binaries left by a previous run of the other mode (the
-  # rsync doesn't --delete), e.g. test_cpu_executor lingering during a --gpu run.
+  # rsync doesn't --delete), e.g. test_cpu_full_table lingering during a --gpu run.
   RUST_TEST_NAMES=""
   for spec in "${RUST_TESTS[@]}"; do RUST_TEST_NAMES="$RUST_TEST_NAMES ${spec##*:}"; done
 

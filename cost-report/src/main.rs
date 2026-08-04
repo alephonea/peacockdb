@@ -7,7 +7,8 @@
 //!   - DuckDB Σout    = pipeline-breaker materialized bytes computed from the
 //!                      `<q>.duckdb_cost.txt` profiling tree (see [`duckdb_cost`]).
 //!   - GPU coverage   = whether the query's GPU result test is enabled in
-//!                      `test_gpu.rs` (uncommented macro invocation).
+//!                      `test_gpu_full_table.rs` / `test_gpu_partitioned.rs`
+//!                      (uncommented macro invocation).
 //!
 //! Both sides are deterministic, measured byte sums — NOT wall-clock cost, and
 //! the two engines emit different plan trees, so the ratio is a provisional,
@@ -35,11 +36,11 @@ const RATIO_GREEN_MAX: f64 = 1.4;
 
 const PAGES_URL_DEFAULT: &str = "https://asymptote-tech.github.io/peacockdb/";
 const DEFAULT_REPO: &str = "asymptote-tech/peacockdb";
-/// Device label of the CPU-cost goldens (8 partitions / 2 GiB), part of the
-/// `.cpu.txt` filename under the unified golden layout. MUST track the device the
-/// `cpu_result_test!` goldens are canonized at — a stale label here makes every
-/// PeacockDB cell render "—" (guarded in `main`).
-const CPU_DEVICE: &str = "tp8-mini";
+/// Golden label of the CPU-cost goldens (full-table execution, 8 partitions /
+/// 2 GiB), the `<mode>-<tp>-<tier>` component of the `.cpu.txt` filename. MUST
+/// track the mode + device the `cpu_full_table_result_test!` goldens are canonized
+/// at — a stale label here makes every PeacockDB cell render "—" (guarded in `main`).
+const CPU_DEVICE: &str = "full_table-tp8-mini";
 /// Hidden marker so CI can find-and-update its single PR comment in place.
 const SENTINEL: &str = "<!-- peacockdb-cost-report -->";
 /// Separate marker for the cost-regression gate widget, so it upserts as its own
@@ -342,8 +343,8 @@ fn main() {
     // from (`<query>.{CPU_DEVICE}.cost.txt`). Requiring it of every operational
     // query would be wrong now that the registry includes the synthetic
     // micro-queries: tpch/scan_limit is GPU-operational but runs full_table_cpu at
-    // tp1-mini only, so no tp8-mini cost golden exists or should. Its Σout cell is a
-    // dash, and the ftc column shows why.
+    // tp1-mini only, so no full_table-tp8-mini cost golden exists or should. Its Σout
+    // cell is a dash, and the ftc column shows why.
     let mut missing: Vec<String> = Vec::new();
     for d in &datasets {
         for r in &d.rows {
@@ -1318,7 +1319,7 @@ mod tests {
     #[test]
     fn cost_cells_link_only_when_value_and_url_present() {
         let v = Some(43_308_088u64);
-        let url = Some("https://x/blob/abc/testdata/goldens/tpch.sf1/q1.tp1-mini.cpu.txt".to_string());
+        let url = Some("https://x/blob/abc/testdata/goldens/tpch.sf1/q1.full_table-tp1-mini.cpu.txt".to_string());
         assert!(cost_cell_html(v, url.clone()).starts_with("<a href="));
         assert!(cost_cell_md(v, url).starts_with("<a href="));
         // value but no sha/url → plain text, no link.
@@ -1365,15 +1366,15 @@ mod tests {
 
     #[test]
     fn peacock_cell_renders_plan_and_cost_links() {
-        let plan = Some("https://x/q1.tp8-mini.cpu.txt".to_string());
-        let cost = Some("https://x/q1.tp8-mini.cost.txt".to_string());
+        let plan = Some("https://x/q1.full_table-tp8-mini.cpu.txt".to_string());
+        let cost = Some("https://x/q1.full_table-tp8-mini.cost.txt".to_string());
         let html = peacock_cell_html(Some(43_308_088), plan.clone(), cost.clone());
         assert!(html.contains(">plan</a>") && html.contains(">cost</a>") && html.starts_with("41.30 MB ("));
         let md = peacock_cell_md(Some(43_308_088), plan, cost);
         // HTML anchors: the comment's table is raw HTML, where markdown link
         // syntax would render literally as brackets.
-        assert!(md.contains("<a href=\"https://x/q1.tp8-mini.cpu.txt\">plan</a>"), "{md}");
-        assert!(md.contains("<a href=\"https://x/q1.tp8-mini.cost.txt\">cost</a>"), "{md}");
+        assert!(md.contains("<a href=\"https://x/q1.full_table-tp8-mini.cpu.txt\">plan</a>"), "{md}");
+        assert!(md.contains("<a href=\"https://x/q1.full_table-tp8-mini.cost.txt\">cost</a>"), "{md}");
         assert!(md.starts_with("41.30 MB ("));
         // value but no urls (dry run) → plain bytes, no links.
         assert_eq!(peacock_cell_html(Some(43_308_088), None, None), "41.30 MB");

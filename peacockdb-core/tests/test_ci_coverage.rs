@@ -17,12 +17,14 @@ use std::collections::BTreeSet;
 
 /// Targets deliberately absent from CI, each with the reason it is exempt.
 const INTENTIONALLY_NOT_IN_CI: &[(&str, &str)] = &[
-    ("test_gpu", "GPU host only — run by the gpu-tests job from a prebuilt binary, not via cargo"),
-    ("test_inc2_conformance", "GPU host only — same as test_gpu"),
+    ("test_gpu_full_table", "GPU host only — run by the gpu-tests job from a prebuilt binary, not via cargo"),
+    ("test_gpu_partitioned", "GPU host only — same as test_gpu_full_table"),
+    ("test_inc2_conformance", "GPU host only — same as test_gpu_full_table"),
     ("test_gpu_executor_misc", "needs the linked C++/CUDA executor; not built in the CPU tiers"),
-    // test_cpu_h200 is NOT exempt: it needs no GPU (runs in ~25s) and owns the
-    // REVERSE half of the cost-registry check for the ftc_tp1 column — leaving it
-    // out of CI would let a CSV row claim coverage no test provides.
+    // test_cpu_partitioned is NOT exempt: it needs no GPU (its tp8-standard goldens
+    // are CPU-emulated) and it owns the cost-registry check for the partitioned_cpu
+    // column — leaving it out of CI would let a CSV row claim coverage no test
+    // provides.
     ("test_ci_coverage", "this test"),
 ];
 
@@ -36,9 +38,9 @@ fn repo_root() -> std::path::PathBuf {
 /// reports FALSE coverage is worse than no guard at all. Two ways a naive
 /// `workflows.contains("--test {name}")` lies:
 ///
-///   - PREFIX COLLISION. `--test test_cpu_executor` is a substring of
-///     `--test test_cpu_executor_misc`. This repo HAS that prefix pair, so deleting
-///     the standalone `test_cpu_executor` step would still report it covered — one
+///   - PREFIX COLLISION. `--test test_query_plan` is a substring of
+///     `--test test_query_plan_misc`. This repo HAS that prefix pair, so deleting
+///     the standalone `test_query_plan` step would still report it covered — one
 ///     edit away from a live hole. Fixed by requiring a word boundary (whitespace
 ///     or end-of-line) after the name.
 ///   - `--no-run` BLINDNESS. `cargo test --no-run ... --test X` BUILDS X without
@@ -74,13 +76,13 @@ fn line_runs_target(line: &str, name: &str) -> bool {
 #[test]
 fn line_matcher_rejects_both_false_coverage_modes() {
     // (1) prefix collision — a longer target name must not cover a shorter one.
-    let only_misc = "          cargo test -p peacockdb-core --test test_cpu_executor_misc";
+    let only_misc = "          cargo test -p peacockdb-core --test test_query_plan_misc";
     assert!(
-        !line_runs_target(only_misc, "test_cpu_executor"),
-        "prefix collision: `--test test_cpu_executor_misc` must NOT count as running \
-         test_cpu_executor"
+        !line_runs_target(only_misc, "test_query_plan"),
+        "prefix collision: `--test test_query_plan_misc` must NOT count as running \
+         test_query_plan"
     );
-    assert!(line_runs_target(only_misc, "test_cpu_executor_misc"));
+    assert!(line_runs_target(only_misc, "test_query_plan_misc"));
 
     // (2) --no-run blindness — building a target is not running it.
     let build_only =

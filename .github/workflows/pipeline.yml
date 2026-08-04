@@ -94,7 +94,7 @@ jobs:
       # drift would make the run step silently recompile, defeating the split.
       - name: Build Rust tests
         run: |
-          cargo test --no-run -p peacockdb-core --test test_plan_serialiser --test test_query_plan --test test_cpu_executor
+          cargo test --no-run -p peacockdb-core --test test_plan_serialiser --test test_query_plan --test test_cpu_full_table
           cargo test --no-run -p peacockdb-ffi --test test_ffi
           # Separate line because of --features rust-only: cargo's fingerprint
           # includes the feature set, so this cannot share the invocation above.
@@ -120,7 +120,7 @@ jobs:
         run: |
           cargo test -p peacockdb-core --test test_plan_serialiser
           cargo test -p peacockdb-core --test test_query_plan
-          cargo test -p peacockdb-core --test test_cpu_executor
+          cargo test -p peacockdb-core --test test_cpu_full_table
           # Named-not-globbed, so these four were invisible to CI until the
           # test_ci_coverage meta-test surfaced them. They need the dataset + the
           # linked executor, so they belong in this tier rather than the golden one.
@@ -128,11 +128,11 @@ jobs:
           cargo test -p peacockdb-core --test test_cpu_oom
           cargo test -p peacockdb-core --test test_node_executor
           cargo test -p peacockdb-core --test test_query_plan_misc
-          # Despite the H200 name this needs NO GPU (~25s): the tp1-standard goldens
-          # are CPU-emulated. It also owns the reverse half of the cost-registry
-          # check for the ftc_tp1 column, so without it a CSV row could claim
-          # coverage that no test provides.
-          cargo test -p peacockdb-core --test test_cpu_h200
+          # The partitioned (real 8-way) CPU tier needs NO GPU: its
+          # partitioned-tp8-standard goldens are CPU-emulated. It owns the
+          # partitioned_cpu column of the cost registry, so without it a CSV row
+          # could claim coverage that no test provides.
+          cargo test -p peacockdb-core --test test_cpu_partitioned
           cargo test -p peacockdb-ffi --test test_ffi
           # The FlatBuffer wire-format guard lives HERE, not in the golden-only
           # cost-report tier where it was first wired. It NEEDS the sf1 parquet,
@@ -201,14 +201,17 @@ jobs:
       - name: Build and stage rust GPU test binaries
         run: |
           mkdir -p cpp/install/rust-tests
-          # test_gpu = the MERGED per-query GPU verify (Phase 2 C2): one GPU run
-          # per query asserts BOTH per-node rows + rows+schema cost vs the H200/tp1
-          # *.tp1-standard.cpu.txt goldens AND the final result. The node-by-node
-          # half is what catches intermediate divergences a whole-result check
-          # misses (e.g. q14's INTERSECT NULL-semantics regression), so it MUST gate.
+          # test_gpu_full_table / test_gpu_partitioned = the MERGED per-query GPU
+          # verify (Phase 2 C2), split by execution mode: one GPU run per query
+          # asserts BOTH per-node rows + rows+schema cost vs the matching
+          # *.<mode>-<tp>-<tier>.cpu.txt goldens AND the final result. The
+          # node-by-node half is what catches intermediate divergences a whole-result
+          # check misses (e.g. q14's INTERSECT NULL-semantics regression), so it MUST
+          # gate. BOTH binaries must be staged — dropping either silently retires a
+          # whole execution mode.
           # test_inc2_conformance = the live GPU↔CPU Spark-murmur3 partition-id gate
           # (peacock FFI path vs comet, bit-exact) — the standing Inc2 hash gate.
-          for t in test_gpu test_inc2_conformance; do
+          for t in test_gpu_full_table test_gpu_partitioned test_inc2_conformance; do
             exec_path=$(cargo test --no-run -p peacockdb-core --test "$t" \
                 --message-format=json \
               | python3 -c '
@@ -230,7 +233,7 @@ jobs:
           CMAKE_GENERATOR: Ninja
           LD_LIBRARY_PATH: /opt/conda/lib
           CUDF_ROOT: /opt/conda
-          # Same as the cpp-cpu job: without this, linking test_gpu
+          # Same as the cpp-cpu job: without this, linking the GPU test binaries
           # (full DataFusion/Arrow + libpeacock_gpu, now larger with the TPC-DS
           # suite merged in) overflows the container tmpfs while lld writes its
           # mmap'd output and crashes with SIGBUS. The failure is at *link* time,
@@ -294,9 +297,10 @@ jobs:
           # Fresh binaries — --delete keeps cpp/install/ clean across runs.
           rsync -a --delete cpp/install/ gpu:$REMOTE_DIR/cpp/install/
           # Query SQL + minimal dataset + testdata generator + committed goldens.
-          # testdata/goldens carries the *.tp1-standard.cpu.txt H200/tp1 node-by-node
-          # goldens (29 tpch + 78 tpcds) that test_gpu asserts against; without
-          # them the node-by-node verify cannot run.
+          # testdata/goldens carries the *.full_table-tp1-standard.cpu.txt tp1
+          # node-by-node goldens (29 tpch + 78 tpcds) that test_gpu_full_table asserts
+          # against, plus the *.partitioned-tp8-standard.cpu.txt set for
+          # test_gpu_partitioned; without them the node-by-node verify cannot run.
           # cost-registry.csv is a committed fixture the registry test READS (it
           # asserts the CSV against the suite's link-time inventory); without it the
           # test dies on a missing file, which reads as a broken check rather than an

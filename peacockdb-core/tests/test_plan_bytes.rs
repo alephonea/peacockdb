@@ -142,7 +142,7 @@ async fn serialized_plan_bytes_are_stable() {
             &data_dir,
             partitions,
             budget,
-            common::partition_mode(&device),
+            common::plan_partition_mode(&device),
         )
         .await
         .unwrap();
@@ -150,7 +150,7 @@ async fn serialized_plan_bytes_are_stable() {
 
         // Record UNSUPPORTED rather than skipping: a node becoming (un)serializable is
         // itself a wire-format change, and silently dropping it would hide that.
-        let value = match serialize_plan_mode(&plan, common::partition_mode(&device)) {
+        let value = match serialize_plan_mode(&plan, common::plan_partition_mode(&device)) {
             Ok(bytes) => {
                 let mut h = Sha256::new();
                 h.update(&bytes);
@@ -187,12 +187,12 @@ async fn serialized_plan_bytes_are_stable() {
             &canonical_data_dir("tpch", "1"),
             partitions,
             budget,
-            common::partition_mode(device),
+            common::plan_partition_mode(device),
         )
         .await
         .unwrap();
         let plan = ctx.sql(sql).await.unwrap().create_physical_plan().await.unwrap();
-        let value = match serialize_plan_mode(&plan, common::partition_mode(device)) {
+        let value = match serialize_plan_mode(&plan, common::plan_partition_mode(device)) {
             Ok(bytes) => {
                 let mut h = Sha256::new();
                 h.update(&bytes);

@@ -3,7 +3,7 @@
 //! query it reports:
 //!   - join modes/types + key column types,
 //!   - Final-agg mergeability + distinct   → count-distinct/ROLLUP = #11 gate,
-//!   - scan-map presence                   → node13-executable prerequisite,
+//!   - scan-map presence                   → partitioned-executable prerequisite,
 //!   - CollectLeft joins                    → #97-b broadcast defer,
 //!   - EVERY repartition key's cuDF TYPE (join AND group-by keys) vs the murmur3
 //!     kernel-supported set {STRING, INT8/16/32/64, DATE32, dict-string}. This is the
@@ -114,8 +114,8 @@ async fn audit(dataset: &str, query: &str) {
     walk(&plan, &mut collect_left, &mut decimal_key, &mut non_mergeable, &mut distinct,
          &mut has_scan_map, &mut joins, &mut bad_repart);
 
-    let node13 = has_scan_map && non_mergeable.is_empty() && !distinct;
-    let verdict = if !node13 { if distinct || !non_mergeable.is_empty() { "GATE(agg→#11)" } else { "GATE(no-scan-map)" } }
+    let partitioned = has_scan_map && non_mergeable.is_empty() && !distinct;
+    let verdict = if !partitioned { if distinct || !non_mergeable.is_empty() { "GATE(agg→#11)" } else { "GATE(no-scan-map)" } }
                   else if !bad_repart.is_empty() { "GATE(kernel-key-type)" }
                   else if decimal_key { "GATE(decimal→#95)" }
                   else if collect_left { "GATE(CollectLeft→defer)" }

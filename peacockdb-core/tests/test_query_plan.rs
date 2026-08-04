@@ -168,7 +168,7 @@ fn registry_matches_csv_plan_column() {
 
 /// The cross-mode golden invariant: a GPU mode marked `enabled` in the CSV requires
 /// its same-device `.cpu.txt` golden, which the GPU test asserts per-node rows+cost
-/// against. It lives HERE, in the CPU tier, rather than in test_gpu.rs: it inspects
+/// against. It lives HERE, in the CPU tier, rather than in the GPU suites: it inspects
 /// only committed files, so putting it behind the GPU build would make it unable to
 /// fail on the CPU tiers where most CI runs happen.
 #[test]
