@@ -29,8 +29,8 @@ code itself — do not consult external note repositories.
 - **Tickets** live in `llm-wiki/tickets.md` (GitHub issues are retired). New bugs and
   follow-ups get a ticket there; ticket IDs (`#NN`) are permanent.
 - **Task specs** go in `llm-wiki/tasks/`. If work on a task outlives one commit, commit
-  the spec and move it to `llm-wiki/archive/` when the task completes. Specs smaller than
-  one commit are deleted when done.
+  the spec; it is archived by the coordinator after the PR merges (see below). Specs
+  smaller than one commit are deleted when done.
 - **Every commit keeps code, code comments, and llm-wiki content in agreement.**
 
 ## Coordinator
@@ -65,11 +65,23 @@ arrive from the human one at a time.
   - Verify the base took effect (`gh pr view <n> --json baseRefName`). `gh pr edit
     --base` can no-op behind an unrelated API warning; the `gh api -X PATCH
     repos/<owner>/<repo>/pulls/<n> -f base=<branch>` form is the reliable fallback.
-  - The human merges the chain oldest-first; GitHub retargets each child PR as its base
-    merges. Never reorder or skip a link to merge something sooner.
-- **You perform ALL git operations** (branch, commit, push, PR). The developer and
-  reviewer never mutate git state. Never merge to master — the human reviews and merges;
-  a human override to merge is one-time and covers only the PRs it names.
+  - A chain merges oldest-first (on instruction — see the merge rule below); GitHub
+    retargets each child PR as its base merges. Never reorder or skip a link to merge
+    something sooner.
+- **You perform ALL git operations** (branch, commit, push, PR, merge). The developer
+  and reviewer never mutate git state.
+- **Merging to master happens ONLY when a human instructs it, in that message.** Never
+  on your own judgment, however green CI is and however satisfied the reviewer. The
+  instruction covers only the PR or chain it names and does not carry forward to the
+  next one — "merge #114" is not standing permission to merge #118. Merge a chain
+  oldest-first, so each child retargets as its base lands.
+- **After a merge, archive the task specs in a master-only commit.** No branch, no PR:
+  on master, move each merged PR's spec out of `llm-wiki/tasks/` and into
+  `llm-wiki/archive/archived-tasks.md` — ONE file holding every archived task, newest
+  first — then commit and push. Keeping them in one reverse-chronological file means the
+  history reads as a history; a directory of files does not order itself. This commit
+  carries nothing else: it is bookkeeping, and mixing code into it makes the merge point
+  unreadable.
 - Task loop: (1) branch; (2) send the task to the developer with the needed context from
   architecture/tickets; (3) iterate until the developer reports tests green; (4) commit,
   push, open the PR, pass the CI URL to the developer; (5) send the PR to the reviewer
