@@ -14,9 +14,14 @@ code itself — do not consult external note repositories.
 - **Communication with the human is brief**, in simple language wherever possible. No
   preamble, no restating the question.
 - **msgq** (assumed in PATH) is the inter-agent channel. Identities: `coordinator`,
-  `peacockdb-developer`, `peacockdb-reviewer`. Always keep a monitor armed:
-  `while true; do MSGQ_ME=<me> msgq poll 2>&1 || true; sleep 1; done`
-  The poll watermark is lossy across process restarts — after a crash check
+  `peacockdb-developer`, `peacockdb-reviewer`. Always keep a poll loop armed, naming
+  your identity explicitly (`msgq poll` blocks until a message arrives, prints it, and
+  advances the watermark):
+  `while true; do out=$(msgq poll <me> 2>&1 || true); [ -n "$out" ] && printf '%s\n' "$out"; sleep 1; done`
+  Run it as a **background monitor, not a background shell**: a monitor surfaces each
+  message as it lands, whereas a background shell's output is only read if you remember
+  to — and killing it silently eats whatever it already consumed. The watermark is lossy
+  that way and across process restarts, so after a crash or a killed loop check
   `msgq history <me>`, not just `msgq count`.
 - **Write every outgoing message body to a file first**, then send it from the file
   (e.g. `msgq send <to> "$(cat msg.txt)"`) — inline bodies lose backticks and quotes to
@@ -35,8 +40,27 @@ arrive from the human one at a time.
 
 - **Maximum autonomy: use your own judgment instead of asking the human.** Escalate only
   for the triggers listed below or genuinely destructive/irreversible decisions.
-- For every task, create a git branch prefixed `ENS-`, forked off the previous task's
-  branch (or master for the first task).
+- **The task chain, the branch chain and the PR chain are the same chain.** One task =
+  one `ENS-` branch = one PR, and all three run in parallel:
+
+      master ── ENS-task-A ── ENS-task-B ── ENS-task-C
+                  PR→master    PR→task-A     PR→task-B
+
+  Task N's branch forks off task N−1's branch, and its PR **targets that same branch** —
+  master only for the first task in a chain. A PR aimed at master instead of its parent
+  is not a small mistake: it carries every earlier task's commits, so the diff under
+  review is not the task. (Symptom: the PR's commit count is much larger than the task's.
+  Check it right after opening.)
+  - Every branch in the chain needs its own PR. A branch with no PR breaks the chain —
+    the next task's PR then has no correct base to target, and the work is invisible for
+    review.
+  - GitHub cannot target a base that is not on the remote, so **push the parent branch
+    before opening the child's PR**, not just the child.
+  - Verify the base took effect (`gh pr view <n> --json baseRefName`). `gh pr edit
+    --base` can no-op behind an unrelated API warning; the `gh api -X PATCH
+    repos/<owner>/<repo>/pulls/<n> -f base=<branch>` form is the reliable fallback.
+  - The human merges the chain oldest-first; GitHub retargets each child PR as its base
+    merges. Never reorder or skip a link to merge something sooner.
 - **You perform ALL git operations** (branch, commit, push, PR). The developer and
   reviewer never mutate git state. Never merge to master — the human reviews and merges;
   a human override to merge is one-time and covers only the PRs it names.
@@ -71,8 +95,15 @@ Style: `llm-wiki/coding-style.md`.
   subsets; kick heavy suites off in the background rather than blocking. Full-suite runs
   are for milestones/handoffs.
 - **Iteration cap:** if 5 edits don't fix a test, stop and write up what you found.
-- For large test/regen runs, arm a monitor that reports progress every 5 minutes
-  (progress may stall — see build-test.md).
+- For large test/regen runs, arm a monitor that reports progress every 2 minutes
+  (progress may stall — see build-test.md). A silent stall looks exactly like a long
+  run, so the monitor must also match failure signatures, not just progress lines.
+- **A refactor with no intended behavior change is verified with SUBSETS, not full
+  suites** — a representative case per mode/tier per binary, plus the cheap golden/meta
+  tier. The goldens are the invariant. Check what a package-wide command actually
+  sweeps before running it: `--features rust-only` selects a BUILD, not a tier, so
+  `cargo test --features rust-only -p peacockdb-core` runs the whole CPU execution
+  suite, not just the golden tier.
 - **No regression in test coverage** unless a human explicitly authorized it.
   `test_ci_coverage.rs` must be kept up to date and include all necessary coverage.
   **One exception — flaky tests:** if you hit a flaky test, prove it is flaky (repeated
