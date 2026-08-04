@@ -34,11 +34,10 @@ use peacockdb_core::{
 };
 
 /// Per-device default [`PartitionMode`] — the map + Hash-repartition-lowering
-/// discriminator (dmitry, replacing the old 16 GiB budget threshold). tp8-standard
-/// is the real-8-way device; every other label (tp1-*, tp8-mini) is single-
-/// partition. The enum — NOT the budget — is now the sole discriminator, so a
-/// memory-constrained genuine-8-way device (GitHub #91) would just add its label
-/// here → `RealMultiPartition`, no budget change needed.
+/// discriminator. tp8-standard is the real-8-way device; every other label
+/// (tp1-*, tp8-mini) is single-partition. The enum — NOT the budget — is the
+/// sole discriminator, so a memory-constrained genuine-8-way device (#91) would
+/// just add its label here → `RealMultiPartition`, no budget change needed.
 pub fn partition_mode(device: &str) -> PartitionMode {
     match device {
         "tp8-standard" => PartitionMode::RealMultiPartition,
@@ -58,7 +57,7 @@ pub const GPU_BUDGET: usize = MemoryLimit::Mini.bytes();
 /// Max rendered size for a committed `.result.txt` golden. Above this the golden is
 /// NOT written (full-result text doesn't scale — e.g. tpch anti-join renders ~240
 /// MB / 1.2M rows and trips the repo's push size guard). Large-result queries fall
-/// back to the live CPU oracle in the merged GPU test (Inc0.5, dmitry's size rule).
+/// back to the live CPU oracle in the merged GPU test.
 pub const RESULT_GOLDEN_MAX_BYTES: usize = 256 * 1024;
 
 // --- parameterized testdata layout -----------------------------------------
@@ -102,7 +101,7 @@ pub fn cost_golden(dataset: &str, sf: &str, query: &str, device: &str) -> PathBu
 
 /// Frozen final-result snapshot (`batches_to_sorted_str`), generated ONLY from the
 /// CPU oracle under UPDATE_CANONICAL (never the GPU), so the merged GPU test can
-/// assert the final result without a live CPU run (Inc0.5).
+/// assert the final result without a live CPU run.
 pub fn result_golden(dataset: &str, sf: &str, query: &str, device: &str) -> PathBuf {
     golden_dir_for(dataset, sf).join(format!("{query}.{device}.result.txt"))
 }
@@ -342,11 +341,10 @@ pub fn cpu_stats_str(plan: &Arc<dyn ExecutionPlan>, stats: &[NodeMemoryStats]) -
                         ps.out_rows, ps.out_bytes,
                     ));
                 } else if node.plan.as_any().is::<GpuRepartitionExec>() {
-                    // Hash repartition (Inc2): the child (a lowered GpuCoalescePartitions)
-                    // is a SINGLE partition, so there is no child.out_rows[k] to source
-                    // an input count from — the shuffle redistributes one table into N.
-                    // Per dmitry, render in_rows = out_rows[k] (this output partition's
-                    // rows are exactly what flows on); out_rows[k] is the load-bearing
+                    // Hash repartition: the child (a lowered GpuCoalescePartitions) is a
+                    // SINGLE partition, so there is no child.out_rows[k] to source an
+                    // input count from — the shuffle redistributes one table into N.
+                    // Render in_rows = out_rows[k]; out_rows[k] is the load-bearing
                     // murmur3-fidelity number the GPU must reproduce.
                     lines.push(format!(
                         "{sub}p{k}: in_rows={} out_rows={} out_bytes={}",
@@ -375,16 +373,15 @@ pub fn cpu_stats_str(plan: &Arc<dyn ExecutionPlan>, stats: &[NodeMemoryStats]) -
     let root = collect(plan, stats, &mut 0);
     let mut lines = Vec::new();
     walk(&root, 0, &mut lines);
-    // The total cost (and its per-category breakdown) now lives in the sibling
-    // `.cost.txt` golden, derived purely from this tree's text — see
-    // `cost_model::cost_text_from_cpu` and `test_cost_model.rs`.
+    // Total cost + per-category breakdown live in the sibling `.cost.txt` golden,
+    // derived purely from this tree's text — see `cost_model::cost_text_from_cpu`.
     lines.join("\n")
 }
 
 /// CPU-oracle cost-golden assert: WRITES under UPDATE_CANONICAL, else verifies.
 /// Only the CPU path may use this (it can write). The GPU path uses the read-only
 /// `assert_cost_golden_verify` so a UPDATE_CANONICAL on the GPU host can never
-/// overwrite cost goldens from GPU stats (Inc0.5 req#1, extended to cost).
+/// overwrite cost goldens from GPU stats.
 pub fn assert_cpu_cost_canonical(plan: &Arc<dyn ExecutionPlan>, stats: &[NodeMemoryStats], canonical_path: &Path) {
     if std::env::var("UPDATE_CANONICAL").is_ok() {
         let actual = cpu_stats_str(plan, stats);
@@ -524,7 +521,7 @@ fn assert_results_match(
 }
 
 /// Write the final-result golden (`batches_to_sorted_str`) under UPDATE_CANONICAL.
-/// Called ONLY on the CPU oracle path (Inc0.5 req #1: goldens never come from GPU).
+/// Called ONLY on the CPU oracle path (goldens never come from GPU).
 /// A no-op when UPDATE_CANONICAL is unset.
 pub fn maybe_write_result_golden(batches: &[RecordBatch], golden_path: &Path) {
     if std::env::var("UPDATE_CANONICAL").is_err() {
@@ -637,7 +634,7 @@ fn assert_sorted_str_approx(golden: &str, actual: &str, tol: f64, query: &str) {
 /// Assert `actual` matches the frozen result golden at `golden_path` (fail-closed:
 /// a missing golden PANICS, mirroring `assert_cpu_cost_canonical`). `rel_tol`
 /// `None` = exact sorted-string equality; `Some(tol)` = float-tolerant (q14/q39).
-/// Never writes (the GPU side never updates canon — Inc0.5 req #1).
+/// Never writes (the GPU side never updates canon).
 pub fn assert_result_golden(
     actual: &[RecordBatch],
     golden_path: &Path,
@@ -677,13 +674,6 @@ pub fn assert_result_golden(
     }
 }
 
-/// Run a query through plain DataFusion (ground truth) and the CPU executor;
-/// assert results match (order-independent) and the cpu cost tree matches golden.
-///
-/// `rel_tol` is `None` for the exact sorted-string comparison (the default for
-/// nearly all queries). A `Some(tol)` is passed ONLY via `cpu_result_approx_test!`
-/// for the handful of queries (q39, q14) whose only divergence from the oracle is
-/// float summation reassociation (~1 ULP) — see [`assert_results_match`].
 /// True if the plan's scan carries a non-empty RG→partition map (tp>1 multi-
 /// partition). The map is attached by `GpuMemoryBudgetRule` for EVERY
 /// target_partitions>1, so this alone is NOT enough to route to #13.
@@ -704,11 +694,11 @@ fn has_repartition(plan: &Arc<dyn ExecutionPlan>) -> bool {
 
 /// Whether an aggregate's two-phase STATE is mergeable across hash partitions by a
 /// per-bucket Final re-aggregation. SUM/COUNT/MIN/MAX merge trivially (Σ / extremum);
-/// AVG merges because its state (sum, count) IS additive — the per-bucket Final does
-/// Σsum/Σcount = correct mean, no mean-of-means (Inc4, #25). STDDEV/VAR merge via the
-/// Welford [count, mean, m2] state + cuDF MERGE_M2 across buckets (Inc5, #25). Whitelist
-/// (not blacklist) so any unrecognized aggregate defaults to NON-mergeable → the query
-/// stays on the #11 single-partition path (correct) rather than silently mis-merging on #13.
+/// AVG's (sum, count) state IS additive — the per-bucket Final does Σsum/Σcount, no
+/// mean-of-means (#25). STDDEV/VAR merge via the Welford [count, mean, m2] state +
+/// cuDF MERGE_M2 across buckets (#25). Whitelist (not blacklist) so any unrecognized
+/// aggregate defaults to NON-mergeable → the query stays on the #11 single-partition
+/// path (correct) rather than silently mis-merging on #13.
 fn state_mergeable_agg(fun_name: &str) -> bool {
     matches!(
         fun_name.to_ascii_lowercase().as_str(),
@@ -739,18 +729,20 @@ fn all_final_aggs_state_mergeable(plan: &Arc<dyn ExecutionPlan>) -> bool {
 
 /// True iff the plan can be driven by the #13 CpuNodeExecutor: it has a multi-
 /// partition scan map AND every multi-partition Final-aggregate is state-mergeable
-/// (SUM/COUNT/MIN/MAX/AVG — see [`state_mergeable_agg`]). Inc2 lowers a Hash
-/// `GpuRepartitionExec` into GpuCoalescePartitions(M→1) + GpuRepartition(1→N) and
-/// hash-partitions via Spark-murmur3, so every group lands wholly in one bucket; the
-/// per-bucket Final then merges that group's state — Σ for sum/count, Σsum/Σcount for
-/// AVG (Inc4, #25). A STDDEV/VAR Final-agg still can't be merged (compound moments,
-/// Inc5) → those queries stay on the #11 instrumented-enforced path (correct single-
-/// partition goldens). Gate on AGG-KIND, NOT on the mere presence of a
-/// GpuRepartitionExec (which would wrongly admit a STDDEV/VAR shuffle).
+/// (see [`state_mergeable_agg`]). A Hash `GpuRepartitionExec` is lowered into
+/// GpuCoalescePartitions(M→1) + GpuRepartition(1→N) and hash-partitioned via
+/// Spark-murmur3, so every group lands wholly in one bucket and the per-bucket
+/// Final merges that group's state. Gate on AGG-KIND, NOT on the mere presence of
+/// a GpuRepartitionExec (which would wrongly admit a non-mergeable shuffle).
 pub(crate) fn plan_is_node13_executable(plan: &Arc<dyn ExecutionPlan>) -> bool {
     has_scan_map(plan) && all_final_aggs_state_mergeable(plan)
 }
 
+/// Run a query through plain DataFusion (ground truth) and the CPU executor;
+/// assert results match (order-independent) and the cpu cost tree matches golden.
+/// `rel_tol = None` = exact sorted-string compare (the default); `Some(tol)` is
+/// passed only via `cpu_result_approx_test!` for queries whose sole oracle
+/// divergence is float summation reassociation (~1 ULP) — see [`assert_results_match`].
 pub async fn assert_cpu_results_match_datafusion(
     dataset: &str,
     sf: &str,
@@ -786,12 +778,10 @@ pub async fn assert_cpu_results_match_datafusion(
     // coalesced regardless of target_partitions — AND the tp8-standard golden — the
     // #13 CpuNodeExecutor, which maintains N partitions across nodes (partial-agg =
     // Σ-over-partitions, CoalescePartitions concat N→1), matching the real 8-way GPU.
-    // So a plan-only predicate can't tell them apart; only the device/test does.
-    // `plan_is_node13_executable` is asserted here purely as a SAFETY guard: a query
-    // opted into #13 MUST have a scan map and only additive Final-aggregates (a Hash
-    // repartition is lowered + Spark-murmur3 partitioned in Inc2; AVG/STDDEV/VAR merge
-    // waits for Inc4/Inc5). #11 also backs the resident-OOM tests. Both yield
-    // post-order stats + a coalesced result, so the assertions below are identical.
+    // A plan-only predicate can't tell them apart; only the device/test does.
+    // `plan_is_node13_executable` is asserted purely as a SAFETY guard. #11 also
+    // backs the resident-OOM tests. Both yield post-order stats + a coalesced
+    // result, so the assertions below are identical.
     let (actual, stats): (Vec<RecordBatch>, Vec<NodeMemoryStats>) = if use_node13 {
         assert!(
             plan_is_node13_executable(&plan),
@@ -816,18 +806,16 @@ pub async fn assert_cpu_results_match_datafusion(
     assert_results_match(&expected, &actual, rel_tol, &format!("{dataset}/{query}"));
     assert_cpu_cost_canonical(&plan, &stats, &cpu_golden(dataset, sf, query, device));
     // Snapshot the (DataFusion-validated) result for the merged GPU test to verify
-    // against, so the GPU run needs no live CPU oracle (Inc0.5). UPDATE_CANONICAL only.
+    // against, so the GPU run needs no live CPU oracle. UPDATE_CANONICAL only.
     //
-    // GATED on `gen_result_golden`: write the `.result.txt` ONLY when a golden-
-    // asserting `gpu_test!` (GoldenExact/GoldenApprox) actually consumes this
-    // (query, device). INVARIANT: `gen_result_golden` must be TRUE exactly for the
-    // (query, device) pairs that have such a consumer — TRUE for tp1-standard
-    // golden_exact/approx + the tp8-standard real-partitioning goldens (q6,
-    // shuffle_additive); FALSE for tp8-mini (no gpu_test! consumer) and for
-    // oracle-mode queries (>256KB result → GPU uses the live oracle, no golden).
-    // false-when-should-be-true = missing golden = the GPU test fails loud (safe);
-    // true-when-should-be-false = an orphan golden written but never read (the
-    // silent case this gate exists to prevent).
+    // INVARIANT: `gen_result_golden` must be TRUE exactly for the (query, device)
+    // pairs consumed by a golden-asserting `gpu_test!` (GoldenExact/GoldenApprox) —
+    // TRUE for tp1-standard golden_exact/approx + the tp8-standard real-partitioning
+    // goldens (q6, shuffle_additive); FALSE for tp8-mini (no gpu_test! consumer) and
+    // for oracle-mode queries (>256KB result → GPU uses the live oracle, no golden).
+    // false-when-should-be-true fails loud (missing golden); true-when-should-be-
+    // false is an orphan golden written but never read — the silent case this gate
+    // exists to prevent.
     if gen_result_golden {
         maybe_write_result_golden(&actual, &result_golden(dataset, sf, query, device));
     }
@@ -993,12 +981,10 @@ pub async fn assert_gpu_nodes_match_golden(dataset: &str, sf: &str, query: &str,
 /// `GoldenApprox` = static result-golden, 1e-12 float-tolerant (q14/q39 — avg/sum
 ///                  summation reassociation across partitions, ~1 ULP).
 /// `GoldenApproxStddev` = static result-golden, 1e-11 float-tolerant. STDDEV/VAR ONLY:
-///                  cuDF's variance algorithm (Σ(x-x̄)² then sqrt) accumulates more
-///                  float error than sum/avg, and cuDF make_std/MERGE_M2 vs DataFusion's
-///                  Welford diverge ~2e-12 (observed 1.996e-12) — beyond the 1e-12
-///                  convention. 1e-11 = ~5× headroom, still 11 significant digits. The
-///                  CPU-side #13 approx tests stay at 1e-12 (CPU#13 == DataFusion at
-///                  ~3e-14); this looser tol is GPU-cuDF-specific. See #94-adjacent.
+///                  cuDF make_std/MERGE_M2 vs DataFusion's Welford diverge ~2e-12 —
+///                  beyond the 1e-12 convention. 1e-11 = ~5× headroom, still 11
+///                  significant digits. CPU-side #13 approx tests stay at 1e-12;
+///                  this looser tol is GPU-cuDF-specific (#94-adjacent).
 /// `Oracle`       = live CPU-oracle compare, NO golden — for results too large to
 ///                  commit as text (>= RESULT_GOLDEN_MAX_BYTES, e.g. anti-join's
 ///                  ~240MB/1.2M rows). R4 preserved: still result-validated, live.
@@ -1028,7 +1014,7 @@ pub fn gpu_result_mode(s: &str) -> GpuResultMode {
     }
 }
 
-/// Merged per-query GPU verification (Task #13 Phase 2, C2): a SINGLE GPU run
+/// Merged per-query GPU verification (#13): a SINGLE GPU run
 /// (the node-by-node executor, which also materializes the final result) asserts
 /// BOTH (a) per-node exact rows + rows/schema cost vs the `.cpu.txt` golden
 /// (ALWAYS), AND (b) the final RESULT vs the peacock CPU oracle (per `result_mode`).
@@ -1195,9 +1181,9 @@ macro_rules! cpu_result_test {
 /// `cpu_node13_result_test!(dataset, sf, query, device, gen_result_golden)` — EXACT
 /// result compare, driven by the #13 multi-handle CpuNodeExecutor (real N-partition,
 /// Σ-over-partitions cost). EXPLICIT opt-in (not plan-inferred): a query routed here
-/// MUST be node13-executable (scan map + only additive Final-aggregates; asserted at
-/// runtime). Used for the H200/tp8 device (tp8-standard); AVG/STDDEV/VAR queries
-/// wait for Inc4/Inc5. The SAME plan at tp8-mini stays on #11 via `cpu_result_test!`.
+/// MUST be node13-executable (scan map + state-mergeable Final-aggregates; asserted
+/// at runtime). Used for tp8-standard; the SAME plan at tp8-mini stays on #11 via
+/// `cpu_result_test!`.
 #[macro_export]
 macro_rules! cpu_node13_result_test {
     ($dataset:ident, $sf:literal, $query:ident, $device:ident, $gen:literal) => {
@@ -1248,12 +1234,12 @@ macro_rules! cpu_result_approx_test {
 }
 
 /// `cpu_node13_result_approx_test!(dataset, sf, query, device, gen)` — like
-/// [`cpu_node13_result_test!`] (the #13 real-N-partition CpuNodeExecutor) but with a
-/// 1e-12 relative tolerance on Float64 columns. Required for STDDEV/VAR queries (Inc5):
-/// the Welford M2 state, merged across the 8 hash partitions, reassociates float
-/// summation (~1 ULP; ~3e-14 rel) vs the DataFusion single-pass oracle, so exact-string
-/// compare can't be used. The output_bytes cost golden stays exact (float byte width
-/// is unchanged). `gen` writes the `.result.txt` iff a golden `gpu_test!` consumes it.
+/// [`cpu_node13_result_test!`] but with a 1e-12 relative tolerance on Float64
+/// columns. Required for STDDEV/VAR: the Welford M2 state, merged across the 8 hash
+/// partitions, reassociates float summation (~1 ULP; ~3e-14 rel) vs the DataFusion
+/// single-pass oracle, so exact-string compare can't be used. The output_bytes cost
+/// golden stays exact. `gen` writes the `.result.txt` iff a golden `gpu_test!`
+/// consumes it.
 #[macro_export]
 macro_rules! cpu_node13_result_approx_test {
     ($dataset:ident, $sf:literal, $query:ident, $device:ident, $gen:literal) => {
@@ -1318,12 +1304,11 @@ macro_rules! cpu_result_fits_test {
     };
 }
 
-/// `gpu_test!(dataset, sf, query, device, mode)` — the MERGED GPU test (Phase 2
-/// C2): one GPU run asserts per-node rows+cost vs the `.cpu.txt` golden AND the
-/// final result. `mode` ∈ { golden_exact | golden_approx | oracle | skip } (see
-/// `GpuResultMode`). Derived fn name `gpu_<ds>_sf<sf>_<query>_<device>` matches the
-/// former gpu_result_test names so CI/--exact filters keep working. (Replaces the
-/// old gpu_node_test! + gpu_result_test! macros, removed in Inc0.)
+/// `gpu_test!(dataset, sf, query, device, mode)` — the MERGED GPU test: one GPU run
+/// asserts per-node rows+cost vs the `.cpu.txt` golden AND the final result.
+/// `mode` ∈ { golden_exact | golden_approx | golden_approx_std | oracle | skip }
+/// (see `GpuResultMode`). Fn name is `gpu_<ds>_sf<sf>_<query>_<device>` so
+/// CI/--exact filters keep working.
 #[macro_export]
 macro_rules! gpu_test {
     ($dataset:ident, $sf:literal, $query:ident, $device:ident, $mode:ident) => {

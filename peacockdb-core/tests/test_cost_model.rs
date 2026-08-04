@@ -3,12 +3,11 @@
 //! `UPDATE_CANONICAL=1`). Pure text — no executor, no dataset — so it runs in the
 //! plain CPU CI tier. The taxonomy + multipliers live in `common/cost_model.rs`.
 //!
-//! Also guards the byte-identity invariant the refactor must preserve: at today's
-//! all-1.0 multipliers the `.cost.txt` total equals `Σ output_bytes` over the
-//! `.cpu.txt` tree (the value the old `peacockdb_cost=` footer carried).
+//! Byte-identity invariant: at today's all-1.0 multipliers the `.cost.txt` total
+//! equals `Σ output_bytes` over the `.cpu.txt` tree.
 //!
 //! `COST_FILTER=<substr>` restricts the run to `.cpu.txt` files whose name
-//! contains `<substr>` (used to regenerate a single golden at the review gate).
+//! contains `<substr>` (regenerate a single golden).
 #[macro_use]
 mod common;
 
@@ -16,7 +15,7 @@ use std::path::PathBuf;
 
 use common::cost_model::CostModel;
 
-/// Σ of every `output_bytes=` value in a `.cpu.txt` body (the old footer total).
+/// Σ of every `output_bytes=` value in a `.cpu.txt` body.
 fn sum_output_bytes(cpu_text: &str) -> u64 {
     const KEY: &str = "output_bytes=";
     cpu_text

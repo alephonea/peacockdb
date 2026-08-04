@@ -18,11 +18,9 @@ use datafusion::physical_plan::union::{InterleaveExec, UnionExec};
 use super::executor::NodeMemoryStats;
 use super::stream::{drain_stream, InstrumentedStream, StreamSourceExec};
 
-// 
-/// Delegates to the ONE dispatch point, `operators::strip_target` (Inc3). The old
-/// `try_strip!` chain lived here; it is gone, not duplicated. Behavior is unchanged,
-/// asymmetry included — see the per-operator `strips_to_inner` impls for which
-/// wrappers deliberately pass through unstripped, and why.
+/// Delegates to the ONE dispatch point, `operators::strip_target`. The asymmetry is
+/// deliberate — see the per-operator `strips_to_inner` impls for which wrappers
+/// pass through unstripped, and why.
 pub(crate) fn strip_gpu(node: Arc<dyn ExecutionPlan>) -> (Arc<dyn ExecutionPlan>, Option<usize>) {
     crate::operators::strip_target(&node)
 }
@@ -47,12 +45,10 @@ pub(crate) fn with_batch_size(ctx: Arc<TaskContext>, batch_size: usize) -> Arc<T
 /// Execute exactly ONE plan node, fed by its children's already-computed output
 /// batches (in child order), and return this node's output batches + stats.
 ///
-/// This is the CPU backend of the unified node-executor interface
-/// (`node_executor::CpuNodeExecutor`): the orchestrator drives the tree post-order
-/// and hands each node its child outputs. Reuses the same machinery as the
-/// recursive executor — `strip_gpu`, the `StreamSourceExec` child stubs, the
-/// `InterleaveExec`→`UnionExec` substitution, and `InstrumentedStream` — so the
-/// per-node `NodeMemoryStats` are byte-identical to `execute_node_by_node`.
+/// Primitive under `CpuNodeExecutor`. Reuses the recursive executor's machinery —
+/// `strip_gpu`, `StreamSourceExec` child stubs, the `InterleaveExec`→`UnionExec`
+/// substitution, `InstrumentedStream` — so per-node `NodeMemoryStats` are
+/// byte-identical to `execute_node_by_node`.
 pub(crate) async fn execute_single_node(
     node: &Arc<dyn ExecutionPlan>,
     inputs: Vec<Vec<RecordBatch>>,

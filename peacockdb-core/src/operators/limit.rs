@@ -31,7 +31,7 @@ impl GpuExtraDisplay for GpuGlobalLimitExec {
 
 
 // ---------------------------------------------------------------------------
-// FlatBuffer wire format (Inc3: moved verbatim from plan_serializer.rs)
+// FlatBuffer wire format
 //
 // STATEMENT ORDER IS THE WIRE FORMAT. FlatBufferBuilder is a no-interning bump
 // arena, so every builder call appends and returns an offset — reordering the
@@ -97,7 +97,7 @@ pub(crate) fn deserialize_gpu_limit(l: &fb::GpuLimit) -> Result<Arc<dyn Executio
 
 // --- Operator: partition topology + strip behavior ------------------------
 
-/// NOT stripped, same reason.
+/// NOT stripped, same reason as `GpuCrossJoinExec` in `join.rs`.
 impl Operator for GpuGlobalLimitExec {
     fn inner(&self) -> &Arc<dyn ExecutionPlan> {
         &self.inner

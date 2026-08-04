@@ -51,13 +51,11 @@ TEST(CudfGpu, SequenceSum) {
   EXPECT_EQ(scalar->value(), static_cast<int64_t>(N) * (N + 1) / 2);
 }
 
-// Inc2 conformance (Route B): the REAL peacock GPU Spark-murmur3 partition-id path
+// Conformance: the GPU Spark-murmur3 partition-id path
 // (peacock::partitioning::spark_partition_ids) must match comet's CPU twin
-// bit-exact. The comet reference values are computed by the REAL comet helper in
-// tests/test_inc2_conformance.rs (create_murmur3_hashes seed=42 -> pmod), and are
-// asserted here against the live GPU kernel. (A later FFI-backed rust test runs
-// BOTH live in one process for the permanent CI gate; this gtest is the GPU-side
-// proof of the same kernel against comet's verified output.)
+// bit-exact. The reference values below come from the real comet helper
+// (create_murmur3_hashes seed=42 -> pmod) in
+// peacockdb-core/tests/test_inc2_conformance.rs.
 namespace {
 std::vector<int32_t> gpu_partition_ids(cudf::table_view const& keys,
                                        std::vector<cudf::size_type> const& cols,
@@ -79,7 +77,7 @@ TEST(CudfGpu, SparkPartitionIdsMatchCometSingleCol) {
   std::fprintf(stderr, "GPU spark_partition_ids 1-col(['A','N','R','F','O'],8) =");
   for (auto p : ids) std::fprintf(stderr, " %d", p);
   std::fprintf(stderr, "\n");
-  // comet reference (tests/test_inc2_conformance.rs): A->2 N->0 R->1 F->4 O->6
+  // comet reference: A->2 N->0 R->1 F->4 O->6
   EXPECT_EQ(ids, (std::vector<int32_t>{2, 0, 1, 4, 6}));
 }
 

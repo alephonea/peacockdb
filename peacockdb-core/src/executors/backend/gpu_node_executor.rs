@@ -110,7 +110,7 @@ impl NodeExecutor for GpuNodeExecutor {
         let schema = node.schema();
         // Scan's per-partition row groups come from the SAME RG→batch→partition
         // map the C++ side replays via set_row_groups — so the GPU's per-partition
-        // sub-lines match the #13 CPU golden by construction (Task A: the golden is
+        // sub-lines match the #13 CPU golden by construction (the golden is
         // GPU-VERIFIED, not just CPU-printed).
         let scan_map = node
             .as_any()

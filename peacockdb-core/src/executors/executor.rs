@@ -33,7 +33,7 @@ pub trait InstrumentedExecutor: Executor {
 // Node-by-node CPU execution
 // ---------------------------------------------------------------------------
 
-/// Per-OUTPUT-partition breakdown of a node's stats (Phase 2 Inc1 / Task A). Empty
+/// Per-OUTPUT-partition breakdown of a node's stats. Empty
 /// on a node's [`NodeMemoryStats`] means a single output partition (N=1): the
 /// `.cpu.txt` golden renders `partitions=1` with NO per-partition sub-lines. When
 /// the node emits N>1 output partitions (the real-partitioning device), there is

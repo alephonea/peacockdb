@@ -1,4 +1,4 @@
-//! GPU-coverage & output-size report generator (Task 6).
+//! GPU-coverage & output-size report generator.
 //!
 //! Reads only committed goldens, so it runs in the CI CPU tier with no GPU and
 //! no executor build:
@@ -17,8 +17,10 @@
 //! Markdown blob (for the upserted PR comment, keyed on [`SENTINEL`]).
 //!
 //! Usage:
-//!   cost-report [--testdata DIR] [--tests FILE] [--html FILE] [--md FILE]
-//!               [--pages-url URL] [--sha SHA] [--repo OWNER/REPO] [--published]
+//!   cost-report [--testdata DIR] [--registry FILE] [--html FILE] [--md FILE]
+//!               [--site DIR] [--pages-url URL] [--sha SHA] [--repo OWNER/REPO]
+//!               [--generated-at TS] [--published]
+//!               [--cost-diff --base REF|DIR]
 
 use std::collections::BTreeMap;
 #[cfg(test)]
@@ -35,8 +37,8 @@ const PAGES_URL_DEFAULT: &str = "https://asymptote-tech.github.io/peacockdb/";
 const DEFAULT_REPO: &str = "asymptote-tech/peacockdb";
 /// Device label of the CPU-cost goldens (8 partitions / 2 GiB), part of the
 /// `.cpu.txt` filename under the unified golden layout. MUST track the device the
-/// `cpu_result_test!` goldens are canonized at — #11 renamed these tp1 → tp8, so a
-/// stale label here makes every PeacockDB cell render "—" (now guarded in `main`).
+/// `cpu_result_test!` goldens are canonized at — a stale label here makes every
+/// PeacockDB cell render "—" (guarded in `main`).
 const CPU_DEVICE: &str = "tp8-mini";
 /// Hidden marker so CI can find-and-update its single PR comment in place.
 const SENTINEL: &str = "<!-- peacockdb-cost-report -->";
@@ -57,11 +59,9 @@ const MODE_COLUMNS: [&str; 5] = [
 
 /// One row of `testdata/cost-registry.csv` — the widget's source of truth.
 ///
-/// This REPLACES the old textual scrape of `test_gpu.rs`, which could only see one
-/// file and inferred "enabled" from whether a macro line was commented out. The CSV
-/// is verified against the test suite's own link-time inventory by the registry
-/// tests in peacockdb-core (both directions), so a stale cell fails the build rather
-/// than silently mis-rendering a tick here.
+/// The CSV is verified against the test suite's own link-time inventory by the
+/// registry tests in peacockdb-core (both directions), so a stale cell fails the
+/// build rather than silently mis-rendering a tick here.
 struct Registry {
     rows: Vec<RegistryRow>,
 }
@@ -188,8 +188,7 @@ impl Row {
     }
 
     /// "Operational" for the summary line = the single-partition GPU mode is
-    /// enabled. That is the mode the old test_gpu.rs scrape counted, so the
-    /// headline number stays comparable across this change.
+    /// enabled.
     fn operational(&self) -> bool {
         self.state("full_table_gpu") == "enabled"
     }
@@ -279,8 +278,7 @@ fn main() {
 
     let testdata = PathBuf::from(opt("--testdata", "testdata"));
     // The registry CSV lives beside the goldens it describes; --registry overrides
-    // for out-of-tree runs. (`--tests`, which pointed at test_gpu.rs for the old
-    // textual scrape, is gone — coverage is read from this CSV now.)
+    // for out-of-tree runs.
     let registry_csv = PathBuf::from(opt(
         "--registry",
         testdata.join("cost-registry.csv").to_str().unwrap_or("testdata/cost-registry.csv"),
@@ -327,9 +325,8 @@ fn main() {
         .cloned()
         .or_else(|| env("COST_REPORT_GENERATED_AT"));
 
-    // Coverage now comes from the committed registry CSV (verified against the test
-    // suite's link-time inventory by peacockdb-core's registry tests), NOT from
-    // scraping test_gpu.rs for uncommented macro lines.
+    // Coverage comes from the committed registry CSV, verified against the test
+    // suite's link-time inventory by peacockdb-core's registry tests.
     let registry = Registry::load(&registry_csv);
 
     let tpch = build_dataset("TPC-H", "testdata/goldens/tpch.sf1", "testdata/tpch-queries", &testdata.join("goldens/tpch.sf1"), &registry, "tpch");
@@ -395,8 +392,7 @@ fn build_dataset(
     // Each golden carries its own explicit total footer (peacockdb_cost= /
     // duckdb_cost=), the single source of truth for that side's number; the
     // per-node output_bytes/materialized values above it are the contribution
-    // breakdown that sums to it. We read the footer (sum_field over a key that
-    // appears once == that value).
+    // breakdown that sums to it. We read only the footer (`read_total`).
     // Rows come from the registry CSV, not a 1..=N range, so the synthetic
     // micro-queries (aggregate_groupby, mixed_join, …) appear alongside the numbered
     // ones as the spec requires. Numbered queries sort first, by number.
@@ -415,8 +411,8 @@ fn build_dataset(
                 plan_status: r.plan_status.clone(),
                 features: r.features.clone(),
                 tickets: r.tickets.clone(),
-                // PeacockDB total now lives in the cheap-to-regenerate .cost.txt (the
-                // .cpu.txt no longer carries a footer); same `peacockdb_cost=` key.
+                // PeacockDB total lives in the cheap-to-regenerate .cost.txt (the
+                // .cpu.txt carries no footer); `peacockdb_cost=` key.
                 peacockdb: read_total(
                     &canon.join(format!("{stem}.{CPU_DEVICE}.cost.txt")),
                     "peacockdb_cost=",
@@ -432,10 +428,8 @@ fn build_dataset(
         (None, None) => a.query.cmp(&b.query),
     });
     // `total` is the number of registry rows for this dataset, NOT a hardcoded
-    // query count. It used to be the literal 22/99 (the numbered queries), which
-    // became wrong the moment the registry started including the synthetic
-    // micro-queries: TPC-H rendered "32/22 GPU-operational" — 32 operational out of
-    // 36 rows, printed against a denominator that no longer described the table.
+    // 22/99: the registry includes the synthetic micro-queries, so the denominator
+    // must describe the table, not the numbered-query count.
     let total = rows.len();
     Dataset { label, total, canon_rel, query_rel, rows }
 }
@@ -540,15 +534,13 @@ fn peacock_cell_md(value: Option<u64>, plan_url: Option<String>, cost_url: Optio
     }
 }
 
-/// Query-column cell: the `q<n>` label linked to its SQL source when a URL exists
-/// (sha present), plain `q<n>` otherwise (dry run) — mirrors the golden-link cells.
 /// The four execution-mode `<td>`s for a row — or ONE `colspan=4` cell when the
 /// query has no per-mode story to tell.
 ///
-/// Executable rows are unchanged (full_table_cpu split + 3 glyphs). The other two
-/// kinds merge, because four repeated em-dashes read as "look for the difference"
-/// when the real statement is a single fact about the whole row: it plans but
-/// nothing runs it yet, or it does not plan at all.
+/// Executable rows get the full cells (full_table_cpu split + 3 glyphs). The other
+/// two kinds merge, because four repeated em-dashes read as "look for the
+/// difference" when the real statement is a single fact about the whole row: it
+/// plans but nothing runs it yet, or it does not plan at all.
 fn mode_cells_html(r: &Row) -> String {
     match r.kind() {
         RowKind::Executable => format!(
@@ -568,6 +560,8 @@ fn mode_cells_html(r: &Row) -> String {
     }
 }
 
+/// Query-column cell: the `q<n>` label linked to its SQL source when a URL exists
+/// (sha present), plain `q<n>` otherwise (dry run) — mirrors the golden-link cells.
 fn query_cell_html(name: &str, url: Option<String>) -> String {
     match url {
         Some(u) => format!("<a href=\"{u}\">{name}</a>"),
@@ -588,34 +582,32 @@ fn features_html(features: &[String]) -> String {
         .join(" ")
 }
 
-/// Ticket numbers as GitHub issue links. Bare numbers in the CSV; the repo comes
-/// from the report's `--repo`, so forks link to their own issues.
+/// Ticket links into `llm-wiki/tickets.md` (GitHub issues are retired; the wiki is the
+/// registry). Each ticket carries an `<a id="tNN">` anchor there, so `#tNN` is stable
+/// even when a title is reworded. Bare numbers in the CSV; `--repo` keeps forks linking
+/// to their own copy.
+fn ticket_link(t: &str, repo: &str) -> String {
+    format!("<a href=\"https://github.com/{repo}/blob/master/llm-wiki/tickets.md#t{t}\">#{t}</a>")
+}
+
 fn tickets_html(tickets: &[String], repo: &str) -> String {
     if tickets.is_empty() {
         return "—".to_string();
     }
-    tickets
-        .iter()
-        .map(|t| format!("<a href=\"https://github.com/{repo}/issues/{t}\">#{t}</a>"))
-        .collect::<Vec<_>>()
-        .join(" ")
+    tickets.iter().map(|t| ticket_link(t, repo)).collect::<Vec<_>>().join(" ")
 }
 
 fn tickets_md(tickets: &[String], repo: &str) -> String {
     if tickets.is_empty() {
         return "—".to_string();
     }
-    tickets
-        .iter()
-        .map(|t| format!("<a href=\"https://github.com/{repo}/issues/{t}\">#{t}</a>"))
-        .collect::<Vec<_>>()
-        .join(" ")
+    tickets.iter().map(|t| ticket_link(t, repo)).collect::<Vec<_>>().join(" ")
 }
 
-/// Markdown counterpart of [`mode_cells_html`]. Markdown has no `colspan`, and (d)
-/// specified the merge for the HTML render only — so the PR comment keeps its
-/// existing 10-column shape and carries the plan status in the first mode cell with
-/// the remaining three dashed. Returns FOUR pipe-separated cells.
+/// Markdown counterpart of [`mode_cells_html`]. The PR comment's table is raw HTML
+/// (GFM pipe tables support neither `colspan` nor font control), so the same shapes
+/// apply: four `<td>` mode cells for an Executable row, one `colspan=4`
+/// plan-status cell otherwise. `<sub>` shrinks text — GitHub strips class/style.
 fn mode_cells_md(r: &Row) -> String {
     match r.kind() {
         RowKind::Executable => format!(
@@ -1227,14 +1219,6 @@ mod tests {
         }
     }
 
-    // `operational_set_honors_comment_convention` is GONE with the function it
-    // tested. Coverage no longer comes from parsing test_gpu.rs for uncommented
-    // macro lines — it comes from testdata/cost-registry.csv, which peacockdb-core's
-    // registry tests check against the suite's link-time inventory in both
-    // directions. That is a strictly stronger guarantee than the comment convention:
-    // the scrape could only ever see one file and could not notice a query whose
-    // test had been deleted outright.
-
     /// The glyph mapping is the whole visual contract of the widget, so pin it.
     /// `skip` must NOT collapse into ✓ or ✗ — it means "ran, result unvalidated",
     /// which is exactly the state a reader must be able to distinguish from a
@@ -1258,8 +1242,8 @@ mod tests {
         assert_eq!(tickets_html(&[], "o/r"), "—");
         assert_eq!(features_html(&[]), "—");
         let t = tickets_html(&["103".to_string()], "asymptote-tech/peacockdb");
-        assert!(t.contains("https://github.com/asymptote-tech/peacockdb/issues/103"), "{t}");
-        assert!(t.contains("#103"), "{t}");
+        assert!(t.contains("llm-wiki/tickets.md#t103"), "{t}");
+        assert!(t.contains(">#103<"), "{t}");
         assert!(features_html(&["stddev_var".to_string()]).contains("stddev_var"));
     }
 

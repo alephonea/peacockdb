@@ -167,6 +167,15 @@ if [ "$BUILD" -eq 1 ]; then
     # busts the FFI/arrow fingerprints, so sharing one target-cudf across versions
     # recompiles the whole DataFusion stack on every switch. See build-test-shadgpu.sh.
     export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$PWD/target-cudf-$(basename "$LOCAL_CUDF_ROOT")}"
+    # Low-memory throttle (same rationale as build-test-shadgpu.sh): a cold opt-3
+    # cudf build OOMs a 15GiB host at full parallelism. Override with CARGO_BUILD_JOBS.
+    if [ -z "${CARGO_BUILD_JOBS:-}" ]; then
+      _mem_gib=$(awk '/MemTotal/{printf "%d", $2/1024/1024}' /proc/meminfo 2>/dev/null || echo 32)
+      if [ "${_mem_gib:-32}" -lt 20 ]; then
+        export CARGO_BUILD_JOBS=3
+        echo "==> low-memory host (${_mem_gib}GiB RAM): throttling CARGO_BUILD_JOBS=3"
+      fi
+    fi
     echo "==> build C++ in $BUILD_DIR against cuDF at $LOCAL_CUDF_ROOT (gcc-$GCC_VERSION)"
     # cuDF env first on PATH so nvcc/cmake/ninja resolve from the rapids env.
     export PATH="$LOCAL_CUDF_ROOT/bin:$PATH"
@@ -176,12 +185,23 @@ if [ "$BUILD" -eq 1 ]; then
     export LDFLAGS="-Wl,-rpath-link,$LOCAL_CUDF_ROOT/lib"
     # Drive cmake directly (build.sh hardcodes cpp/build) so we land in cpp/build26
     # and leave the 25.02 cpp/build untouched.
+    # ccache when available (host compilers only — ccache+nvcc is unreliable).
+    ccache_flags=""
+    if command -v ccache >/dev/null 2>&1; then
+      ccache_flags="-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache"
+      echo "==> ccache found; using it as the C/C++ compiler launcher"
+    fi
     cmake -S cpp -B "$BUILD_DIR" -G Ninja \
+      $ccache_flags \
       -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_CUDA_ARCHITECTURES="$CUDA_ARCHITECTURES" \
       -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
       -DCMAKE_INSTALL_PREFIX="$INSTALL_DIR" \
+      "-DCMAKE_JOB_POOLS=link_pool=1" \
+      -DCMAKE_JOB_POOL_LINK=link_pool \
       -Dcudf_ROOT="$LOCAL_CUDF_ROOT"
+    # link_pool=1 above serializes links (Ninja): at most 1 binary links at a time —
+    # parallel links OOM this host class; compiles still run at full parallelism.
     cmake --build "$BUILD_DIR" --parallel "$(nproc)"
     cmake --install "$BUILD_DIR"
 
@@ -189,9 +209,21 @@ if [ "$BUILD" -eq 1 ]; then
     mkdir -p "$RUST_TESTS_STAGING"
     export CUDF_ROOT="$LOCAL_CUDF_ROOT"
     # The FFI crate builds its own libpeacock_gpu via the cmake crate in cargo's
-    # OUT_DIR, which carries the same stale cudf_DIR risk as the C++ build dir.
-    # Clean it so it reconfigures against the 26.02 root selected above.
-    cargo clean -p peacockdb-ffi
+    # OUT_DIR, which caches the resolved cudf_DIR. Clean ONLY when the cuDF root
+    # actually changed (stamp under CARGO_TARGET_DIR, same scheme as
+    # build-test-shadgpu.sh) — an unconditional clean rebuilds flatbuffers+gtest+
+    # libpeacock_gpu on every --build. PEACOCK_FFI_CLEAN=1 forces it.
+    ffi_root_stamp="$CARGO_TARGET_DIR/.peacock-ffi-cudf-root"
+    if [ "${PEACOCK_FFI_CLEAN:-0}" = "1" ] \
+       || [ ! -f "$ffi_root_stamp" ] \
+       || [ "$(cat "$ffi_root_stamp" 2>/dev/null)" != "$CUDF_ROOT" ]; then
+      echo "--- peacockdb-ffi: cuDF root changed or clean forced; cleaning to reconfigure cmake"
+      cargo clean -p peacockdb-ffi
+      mkdir -p "$CARGO_TARGET_DIR"
+      printf '%s\n' "$CUDF_ROOT" > "$ffi_root_stamp"
+    else
+      echo "--- peacockdb-ffi: cuDF root unchanged ($CUDF_ROOT); skipping clean"
+    fi
   fi
   for spec in "${RUST_TESTS[@]}"; do
     pkg="${spec%%:*}"
@@ -239,9 +271,8 @@ if [ "$RSYNC" -eq 1 ]; then
     # This deliberately does NOT exclude --rust-only. It used to, and that was a
     # trap: --rust-only IS the golden/plan verify mode, so it needs the goldens
     # more than the C++ path does. With the exclusion in place a --rust-only run
-    # verified the new binaries against whatever stale goldens the remote happened
-    # to have — on verda that meant the pre-Executors-refactor device labels
-    # (tp1-mem120gib vs tp1-standard), i.e. 110/110 "canonical file not found".
+    # verified the new binaries against whatever stale goldens the remote happened to
+    # have — a device-label skew alone produced 110/110 "canonical file not found".
     echo "==> rsync goldens testdata/goldens"
     rsync -r --delete testdata/goldens/ "$HOST:$REMOTE_DIR/testdata/goldens/"
   fi

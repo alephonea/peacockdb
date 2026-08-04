@@ -1,5 +1,3 @@
-// Split out of the former src/plan_executor.cpp monolith.
-//
 // GpuScan -- Parquet reads, row-group selection, projection pushdown.
 
 #include "peacock/operators.h"
@@ -16,10 +14,6 @@
 #include <string>
 
 namespace peacock {
-
-// ============================================================================
-// GpuScan — read Parquet files
-// ============================================================================
 
 TableResult execute_scan(
     const fb::GpuScan* scan,
@@ -72,7 +66,7 @@ TableResult execute_scan(
   // Row-group pruning: decode ONLY the surviving groups the serializer computed
   // (same DataFusion PruningPredicate as the CPU path). One inner vector = single
   // source. Empty/absent => read all groups (no predicate / multi-file / #16).
-  // A per-partition override (Inc1 RG→partition map) takes precedence over the
+  // A per-partition override (the RG→partition map) takes precedence over the
   // scan's single-partition `row_groups`; both name the SAME global RG indices, so
   // the GPU decodes exactly the groups the CPU oracle / golden generator read.
   const flatbuffers::Vector<uint32_t>* rg_src =
@@ -88,10 +82,9 @@ TableResult execute_scan(
 
   auto result = cudf::io::read_parquet(opts);
 
-  // Optional diagnostic (PEACOCK_LOG_SCAN_ROWS=1): how many rows the GPU scan
-  // actually decoded + whether row-group pruning was applied. Evidence that a
-  // clustered-predicate scan reads only the surviving groups (e.g. q6 lineitem ->
-  // 983040, not 6001215). Off by default; no effect on results.
+  // Optional diagnostic (PEACOCK_LOG_SCAN_ROWS=1): rows actually decoded and
+  // whether row-group pruning applied — evidence that a clustered-predicate scan
+  // reads only surviving groups (q6 lineitem -> 983040, not 6001215).
   if (std::getenv("PEACOCK_LOG_SCAN_ROWS")) {
     bool pruned = rg_src && rg_src->size() > 0;
     std::fprintf(stderr, "[PEACOCK_SCAN] %s rows=%ld row_groups=%s(%u)\n",
@@ -107,14 +100,11 @@ TableResult execute_scan(
     col_names.push_back(ci.name);
   }
 
-  // Widen narrow decimals to DECIMAL128. The cuDF parquet reader picks the
-  // smallest fixed_point width that fits (decimal32/64 for small precision),
-  // but DataFusion — and therefore our serialized literals and the CPU
-  // ground-truth executor — represent every decimal as Decimal128. cuDF's
-  // binary_operation rejects mixed fixed_point widths ("Unsupported operator
-  // for these types"), so normalize the scan output to a uniform DECIMAL128
-  // representation (scale preserved). This also subsumes the decimal64→128
-  // widening the result-export path does for Arrow IPC.
+  // Widen narrow decimals to DECIMAL128 (scale preserved). The cuDF parquet reader
+  // picks the smallest fixed_point width that fits, but DataFusion — and so our
+  // serialized literals and the CPU oracle — use Decimal128 throughout, and cuDF's
+  // binary_operation rejects mixed fixed_point widths. Subsumes the decimal64→128
+  // widening the Arrow IPC export path also does.
   auto cols = result.tbl->release();
   for (auto& c : cols) {
     auto id = c->type().id();

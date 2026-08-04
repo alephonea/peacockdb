@@ -38,7 +38,7 @@ query_plan_test!(tpch, 1, q19, tp8_mini);
 query_plan_test!(tpch, 1, q20, tp8_mini);
 query_plan_test!(tpch, 1, q21, tp8_mini);
 query_plan_test!(tpch, 1, q22, tp8_mini);
-// R3 (Inc2): the ONLY tp8-standard plan test — the real-partitioning device where
+// The ONLY tp8-standard plan test — the real-partitioning device where
 // the scan carries an RG→batch→partition map AND the Hash repartition is lowered into
 // GpuCoalescePartitions(8→1) + GpuRepartition(1→8). Exercises the full lowered plan's
 // flatbuffer roundtrip (plan_str + bytes) so the map + lowering survive serialize/
@@ -157,7 +157,7 @@ query_plan_test!(tpcds, 1, q99, tp8_mini);
 // q86: DataFusion 45 doesn't physical-plan the GROUPING() aggregate.
 // query_plan_test!(tpcds, 1, q86, tp8_mini);
 
-// ── registry verification (Inc5) ──────────────────────────────────────────
+// ── registry verification ───────────────────────────────────────────────────
 /// This binary owns the `plan` column of testdata/cost-registry.csv. `inventory`
 /// collects per binary, so each suite verifies its own columns; together the four
 /// suites cover all six. See common/registry.rs.

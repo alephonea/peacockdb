@@ -1,5 +1,3 @@
-// Split out of the former src/plan_executor.cpp monolith.
-//
 // Limit (LIMIT / OFFSET) -- slice rows [skip, skip + fetch).
 
 #include "peacock/operators.h"
@@ -13,10 +11,6 @@
 #include <string>
 
 namespace peacock {
-
-// ============================================================================
-// Limit (LIMIT / OFFSET): slice rows [skip, skip + fetch)
-// ============================================================================
 
 TableResult execute_limit(const fb::GpuLimit* limit, NodeInputs* in) {
   auto input = execute_node(limit->input(), in);

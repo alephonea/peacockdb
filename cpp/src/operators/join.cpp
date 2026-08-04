@@ -1,5 +1,3 @@
-// Split out of the former src/plan_executor.cpp monolith.
-//
 // GpuHashJoin / GpuCrossJoin / GpuNestedLoopJoin.
 
 #include "peacock/operators.h"
@@ -21,15 +19,12 @@
 #include <cudf/join/filtered_join.hpp>
 #define PEACOCK_HAVE_FILTERED_JOIN 1
 #endif
-// cuDF 26.02 moved the mixed (equality + AST-conditional) join functions out of
-// the monolithic <cudf/join.hpp> into their own header; older versions declare
-// them in <cudf/join.hpp> (included above). Pull in the split header when present.
+// cuDF 26.02 split the mixed (equality + AST) and conditional (pure-AST) join
+// functions out of the monolithic <cudf/join.hpp> (included above, which is where
+// older versions declare them). Pull in the split headers when present.
 #if __has_include(<cudf/join/mixed_join.hpp>)
 #include <cudf/join/mixed_join.hpp>
 #endif
-// Likewise, 26.02 split the conditional (pure-AST) join functions
-// (conditional_inner_join / conditional_left_join, used by GpuNestedLoopJoin)
-// into their own header; older versions declare them in <cudf/join.hpp>.
 #if __has_include(<cudf/join/conditional_join.hpp>)
 #include <cudf/join/conditional_join.hpp>
 #endif
@@ -79,14 +74,11 @@ TableResult execute_hash_join(const fb::GpuHashJoin* join, NodeInputs* in) {
   bool emit_left = true;  // false → emit right side instead
   std::unique_ptr<rmm::device_uvector<cudf::size_type>> single_indices;
 
-  // A residual filter on a semi/anti join (e.g. EXISTS / NOT EXISTS with a `<>`
-  // correlation, as in TPC-H q21) is NOT optional: the key-only cuDF semi/anti
-  // joins ignore it, which silently changes the result — a LeftAnti on the key
-  // alone excludes every left row whose key trivially exists in the right side,
-  // collapsing the output to zero rows. Route those to the mixed_* variants,
-  // whose AST predicate is evaluated during the join. Build the predicate only
-  // for semi/anti types so inner-join (non-AST) filters aren't forced through
-  // the AST path.
+  // A residual filter on a semi/anti join (EXISTS/NOT EXISTS with a `<>`
+  // correlation, TPC-H q21) is NOT optional: the key-only cuDF semi/anti joins
+  // ignore it, so e.g. a LeftAnti on the key alone collapses to zero rows. Those
+  // must go to the mixed_* variants, which evaluate the AST during the join.
+  // Built only for semi/anti so inner-join filters aren't forced onto the AST path.
   auto jt = join->join_type();
   bool semi_anti_type =
       jt == fb::JoinType_LeftSemi || jt == fb::JoinType_LeftAnti ||
@@ -106,32 +98,20 @@ TableResult execute_hash_join(const fb::GpuHashJoin* join, NodeInputs* in) {
     semi_pred = &build_expr(join->filter(), semi_ctx, join->filter_columns());
   }
 
-  // NULL semantics by join kind (see #59 semi / #80 anti):
-  //  - SEMI (Left/Right) and the EQUI joins use `join_nulls`, mirrored from
-  //    DataFusion's per-join `null_equals_null` (serialized in the plan). The two
-  //    cases genuinely need OPPOSITE NULL behavior and only the source plan can
-  //    tell them apart, so a blanket choice is wrong:
-  //      * IN/EXISTS-derived semi (null_equals_null=false → UNEQUAL): SQL
-  //        `x IN (...)` excludes NULLs (NULL IN (...,NULL) = UNKNOWN). q33 hit
-  //        this — item has one Electronics row with NULL i_manufact_id; under
-  //        cuDF's default EQUAL the semi paired NULL↔NULL → a spurious extra
-  //        group (708 vs DuckDB/DataFusion's correct 707).
-  //      * INTERSECT-derived semi (null_equals_null=true → EQUAL): set semantics
-  //        treat NULLs as equal. q14 (cross-channel INTERSECT on
-  //        brand/class/category) needs NULL=NULL → 3837; UNEQUAL wrongly drops
-  //        the NULL-composite-key rows (3792).
-  //    cuDF honors compare_nulls on both the free `left_{semi}_join` and the
-  //    newer `filtered_join` (selected at compile time by __has_include; this
-  //    build uses the free functions — same compare_nulls contract).
-  //  - ANTI (Left/Right) and the mark join below intentionally STAY at EQUAL and
-  //    are NOT driven by the flag. Anti is the NOT IN/NOT EXISTS
-  //    three-valued-logic trap (`x NOT IN (..., NULL)` is NULL/false for every
-  //    x), which neither EQUAL nor UNEQUAL implements on its own; driving it from
-  //    the flag could regress. Dedicated NOT IN vs NOT EXISTS semantics + a
-  //    demonstrating test + a DuckDB oracle are tracked in issue #80.
+  // NULL semantics by join kind (#59 semi / #80 anti):
+  //  - SEMI and the EQUI joins take `join_nulls` from the plan. The two semi
+  //    flavours need OPPOSITE behaviour and only the source plan distinguishes
+  //    them, so no blanket choice works: IN/EXISTS-derived semi (UNEQUAL) must
+  //    exclude NULLs — q33's NULL i_manufact_id paired NULL↔NULL under cuDF's
+  //    default EQUAL and gave 708 groups instead of 707 — while INTERSECT-derived
+  //    semi (EQUAL) needs NULL=NULL, or q14 drops NULL-composite keys (3792 vs
+  //    3837). Both the free left_semi_join and filtered_join honour compare_nulls.
+  //  - ANTI and the mark join below STAY at EQUAL and are NOT flag-driven. Anti is
+  //    the NOT IN/NOT EXISTS three-valued trap (`x NOT IN (..., NULL)` is never
+  //    true), which neither EQUAL nor UNEQUAL implements; splitting NOT IN from
+  //    NOT EXISTS, with a DuckDB-oracle test, is ticket #80 (llm-wiki/tickets.md).
   //
-  // For Left{Semi,Anti} the right side is the membership/filter; for
-  // Right{Semi,Anti} we swap.
+  // Left{Semi,Anti} treat the right side as the membership set; Right{...} swap.
   switch (jt) {
     case fb::JoinType_LeftSemi: {
       if (semi_pred) {
@@ -237,14 +217,13 @@ TableResult execute_hash_join(const fb::GpuHashJoin* join, NodeInputs* in) {
     return {std::move(t), std::move(names)};
   }
 
-  // LeftMark: one row per left row, plus a trailing boolean "mark" column that
-  // is true iff the left row has >=1 match in the right input (DataFusion's
-  // EXISTS-in-disjunction decorrelation). cuDF has no mark join, so compute the
-  // matched left-row indices with a (mixed) left semi-join and scatter `true`
-  // into an all-false boolean column.
+  // LeftMark: one row per left row plus a trailing boolean "mark" = the left row
+  // has >=1 match on the right (DataFusion's EXISTS-in-disjunction decorrelation).
+  // cuDF has no mark join, so take the matched left indices from a (mixed) left
+  // semi-join and scatter `true` into an all-false column.
   if (jt == fb::JoinType_LeftMark) {
-    // null_equality::EQUAL kept on purpose here too — see the semi/anti note
-    // above (nullable mark-key semantics tracked in issue #59).
+    // EQUAL on purpose — see the semi/anti note above; nullable mark-key
+    // semantics are ticket #59 (llm-wiki/tickets.md).
     std::unique_ptr<rmm::device_uvector<cudf::size_type>> matched;
     if (join->filter()) {
       if (!join->filter_columns())
@@ -297,14 +276,11 @@ TableResult execute_hash_join(const fb::GpuHashJoin* join, NodeInputs* in) {
     return {std::move(t), std::move(names)};
   }
 
-  // SQL equi-joins never match on NULL keys (NULL = NULL is unknown, not true),
-  // but cuDF's join APIs default to null_equality::EQUAL, which pairs NULL keys
-  // together and invents rows the SQL oracle excludes — e.g. TPC-DS q50/q6/q81,
-  // where a spurious NULL=NULL match inflates a downstream count/sum by one.
-  // We drive this from DataFusion's per-join null_equals_null (join_nulls):
-  // its default false → UNEQUAL restores SQL semantics for inner/left/full/right
-  // (the whole passing suite, non-null keys, is unaffected), while a set-semantics
-  // join that asks for NULL=NULL gets EQUAL.
+  // SQL equi-joins never match on NULL keys, but cuDF defaults to
+  // null_equality::EQUAL and so invents rows the SQL oracle excludes (TPC-DS
+  // q50/q6/q81 inflate a downstream count/sum by one). join_nulls carries
+  // DataFusion's null_equals_null: default false → UNEQUAL = SQL semantics, while
+  // a set-semantics join that asks for NULL=NULL still gets EQUAL.
   auto kJoinNulls = join_nulls;
 
   // Execute join — returns index pairs.
@@ -330,12 +306,9 @@ TableResult execute_hash_join(const fb::GpuHashJoin* join, NodeInputs* in) {
     }
   }();
 
-  // Gather rows from both sides.
-  //
-  // For LEFT/FULL outer joins, cuDF signals unmatched rows with
-  // JoinNoneValue (INT32_MIN) in the corresponding index vector — gathering
-  // those with the default DONT_CHECK policy reads out of bounds and faults
-  // with cudaErrorIllegalAddress. NULLIFY converts sentinel indices to nulls.
+  // For LEFT/FULL outer joins cuDF marks unmatched rows with JoinNoneValue
+  // (INT32_MIN); gathering those under the default DONT_CHECK reads out of bounds
+  // and faults with cudaErrorIllegalAddress. NULLIFY turns sentinels into nulls.
   using cudf::out_of_bounds_policy;
   auto kind = join->join_type();
   auto right_policy = (kind == fb::JoinType_Left || kind == fb::JoinType_Full)
@@ -372,13 +345,11 @@ TableResult execute_hash_join(const fb::GpuHashJoin* join, NodeInputs* in) {
 
   auto full_table = std::make_unique<cudf::table>(std::move(all_cols));
 
-  // Residual (non-equi) join filter: DataFusion attaches a predicate the
-  // equijoin can't express (e.g. q17's `l_quantity < 0.2 * avg`). It's
-  // serialized verbatim, with its ColumnRefs indexing the filter's intermediate
-  // schema; `filter_columns` maps intermediate column i to the (side, index) in
-  // the join inputs. Build that intermediate view over the gathered
-  // [left_cols..., right_cols...] table, evaluate the filter, and drop failing
-  // rows before applying the output projection.
+  // Residual (non-equi) join filter, e.g. q17's `l_quantity < 0.2 * avg`. Its
+  // ColumnRefs index the filter's own intermediate schema; `filter_columns` maps
+  // intermediate column i to a (side, index) in the join inputs. Build that view
+  // over the gathered [left..., right...] table and drop failing rows BEFORE the
+  // output projection.
   if (join->filter()) {
     auto left_width = static_cast<cudf::size_type>(left.table->num_columns());
     std::vector<cudf::column_view> inter_cols;
@@ -448,13 +419,11 @@ TableResult execute_nested_loop_join(const fb::GpuNestedLoopJoin* join, NodeInpu
 
   std::unique_ptr<cudf::table> full_table;
   if (!join->filter()) {
-    // Unconditional NestedLoopJoin = cartesian product: every left row pairs
-    // with every right row. For a LEFT join this equals the cross product only
-    // when the right side is non-empty — an empty right would have to emit each
-    // left row once with null right columns, but cross_join yields zero rows.
-    // The only source of an unconditional LEFT NLJ is a decorrelated scalar
-    // subquery whose (group-by-less) aggregate always returns exactly one row,
-    // so we assert that invariant rather than special-casing empty-right.
+    // Unconditional NLJ = cartesian product. For a LEFT join that is only correct
+    // when the right side is non-empty: an empty right must emit each left row
+    // with null right columns, but cross_join yields zero rows. The only source
+    // of an unconditional LEFT NLJ is a decorrelated scalar subquery whose
+    // group-by-less aggregate always returns one row, so assert that invariant.
     if (jt == fb::JoinType_Left && rtv.num_rows() == 0)
       throw std::runtime_error(
           "unconditional LEFT NestedLoopJoin with an empty right side is "
@@ -480,12 +449,11 @@ TableResult execute_nested_loop_join(const fb::GpuNestedLoopJoin* join, NodeInpu
                    }
                    return cudf::table_view{cols};
                  }())) {
-    // Filter isn't expressible in the cuDF AST (e.g. a CAST to Decimal128, as in
-    // TPC-H q11/q22) so conditional_*_join can't evaluate it. Fall back to the
-    // column path: materialise the full cross product, evaluate the predicate as
-    // a boolean column, and apply it as a mask. Only Inner is handled — a LEFT
-    // join would additionally have to re-emit unmatched left rows with null
-    // right columns, which the mask can't express.
+    // Filter isn't AST-expressible (e.g. a CAST to Decimal128, TPC-H q11/q22), so
+    // conditional_*_join can't evaluate it: materialise the full cross product and
+    // apply the predicate as a boolean mask. Inner only — a LEFT join would also
+    // have to re-emit unmatched left rows with null right columns, which a mask
+    // cannot express.
     if (jt != fb::JoinType_Inner)
       throw std::runtime_error(
           "non-AST-able NestedLoopJoin filter is only supported for Inner joins");

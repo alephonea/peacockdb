@@ -23,7 +23,7 @@ use datafusion::datasource::physical_plan::ParquetExec;
 // GpuScanExec — wraps ParquetExec to override batch_size at execution time
 // ---------------------------------------------------------------------------
 
-/// One entry of the scan's explicit row-group→batch→partition MAP (Phase 2 Inc1):
+/// One entry of the scan's explicit row-group→batch→partition MAP:
 /// a group of WHOLE row groups read as one batch, landing in output `partition`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ScanBatchMap {
@@ -31,7 +31,7 @@ pub struct ScanBatchMap {
     pub partition: u32,
 }
 
-/// Build the RG→batch→partition map (Phase 2 Inc1): split the row groups to read
+/// Build the RG→batch→partition map: split the row groups to read
 /// (`rgs`) into `n_parts` CONTIGUOUS chunks, one batch each, chunk p → partition p.
 /// Deterministic + reader-independent (explicit RG indices). At a large budget each
 /// partition is one batch (>per-partition-budget multi-batch splitting is deferred).
@@ -68,7 +68,7 @@ pub struct GpuScanExec {
     /// ParquetExec has no predicate to recompute from). None for a fresh plan, where
     /// the serializer computes survivors from the ParquetExec pushdown predicate.
     row_groups: Option<Vec<u32>>,
-    /// Explicit RG→batch→partition MAP (Phase 2 Inc1). EMPTY = legacy
+    /// Explicit RG→batch→partition MAP. EMPTY = legacy
     /// single-partition read (tp1, byte-unchanged). When set, the scan emits one
     /// batch per entry into its `partition` — both the CPU golden generator and
     /// the GPU replay this identical map. Set on a deserialized plan (carried
@@ -223,7 +223,7 @@ impl ExecutionPlan for GpuScanExec {
 
 
 // ---------------------------------------------------------------------------
-// FlatBuffer wire format (Inc3: moved verbatim from plan_serializer.rs)
+// FlatBuffer wire format
 //
 // STATEMENT ORDER IS THE WIRE FORMAT. FlatBufferBuilder is a no-interning bump
 // arena, so every builder call appends and returns an offset — reordering the
@@ -260,7 +260,7 @@ pub(crate) fn serialize_gpu_scan<'a>(
     // by the time we get here.
     // File-path emission is gated on whether this scan carries the explicit
     // RG→batch→partition map — `batches_map()` is the single source of truth (the
-    // budget gate in GpuMemoryBudgetRule decides map presence; map presence alone
+    // real-partitioning gate in GpuMemoryBudgetRule decides map presence; map presence alone
     // decides dedup here — no second, divergent notion of "partitioned").
     //
     // MAP PRESENT (real-partitioning device, e.g. tp8-standard): the peacock model
@@ -272,8 +272,7 @@ pub(crate) fn serialize_gpu_scan<'a>(
     // first-seen order; genuine multi-file scans keep all distinct paths.
     //
     // NO MAP (tp1, or the tight tp8-mini determinism device): emit EVERY
-    // PartitionedFile verbatim — byte-identical to the legacy (pre-Inc1)
-    // serialization — so the deserialized scan reconstructs the SAME file_group
+    // PartitionedFile verbatim — byte-identical to the legacy serialization — so the deserialized scan reconstructs the SAME file_group
     // count and the flatbuffer roundtrip's GpuRepartitionExec.input_partitions
     // stays stable (no 8↔1 flip).
     let dedup = !scan.batches_map().is_empty();
@@ -312,7 +311,7 @@ pub(crate) fn serialize_gpu_scan<'a>(
         .filter(|v| !v.is_empty())
         .map(|v| b.create_vector(&v));
 
-    // Explicit RG→batch→partition map (Phase 2 Inc1). Empty = legacy
+    // Explicit RG→batch→partition map. Empty = legacy
     // single-partition read (tp1, byte-unchanged: None adds no bytes).
     let batches = if scan.batches_map().is_empty() {
         None
@@ -410,7 +409,7 @@ pub(crate) fn deserialize_gpu_scan(
         .map(|v| (0..v.len()).map(|i| v.get(i)).collect::<Vec<u32>>())
         .filter(|v| !v.is_empty());
 
-    // Carry the explicit RG→batch→partition map verbatim (Phase 2 Inc1).
+    // Carry the explicit RG→batch→partition map verbatim.
     let batches: Vec<crate::gpu_rule::ScanBatchMap> = scan
         .batches()
         .map(|v| {

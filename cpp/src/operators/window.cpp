@@ -1,5 +1,3 @@
-// Split out of the former src/plan_executor.cpp monolith.
-//
 // GpuWindow -- window functions (append one column per window expr).
 
 #include "peacock/operators.h"
@@ -17,10 +15,6 @@
 #include <string>
 
 namespace peacock {
-
-// ============================================================================
-// GpuWindow — window functions (append one column per window expr)
-// ============================================================================
 
 static std::unique_ptr<cudf::rolling_aggregation> make_rolling_agg(
     const std::string& func_name, cudf::null_policy count_nulls) {

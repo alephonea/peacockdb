@@ -36,7 +36,7 @@ impl GpuExtraDisplay for GpuWindowExec {
 }
 
 // ---------------------------------------------------------------------------
-// FlatBuffer wire format (Inc3: moved verbatim from plan_serializer.rs)
+// FlatBuffer wire format
 //
 // STATEMENT ORDER IS THE WIRE FORMAT. FlatBufferBuilder is a no-interning bump
 // arena, so every builder call appends and returns an offset — reordering the
@@ -323,7 +323,7 @@ pub(crate) fn deserialize_gpu_window(win: &fb::GpuWindow) -> Result<Arc<dyn Exec
 }
 // --- Operator: partition topology + strip behavior ------------------------
 
-/// NOT stripped, same reason.
+/// NOT stripped, same reason as `GpuCrossJoinExec` in `join.rs`.
 impl Operator for GpuWindowExec {
     fn inner(&self) -> &Arc<dyn ExecutionPlan> {
         &self.inner

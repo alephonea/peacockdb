@@ -20,7 +20,7 @@ use super::operator::{Operator, PartitionTopology};
 gpu_exec_node!(GpuCoalesceBatchesExec);
 // target_batch_size is deliberately NOT displayed: it is budget-derived
 // (budget / subtree_max_row_bytes) and vestigial for observable output — see the
-// note on `GpuScanExec`'s display below.
+// note on `GpuScanExec`'s display in `scan.rs`.
 impl GpuExtraDisplay for GpuCoalesceBatchesExec {}
 
 gpu_exec_node!(GpuCoalescePartitionsExec);
@@ -28,7 +28,7 @@ impl GpuExtraDisplay for GpuCoalescePartitionsExec {}
 
 
 // ---------------------------------------------------------------------------
-// FlatBuffer wire format (Inc3: moved verbatim from plan_serializer.rs)
+// FlatBuffer wire format
 //
 // STATEMENT ORDER IS THE WIRE FORMAT. FlatBufferBuilder is a no-interning bump
 // arena, so every builder call appends and returns an offset — reordering the

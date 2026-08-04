@@ -1,4 +1,4 @@
-//! Part 2: strict resident "GPU"-memory control.
+//! Strict resident "GPU"-memory control.
 //!
 //! Simulates a fixed GPU memory budget. Streaming operators (filter, project,
 //! coalesce, repartition, sort-preserving merge, bounded window) process
@@ -14,7 +14,7 @@
 //! If a breaker's resident requirement exceeds the budget the query would OOM on
 //! the GPU regardless of batch size (a 10 GiB sort can't fit a 2 GiB budget). The
 //! resident size uses the SAME per-node logical basis as the `output_bytes`
-//! metric (deterministic, schema+rows derived — see `cpu_executor::ColAccum`),
+//! metric (deterministic, schema+rows derived — see `memory::ColAccum`),
 //! NOT `allocated_bytes`/`get_array_memory_size`, which is allocation-padded and
 //! non-deterministic.
 //!
@@ -39,7 +39,7 @@ use crate::cpu_executor::NodeMemoryStats;
 /// A plan node paired with its post-order execution stats and children, mirroring
 /// the (plan, stats) lockstep used by the cpu cost-tree formatter.
 ///
-/// `pub(crate)` so the in-engine enforcer (`cpu_executor`) builds the SAME node
+/// `pub(crate)` so the in-engine enforcer (`executors::stream`) builds the SAME node
 /// tree and calls the SAME [`ResidentNode::peak`] — the offline reference path
 /// ([`peak_resident`]) and the mid-run enforcement must never drift.
 pub(crate) struct ResidentNode {
@@ -74,7 +74,7 @@ impl ResidentNode {
                 child_peak(0).max(build_bytes + child_peak(1))
             }
             // CoalescePartitionsExec at tp>1 CONCATENATES all input partitions into
-            // one resident table (Inc1 C1a) — a buffering breaker, not streaming. Like
+            // one resident table — a buffering breaker, not streaming. Like
             // Sort/Aggregate it's sequential with its descendants (the inputs are done
             // and released as the concat completes), so `max(child.peak(),
             // output_bytes)`. At single-partition (tp1) its output flows through ≤ the

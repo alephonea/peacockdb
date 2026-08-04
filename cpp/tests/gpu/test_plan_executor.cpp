@@ -20,10 +20,6 @@
 
 namespace fb = peacock::plan;
 
-// ---------------------------------------------------------------------------
-// Paths
-// ---------------------------------------------------------------------------
-
 static std::string testdata_dir() {
   const char* env = std::getenv("PEACOCK_TESTDATA_DIR");
   if (env) return std::string(env);
@@ -33,10 +29,6 @@ static std::string testdata_dir() {
 static std::string parquet_path(const std::string& table) {
   return testdata_dir() + "/tpch.minimal/" + table + ".parquet";
 }
-
-// ---------------------------------------------------------------------------
-// FlatBuffer expression helpers
-// ---------------------------------------------------------------------------
 
 /// Build an Expr wrapping a ColumnRef.
 static flatbuffers::Offset<fb::Expr> make_col_ref(
@@ -84,10 +76,6 @@ static flatbuffers::Offset<fb::Expr> make_cast_expr(
   return fb::CreateExpr(fbb, fb::ExprNode_CastExprNode, cast.Union());
 }
 
-// ---------------------------------------------------------------------------
-// FlatBuffer plan node helpers
-// ---------------------------------------------------------------------------
-
 /// Wrap a plan node kind into a PlanNode table.
 static flatbuffers::Offset<fb::PlanNode> make_plan_node(
     flatbuffers::FlatBufferBuilder& fbb, fb::PlanNodeKind kind,
@@ -118,10 +106,6 @@ static std::vector<uint8_t> finish_plan(
   return {ptr, ptr + fbb.GetSize()};
 }
 
-// ---------------------------------------------------------------------------
-// Test helpers
-// ---------------------------------------------------------------------------
-
 template <typename T>
 static T get_scalar_value(const cudf::column_view& col, cudf::size_type row);
 
@@ -146,13 +130,10 @@ int64_t get_scalar_value<int64_t>(const cudf::column_view& col,
 static std::string get_string_value(const cudf::column_view& col,
                                     cudf::size_type row) {
   cudf::strings_column_view scv{col};
-  // Copy offsets and chars to host.
   auto offsets = scv.offsets();
   auto chars_size = scv.chars_size(cudf::get_default_stream());
 
-  // For large string columns, offsets are int64; for small they're int32.
-  // Use cudf element access via a gather of single row.
-  // Simpler: use cudf::strings::detail or just copy all data.
+  // Large string columns carry int64 offsets, small ones int32.
   if (offsets.type().id() == cudf::type_id::INT64) {
     std::vector<int64_t> host_offsets(offsets.size());
     cudaMemcpy(host_offsets.data(), offsets.data<int64_t>(),
@@ -175,10 +156,6 @@ static std::string get_string_value(const cudf::column_view& col,
     return {host_chars.data() + start, host_chars.data() + end};
   }
 }
-
-// =========================================================================
-// Test: GpuScan — read nation.parquet
-// =========================================================================
 
 TEST(PlanExecutor, ScanNation) {
   flatbuffers::FlatBufferBuilder fbb;
@@ -210,10 +187,6 @@ TEST(PlanExecutor, ScanNation) {
   EXPECT_EQ(result.column_names[3], "n_comment");
 }
 
-// =========================================================================
-// Test: GpuScan with column projection
-// =========================================================================
-
 TEST(PlanExecutor, ScanNationProjected) {
   flatbuffers::FlatBufferBuilder fbb;
 
@@ -244,14 +217,9 @@ TEST(PlanExecutor, ScanNationProjected) {
   EXPECT_EQ(result.column_names[1], "n_regionkey");
 }
 
-// =========================================================================
-// Test: GpuFilter — n_regionkey > 2
-// =========================================================================
-
 TEST(PlanExecutor, FilterNation) {
   flatbuffers::FlatBufferBuilder fbb;
 
-  // Build scan node for nation.
   auto path = fbb.CreateString(parquet_path("nation"));
   auto paths = fbb.CreateVector(
       std::vector<flatbuffers::Offset<flatbuffers::String>>{path});
@@ -264,10 +232,8 @@ TEST(PlanExecutor, FilterNation) {
   auto scan = fb::CreateGpuScan(fbb, paths, schema);
   auto scan_node = make_plan_node(fbb, fb::PlanNodeKind_GpuScan, scan.Union());
 
-  // Filter: n_regionkey (col 2) > 2
-  // Need to cast the Int32 column to Int64 to match the Int64 literal,
-  // or use an Int32 literal. cuDF AST can compare Int32 col with Int64 literal
-  // via implicit promotion. Let's use a cast to be safe.
+  // Filter: n_regionkey (col 2) > 2. Cast the Int32 column to Int64 so it matches
+  // the Int64 literal rather than relying on cuDF AST implicit promotion.
   auto col2 = make_col_ref(fbb, 2, "n_regionkey");
   auto cast_col2 = make_cast_expr(fbb, col2, fb::DataType_Int64);
   auto lit2 = make_int64_literal(fbb, 2);
@@ -285,10 +251,6 @@ TEST(PlanExecutor, FilterNation) {
   EXPECT_GT(result.table->num_rows(), 0);
   EXPECT_LT(result.table->num_rows(), 25);
 }
-
-// =========================================================================
-// Test: GpuHashJoin — nation JOIN region ON n_regionkey = r_regionkey
-// =========================================================================
 
 TEST(PlanExecutor, HashJoinNationRegion) {
   flatbuffers::FlatBufferBuilder fbb;
@@ -340,10 +302,6 @@ TEST(PlanExecutor, HashJoinNationRegion) {
   ASSERT_EQ(result.table->num_columns(), 7);
   EXPECT_EQ(result.table->num_rows(), 25);
 }
-
-// =========================================================================
-// Test: GpuHashJoin with output projection
-// =========================================================================
 
 TEST(PlanExecutor, HashJoinWithProjection) {
   flatbuffers::FlatBufferBuilder fbb;
@@ -404,10 +362,6 @@ TEST(PlanExecutor, HashJoinWithProjection) {
   EXPECT_EQ(result.column_names[2], "r_name");
 }
 
-// =========================================================================
-// Test: GpuSort — sort nation by n_name ASC
-// =========================================================================
-
 TEST(PlanExecutor, SortNationByName) {
   flatbuffers::FlatBufferBuilder fbb;
 
@@ -445,16 +399,12 @@ TEST(PlanExecutor, SortNationByName) {
   EXPECT_EQ(result.table->num_rows(), 25);
   EXPECT_EQ(result.column_names[0], "n_name");
 
-  // Verify sort order: first should be ALGERIA, last VIETNAM.
+  // Sort order: ALGERIA first, VIETNAM last.
   auto first = get_string_value(result.table->view().column(0), 0);
   auto last = get_string_value(result.table->view().column(0), 24);
   EXPECT_EQ(first, "ALGERIA");
   EXPECT_EQ(last, "VIETNAM");
 }
-
-// =========================================================================
-// Test: GpuSort with LIMIT (fetch)
-// =========================================================================
 
 TEST(PlanExecutor, SortWithFetch) {
   flatbuffers::FlatBufferBuilder fbb;
@@ -491,10 +441,6 @@ TEST(PlanExecutor, SortWithFetch) {
   EXPECT_EQ(result.table->num_rows(), 5);
 }
 
-// =========================================================================
-// Test: GpuAggregate — count(*) from region (single-mode)
-// =========================================================================
-
 TEST(PlanExecutor, AggregateCount) {
   flatbuffers::FlatBufferBuilder fbb;
 
@@ -527,7 +473,6 @@ TEST(PlanExecutor, AggregateCount) {
 
   auto result = peacock::execute_plan(buf.data(), buf.size());
 
-  // Should produce 1 row with count(*) = 5.
   ASSERT_EQ(result.table->num_columns(), 1);
   ASSERT_EQ(result.table->num_rows(), 1);
   EXPECT_EQ(result.column_names[0], "count(*)");
@@ -535,10 +480,6 @@ TEST(PlanExecutor, AggregateCount) {
   auto count = get_scalar_value<int64_t>(result.table->view().column(0), 0);
   EXPECT_EQ(count, 5);
 }
-
-// =========================================================================
-// Test: GpuAggregate with group-by — count nations per region
-// =========================================================================
 
 TEST(PlanExecutor, AggregateGroupBy) {
   flatbuffers::FlatBufferBuilder fbb;
@@ -615,17 +556,12 @@ TEST(PlanExecutor, AggregateGroupBy) {
   EXPECT_EQ(result.column_names[0], "r_name");
   EXPECT_EQ(result.column_names[1], "nation_count");
 
-  // Each region should have count = 5.
   for (cudf::size_type i = 0; i < 5; ++i) {
     auto count =
         get_scalar_value<int64_t>(result.table->view().column(1), i);
     EXPECT_EQ(count, 5);
   }
 }
-
-// =========================================================================
-// Test: GpuProject — rename columns
-// =========================================================================
 
 TEST(PlanExecutor, ProjectRename) {
   flatbuffers::FlatBufferBuilder fbb;
@@ -665,10 +601,6 @@ TEST(PlanExecutor, ProjectRename) {
   EXPECT_EQ(result.column_names[1], "key");
 }
 
-// =========================================================================
-// Test: Pass-through nodes (CoalesceBatches, CoalescePartitions)
-// =========================================================================
-
 TEST(PlanExecutor, PassthroughNodes) {
   flatbuffers::FlatBufferBuilder fbb;
 
@@ -684,7 +616,6 @@ TEST(PlanExecutor, PassthroughNodes) {
   auto scan_node =
       make_plan_node(fbb, fb::PlanNodeKind_GpuScan, scan.Union());
 
-  // Wrap in CoalesceBatches → CoalescePartitions.
   auto cb = fb::CreateGpuCoalesceBatches(fbb, /*target_batch_size=*/8192,
                                           scan_node);
   auto cb_node = make_plan_node(
@@ -700,10 +631,6 @@ TEST(PlanExecutor, PassthroughNodes) {
   ASSERT_EQ(result.table->num_columns(), 3);
   EXPECT_EQ(result.table->num_rows(), 5);
 }
-
-// =========================================================================
-// Test: End-to-end join → project → sort (like join_sort test plan)
-// =========================================================================
 
 TEST(PlanExecutor, JoinProjectSort) {
   flatbuffers::FlatBufferBuilder fbb;
@@ -751,13 +678,11 @@ TEST(PlanExecutor, JoinProjectSort) {
   auto join_node =
       make_plan_node(fbb, fb::PlanNodeKind_GpuHashJoin, join.Union());
 
-  // CoalesceBatches
   auto cb = fb::CreateGpuCoalesceBatches(fbb, /*target_batch_size=*/65536,
                                           join_node);
   auto cb_node = make_plan_node(
       fbb, fb::PlanNodeKind_GpuCoalesceBatches, cb.Union());
 
-  // Project: pass-through columns with aliases n_name, r_name.
   auto pe1 = make_col_ref(fbb, 0);
   auto pe2 = make_col_ref(fbb, 1);
   auto proj_exprs = fbb.CreateVector(
@@ -796,8 +721,6 @@ TEST(PlanExecutor, JoinProjectSort) {
   auto first_region = get_string_value(result.table->view().column(1), 0);
   EXPECT_EQ(first_region, "AFRICA");
 }
-
-// =========================================================================
 
 int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);

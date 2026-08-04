@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Phase 3: publish the large datasets to S3 (Nebius). LOCAL-ONLY to the generation host
+# Publish the large datasets to S3 (Nebius). LOCAL-ONLY to the generation host
 # (the datasets live there; nothing else has the disk). Idempotent + resumable.
 #
 # CONTRACT (the thing Tier B / scripts/check_s3_datasets.py depends on):

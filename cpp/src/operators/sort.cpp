@@ -1,5 +1,3 @@
-// Split out of the former src/plan_executor.cpp monolith.
-//
 // GpuSort -- sort by expressions.
 
 #include "peacock/operators.h"
@@ -15,10 +13,6 @@
 #include <string>
 
 namespace peacock {
-
-// ============================================================================
-// GpuSort — sort by expressions
-// ============================================================================
 
 TableResult execute_sort(const fb::GpuSort* sort, NodeInputs* in) {
   auto input = execute_node(sort->input(), in);

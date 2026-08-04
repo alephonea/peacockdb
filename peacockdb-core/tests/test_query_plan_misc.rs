@@ -15,7 +15,7 @@ use common::{
     testdata_minimal_dir, BATCH_STRESS_BUDGET, TEST_TARGET_PARTITIONS,
 };
 
-// ── Inc5: mergeable_agg_state flag serialization ─────────────────────────
+// ── mergeable_agg_state flag serialization ───────────────────────────────
 /// The `mergeable_agg_state` flag on `GpuAggregate` must be driven by the
 /// serializer's [`PartitionMode`] (set iff RealMultiPartition). shuffle-stddev is
 /// a grouped aggregate, so serializing the SAME lowered plan at RealMultiPartition

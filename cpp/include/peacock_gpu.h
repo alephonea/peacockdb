@@ -34,7 +34,7 @@ int peacock_executor_create(uint64_t gpu_memory_limit,
 void peacock_executor_destroy(peacock_executor_t* executor);
 
 // ---------------------------------------------------------------------------
-// Query execution  (placeholder — full interface defined in Phase 2)
+// Query execution
 // ---------------------------------------------------------------------------
 
 /// Execute a serialised physical plan.
@@ -71,9 +71,9 @@ const char* peacock_last_error(peacock_executor_t* executor);
 // Node-by-node execution (unified CPU/GPU node-executor interface)
 //
 // The Rust orchestrator drives ONE plan node at a time: load the plan once, then
-// for each node (canonical post-order) call peacock_executor_execute_node with the
-// child output handles. Intermediates stay GPU-resident behind handles; Arrow IPC
-// crosses the boundary only once, at peacock_result_from_handle (root).
+// call peacock_executor_execute_node per node (canonical post-order) with the child
+// output handles. Intermediates stay GPU-resident behind handles; Arrow IPC crosses
+// the boundary only once, at peacock_result_from_handle (root).
 // ---------------------------------------------------------------------------
 
 /// Actual per-node costs. Rust applies the shared ColAccum overhead (validity +
@@ -92,18 +92,17 @@ int peacock_executor_begin_plan(peacock_executor_t* executor,
                                 const uint8_t* plan_bytes, uint64_t plan_len,
                                 uint64_t* out_node_count);
 
-/// Execute the node at post-order `seq` with already-resident child output
-/// handles (in child order). Stores the output as a new resident handle.
-/// @param out_handle  Set to the new output handle.
-/// @param out_stats   Filled with the node's actual rows + var-len content bytes.
+/// Execute the node at post-order `seq` with already-resident child output handles,
+/// storing each output partition as a new resident handle.
+///
+/// Each child contributes a VECTOR of partition handles: `input_handles` is the
+/// flattened concatenation grouped by child, `input_child_counts[c]` is child c's
+/// partition count, `n_children` the number of children. Output handles go to
+/// `out_handles[0..*out_count]` (caller buffer of `out_cap`; the partition count is
+/// bounded by target_partitions). `out_stats[0..*out_count]` is a caller array
+/// filled PER PARTITION (parallel to out_handles) so Rust sums the ColAccum
+/// overhead per partition: cost = Σ_p ColAccum(rows_p), NOT ColAccum(Σ rows).
 /// @return 0 on success, non-zero on failure.
-/// Multi-handle (Phase 2): each child contributes a vector of partition handles.
-/// `input_handles` = flattened handles grouped by child; `input_child_counts[c]` =
-/// child c's partition count; `n_children` = number of children. Output partition
-/// handles are written to `out_handles[0..*out_count]` (caller buffer of `out_cap`;
-/// partition count is bounded by target_partitions). `out_stats[0..*out_count]` is a
-/// caller array filled PER PARTITION (parallel to out_handles), so Rust sums the
-/// ColAccum overhead per partition (cost = Σ_p ColAccum(rows_p), not ColAccum(Σ rows)).
 int peacock_executor_execute_node(peacock_executor_t* executor,
                                   uint64_t seq,
                                   const uint64_t* input_handles,
@@ -127,12 +126,12 @@ void peacock_handle_release(peacock_executor_t* executor, uint64_t handle);
 void peacock_executor_end_plan(peacock_executor_t* executor);
 
 // ---------------------------------------------------------------------------
-// Inc2 conformance hook (stateless; no executor needed). Computes the GPU
+// Conformance hook (stateless; no executor needed). Computes the GPU
 // Spark-murmur3 partition ids for `key_cols` of the Arrow table described by the
-// C-Data Interface (`schema`, `array` are `ArrowSchema*`/`ArrowArray*`, a struct
-// array = the table). Lets the live conformance test assert the REAL GPU path
-// (peacock::partitioning::spark_partition_ids) == the REAL comet CPU helper over
-// the SAME bytes. Writes up to `out_cap` ids into `out_pids`, sets `*out_n`.
+// C-Data Interface (`schema`/`array` are `ArrowSchema*`/`ArrowArray*`; a struct
+// array = the table), so the live conformance test can assert the REAL GPU path
+// == the REAL comet CPU helper over the SAME bytes. Writes up to `out_cap` ids
+// into `out_pids` and sets `*out_n`.
 /// @return 0 on success; non-zero on failure (message via peacock_last_error(NULL)).
 int peacock_spark_partition_ids(const void* schema, const void* array,
                                 const uint32_t* key_cols, uint64_t num_keys,

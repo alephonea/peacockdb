@@ -1,6 +1,6 @@
 //! CPU backend for the node-by-node driver: the DataFusion oracle.
 //!
-//! Handles are `Vec<RecordBatch>` in a local registry; stats come from the Part-1
+//! Handles are `Vec<RecordBatch>` in a local registry; stats come from
 //! `ColAccum` over the actual batches. Also owns the N-partition machinery (scan
 //! partitioning, Spark-murmur3 hash repartition, partitioned join arity) — those
 //! are backend internals, not mode configuration, so they live here rather than in
@@ -86,8 +86,7 @@ fn collapses_partitions(node: &Arc<dyn ExecutionPlan>) -> bool {
 /// DataFusion's Partitioned `output_partitioning` (verified: all q17 joins at tp8 are
 /// Partitioned 8→8) and the GPU C++ MAP arm. DataFusion's Partitioned join REQUIRES
 /// both inputs Hash-partitioned on the join keys, realized here by the lowered
-/// `GpuRepartition` feeding each side with the SAME comet-murmur3 hash (the Inc2
-/// kernel) — so matching keys (incl. nulls, per the join's own `null_equals_null`)
+/// `GpuRepartition` feeding each side with the SAME comet-murmur3 hash — so matching keys (incl. nulls, per the join's own `null_equals_null`)
 /// co-locate in bucket p ⇒ the per-partition inner join is complete and ∪ₚ = the full
 /// join. Returns None for `CollectLeft` (a tracked latent gap — none in the current
 /// flip set), non-joins, unequal-N, or N≤1: all fall through to the collapsed
@@ -200,7 +199,7 @@ async fn cpu_scan_partitions(
     Ok((out_parts, stat))
 }
 
-/// CPU Spark-murmur3 hash-repartition (Inc2): concat the (already coalesced) input
+/// CPU Spark-murmur3 hash-repartition: concat the (already coalesced) input
 /// into one table, assign each row to `pmod(spark_murmur3(keys, seed=42), n)` via the
 /// comet helper — EXACTLY the GPU `peacock::partitioning::spark_hash_partition`
 /// kernel (the live conformance gate proves bit-equality) — and scatter rows into
@@ -304,7 +303,7 @@ impl NodeExecutor for CpuNodeExecutor {
         node: &Arc<dyn ExecutionPlan>,
         input_handles: &[Vec<u64>],
     ) -> DfResult<(Vec<u64>, NodeMemoryStats)> {
-        // (iii) SCAN with an explicit RG→batch→partition map → N partition handles.
+        // SCAN with an explicit RG→batch→partition map → N partition handles.
         if let Some(scan) = node.as_any().downcast_ref::<GpuScanExec>() {
             if !scan.batches_map().is_empty() {
                 let (parts, stat) = cpu_scan_partitions(scan, self.task_ctx.clone()).await?;
@@ -319,7 +318,7 @@ impl NodeExecutor for CpuNodeExecutor {
             .map(|child| child.iter().map(|h| self.registry.remove(h).unwrap_or_default()).collect())
             .collect();
 
-        // (Inc2) HASH REPARTITION → N partitions via Spark-murmur3 (comet), matching
+        // HASH REPARTITION → N partitions via Spark-murmur3 (comet), matching
         // the GPU kernel. The lowering feeds it ONE input partition (a preceding
         // GpuCoalescePartitions concats M→1); we concat whatever we get and scatter.
         // Intercepted BEFORE the generic single-child map, which would otherwise run

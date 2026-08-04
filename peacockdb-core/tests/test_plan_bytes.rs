@@ -1,6 +1,6 @@
 //! Wire-format guard: the EXACT bytes `serialize_plan_mode` emits, per query.
 //!
-//! Why this exists (Inc3). Nothing else in the suite pins the serialized layout:
+//! Why this exists. Nothing else in the suite pins the serialized layout:
 //!   - `.plan.txt` goldens are rendered TEXT. FlatBuffer field write-order changes
 //!     none of it, so a completely different binary layout leaves them identical.
 //!   - The round-trip oracle asserts `reserialize(deserialize(bytes)) == bytes`
@@ -26,8 +26,6 @@ use std::collections::BTreeMap;
 use sha2::{Digest, Sha256};
 
 use peacockdb_core::plan_serializer::serialize_plan_mode;
-
-/// `<dataset>.sf<sf>/<query>.<device>` -> sha256 of the serialized plan bytes.
 
 /// A FIXED-LENGTH path that stands in for the testdata root when building plans.
 ///
@@ -63,6 +61,7 @@ fn canonical_data_dir(dataset: &str, sf: &str) -> std::path::PathBuf {
     canonical_root().join(format!("{dataset}.sf{sf}"))
 }
 
+/// Digest golden: `<dataset>.sf<sf>/<query>.<device>` -> sha256 + byte length.
 fn digest_path() -> std::path::PathBuf {
     common::testdata_root().join("goldens/plan_bytes.sha256")
 }
@@ -107,8 +106,7 @@ fn corpus() -> Vec<(String, String, String, String)> {
 /// dataset — it is NOT a pure-text check over committed artifacts. Without this
 /// guard a parquet-less tier surfaces the problem as a deep `NotFound` inside
 /// `create_context_with_tables_mode`, which reads as "the wire-format guard is
-/// broken" rather than "this tier has no parquet". That misdiagnosis has already
-/// cost one debug cycle.
+/// broken" rather than "this tier has no parquet".
 ///
 /// Deliberately FAIL, never SKIP. A skip exits 0 — green, having verified nothing —
 /// which is exactly how a wire-format guard quietly stops guarding (the same lesson

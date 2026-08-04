@@ -110,8 +110,8 @@ pub(crate) fn serialize_plan_node<'a>(
 
 
 // ---------------------------------------------------------------------------
-// The per-operator serialize arms MOVED to `crate::operators::<family>` (Inc3),
-// verbatim — statement order is the wire format, so they were relocated, not
+// The per-operator serialize arms live in `crate::operators::<family>` —
+// statement order is the wire format, so they were relocated verbatim, not
 // rewritten. What remains here is the framework: the dispatcher above (which still
 // writes each node's output_schema FIRST and builds the enclosing PlanNode itself,
 // because moving either into the operators would shift every node's bytes) plus the
@@ -862,12 +862,8 @@ pub(crate) fn fb_to_operator(op: fb::BinaryOp) -> Result<datafusion::logical_exp
     })
 }
 
-// --- Plan node deserialization ---
-
-
-
 // ---------------------------------------------------------------------------
-// The per-operator deserialize arms MOVED to `crate::operators::<family>` (Inc3),
+// The per-operator deserialize arms live in `crate::operators::<family>`,
 // each one sitting next to the serializer it mirrors. They are one contract: the
 // round-trip identity depends on pairings that are invisible if the halves live in
 // different files (GpuScanExec's row_groups override; the batches_map path-dedup

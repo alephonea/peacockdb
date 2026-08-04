@@ -17,7 +17,7 @@ const OUTPUT_BYTES_KEY: &str = "output_bytes=";
 pub struct Category {
     pub name: String,
     pub multiplier: f64,
-    /// Gpu node types binned into this category (empty = placeholder phase).
+    /// Gpu node types binned into this category (empty = placeholder category).
     pub nodes: Vec<String>,
 }
 

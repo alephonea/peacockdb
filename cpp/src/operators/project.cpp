@@ -1,5 +1,3 @@
-// Split out of the former src/plan_executor.cpp monolith.
-//
 // GpuProject -- column selection / renaming / computed columns.
 
 #include "peacock/operators.h"
@@ -15,10 +13,6 @@
 #include <string>
 
 namespace peacock {
-
-// ============================================================================
-// GpuProject — column selection / renaming
-// ============================================================================
 
 TableResult execute_project(const fb::GpuProject* proj, NodeInputs* in) {
   auto input = execute_node(proj->input(), in);

@@ -2,17 +2,12 @@
 //!
 //! Why this exists. CI does not sweep Rust test targets as a set — pipeline.yml lists
 //! each `cargo test ... --test <name>` by hand. So a new `tests/test_*.rs` is invisible
-//! to CI until someone remembers to add it, and `cargo test` locally still runs it, which
-//! makes the gap look like coverage. This repo has now been bitten twice:
-//!
-//!   - `test_plan_bytes` (the FlatBuffer wire-format guard) shipped able to go red
-//!     locally but NOT at the merge gate — a guard that cannot fail where it matters.
-//!   - `peacock_tpchv_tests` on the C++ side was built, shipped, glibc-patched and
-//!     verified present, and still never executed; CI was green having never run it.
-//!     That was fixed with a glob + a ran-any assertion (see the gpu-tests job).
-//!
-//! The C++ side got a glob. Rust cannot glob (targets are named in Cargo/CI), so this
-//! test is the equivalent guard: it fails when a target exists that no workflow runs.
+//! to CI until someone remembers to add it, and `cargo test` locally still runs it,
+//! which makes the gap look like coverage (it has happened: a guard shipped able to go
+//! red locally but not at the merge gate, and a C++ test binary was built and shipped
+//! but never executed). The C++ side got a glob + ran-any assertion (gpu-tests job);
+//! Rust cannot glob (targets are named in Cargo/CI), so this test is the equivalent
+//! guard: it fails when a target exists that no workflow runs.
 //!
 //! If this fails you have two honest options — wire the target into pipeline.yml, or
 //! add it to `INTENTIONALLY_NOT_IN_CI` below WITH a reason. Deleting the test to make
@@ -25,11 +20,9 @@ const INTENTIONALLY_NOT_IN_CI: &[(&str, &str)] = &[
     ("test_gpu", "GPU host only — run by the gpu-tests job from a prebuilt binary, not via cargo"),
     ("test_inc2_conformance", "GPU host only — same as test_gpu"),
     ("test_gpu_executor_misc", "needs the linked C++/CUDA executor; not built in the CPU tiers"),
-    // test_cpu_h200 is NOT exempt. It was, with the reason "H200-device goldens;
-    // exercised on the GPU host, not in the CPU tiers" — which was factually wrong:
-    // it needs no GPU and runs in ~25s. It also owns the REVERSE half of the
-    // cost-registry check for the ftc_tp1 column, so leaving it out of CI meant a
-    // CSV row could claim coverage no test provided. Now wired into the CPU tier.
+    // test_cpu_h200 is NOT exempt: it needs no GPU (runs in ~25s) and owns the
+    // REVERSE half of the cost-registry check for the ftc_tp1 column — leaving it
+    // out of CI would let a CSV row claim coverage no test provides.
     ("test_ci_coverage", "this test"),
 ];
 

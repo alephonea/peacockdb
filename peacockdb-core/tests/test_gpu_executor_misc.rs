@@ -12,7 +12,7 @@ use common::{testdata_dir, total_rows, GPU_BUDGET};
 
 // All-at-once GPU executor (peacock_execute): final-result-only fast path, slated for
 // retirement once the node-by-node full_table/partitioned executors cover these.
-// See https://github.com/asymptote-tech/peacockdb/issues/110
+// See ticket #110 (llm-wiki/tickets.md).
 #[tokio::test]
 async fn test_all_at_once_executor_scan_nation() {
     let exec = GpuExecutor::new(&testdata_dir(), 1, GPU_BUDGET).await.unwrap();

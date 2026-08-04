@@ -1,5 +1,3 @@
-// Split out of the former src/plan_executor.cpp monolith.
-//
 // NodeSession: node-by-node execution over a parsed plan, keeping intermediates
 // resident in a handle registry. `node_children` stays static here -- it is the
 // session's own notion of child order and nothing else needs it.
@@ -22,10 +20,6 @@
 #include <vector>
 
 namespace peacock {
-
-// ============================================================================
-// Node-by-node session (unified CPU/GPU node-executor interface)
-// ============================================================================
 
 // Children of a plan node in canonical order — MUST match the Rust walk's child
 // order so the caller's input handles line up with each node's inputs.
@@ -111,8 +105,8 @@ void NodeSession::execute_node(uint64_t seq, const uint64_t* input_handles,
     throw std::runtime_error("NodeSession::execute_node: seq out of range");
   const fb::PlanNode* node = impl_->post_order[seq];
 
-  // Each child contributes a VECTOR of partition handles (multi-handle model,
-  // Phase 2). The flat `input_handles` is grouped by child via `input_child_counts`.
+  // Each child contributes a VECTOR of partition handles; the flat
+  // `input_handles` is grouped by child via `input_child_counts`.
   std::vector<std::vector<uint64_t>> child(n_children);
   size_t off = 0;
   for (size_t c = 0; c < n_children; ++c) {
@@ -121,11 +115,11 @@ void NodeSession::execute_node(uint64_t seq, const uint64_t* input_handles,
     off += cnt;
   }
 
-  // (iii) GpuScan with an explicit RG→batch→partition MAP → emit N partitions, one
-  // per ScanBatch, each a set_row_groups read of that entry's row groups. This is
-  // the SAME map the Rust CpuNodeExecutor / golden generator replay, so per-partition
-  // row counts match by construction. EMPTY map => fall through to the generic path
-  // (single-partition read of `row_groups`, tp1 byte-identical).
+  // GpuScan with an explicit RG→batch→partition MAP → emit N partitions, one per
+  // ScanBatch, each a set_row_groups read of that entry's row groups. This is the
+  // SAME map the Rust CpuNodeExecutor / golden generator replay, so per-partition
+  // row counts match by construction. EMPTY map => fall through to the generic
+  // path (single-partition read of `row_groups`).
   if (node->node_type() == fb::PlanNodeKind_GpuScan) {
     const fb::GpuScan* scan = node->node_as_GpuScan();
     if (scan->batches() && scan->batches()->size() > 0) {
@@ -147,16 +141,12 @@ void NodeSession::execute_node(uint64_t seq, const uint64_t* input_handles,
     }
   }
 
-  // Partition-COLLAPSING nodes → concatenate ALL M child partitions into ONE output
-  // (BUFFERING: the full concatenated table is resident), in partition-index order to
-  // match the Rust CpuNodeExecutor's `collapses_partitions` concat. NOT a per-partition
-  // passthrough.
+  // Partition-COLLAPSING nodes → concatenate ALL M child partitions into ONE
+  // output (BUFFERING: the full table goes resident), in partition-index order to
+  // match the Rust CpuNodeExecutor's `collapses_partitions` concat. NOT a
+  // per-partition passthrough.
   //   - GpuCoalescePartitions: the explicit M→1 concat before a Hash repartition.
-  //   - GpuSortPreservingMerge: merges N sorted partitions into one (q1's top ORDER BY
-  //     node). A plain concat suffices HERE: the node-by-node result is compared
-  //     order-independently (batches_to_sorted_str) and the per-node cost is schema-
-  //     driven (rows + schema), so partitions=1 + the right row count match the #13
-  //     golden by construction. (The production fast path keeps its own sort-merge.)
+  //   - GpuSortPreservingMerge: N sorted partitions → one (q1's top ORDER BY node).
   if (node->node_type() == fb::PlanNodeKind_GpuCoalescePartitions ||
       node->node_type() == fb::PlanNodeKind_GpuSortPreservingMerge) {
     if (out_cap < 1)
@@ -181,14 +171,12 @@ void NodeSession::execute_node(uint64_t seq, const uint64_t* input_handles,
             ? node->node_as_GpuSortPreservingMerge()
             : nullptr;
     if (spm && spm->exprs() && spm->exprs()->size() > 0 && views.size() > 1) {
-      // (#99) SortPreservingMerge = K-WAY MERGE the N already-sorted partitions by the
-      // SPM's sort keys, NOT a plain concat. Concat leaves the output globally
-      // UNSORTED (only per-partition-sorted), so a downstream LIMIT/fetch picks the
-      // wrong top-N. The N inputs are each sorted upstream by the SAME GpuSort spec
-      // (execute_sort reads the identical SortExprNode fields), which is cudf::merge's
-      // precondition. Column-ref keys only (post-aggregate ORDER BY, the whole top-N
-      // corpus); an EXPRESSION sort key would need per-partition materialization
-      // (none present) — throw loudly rather than silently mis-merge.
+      // (#99) SortPreservingMerge is a K-WAY MERGE by the SPM's sort keys, NOT a
+      // concat: concat leaves the output only per-partition-sorted, so a downstream
+      // LIMIT/fetch picks the wrong top-N. cudf::merge's precondition holds because
+      // each input was sorted upstream by the SAME GpuSort spec. Column-ref keys
+      // only; an expression sort key would need per-partition materialization, so
+      // throw rather than silently mis-merge.
       std::vector<cudf::size_type> key_cols;
       std::vector<cudf::order> orders;
       std::vector<cudf::null_order> null_orders;
@@ -229,12 +217,11 @@ void NodeSession::execute_node(uint64_t seq, const uint64_t* input_handles,
     return;
   }
 
-  // (Inc2) GpuRepartition Hash → scatter the ONE input table into N partitions by
-  // Spark-murmur3 (comet-identical) hash of the key columns, so the per-partition
-  // row counts match the #13 CPU twin (and the golden) by construction — the live
-  // conformance gate proves the kernel is bit-equal to comet. Post-lowering the child
-  // is a GpuCoalescePartitions (single handle); we defensively concat whatever input
-  // partitions arrive into one table, then spark_hash_partition + slice into N.
+  // GpuRepartition Hash → scatter the ONE input table into N partitions by
+  // Spark-murmur3 (comet-identical) hash of the key columns, so per-partition row
+  // counts match the CPU twin by construction; the live conformance gate proves
+  // the kernel is bit-equal to comet. Post-lowering the child is a
+  // GpuCoalescePartitions (single handle), but concat defensively anyway.
   if (node->node_type() == fb::PlanNodeKind_GpuRepartition &&
       node->node_as_GpuRepartition()->kind() == fb::PartitioningKind_Hash) {
     const fb::GpuRepartition* rp = node->node_as_GpuRepartition();
@@ -260,8 +247,8 @@ void NodeSession::execute_node(uint64_t seq, const uint64_t* input_handles,
     std::unique_ptr<cudf::table> combined =
         (owned.size() == 1) ? std::move(owned[0].table) : cudf::concatenate(views);
 
-    // Hash keys: ColumnRef indices into the (partial-agg output) table. Inc2 scope =
-    // ColumnRef keys only (the group-by columns); other exprs arrive at Inc6/7.
+    // Hash keys: ColumnRef indices into the (partial-agg output) table. ColumnRef
+    // keys only for now — the group-by columns.
     std::vector<cudf::size_type> key_cols;
     if (auto* exprs = rp->hash_exprs()) {
       for (flatbuffers::uoffset_t i = 0; i < exprs->size(); ++i) {
@@ -296,18 +283,16 @@ void NodeSession::execute_node(uint64_t seq, const uint64_t* input_handles,
     return;
   }
 
-  // Output partition count. Ordinary ops MAP over their children's partitions
-  // (all children carry the same count), so n_out = child[0]'s count. Partition-
-  // collapsing ops (GpuScan map, GpuCoalescePartitions) are handled above; every
-  // remaining node maps 1:1 (tp1 empty-map scans give n_out == 1 = byte-identical
-  // to the pre-multi-handle path).
+  // Output partition count. Ordinary ops MAP over their children's partitions (all
+  // children carry the same count), so n_out = child[0]'s count. Partition-changing
+  // ops (GpuScan map, GpuCoalescePartitions, Hash repartition) returned above.
   size_t n_out = (n_children > 0) ? child[0].size() : 1;
   if (n_out == 0) n_out = 1;
   if (n_out > out_cap)
     throw std::runtime_error("NodeSession::execute_node: out_handles buffer too small");
-  // The per-partition MAP arm requires every child to carry the same partition
-  // count (child[c][p] is read for all c). Joins with mismatched per-child counts
-  // arrive at Inc2 (partitioned joins); until then fail LOUDLY rather than read OOB.
+  // The per-partition MAP arm reads child[c][p] for every c, so every child must
+  // carry the same partition count. Partitioned joins (mismatched counts) are not
+  // implemented — fail LOUDLY rather than read out of bounds.
   for (size_t c = 1; c < n_children; ++c) {
     if (child[c].size() != n_out)
       throw std::runtime_error(
