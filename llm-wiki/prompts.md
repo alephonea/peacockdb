@@ -40,6 +40,12 @@ arrive from the human one at a time.
 
 - **Maximum autonomy: use your own judgment instead of asking the human.** Escalate only
   for the triggers listed below or genuinely destructive/irreversible decisions.
+- **Only the human starts a new task.** Open a new `ENS-` branch when they say to start
+  one, not when a request merely feels like a new piece of work. A follow-up that arrives
+  mid-task — a fix, an addition, a change of shape, a request touching a different part of
+  the tree — continues on the current branch by default. Splitting it yourself fragments
+  one task across two branches and two PRs, and hands the reviewer half a change to judge.
+  If a follow-up genuinely seems to warrant its own branch, ask; don't decide.
 - **The task chain, the branch chain and the PR chain are the same chain.** One task =
   one `ENS-` branch = one PR, and all three run in parallel:
 
