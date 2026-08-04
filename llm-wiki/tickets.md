@@ -6,7 +6,7 @@ anchor that the cost widget links to. Names reflect the post-refactor tree: devi
 `tp<N>-<tier>` (micro=100MiB, mini=2GiB, standard=12GiB); C++ in `cpp/src/operators/*.cpp`,
 `expr.cpp`, `node_session.cpp`, `dispatch.cpp`; Rust modes in `peacockdb-core/src/executors/`.
 
-New tickets take the next free number (currently 127).
+New tickets take the next free number (currently 128).
 
 ## Critical correctness
 
@@ -312,6 +312,15 @@ stale golden is still on disk, and the message cannot distinguish "deleted a sta
 from "there was nothing here". Narrow, but it is a regen path: the operator's next move
 is to trust the log and commit. Same shape as #119. Check the result, and say which of
 the two things happened.
+
+<a id="t127"></a>
+### #127 — Unowned testdata dirs on shad-gpu
+shad-gpu carries `testdata/plans.sf1` (10 files) and `testdata/plans` (3) that no local
+checkout has, that the git-derived fixture sweep does not produce, and that nothing in
+the test suite references. Same shape as the binary orphans that `--delete` just closed:
+state on a remote host no provisioning path owns, so nobody can say whether it is stale
+or load-bearing. Not deleted, because something outside this repo may read it. Establish
+what wrote them and either bring them under the sweep or remove them.
 
 <a id="t124"></a>
 ### #124 — common/mod.rs is over the 1000-line bar

@@ -161,7 +161,14 @@ if [ "$RSYNC" -eq 1 ]; then
   for t in "${RUST_TESTS[@]}"; do
     [ -f "$RUST_TESTS_STAGING/$t" ] && strip --strip-debug "$RUST_TESTS_STAGING/$t"
   done
-  resilient_rsync -r cpp/install/* shad-gpu:/home/info/peacockdb/cpp/install/
+  # --delete, and the source is cpp/install/ NOT cpp/install/* : with a glob rsync gets
+  # several sources and --delete does not mean what it looks like. This runner GLOBS
+  # rust-tests/* on the remote, so an orphan left by an earlier run does not just sit
+  # there — it EXECUTES. That is the stale test_gpu failure from this branch: a
+  # pre-rename binary shipped, glibc-patched and run against goldens renamed out from
+  # under it. Clearing the staging dir locally stops shipping new ones; only --delete
+  # removes those already on the host.
+  resilient_rsync -r --delete cpp/install/ shad-gpu:/home/info/peacockdb/cpp/install/
   # Ship the result/cost/cpu GOLDENS the rust GPU tests assert against. Without this
   # the remote keeps whatever goldens a PREVIOUS run left, so a locally-regenerated
   # golden (e.g. a join subtree flipping 1→8 partitions) silently compares the fresh

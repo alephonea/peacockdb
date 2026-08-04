@@ -81,7 +81,14 @@ Usage: build-test.sh --host <ssh-dest> [mode] <action...> [options]
     --run                run the suite on the remote
     --all                --build --push-binaries --run
     --push-<kind>        parquet | queries | goldens | duckdb-profiles | duckdb-dynfilters
-    --pull-<kind>        same kinds, remote -> local
+    --pull-<kind>        parquet | goldens | duckdb-profiles | duckdb-dynfilters
+                         (no --pull-queries: a --pull-<kind> exists only where the
+                          remote can PRODUCE that kind. Queries are AUTHORED — nothing
+                          on a remote generates a .sql — so pulling would overwrite
+                          committed source with whatever a scratch host holds. The
+                          other four are generated artifacts: parquet on verda,
+                          goldens by --update-canonical, both duckdb sets by their
+                          extractors.)
     --update-canonical   regen goldens during --run instead of asserting
     (--push-binaries always ships goldens: binaries without the fixtures they assert
      against is what produced 110/110 "canonical file not found". --push-goldens is the
@@ -113,6 +120,37 @@ USAGE
 # maybe_write_result_golden) cannot propagate that deletion back through an additive
 # pull. The deletion is announced on stderr and reaches the operator through the ssh
 # heredoc; that is the handling, not a --delete armed for one rare case.
+# #113: ship every COMMITTED testdata fixture, swept from git rather than named by hand.
+#
+# The hand list is the defect, not the missing file. build-test.sh shipped goldens and
+# nothing else, so widening the rust-only suite surfaced two absent fixtures at once
+# (cost-registry.csv, cost_model.conf) — and load_csv's own panic text had already
+# predicted exactly this, naming the two OTHER provisioning paths that had been fixed
+# one at a time. Three paths, three lists, each patched only when something broke.
+#
+# `--cached --others --exclude-standard` is #113's prescription and both halves matter:
+#   --others         picks up a NEW fixture that is not committed yet; plain ls-files
+#                    would miss it and reintroduce the same class.
+#   --exclude-standard honours .gitignore, which is what keeps the ~1.7 GB of GENERATED
+#                    parquet (tpch.sf1, tpcds.sf1) out — those are produced on the
+#                    remote, not shipped to it.
+# Do NOT add --exclude=*.parquet: tpch.minimal commits 5 parquet files the tests need.
+#
+# goldens are excluded here and pushed by sync_goldens instead — they are the one kind
+# that must MIRROR (--delete) so a regen's baseline is the committed set exactly.
+sync_fixtures() {
+  local list
+  list=$(mktemp)
+  git ls-files --cached --others --exclude-standard testdata \
+    | grep -v '^testdata/goldens/' > "$list"
+  local n
+  n=$(wc -l < "$list")
+  [ "$n" -gt 0 ] || { echo "error: no tracked testdata fixtures found — git sweep is wrong" >&2; rm -f "$list"; exit 1; }
+  echo "==> push $n committed testdata fixtures -> $HOST:$REMOTE_DIR/"
+  rsync -a --files-from="$list" ./ "$HOST:$REMOTE_DIR/"
+  rm -f "$list"
+}
+
 sync_goldens() {
   case "$1" in
     push)
@@ -184,7 +222,6 @@ while [ $# -gt 0 ]; do
     --push-duckdb-profiles)   PUSH_KINDS+=(duckdb-profiles) ;;
     --push-duckdb-dynfilters) PUSH_KINDS+=(duckdb-dynfilters) ;;
     --pull-parquet)           PULL_KINDS+=(parquet) ;;
-    --pull-queries)           PULL_KINDS+=(queries) ;;
     --pull-goldens)           PULL_KINDS+=(goldens) ;;
     --pull-duckdb-profiles)   PULL_KINDS+=(duckdb-profiles) ;;
     --pull-duckdb-dynfilters) PULL_KINDS+=(duckdb-dynfilters) ;;
@@ -232,6 +269,18 @@ rust_only_targets() {
       case "$base" in
         test_ffi|diag_flip_audit) continue ;;
       esac
+      # SECOND AXIS: what does the target verify — the RUNTIME, or the REPO?
+      # A test that reads the checkout (.github/workflows, the tests/ tree) cannot be
+      # verified from a shipped binary: none of that travels with it. Running
+      # test_ci_coverage on verda compared today's binary against a pipeline.yml left
+      # there by some earlier push — verda is not even a git checkout — so it failed
+      # for reasons that say nothing about the remote. Measured: it is the ONLY target
+      # that reaches outside testdata, so this excludes exactly one thing today and
+      # classifies the next one automatically.
+      # It still runs locally and in CI, which is where a repo check belongs.
+      if grep -qE 'repo_root|\.github/workflows' "$f"; then
+        continue
+      fi
       printf '%s:%s\n' "$pkg" "$base"
     done
   done
@@ -443,7 +492,14 @@ if [ "$PUSH_BINARIES" -eq 1 ]; then
   done
   echo "==> rsync $INSTALL_DIR to $HOST:$REMOTE_DIR/cpp/install"
   ssh "$HOST" "mkdir -p '$REMOTE_DIR/cpp/install'"
-  rsync -r -P "$INSTALL_DIR"/* "$HOST:$REMOTE_DIR/cpp/install/"
+  # --delete, and the source is "$INSTALL_DIR/" NOT "$INSTALL_DIR"/*: with a glob rsync
+  # receives several sources and --delete does not mean what it looks like.
+  # Without it remote orphans are permanent — verda was carrying test_cpu_executor and
+  # test_cpu_h200 (this branch's PRE-RENAME binaries) plus three targets deleted in
+  # June. Clearing the local staging dir stops shipping NEW orphans; only --delete
+  # removes the ones already there. It matters most where the runner GLOBS
+  # rust-tests/* (build-test-shadgpu.sh, pipeline.yml) — there an orphan RUNS.
+  rsync -r -P --delete "$INSTALL_DIR/" "$HOST:$REMOTE_DIR/cpp/install/"
 
   if [ -d testdata/goldens ]; then
     # Ship the committed goldens (testdata/goldens/<dataset>.sf<N>/) so they match
@@ -469,6 +525,10 @@ if [ "$PUSH_BINARIES" -eq 1 ]; then
     # "canonical file not found".
     sync_goldens push
   fi
+  # Fixtures the binaries READ but which are not goldens (cost-registry.csv,
+  # cost_model.conf, the query .sql sets, tpch.minimal). Swept from git — see
+  # sync_fixtures.
+  sync_fixtures
 fi
 
 if [ "$RUN" -eq 1 ]; then

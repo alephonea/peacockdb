@@ -173,6 +173,10 @@ Rules that keep this healthy:
   so exercising that guard takes a filter that matches it or a separate run.
 - **Prefer verda for large CPU runs** (whole suite or big selections). It is not always
   up (the human starts it manually) — falling back to a local run is completely fine.
+- **Comparing files across hosts: use checksums, and `LC_ALL=C sort` for any listing.**
+  Two hosts collate `ls`/`sort` differently, so a manifest diff reports differences that
+  are pure collation — this produced two false alarms in one session before checksums
+  settled it. Compare `sha256sum`/`md5sum` output, not directory listings.
 - Rented hosts change SSH host keys on reprovision: `ssh-keygen -R <host>` + re-keyscan
   rather than fighting the mismatch.
 - **Golden regen**: on verda via `scripts/build-test.sh --host verda --rust-only
