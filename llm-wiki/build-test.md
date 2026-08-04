@@ -81,9 +81,18 @@ dir below.
 
 Rules that keep this healthy:
 
-- **Never run cudf-feature cargo builds in `./target`** — use `scripts/cargo-cudf.sh`
-  (exports `CARGO_TARGET_DIR=target-cudf-$(basename "$CUDF_ROOT")`). `./target` is for
-  rust-only/default/cost-report builds.
+- **Day-to-day iteration is the rust-only loop** — plain cargo into `./target`, no
+  wrapper, no C++/CUDA:
+  `cargo test --features rust-only -p peacockdb-core --test test_query_plan`
+- **Never run cudf-feature cargo builds in `./target`** — they would evict the rust-only
+  cache and vice versa (the `ffi` feature and `cudf_ROOT` both change fingerprints, and
+  the cudf side recompiles the DataFusion stack at opt-3). For one-off cudf/FFI cargo
+  commands use `scripts/cargo-cudf.sh`, which requires `CUDF_ROOT` and derives
+  `CARGO_TARGET_DIR=target-cudf-$(basename "$CUDF_ROOT")` — the same dir the build-test
+  scripts use, so it shares their warm cache:
+  `CUDF_ROOT=~/data/miniforge3/envs/rapids scripts/cargo-cudf.sh test -p peacockdb-core --test test_gpu --no-run`
+  For anything more than a one-off command, use `build-test.sh` / `build-test-shadgpu.sh`
+  instead — they handle build, staging, shipping and running.
 - The FFI crate caches its cmake `cudf_DIR` in OUT_DIR; both build-test scripts clean it
   **only when the cuDF root changed** (stamp file `.peacock-ffi-cudf-root`);
   `PEACOCK_FFI_CLEAN=1` forces.
