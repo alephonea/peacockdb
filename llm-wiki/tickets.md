@@ -6,7 +6,7 @@ anchor that the cost widget links to. Device labels are `tp<N>-<tier>` (micro=10
 mini=2GiB, standard=12GiB).
 
 A ticket carries a **Priority** line only when it is not medium; medium is the default.
-New tickets take the next free number (currently 136). Finished and lapsed tickets move to
+New tickets take the next free number (currently 144). Finished and lapsed tickets move to
 `llm-wiki/archive/archived-tickets.md` (Done / Stale) — numbers are never reused, so an old
 reference still resolves there.
 
@@ -15,8 +15,8 @@ reference still resolves there.
 | Section | Open | Tickets |
 |---|--:|---|
 | [Critical correctness](#critical-correctness) | 14 | #103 #80 #59 #46 #47 #60 #121 #122 #123 #118 #119 #120 #117 #41 |
-| [Blockers for disabled coverage](#blockers-for-disabled-coverage) | 14 | #97 #23 #32 #65 #62 #91 #95 #57 #45 #63 #56 #55 #115 #96 |
-| [Performance / architecture](#performance--architecture) | 8 | #19 #16 #20 #71 #101 #73 #110 #75 |
+| [Blockers for disabled coverage](#blockers-for-disabled-coverage) | 15 | #97 #23 #32 #65 #62 #91 #95 #57 #45 #63 #56 #55 #115 #96 #143 |
+| [Performance / architecture](#performance--architecture) | 15 | #19 #16 #20 #71 #101 #73 #110 #75 #136 #137 #138 #139 #140 #141 #142 |
 | [Infrastructure / process](#infrastructure--process) | 16 | #113 #114 #116 #126 #132 #131 #130 #129 #128 #127 #124 #125 #13 #94 #69 #49 |
 
 ## Critical correctness
@@ -243,6 +243,16 @@ per-partition (child0[p] ⋈ child1[p]); q17 green at tp8-standard plus
 q3/q5/q7/q8/q9/q12/q13/q19. Before closing, confirm nothing remains beyond the
 broadcast/CollectLeft and non-inner surfaces now tracked in #97.
 
+<a id="t143"></a>
+### #143 — window functions in batch-partitioned mode
+The batch-partitioned planner refuses window queries at plan time (rendered as plan ✗ in
+the new widget tables) — the one feature regression against legacy full_table coverage,
+and a blocker for ever retiring the legacy modes. Direction: a window is a per-partition
+op once the input is hash-partitioned on the PARTITION BY keys (the legacy invariant);
+whole-partition aggregate windows need a single batch (coalesce-all first), while
+`BoundedWindowAggExec`-class frames could stream as a `BatchAccumulator`. The
+rank/dense_rank gaps of #32 carry over unchanged.
+
 ## Performance / architecture
 
 <a id="t19"></a>
@@ -304,6 +314,103 @@ readability, not behaviour.
 and row-group pruning. Shape: preprocessor → flat per-node intermediate
 (op/rows_read/bytes_read/out_rows/out_bytes/breaker) → one-line cost. Pure refactor:
 `.duckdb_cost.txt` numbers must not move.
+
+<a id="t136"></a>
+### #136 — batch-partitioned GpuJoin: build-side match tracking when the probe side streams
+
+The batch-partitioned executor design streams a join's probe side in batches. Inner joins
+compose per-batch, and right-outer emits its unmatched probe rows batch-locally — but
+left-outer/full/semi/anti/mark need "which build rows matched at least once across all
+probe batches", and that information never crosses the current ABI:
+`peacock_executor_execute_node` returns only the joined table plus rows/varlen stats
+(`cpp/include/peacock_gpu.h`), and every call rebuilds the join from scratch — there is no
+persistent `cudf::hash_join` anywhere in `cpp/src/operators/join.cpp`.
+
+No-ABI-change plan (v1): accumulate each probe batch's key columns only (a project node
+plus the `GpuCoalescePartitions` concat arm — keys are small next to full rows), and at the
+join's finish call run one `left_anti_join(build, accumulated_keys)` — semi form for
+semi/mark — then null-pad the probe columns with a synthesized project. Correct for pure
+equi-joins; the per-join `null_equals_null` flag applies to the finish join too, and the
+#80 NOT IN caveat carries over unchanged. Not usable with a residual filter (a keys-only
+input cannot evaluate it), so filtered semi/anti keep a single-batch probe side. Cost:
+the accumulated keys stay resident, and the build side is built one extra time at finish.
+
+ABI-change options if that cost bites: (a) return a build-side match bitmap per probe
+call (new out-param, or a handle to a bool column) and OR the bitmaps in Rust; (b) a
+persistent per-seq `cudf::hash_join` session object with internal matched-row tracking —
+which also removes the per-probe-call build rebuild, the standing perf cost of streamed
+probes. Either would be additive, alongside the planned scan-with-row-groups entry point.
+
+<a id="t137"></a>
+### #137 — batch-partitioned planner: drop null join keys before the shuffle
+
+With `null_equals_null=false`, a row whose join key columns are all null matches nothing —
+and `spark_hash_partition.cu` skips null columns (comet conformance), so every such row
+lands in the one fixed partition `pmod(seed, N)`. On a null-dominated input that is pure
+shuffle skew carrying rows the join will discard anyway.
+
+Fix, for the sides whose unmatched rows are never emitted (both sides of an inner join;
+the probe side of left-outer/semi/anti — the join-capability matrix knows which): the
+translation layer inserts `GpuFilter(<key> IS NOT NULL)` under the `GpuEmitPartitions`
+feeding that side. Existing filter node, existing serialization, visible and
+cost-accounted in the plan; the shuffle shrinks and the skew case never reaches the
+kernel. `GpuEmitPartitions` itself keeps exactly one routing (hash, nulls co-located) —
+no runtime knob.
+
+Two deliberately-out-of-scope halves. Scattering null-keyed rows on placement-free sides
+(the preserved side of outer/anti, where rows must be emitted but cannot match) needs a
+C++ kernel knob plus a conformance-gate extension, and no corpus query has a
+null-dominated join key to exercise it. And the adaptive form — partially execute a node,
+observe a null-dominated intermediate, insert the filter at replan time — waits on
+adaptive replanning existing at all; this ticket is the static planner tweak that the
+adaptive path would later reuse.
+
+<a id="t138"></a>
+### #138 — batch-partitioned sort: ranged merge emission
+`GpuAccumulateBatchesAndSort` and `GpuMergeSortedPartitions` run one `cudf::merge` over
+all sorted input batches and materialize the full output, so the local peak is inputs +
+output (~2× the data). cuDF has no streaming merge; the hand-rolled alternative is a
+ranged merge — pick split keys, `cudf::slice` each sorted batch at `upper_bound`
+boundaries (zero-copy views), merge range by range, emit and release each range. Bounds
+the output term to one range; the inputs stay resident either way, so the win is at most
+~2× on the sort's local peak. Do it only if sort peaks bind after the mode ships; it also
+unlocks multi-batch output from merge nodes.
+
+<a id="t139"></a>
+### #139 — batch-partitioned GpuCoalesceBatches(target): compact post-filter fragments
+Dropped from v1. After a selective filter, batches shrink to a few rows and every
+downstream kernel pays per-launch overhead on each fragment. A `BatchAccumulator` that
+concatenates to a minimum target size (DataFusion semantics: merge only, never split),
+streaming out one batch whenever the threshold is crossed. `cudf::concatenate` via the
+existing collapse arm — no C++ change; target size from the same budget rule that sizes
+loader batches.
+
+<a id="t140"></a>
+### #140 — batch-partitioned broadcast joins (1:N partition broadcast)
+Deferred by the design. Lets one partition (small dimension side) be broadcast to all N
+partitions of the other side without shuffling the big side; also unblocks partitioned
+cross/nested-loop joins. The blocker is consume-once: a GPU handle feeds exactly one
+call, so a broadcast build needs either an explicit device copy (`GpuBatch::copy()` — 
+keep `!Clone` so the cost stays visible at call sites) or a C++-side non-consuming/
+refcounted handle. Interacts with #136's persistent-build option, which would solve both
+at once.
+
+<a id="t141"></a>
+### #141 — batch-partitioned planner: skip the shuffle for small group-key sets
+v1 skips `GpuMergePartitions` + `GpuEmitPartitions` around an aggregate only when the
+input is already one partition or the aggregate is keyless. Skipping when the key set is
+merely small (collapse to one partition, run `GpuAggregateBatches[final]` once, avoid the
+shuffle) needs a cardinality estimate that does not exist — the estimators are constants
+(#19). When stats land, add the rule and regenerate the affected plan goldens.
+
+<a id="t142"></a>
+### #142 — batch-partitioned: no recourse for oversized batches
+Nothing downstream of the loader can split a batch: minimum load granularity is one row
+group, `GpuCoalesceAllBatches` before a join build side can exceed any budget, and the
+planner deliberately still produces a plan — the enforcer then trips at run time and the
+query dies cleanly. Recourse options, deferred until better estimators and adaptive
+execution: a split operator (needs a C++ slice-to-handles entry point), or adaptive
+replanning on trip (re-plan with more partitions or smaller batches). Related: #91.
 
 ## Infrastructure / process
 
