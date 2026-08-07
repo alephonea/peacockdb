@@ -8,7 +8,7 @@
 - **Interfaces/traits in separate files** from their implementations (`executors/executor.rs`,
   `executors/node_by_node.rs`, `operators/operator.rs` are the models).
 - **Short functions:** under 150 lines in most cases.
-- **Comments say WHY, briefly.** Only non-obvious constraints, invariants, and gotchas —
+- **Comments say *why*, briefly.** Only non-obvious constraints, invariants, and gotchas —
   never what the next line does, never process history. If a comment documents an
   important historical decision, a distilled version may go to
   `llm-wiki/archive/historical-comments.md` instead of living in the code.
@@ -29,7 +29,7 @@
   inside `$(…)` ends the subshell only; an empty list makes a `for` body vanish
   silently, so a derived-but-empty work set must be an explicit error rather than a
   green no-op; and a failing `&&` list is ignored at statement level but becomes the
-  return value when it is a function's LAST command, so `[ -f x ] && do_thing` written
+  return value when it is a function's *last* command, so `[ -f x ] && do_thing` written
   at the end of a function silently fails the caller. Where execution genuinely must continue past a failure (running every
   test binary before reporting), say why at the site and accumulate the status so the
   script still exits non-zero.
