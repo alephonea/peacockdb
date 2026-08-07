@@ -2,11 +2,22 @@
 
 Migrated from GitHub issues on 2026-07-31; GitHub issues are closed and this file is the
 registry. The number is the permanent ticket ID — each ticket carries an `<a id="tNN">`
-anchor that the cost widget links to. Names reflect the post-refactor tree: device labels
-`tp<N>-<tier>` (micro=100MiB, mini=2GiB, standard=12GiB); C++ in `cpp/src/operators/*.cpp`,
-`expr.cpp`, `node_session.cpp`, `dispatch.cpp`; Rust modes in `peacockdb-core/src/executors/`.
+anchor that the cost widget links to. Device labels are `tp<N>-<tier>` (micro=100MiB,
+mini=2GiB, standard=12GiB).
 
-New tickets take the next free number (currently 128).
+A ticket carries a **Priority** line only when it is not medium; medium is the default.
+New tickets take the next free number (currently 136). Finished and lapsed tickets move to
+`llm-wiki/archive/archived-tickets.md` (Done / Stale) — numbers are never reused, so an old
+reference still resolves there.
+
+## Contents
+
+| Section | Open | Tickets |
+|---|--:|---|
+| [Critical correctness](#critical-correctness) | 14 | #103 #80 #59 #46 #47 #60 #121 #122 #123 #118 #119 #120 #117 #41 |
+| [Blockers for disabled coverage](#blockers-for-disabled-coverage) | 14 | #97 #23 #32 #65 #62 #91 #95 #57 #45 #63 #56 #55 #115 #96 |
+| [Performance / architecture](#performance--architecture) | 8 | #19 #16 #20 #71 #101 #73 #110 #75 |
+| [Infrastructure / process](#infrastructure--process) | 16 | #113 #114 #116 #126 #132 #131 #130 #129 #128 #127 #124 #125 #13 #94 #69 #49 |
 
 ## Critical correctness
 
@@ -109,6 +120,27 @@ is a no-op, so non-parquet dir entries are not skipped; and `read_table` never r
 `Err` (failures panic), making the `else { continue }` dead. A stray non-parquet file in
 a data dir panics instead of being skipped. Found during the comment audit.
 
+<a id="t41"></a>
+### #41 — Standing test for GpuUnion branch-type normalization cast
+Nothing is unimplemented here, which is why the title says *test*. The cast exists and works:
+`execute_union` retypes every branch column to the union's declared output type before
+`cudf::concatenate`, because branches are planned independently and one column can land a
+different cuDF type per branch (`cpp/src/operators/union.cpp` ~L49). Without it concatenate
+throws on mismatched types.
+
+What is open is that the coverage is *incidental*, and unverified. The implementation comment names the case it
+was written for — tpcds q5, which pairs a decimal measure against a `cast(0 AS decimal(7,2))`
+literal that materializes as FLOAT64, plus cuDF's SUM drifting fixed_point scale per branch —
+and tpcds q5 does run `full_table_tp1_standard` GPU at `golden_exact` (tpch q5 is irrelevant:
+its plan has no `GpuUnionExec` at all). So the branch is exercised today, and breaking the
+cast would go red. But it is red by luck: nothing pins that q5 keeps a union with mismatched
+branch types, and if that shape changes the cast becomes untested silently — the exact
+situation this ticket was filed to end.
+
+Fix: a focused gtest that builds a two-branch union with FLOAT64 against DECIMAL128 and
+asserts the concatenate succeeds with the declared type. Cheap, and independent of any corpus
+query.
+
 ## Blockers for disabled coverage
 
 <a id="t97"></a>
@@ -154,14 +186,14 @@ the rewrite queries.
 Real 8-way is only validated at generous budgets. (1) Repartition is concat-first
 (`GpuCoalescePartitions` full concatenate, then scatter), spiking peak memory and
 defeating the point of partitioning. (2) The resident-OOM enforcer
-(`executors/stream.rs`) is full-table-only, not ported to the partitioned driver.
+(`executors/stream.rs`) hangs off the streaming driver only, not ported to the CPU backend.
 Payoff: a genuine tp8-mini (2 GiB real-8-way) device, inexpressible today.
 
 <a id="t95"></a>
 ### #95 — Decimal partition keys for real-8-way murmur3
 murmur3 covers int/date/timestamp/composite/null; decimal deferred (float indefinitely).
 Needed once the tp8 rollout reaches decimal-keyed repartitions (tpch q18 `o_totalprice`,
-q22 `c_acctbal`, tpcds `i_current_price`). Dispatch by LOGICAL precision (≤18 → low 8 LE
+q22 `c_acctbal`, tpcds `i_current_price`). Dispatch by *logical* precision (≤18 → low 8 LE
 bytes of int128; >18 → raw 16B LE) and thread precision through the partition FFI. Until
 then `spark_hash_partition.cu` throws a loud "decimal partition key unsupported".
 
@@ -243,6 +275,8 @@ multi-file scans, dynamic ranges (#16). Cause of red widget ratios on selective 
 
 <a id="t101"></a>
 ### #101 — No CSE / CTE materialization: identical subexpressions recomputed N times
+**Priority: post-MVP**
+
 DataFusion inlines every CTE reference and peacock re-scans each copy. Worst: tpcds q23
 (CTEs ×5/×3/×2 → 6 scans), q4/q11 (`year_total` ×6/×4), q31; tpch q15 (`revenue0` ×2),
 q2. Direction: CTE materialization or physical CSE; at minimum make the cost model aware.
@@ -252,15 +286,6 @@ q2. Direction: CTE materialization or physical CSE; at minimum make the cost mod
 Move physical planning from static heuristics to cost-based, validated against the DuckDB
 cost oracle and goldens. In scope: adaptive filter placement, join enumeration (#20),
 stats (#19, the load-bearing prereq), runtime filters (#16).
-
-<a id="t34"></a>
-### #34 — Multi-partition table results in the GPU executor
-The C++ executor models every node as one materialized `cudf::table`, so
-GpuUnion/GpuInterleave must concatenate (peak = Σ inputs) and
-Coalesce/Repartition/SortPreservingMerge are single-input pass-throughs. Introduce a real
-multi-partition result type and move the concat up to GpuCoalescePartitions / final
-collect. Partly overtaken by the multi-handle partitioned path — rescope to the
-full-table executor before building.
 
 <a id="t110"></a>
 ### #110 — Retire the all-at-once GPU executor
@@ -272,6 +297,9 @@ is unblocked pending full_table/partitioned covering all needs.
 
 <a id="t75"></a>
 ### #75 — Refactor duckdb_cost.py: separate cost formula from extraction
+**Priority: low** — not started (867 lines, 29 top-level defs as of 2026-08-05), and it buys
+readability, not behaviour.
+
 ~870 lines where the ~80-line cost formula hides inside JSON parsing, predicate parsing
 and row-group pruning. Shape: preprocessor → flat per-node intermediate
 (op/rows_read/bytes_read/out_rows/out_bytes/breaker) → one-line cost. Pure refactor:
@@ -313,6 +341,125 @@ from "there was nothing here". Narrow, but it is a regen path: the operator's ne
 is to trust the log and commit. Same shape as #119. Check the result, and say which of
 the two things happened.
 
+<a id="t135"></a>
+### #135 — Column ordinals are enforced only by cuDF's `at()` and the final result
+Every column reference in the IR is an ordinal into the child's output table, and almost nothing
+checks them. Two concrete gaps. (a) `TableResult` is a `cudf::table` plus a
+`std::vector<std::string>` of names with no invariant that the two have the same length, and the
+six sites that index the names use `operator[]` — so a short names vector is undefined behaviour,
+not an exception (`filter.cpp` ~L42 reads `fv.column(idx)` and `input.column_names[idx]` in one
+loop iteration; only the first is checked, and it happens to run first). Assert
+`num_columns() == column_names.size()` where `TableResult` is built. (b) Nothing checks that a
+child produced its columns in the ORDER the plan assumed: the per-node golden records name,
+partitions, rows and bytes, and the bytes come from the plan's schema on both engines by design
+(`logical_size_from_schema`, single-sourced so CPU and GPU cannot drift) — so a node emitting the
+right column count in the wrong order yields identical per-node numbers everywhere and surfaces
+only at the root, in a `.result.txt`/oracle comparison. A per-node type or column-name check in
+the GPU tiers would close it. Also worth fixing while there: `expr.cpp` ~L349 bounds-checks a
+ColumnRef and returns `type_id::EMPTY` instead of throwing, converting a bad ordinal into a
+confusing type error later. Found auditing indexing for architecture.md.
+
+<a id="t134"></a>
+### #134 — begin_plan's node count is returned and discarded
+`peacock_executor_begin_plan` fills `out_node_count`, and
+`GpuNodeExecutor::new` (`backend/gpu_node_executor.rs`) reads it into a local and drops it. That
+number is the one free cross-check on the invariant the whole node-by-node FFI rests on: Rust's
+`post_order` and C++'s `index_post_order` are separate implementations of the same rule, and
+every handle is addressed by the resulting sequence number. Today a divergence surfaces
+indirectly — per-node stats that stop matching the `.cpu.txt` golden, or an unknown-handle throw
+— i.e. as wrong-looking results rather than as the structural mismatch it is. Fix: compare it
+with the Rust walk's node count in `GpuNodeExecutor::new` and error naming both numbers. Two
+lines, and it converts a confusing failure into an obvious one. Found while diagramming the
+node-by-node driver's collaborators.
+
+<a id="t133"></a>
+### #133 — No tp1 plan golden: tp1 cost annotation is unpinned
+Every `.plan.txt` in the tree is tp8 — 130 at `tp8-mini` plus `shuffle_additive` at
+`tp8-standard` — so the plan tier never renders a tp1 plan. The tp1 node TREE is still pinned,
+by the 110 `tp1-standard` `.cpu.txt` goldens, which carry each node's exprs, predicates and
+projections. What is pinned nowhere is the plan-only annotation at tp1: `row_width`,
+`subtree_max_row_bytes`, `estimate_input_bytes`, `estimate_output_bytes`, `estimate_cost`
+appear only in `.plan.txt`. A change to the memory/cost model that moved those numbers at tp1
+while leaving tp8 unchanged would go green — and tp1 is the shape the GPU full-table tier
+runs, so it is not a corner. Fix: canonize a handful of tp1 `.plan.txt` goldens (the same
+queries the tp1-standard cpu tier already uses), or teach the cpu golden to carry the
+annotation. Same class as #114 — a cell nothing verifies. Found auditing tp1/tp8 planning
+impact.
+
+<a id="t132"></a>
+### #132 — Two batch-size fields cross the IR and nothing on the C++ side reads them
+`GpuScan.batch_size` and `GpuCoalesceBatches.target_batch_size` are both computed by
+`GpuMemoryBudgetRule`, serialized by the plan serializer, and pinned byte-for-byte by
+`goldens/plan_bytes.sha256` — and `grep -rn 'batch_size' cpp/src cpp/include` returns
+nothing. Neither is read: the GPU scan reads by row group (`set_row_groups`), so there is no
+batch to size, and `GpuCoalesceBatches` is `execute_passthrough` in `dispatch.cpp`, so the
+target it carries is never consulted. Harmless today, and the wire format is deliberately
+frozen, but it reads as a memory bound the GPU respects when the GPU's only memory lever is
+the row-group→partition map. Decide which it is: either the GPU should honour a batch/chunk
+bound (overlaps #91's memory-aware repartition and #34's single-table constraint) or the two
+fields should be dropped from the IR in a commit that regenerates the digest deliberately.
+Until then, do not read these fields as evidence that GPU execution is batch-bounded. Found
+testing the assumption that batch_size is respected only in full-table CPU execution — it is
+respected in BOTH CPU modes and in neither GPU mode.
+
+<a id="t131"></a>
+### #131 — resident model never accounts for cross / nested-loop join build sides
+`resident.rs::peak()` stacks a join's build side by matching `stat.node_name` against
+`"HashJoinExec" | "CrossJoinExec" | "NestedLoopJoinExec"`, and its own doc comment names all
+three. But `GpuCrossJoinExec` and `GpuNestedLoopJoinExec` are two of the five operators that
+do NOT strip, so the name reaching the classifier is `GpuCrossJoinExec` /
+`GpuNestedLoopJoinExec`, which matches nothing and falls into the streaming arm: the build
+side contributes zero and never stacks with the probe. `HashJoinExec` works only because its
+wrapper strips. So the resident-OOM enforcer under-estimates every plan containing a cross
+or nested-loop join, in the direction that lets a query through that should have tripped.
+Latent today — the tight-budget set (`test_cpu_oom`: tpcds q78, tpch q7/q18) has no such
+join — and unreachable by the existing unit tests, which construct names by hand
+(`node("HashJoinExec", …)`) and so cannot see the mismatch: a guard that cannot go red.
+Fix: classify on a type, not a rendered name (`as_operator` + the wrapped node's identity),
+or normalize the `Gpu` prefix at the one place the name is recorded; then add a case built
+from a real wrapped plan rather than a hand-written name. Found auditing the operator
+tables for architecture.md.
+
+<a id="t130"></a>
+### #130 — `partition_topology()` is implemented 16 times and read by nobody
+`Operator::partition_topology()` (`peacockdb-core/src/operators/operator.rs`) returns each
+operator's partition behaviour — ScanEmit / Map / Collapse / KWayMerge / RepartitionHash /
+Join — and has *no* callers: not in `src`, not in `tests`. The CPU backend and the C++ side
+each re-derive the same
+classification independently: the CPU partitioned backend by ad-hoc predicates
+(`collapses_partitions`, `hash_repartition_of`, `partitioned_join_arity` in
+`backend/cpu_node_executor.rs`) and the C++ side by `node_type()` switches in
+`node_session.cpp`. That is the duplicated-rule antipattern coding-style.md names: three
+copies of one fact, and the trait copy — the one a reader would trust, since it is the
+declared interface — is the copy nothing can prove right, because no test can make it go
+red. Either drive both off it (the CPU predicates become one match on the topology)
+or delete it and stop implying an abstraction the code does not use. Found auditing the
+operator tables for architecture.md.
+
+<a id="t129"></a>
+### #129 — The "26.02" CI leg builds against a 25.10a image; the GPU job has no fork guard
+Two unrelated smells in `pipeline.yml`, both found auditing the CI section of
+build-test.md. (a) The cpp-cpu matrix leg labelled `cudf: "26.02"` runs
+`rapidsai/base:25.10a-cuda12-py3.12`, so the compile-only 26.02 coverage the wiki and
+`#94` both rely on is actually 25.10a coverage; the label is the only place 26.02 appears.
+Either bump the image or rename the leg — as it stands, "26.02 compiles" is a claim no job
+makes. (b) `s3-datasets` explains its fork guard as mirroring "the GPU job's fork guard",
+but `gpu-tests` has no job-level `if:` — on a fork PR `secrets.SHAD_GPU_SSH_KEY` is empty,
+so Setup SSH writes an empty key and the job goes red on ssh instead of skipping. Moot
+while the repo has no forks, which is exactly why it will bite later.
+
+<a id="t128"></a>
+### #128 — Doctests run nowhere, and the meta guard cannot see them
+`peacockdb-core` has one doctest (`CpuExecutor`, `src/lib.rs` ~L166). No step in
+`pipeline.yml` passes `--doc`, so it executes only in a local `cargo test`. Worse than a
+missing step: `test_ci_coverage.rs` enumerates `--test` targets plus `--lib`, so a
+doctest is invisible to the guard whose whole job is finding targets CI does not run —
+this one is unlisted, not exempted, and adding a second doctest would go equally
+unnoticed. Fix: run `cargo test --features rust-only -p peacockdb-core --doc` in the
+cpp-cpu tier and teach the guard that `--doc` is a target class it must see named
+(the `--lib` check at `line_runs_lib_tests` is the pattern). Found during the
+test-category census (2026-08-04).
+
 <a id="t127"></a>
 ### #127 — Unowned testdata dirs on shad-gpu
 shad-gpu carries `testdata/plans.sf1` (10 files) and `testdata/plans` (3) that no local
@@ -335,7 +482,7 @@ scope-creep refactors.
 ### #125 — `elsewhere` parameter in assert_registry_matches_csv is dead
 `peacockdb-core/tests/common/registry.rs`: after the by-mode file split every CSV column
 is owned wholly by one binary, so all four callers pass `&[]` and the ~20 lines of
-staleness checking can no longer fire. Reviewer's read is DELETE (coding-style.md: no
+staleness checking can no longer fire. Reviewer's read is *delete* (coding-style.md: no
 fallbacks the task didn't ask for); the parameter was kept only to hold branch scope, and
 its doc paragraph was rewritten to stop justifying it with a now-false example. Re-add it
 in the commit that actually splits a column across binaries again.
@@ -354,12 +501,6 @@ The stddev/var Final path (`cpp/src/operators/aggregate.cpp`) hardcodes INT32
 is build-only so it stays green — this bites at the next GPU-remote cuDF bump. Switch or
 version-gate the type then; the comment marks the site.
 
-<a id="t77"></a>
-### #77 — Cost report: publish per-SHA history on master
-Pages deploy overwrites the latest report each run — no history, no trend. Deploy under
-`/<sha>/`, keep `/index.html` as latest, add a lightweight index + `history.json`. Open:
-retention policy, gh-pages branch vs deploy-pages artifact model.
-
 <a id="t69"></a>
 ### #69 — DuckDB cost oracle: multi-threaded golden generation for larger SF
 `gen_duckdb_cost.sh` pins `PRAGMA threads=1` because `operator_rows_scanned` scales with
@@ -367,53 +508,23 @@ thread count (`output_bytes`/`output_rows` are thread-invariant). Fine at sf1, t
 at sf10/sf100. Simplest fix: parallelize across queries, keep per-query threads=1; or
 drop/normalize the thread-sensitive field.
 
-## Backlog / stale
-
-<a id="t29"></a>
-### #29 — Track skipped TPC-DS GPU execution tests
-Superseded: enablement now lives in `test_gpu_full_table.rs` / `test_gpu_partitioned.rs`
-plus `testdata/cost-registry.csv`, and
-each surviving bucket has its own ticket (#32, #62, #57, #55, #56, #63, #45, #46, #47,
-#60, #115). Close.
-
-<a id="t27"></a>
-### #27 — TPC-H q11/q22 scalar-threshold NLJ → broadcast filter
-Likely stale: q11 and q22 now run full_table_gpu at tp1-standard and
-nested-loop/cross-join operators exist. The 1×N broadcast-filter rewrite may still be a
-perf win — verify, then close or rescope as an optimization.
-
-<a id="t41"></a>
-### #41 — Standing test for GpuUnion branch-type normalization cast
-Premise was "no enabled test exercises the cast until q5 is re-enabled" — q5 is now
-enabled. Verify q5 actually drives the `type()!=want` branch in
-`cpp/src/operators/union.cpp`; if yes close, else add the focused FLOAT64-vs-DECIMAL128
-fixture.
-
-<a id="t53"></a>
-### #53 — Deterministic multi-partition CPU node-by-node execution
-Largely superseded: `partitioned_cpu` produces deterministic tp8-standard `.cpu.txt`
-goldens and `full_table_cpu` runs tp8-hinted plans single-partition. Residual: whether
-recursive ftc_tp8 byte-accounting determinism still matters for any golden. Re-evaluate,
-likely close.
-
 <a id="t49"></a>
 ### #49 — Test crates bake CARGO_MANIFEST_DIR for testdata
-Mostly done: `tests/common/mod.rs testdata_root()` honors `PEACOCK_TESTDATA_DIR`.
-Residual direct uses: `test_node_executor.rs`, `test_plan_serialiser.rs` (tpch.minimal),
-`diag_flip_audit.rs`, `test_ci_coverage.rs`. Sweep those, then close.
+**Priority: low**
 
-<a id="t18"></a>
-### #18 — Add DuckDB cost estimates to canonical plan goldens
-Appears delivered: `*.duckdb_cost.txt` goldens exist under `testdata/goldens/*.sf1/`,
-generated by `gen_duckdb_cost.sh` / `duckdb_cost.py`. Verify the remaining checklist
-items (regeneration wiring, diff display), then close.
+Why it matters: a test binary is built on one host and run on another. Remote CPU runs ship
+binaries, goldens and data — never source — so any path baked in at compile time is a path
+that does not exist on the remote. `tests/common/mod.rs testdata_root()` solves that by
+honouring `PEACOCK_TESTDATA_DIR` first, and `build-test.sh` sets it for remote runs.
 
-<a id="t4"></a>
-### #4 — Make the build process more understandable and transparent
-Empty-body stub from project start. Largely answered by `llm-wiki/build-test.md`; fold
-the rest into #13 or close.
+The residual is three test files that read testdata through
+`env!("CARGO_MANIFEST_DIR")` directly instead of `testdata_root()`:
+`test_node_executor.rs` and `test_plan_serialiser.rs` (both for `tpch.minimal`) and
+`diag_flip_audit.rs`. Those binaries therefore only find their data where the build tree
+stood — which is exactly why a remote CPU host needs a `/media/data/peacockdb` symlink, and
+why `--gpu` runs, which set the env var, do not.
 
-<a id="t3"></a>
-### #3 — CI is too long
-Empty-body stub from project start. Superseded by the tiered pipeline; close or re-file
-with concrete targets.
+`test_ci_coverage.rs` is on the old list but should come off it rather than be swept: its
+`CARGO_MANIFEST_DIR` use resolves the REPO root to read `.github/workflows/pipeline.yml`, not
+testdata, and no env var should redirect that. Sweep the three, drop the fourth from the
+list, then close.

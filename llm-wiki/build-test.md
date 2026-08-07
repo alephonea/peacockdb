@@ -4,70 +4,233 @@ Code and tests are authoritative; this page maps them.
 
 ## Test categories
 
-- **Inline unit tests** — `#[cfg(test)]` modules in `peacockdb-core/src` (config, rules,
-  resident model…). Run with plain `cargo test`.
-- **Plan-only golden tests** — `tests/test_query_plan.rs` (+ `_misc`):
-  `query_plan_test!(dataset, sf, query, device)` compares the rendered physical plan to
-  `testdata/goldens/<ds>.sf<sf>/<query>.<device>.plan.txt`. Wire-format guard:
-  `tests/test_plan_bytes.rs` vs `goldens/plan_bytes.sha256`. Round-trip:
-  `tests/test_plan_serialiser.rs`.
-- **CPU execution tests** — split by EXECUTION MODE, not memory tier:
-  `tests/test_cpu_full_table.rs` (`cpu_full_table_result_test!`, tp8-mini / tp1-mini /
-  tp1-standard) and `tests/test_cpu_partitioned.rs` (`cpu_partitioned_result_test!`,
-  tp8-standard, real 8-way), plus `test_cpu_executor_misc.rs`, `test_cpu_oom.rs`,
-  `test_node_executor.rs`. They run DataFusion ground truth and the CPU executor and
-  assert results + the per-node cost tree against
-  `<query>.<mode>-<tp>-<tier>.cpu.txt`; derived `.cost.txt` and frozen `.result.txt`
-  goldens ride alongside. Mode is `full_table` | `partitioned` and comes from the macro
-  name, never from the device label. Device labels: `tp1-standard`, `tp8-standard`,
-  `tp8-mini`, `tp1-mini`, OOM budget `micro`.
-- **GPU execution tests** — one file per execution mode:
-  `tests/test_gpu_full_table.rs` (`gpu_full_table_test!`, single partition) and
-  `tests/test_gpu_partitioned.rs` (`gpu_partitioned_test!`, real 8-way with
-  per-partition asserts). Their device argument is the combined golden label
-  (`full_table_tp1_standard`, `partitioned_tp8_standard`), so the golden filename is
-  reconstructible from the call site. One GPU run checks per-node rows+cost vs the
-  `.cpu.txt` golden AND the final result (golden_exact / golden_approx / oracle / skip).
-  Conformance: `test_inc2_conformance.rs` (GPU↔comet murmur3 bit-exact).
-- **C++ tests** (`cpp/tests/`): `peacock_cpu_tests`, `peacock_gpu_tests`,
-  `peacock_plan_tests` run in CI. **Special manual plan tests**: `gpu/test_tpch.cpp`
-  (`peacock_tpch_tests`) and `gpu/test_tpchv.cpp` (`peacock_tpchv_tests`) run bare-cudf
-  TPC-H / vector queries against sf40 DuckDB goldens — executed in CI on shad-gpu;
-  `gpu/test_multi_gpu_tpch.cpp` / `gpu/test_multi_gpu_tpchv.cpp` (+
-  `test_basic_multi_gpu.cpp`) are EXCLUDE_FROM_ALL, need ≥2 GPUs, **manual execution
-  only** (skipped by the CI glob and the shad-gpu runner).
-- **Meta tests**: `test_ci_coverage.rs` (every rust test target must be named in a CI run
-  step — keep it up to date); registry tests in `tests/common/registry.rs` (inventory ↔
-  `cost-registry.csv`, both directions).
+**Grand total: 684 test cases — Rust 606, C++ 37, Python 41.**
+
+**Runs** — `cpp-cpu` = pipeline.yml's cpp-cpu job, both cuDF legs · `cost-report` = the
+cost-report job · `shad-gpu` = CI GPU job on the remote host, `--test-threads=1` ·
+`manual` = no CI step runs it · `2gpu` = manual, host with ≥2 GPUs (verda-gpu) ·
+`validate-large` = validate-large.yml manual dispatch. Everything except the `shad-gpu`
+and `2gpu` rows also runs locally; large CPU batches go to verda.
+
+| Category (lang) | Why | Examples | Runs | N |
+|---|---|---|---|---|
+| Plan goldens, tp8 (Rust) | plan text vs `.plan.txt` — planner/rule drift, no execution; every one is tp8 (#133) | [scan_limit](../peacockdb-core/tests/test_query_plan.rs#L9), [shuffle_additive](../peacockdb-core/tests/test_query_plan.rs#L46) | cpp-cpu | 128 |
+| Plan wire format (Rust) | FlatBuffers bytes are the C++ contract | [serialized_plan_bytes_are_stable](../peacockdb-core/tests/test_plan_bytes.rs#L129) | cpp-cpu | 1 |
+| Plan serializer (Rust) | per-operator serialize/deserialize round trip | [left_mark_join](../peacockdb-core/tests/test_plan_serialiser.rs#L445), [scan_row_group_pruning](../peacockdb-core/tests/test_plan_serialiser.rs#L289) | cpp-cpu | 12 |
+| Plan/rule bespoke (Rust) | planner + memory-model cases the macros can't express | [budget_reduces_batch_size](../peacockdb-core/tests/test_query_plan_misc.rs#L169), [mergeable_agg_state](../peacockdb-core/tests/test_query_plan_misc.rs#L26) | cpp-cpu | 10 |
+| CPU exec, full_table tp8-mini (Rust) | tp8 plan collapsed to one stream at 2 GiB: result + per-node cost tree vs DataFusion | [hash_join](../peacockdb-core/tests/test_cpu_full_table.rs#L16), [left_join](../peacockdb-core/tests/test_cpu_full_table.rs#L17) | cpp-cpu | 129 |
+| CPU exec, full_table tp1-standard (Rust) | same at 12 GiB, single-partition — the tier the GPU shares goldens with | [scan_limit](../peacockdb-core/tests/test_cpu_full_table.rs#L188), [aggregate_groupby](../peacockdb-core/tests/test_cpu_full_table.rs#L190) | cpp-cpu | 110 |
+| CPU exec, full_table tp1-mini (Rust) | one probe that tp1 also holds at 2 GiB | [scan_limit](../peacockdb-core/tests/test_cpu_full_table.rs#L24) | cpp-cpu | 1 |
+| CPU exec, partitioned tp8-standard (Rust) | real 8-way: N partitions stay live across nodes; the GPU tier's CPU oracle | [q6](../peacockdb-core/tests/test_cpu_partitioned.rs#L17), [shuffle_additive](../peacockdb-core/tests/test_cpu_partitioned.rs#L21) | cpp-cpu | 17 |
+| CPU exec, resident OOM micro (Rust) | the enforcer trips at a tight budget, and the boundary is real | [q78 oom](../peacockdb-core/tests/test_cpu_oom.rs#L24), [q7 fits](../peacockdb-core/tests/test_cpu_oom.rs#L27) | cpp-cpu | 3 |
+| CPU exec bespoke (Rust) | wrapper stripping, routing predicate, instrumented stats | [test_execution_strips_gpu_nodes](../peacockdb-core/tests/test_cpu_executor_misc.rs#L102) | cpp-cpu | 5 |
+| CPU node-by-node parity (Rust) | the unified walk must equal the recursive path, byte for byte | [cpu_node_executor_matches_recursive](../peacockdb-core/tests/test_node_executor.rs#L16) | cpp-cpu | 1 |
+| GPU exec, full_table tp1-standard (Rust) | one run asserts per-node rows+cost vs `.cpu.txt` AND the final result | [scan_limit](../peacockdb-core/tests/test_gpu_full_table.rs#L24) | shad-gpu | 110 |
+| GPU exec, partitioned tp8-standard (Rust) | same on the real 8-way path, with per-partition asserts | [q6](../peacockdb-core/tests/test_gpu_partitioned.rs#L29) | shad-gpu | 17 |
+| GPU↔comet murmur3 (Rust) | the linchpin gate: both sides place every row in the same partition, bit-exact | [gpu_spark_partition_ids_match_comet_live](../peacockdb-core/tests/test_inc2_conformance.rs#L131) | shad-gpu | 10 |
+| GPU all-at-once smoke (Rust) | whole-plan `peacock_execute` FFI; retires with [#110](tickets.md) | [scan_nation](../peacockdb-core/tests/test_gpu_executor_misc.rs#L18) | manual | 6 |
+| Cost-model goldens (Rust) | `.cost.txt` derivation from `.cpu.txt` × `cost_model.conf` | [cost_goldens_match_and_total_is_byte_identical](../peacockdb-core/tests/test_cost_model.rs#L36) | cost-report | 2 |
+| Registry ↔ CSV (Rust) | each `cost-registry.csv` mode column matches the tests that exist, both directions | [full_table_columns](../peacockdb-core/tests/test_cpu_full_table.rs#L313), [partitioned_gpu_column](../peacockdb-core/tests/test_gpu_partitioned.rs#L88) | cpp-cpu ×4, shad-gpu ×2 | 6 |
+| CI wiring guard (Rust) | every Rust target must be named by a CI step — CI does not glob | [every_rust_test_target_is_named_by_ci](../peacockdb-core/tests/test_ci_coverage.rs#L284) | cost-report | 2 |
+| tp8 flip diagnostic (Rust) | prints would-be flips; a printer, no assertions | [diag_flip_audit](../peacockdb-core/tests/diag_flip_audit.rs#L135) | manual | 1 |
+| Lib unit (Rust) | config tiers, batch-size rule, resident model | [tiers_are_strictly_increasing](../peacockdb-core/src/config.rs#L119), [nested_join_build_sides_stack](../peacockdb-core/src/resident.rs#L165) | cpp-cpu | 9 |
+| Doctest (Rust) | the `CpuExecutor` rustdoc example still compiles | [CpuExecutor example](../peacockdb-core/src/lib.rs#L166) | manual — unlisted, see [#128](tickets.md) | 1 |
+| FFI smoke (Rust) | the crate links; executor lifecycle | [test_executor_lifecycle](../peacockdb-ffi/tests/test_ffi.rs#L17) | cpp-cpu | 2 |
+| Cost-report renderer (Rust) | glyphs, links, ratio bucket, regression gate, history | [bucket_threshold_is_1_4](../cost-report/src/main.rs#L1552), [regression_count_drives_exit_decision](../cost-report/src/main.rs#L1623) | cost-report | 23 |
+| DuckDB cost extraction (Python) | classifier / pruning / dynamic-filter logic — fails CI before generation | [scan_count_mismatch_fails_loud](../testdata/test_duckdb_cost.py#L280), [compute_pruning_from_rowgroups](../testdata/test_duckdb_cost.py#L226) | cost-report | 41 |
+| C++ CPU/FFI unit | decimal binop typing, AST routability, lifecycle; no GPU needed | [DecimalScale.BinopOutputType](../cpp/tests/cpu/test_executor.cpp#L26), [AstRouting.IsAstAble](../cpp/tests/cpu/test_executor.cpp#L81) | cpp-cpu (`ctest -L cpu`) + shad-gpu | 5 |
+| cuDF GPU smoke (C++) | the GPU is alive; the Spark-murmur3 kernel matches comet in C++ | [CudfGpu.SparkPartitionIdsMatchComet2ColWithNulls](../cpp/tests/gpu/test_cudf.cpp#L84) | shad-gpu | 3 |
+| Plan-executor (C++) | hand-built plan IR through the C++ executor, node by node | [PlanExecutor.HashJoinNationRegion](../cpp/tests/gpu/test_plan_executor.cpp#L255) | shad-gpu | 12 |
+| TPC-H sf40 bare-cuDF (C++) | hand-written cuDF pipelines vs DuckDB sf40; the benchmark vehicle | [TpchSf40.Q1GroupByAggregates](../cpp/tests/gpu/test_tpch.cpp#L216), [Q3JoinsGroupByTopN](../cpp/tests/gpu/test_tpch.cpp#L376) | shad-gpu (sf40 is a hard precondition) | 4 |
+| TPC-H+V sf40 bare-cuDF (C++) | the same for the vector-embedding queries | [TpchSf40.Q11VectorBruteForce](../cpp/tests/gpu/test_tpchv.cpp#L326) | shad-gpu | 4 |
+| Multi-GPU TPC-H (C++) | WorkerPool, hash_shuffle, per-device RMM pools across GPUs | [TpchSf40.Q3MultiGpu](../cpp/tests/gpu/test_multi_gpu_tpch.cpp#L460) | manual, 2gpu | 4 |
+| Multi-GPU TPC-H+V (C++) | the same for the vector queries | [TpchSf40.Q10VectorCustomerTopNMultiGpu](../cpp/tests/gpu/test_multi_gpu_tpchv.cpp#L920) | manual, 2gpu | 4 |
+| Multi-GPU basics (C++) | device-local streams + destruction on the owning worker | [BasicMultiGpu.CudfAndCuvsAcrossTwoGpus](../cpp/tests/gpu/test_basic_multi_gpu.cpp#L228) | manual, 2gpu | 1 |
+| Dataset validators (Python) | row counts / clustering / embedding stats over whatever dataset they are pointed at; each check tags itself `EXHAUSTIVE` or `SAMPLED` | [validate_tpch.py](../scripts/validate_tpch.py), [check_s3_datasets.py](../scripts/check_s3_datasets.py) | cpp-cpu (sf1) · validate-large (sf40/sf200) | n/a¹ |
+
+¹ Data-driven — the check count depends on the dataset and SF, so these are excluded from
+the 684. Everything else in the repo that can be enumerated as a test case is counted.
+
+Notes
+
+- Execution mode is `full_table` | `partitioned` and comes from the macro name, never from
+  the device label. Device labels: `tp1-standard`, `tp8-standard`, `tp8-mini`, `tp1-mini`;
+  OOM tests take a raw budget (micro tier), not a label.
+- CPU exec goldens: `<query>.<mode>-<tp>-<tier>.cpu.txt`, with derived `.cost.txt` and
+  frozen `.result.txt` riding alongside. The GPU macros take the combined label
+  (`full_table_tp1_standard`), so the golden filename is reconstructible from the call
+  site. GPU result validation is `golden_exact` | `golden_approx` | `golden_approx_std` |
+  `oracle` | `skip`.
+- One test is quarantined, not deleted: the tp8-standard `shuffle_stddev` GPU case
+  (#103), commented out in `test_gpu_partitioned.rs` with its goldens kept. It is not in
+  the counts above.
+- Why the two `manual` Rust targets run nowhere. `test_gpu_executor_misc` needs the linked
+  C++/CUDA executor, so the CPU tiers cannot build it — and it is not staged for the GPU
+  job either, which is the part nobody chose deliberately: it drives the all-at-once
+  executor that #110 retires, so its 6 smoke tests are already scheduled to be migrated or
+  dropped. `diag_flip_audit` is a diagnostic printer with no assertions, run by hand while
+  #97/#95 gate the tp8 rollout; wiring it to CI would add a step that cannot fail.
+- The doctest is different in kind from those two: they are exempted with a stated reason,
+  it is merely unlisted. No CI step passes `--doc` and the meta guard enumerates only
+  `--test` targets plus `--lib`, so nothing would go red if it broke (#128).
 
 ## Datasets
 
-| Dataset | Where | Used by |
-|---|---|---|
-| tpch sf1 (+ vector embeddings) | `testdata/tpch.sf1` (generated by `generate_testdata.sh`, not committed) | most CPU/GPU rust tests, C++ plan tests, CI |
-| tpcds sf1 | `testdata/tpcds.sf1` | many tests (plan + CPU + GPU subsets) |
-| tpch sf40 (+ vector) | shad-gpu `/home/info/peacock-datasets/...`; S3 `tpch-sf40` | manual C++ plan tests (`peacock_tpch(v)_tests`) — **executed in CI**; multi-GPU C++ tests — manual only |
-| tpch sf200 / tpcds sf200 | S3 (`tpch-sf200`, `tpcds-sf200`) | no tests run; CI's S3 step reads basic parquet metadata; `validate-large.yml` (manual dispatch) can validate in place |
+Host columns are audited, not assumed: they say whether the bytes were actually found
+there (`ls` + `sha256sum`, 2026-08-05). Only tpch.minimal is in git; everything else is
+generated or fetched per host. S3 is Nebius object storage, endpoint
+`https://storage.eu-north1.nebius.cloud:443`, region `eu-north-1`.
 
-Goldens (committed): `testdata/goldens/{tpch.sf1,tpcds.sf1,tpch.sf40,plan_bytes.sha256}`.
-S3 endpoint is Nebius object storage (`storage.eu-north1.nebius.cloud`).
+| Dataset | Shape | <sub>local</sub> | <sub>verda</sub> | <sub>shad-gpu</sub> | S3 bucket | Used by |
+|---|---|:-:|:-:|:-:|---|---|
+| tpch.minimal | 5 tables, 19 MB, git-committed | ✓ | ✓ | ✓ | — | C++ plan tests, plan serializer, node executor |
+| TPC-H+V sf1, external vectors | 8 tables, 987 MB; GloVe 100-d + DEEP1B 96-d | ✓ | ✓ | ✓ | — | most CPU/GPU rust tests |
+| TPC-H+V sf1, synthetic vectors | same tables, hash-generated FLOAT[8] | — | — | — | — | CI only — regenerated every run |
+| TPC-DS sf1 | 24 tables, 764 MB | ✓ | ✓ | ✓ | — | plan + CPU + GPU subsets |
+| TPC-H+V sf40 | 8 tables, 40 GB | — | — | ✓ | `tpch-sf40` | `peacock_tpch(v)_tests`, multi-GPU (manual) |
+| TPC-DS sf200 | 24 tables, 80 GB | — | — | ✓ | `tpcds-sf200` | no tests — S3 check, validate-large |
+| TPC-H sf200 | not generated yet | — | — | — | `tpch-sf200` | nothing yet |
+| embeddings cache | 1.8 GB local / 129 GB shad-gpu | ✓ | — | ✓ | — | generator input, not a test input |
+
+Paths: `testdata/{tpch.minimal,tpch.sf1,tpcds.sf1,embeddings-cache}`; sf40 and sf200 live
+outside the repo on shad-gpu, under `/home/info/peacock-datasets/testdata/`. **+V** means
+the TPC-H tables carry vector columns — `part.p_text_embedding` and
+`partsupp.ps_image_embedding` + `ps_text_embedding`; TPC-DS does not have embeddings.
+
+The three sf1-class datasets are byte-identical on all three hosts (aggregate parquet
+sha256 matches local). Notes on the rows above:
+
+- **The sf1 parquet is generated** — `testdata/generate_testdata.sh` drives DuckDB, and
+  `/tpch.sf*/`, `/tpcds.sf*/` are gitignored, so CI regenerates it every run. That is why
+  the two sf1 rows differ: `--embeddings synthetic` is the default, so a vector query in
+  CI runs against hash-generated FLOAT[8], not the vectors a dev host has.
+- **The embeddings cache is a per-host intermediate and is NOT syncable** — no
+  `--push`/`--pull` kind covers it; `fetch_embeddings.sh` is local-only and hard-guards
+  against running on CI/verda/shad-gpu. Regenerate it where you need it, or ship the
+  augmented parquet instead.
+- **sf40 lives only on shad-gpu**, and its presence there is a hard precondition of the
+  GPU job; the sf40 goldens are committed (see below), so CI compares without touching
+  40 GB.
+- verda reaches the tree through a `/media/data/peacockdb` symlink to
+  `~/peacockdb` — the CPU test crates bake the testdata path at compile time (#49).
+
+## Golden files
+
+All goldens are committed, under `testdata/goldens/`: `tpch.sf1` (266 files), `tpcds.sf1`
+(620), `tpch.sf40` (16), plus the single-file `plan_bytes.sha256` (140 digests). The
+committed DuckDB profile inputs live beside them in `testdata/duckdb-profiles/{tpch,tpcds}`
+(22 + 99) and `testdata/duckdb-dynfilters/{tpch,tpcds}` (22 + 99).
+
+In the Golden column `…` stands for `<query>.<mode>-<tp>-<tier>`; the generator scripts
+live in `testdata/`.
+
+| Golden | Produced by | Depends on | Asserted by |
+|---|---|---|---|
+| `<q>.<device>.plan.txt` | plan tier with `UPDATE_CANONICAL=1` | sf1 parquet (schemas + row-group stats reach the plan) | plan goldens tier |
+| `plan_bytes.sha256` | `test_plan_bytes` with `UPDATE_CANONICAL=1`<br>**and** `PEACOCK_REWRITE_PLAN_BYTES=1` | the same physical plans, serialized | <sub>serialized_plan_<br>bytes_are_stable</sub> |
+| `….cpu.txt` | the CPU executor under `UPDATE_CANONICAL=1` — never the GPU | sf1 parquet | CPU exec tiers; the GPU tiers assert against it read-only |
+| `….cost.txt` | derived from the sibling `.cpu.txt` text × `cost_model.conf` | `.cpu.txt`, `cost_model.conf` | CPU exec tiers + `test_cost_model` (re-derives and compares) |
+| `….result.txt` | the CPU oracle under `UPDATE_CANONICAL=1`; deleted above 256 KB so the GPU test falls back to a live oracle | sf1 parquet | CPU exec tiers; GPU tiers in `golden_exact`/`golden_approx` mode |
+| `<q>.duckdb_cost.txt` | `gen_duckdb_cost.sh --gen`<br>(DuckDB 1.5.4, `threads=1`, pyarrow 19.0.1) | committed pass-1 profiles ∩ pass-2 dynamic-filter bounds ∩ parquet row-group stats | the cost-report widget (directional signal, not a test) |
+| `tpch.sf40/duckdb_<q>.csv`, `.count.csv` | `gen_duckdb_goldens.sh --sf 40`<br>on shad-gpu | sf40 parquet, query text from `tpch_query_sql.sh` | `peacock_tpch_tests` / `peacock_tpchv_tests` |
+
+How they hang together — parquet at the top, goldens derived left to right:
+
+```
+testdata/{tpch,tpcds}-queries/*.sql
+        │
+        └── generate_testdata.sh (DuckDB, --embeddings synthetic|external)
+                 ▼
+        tpch.sf1 / tpcds.sf1   (parquet, gitignored)
+          │
+          ├── plan tier, UPDATE_CANONICAL=1
+          │     ├──► <q>.<device>.plan.txt
+          │     └──► plan_bytes.sha256     [also needs PEACOCK_REWRITE_PLAN_BYTES=1]
+          │
+          ├── CPU executor, UPDATE_CANONICAL=1   (the oracle; the GPU never writes)
+          │     ├──► <q>.<mode>-<tp>-<tier>.cpu.txt
+          │     │       └──× cost_model.conf ──► <q>.<mode>-<tp>-<tier>.cost.txt
+          │     └──► <q>.<mode>-<tp>-<tier>.result.txt    [dropped if ≥ 256 KB]
+          │
+          └── gen_duckdb_cost.sh --gen  (DuckDB 1.5.4, threads=1, pyarrow 19.0.1)
+                ├── pass 1, JFP off ──► duckdb-profiles/<bench>/<q>.json     (committed)
+                ├── pass 2, JFP on  ──► duckdb-dynfilters/<bench>/<q>.json   (committed)
+                └── duckdb_cost.py extract
+                      (pass-1 profile ∩ pass-2 bounds ∩ parquet row-group stats)
+                        └──► <q>.duckdb_cost.txt
+
+embeddings-cache ──► generate_testdata.sh --embeddings external   (local only, per host)
+
+tpch.sf40 (shad-gpu only) + testdata/tpch_query_sql.sh
+    └── gen_duckdb_goldens.sh --sf 40 ──► goldens/tpch.sf40/duckdb_<q>.csv (+ .count.csv)
+```
+
+Consequences worth knowing before you regenerate:
+
+- **`.cost.txt` is a pure function of `.cpu.txt` and `cost_model.conf`** — regenerating one
+  `.cpu.txt` obliges the sibling `.cost.txt`, and `test_cost_model` re-derives every one of
+  them, so a hand-edited `.cost.txt` goes red.
+- **The GPU never authors a golden.** Both GPU tiers read the CPU-authored `.cpu.txt` and
+  `.result.txt`, which is what makes a GPU-vs-CPU divergence a red test rather than a
+  quietly rewritten expectation.
+- **`plan_bytes.sha256` needs a second, deliberate variable.** Under plain
+  `UPDATE_CANONICAL=1` the test verifies instead of rewriting, and says so — a bulk regen that moved the wire
+  format goes red during the regen, before the goldens are pulled home.
+- **The `.duckdb_cost.txt` path is re-runnable without DuckDB**: `--extract-only` rebuilds
+  the goldens from the committed profiles plus the parquet, so only a genuine oracle change
+  needs the 1.5.4 pin.
 
 ## CI structure (`.github/workflows/pipeline.yml`)
 
-- **cpp-cpu** (matrix cudf 25.02 / 26.02): C++ build + ctest CPU label, generate+validate
-  sf1, all rust CPU tests (incl. rust-only golden tier: `test_plan_bytes`,
-  `test_cost_model`, `test_ci_coverage`).
-- **cpp-build-2502**: builds the 25.02 C++ side + stages GPU rust test binaries as the
-  artifact for the GPU job.
-- **GPU Tests (remote)**: ships the artifact to **shad-gpu**, patches glibc, runs every
-  `peacock_*_tests` C++ binary (glob + ran-any + zero-tests guards; multi-GPU binaries
-  excluded) and the GPU rust tests with `--test-threads=1`. sf40 presence is a hard
-  precondition there.
-- **Cost report**: cost-report unit tests + report generation; PR comment upsert;
-  cost-regression gate vs the base SHA; Pages deploy on master.
-- **S3 datasets metadata check**: reads parquet footers of the large S3 datasets.
-- **validate-large.yml** — manual dispatch only: full validation of
-  sf40/sf200 datasets in place on shad-gpu.
+`pipeline.yml` runs on pushes to master and on every PR. Four independent job chains:
+
+```
+cpp-cpu (2 legs)          cpp-build-2502 ──► gpu-tests
+cost-report ──► deploy-pages (master push only)          s3-datasets
+```
+
+- **cpp-cpu** — two matrix legs, each in a RAPIDS container: `cudf: 25.02`
+  (`rapidsai/base:25.02-cuda12.0-py3.12`) and `cudf: 26.02`
+  (`rapidsai/base:25.10a-cuda12-py3.12` — the leg's label is ahead of its image, #129).
+  Both legs do the same work: C++ build through the shared `.github/actions/cpp-build`
+  composite (conda gcc + ccache + pinned cmake/ninja), `ctest --test-dir cpp/build -L cpu`,
+  generate + validate sf1 (pinned DuckDB — the TPC-DS dsdgen column types drift between
+  releases and would move every plan golden), then the CPU rust tiers:
+  `test_plan_serialiser`, `test_query_plan`, `test_cpu_full_table`,
+  `test_cpu_executor_misc`, `test_cpu_oom`, `test_node_executor`, `test_query_plan_misc`,
+  `test_cpu_partitioned`, `peacockdb-ffi --test test_ffi`, plus rust-only
+  `test_plan_bytes` and `--lib`. Build and run are separate steps whose env blocks must
+  stay byte-identical, or the run step recompiles.
+- **cpp-build-2502** — builds the 25.02 C++ side, bundles the Arrow/Parquet runtime libs,
+  and stages `test_gpu_full_table`, `test_gpu_partitioned`, `test_inc2_conformance` as the
+  `cpp-install-25.02` artifact. Separate from cpp-cpu so the GPU job can start without
+  waiting for the CPU tests.
+- **gpu-tests** (needs cpp-build-2502) — ssh to **shad-gpu** into a per-run `REMOTE_DIR`:
+  rsync artifact + testdata, patch the binaries for glibc 2.35, generate sf1 on the host
+  if absent, then run. Three guards, each closing a hole that shipped: sf40 presence is
+  asserted by CI (`tpch.sf40/lineitem.parquet`) because the binaries themselves skip and
+  exit 0, which would be green having verified nothing; every `peacock_*_tests` binary runs
+  by glob with a ran-any assertion (a hand-written list once let `peacock_tpchv_tests` be
+  built, shipped and patched but never run); and any binary reporting `PASSED 0 tests` is
+  an error. The staged rust binaries then run with `--test-threads=1` (cuDF/RMM share one
+  process-wide pool). No `set -e` — statuses are OR'd so one failure cannot skip the rest —
+  and `REMOTE_DIR` is removed on `always()`.
+- **cost-report** — the golden/meta tier lives here, not in cpp-cpu: python
+  `testdata/test_duckdb_cost.py`, `cargo test -p cost-report`, and rust-only
+  `test_cost_model` + `test_ci_coverage`. Then report generation, a PR-comment upsert, and
+  the cost-regression gate against the base SHA, which fails the job on a regression. On a
+  master push it uploads the Pages artifact.
+- **deploy-pages** (needs cost-report; master pushes only) — publishes that artifact.
+- **s3-datasets** — reads parquet footers of the large S3 datasets over ranged GETs
+  (schema, embedding dims, row counts). Skipped on fork PRs, where the secrets do not
+  exist, and exits 0 loudly if the credentials are absent anyway.
+- **validate-large.yml** — `workflow_dispatch` only, gated on the same repo: validates the
+  named datasets in place on shad-gpu with the scale-safe validators, then runs the S3
+  metadata check. The `datasets` input defaults to `tpch.sf40 tpcds.sf200`; `tpch.sf200` is
+  allow-listed but deliberately not defaulted, because it does not exist yet.
+
+Which Rust targets run where is not folklore — `test_ci_coverage` fails when a target
+exists that no workflow step names. Doctests are the one class outside that guard (#128).
 
 ## What `rust-only` means
 
@@ -82,7 +245,7 @@ would have nothing to call.
 So it is the Rust half built against DataFusion alone. That is why it is the fast loop,
 and why anything a rust-only binary can do is by definition CPU-only.
 
-**It selects a BUILD, not a set of tests.** `cargo test --features rust-only -p
+**It selects a *build*, not a set of tests.** `cargo test --features rust-only -p
 peacockdb-core` runs every target that compiles under it — including the full CPU
 execution suite — not just the golden/meta tier. Naming a tier takes `--test`. This has
 been mis-transcribed at least once; see the "refactor is verified with a subset" rule
@@ -106,7 +269,7 @@ ccache is auto-enabled for both C++ workflows when the binary is present (host
 compilers only — ccache + nvcc is unreliable). Rust caching is the per-workflow target
 dir below.
 
-Note the C++ side is built TWICE on the cudf path, into two dirs that are both used:
+Note the C++ side is built *twice* on the cudf path, into two dirs that are both used:
 `build-test.sh` drives cmake into `cpp/build26` for the installable libs and the C++
 test binaries it ships, while `peacockdb-ffi/build.rs` runs cmake again into cargo's
 `OUT_DIR` for the copy the Rust binaries link against. The `.peacock-ffi-cudf-root`
@@ -124,7 +287,7 @@ Rules that keep this healthy:
 - **Never run cudf-feature cargo builds in `./target`** — they would evict the rust-only
   cache and vice versa (the `ffi` feature and `cudf_ROOT` both change fingerprints, and
   the cudf side recompiles the DataFusion stack at opt-3). For one-off cudf/FFI cargo
-  commands use `scripts/cargo-cudf.sh`, which requires `CUDF_ROOT` and derives BOTH
+  commands use `scripts/cargo-cudf.sh`, which requires `CUDF_ROOT` and derives *both*
   `CARGO_TARGET_DIR=target-cudf-$(basename "$CUDF_ROOT")` AND `CC`/`CXX` from that same
   basename (25.02 → gcc-12, 26.02 → gcc-14; an unknown root fails and asks for
   `GCC_VERSION`) — the same dir and the same compiler the build-test scripts use, so it
@@ -163,7 +326,7 @@ Rules that keep this healthy:
 | **verda-gpu** (least used) | same root volume as verda, with a GPU attached | `scripts/build-test.sh --host verda-gpu --gpu --all` |
 | **nebius** | large CPU-only VM for benchmarking | manual |
 
-- **Testing the regen MECHANISM is not a full regen.** Scope it with `PCK_TEST_FILTER`
+- **Testing the regen *mechanism* is not a full regen.** Scope it with `PCK_TEST_FILTER`
   (forwarded to every staged binary) — two or three queries prove the path as well as
   903 do, and a full `--update-canonical` run rewrites every golden on the remote and
   pulls the whole set back into a git working tree, where an unrelated diff can ride
@@ -185,9 +348,10 @@ Rules that keep this healthy:
   flag per kind per direction — `--push-<kind>` / `--pull-<kind>` for
   `parquet | goldens | duckdb-profiles | duckdb-dynfilters | queries`.
   **Pushes mirror (`--delete`), pulls are additive**, deliberately: the remote is a
-  PARTIAL mirror (`testdata/goldens/` holds `tpch.sf40/`, which lives only on shad-gpu),
+  *partial* mirror (`testdata/goldens/` holds `tpch.sf40/`, which lives only on shad-gpu),
   so mirroring downward would delete fixtures the source host never had, out of a git
-  working tree. `plan_bytes.sha256` rides along safely because `test_plan_bytes` itself
+  working tree. (The sf40 *dataset* is what lives only there — its 16 CSV goldens are
+  committed.) `plan_bytes.sha256` rides along safely because `test_plan_bytes` itself
   refuses to regenerate without `PEACOCK_REWRITE_PLAN_BYTES=1`.
   The tpch **embeddings cache is NOT syncable** — a per-host intermediate
   (`fetch_embeddings.sh`, ~1.8 GB, gitignored); regenerate it where you need it.

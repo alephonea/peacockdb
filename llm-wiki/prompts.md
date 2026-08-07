@@ -68,14 +68,14 @@ arrive from the human one at a time.
   - A chain merges oldest-first (on instruction — see the merge rule below); GitHub
     retargets each child PR as its base merges. Never reorder or skip a link to merge
     something sooner.
-- **You perform ALL git operations** (branch, commit, push, PR, merge). The developer
+- **You perform *all* git operations** (branch, commit, push, PR, merge). The developer
   and reviewer never mutate git state.
-- **Merging to master happens ONLY when a human instructs it, in that message.** Never
+- **Merging to master happens *only* when a human instructs it, in that message.** Never
   on your own judgment, however green CI is and however satisfied the reviewer. The
   instruction covers only the PR or chain it names and does not carry forward to the
   next one — "merge #114" is not standing permission to merge #118. Merge a chain
   oldest-first, and **never with `--delete-branch`**: deleting a base that an open PR
-  still targets CLOSES that PR, and it cannot be reopened while the base is gone.
+  still targets *closes* that PR, and it cannot be reopened while the base is gone.
   Retarget each child to master yourself before merging it; tidy branches afterwards.
 - **After a merge, archive the task specs in a master-only commit.** No branch, no PR:
   on master, move each merged PR's spec out of `llm-wiki/tasks/` and into
@@ -95,6 +95,16 @@ arrive from the human one at a time.
   work, commit it, return to the failed branch, fix, verify, push, then rebase and resume.
 - Regressions in the enabled-test set are not allowed unless a human explicitly
   authorizes them (see the developer's flaky-test exception).
+- **Keeping `architecture.md` and `build-test.md` true is yours.** When a task changes
+  code or tests, the same task corrects whatever those two pages now describe wrongly —
+  the commit that changes behavior is the commit that fixes the description, not a later
+  cleanup pass. Correction is the standing duty; **growth is not**: add new material to
+  either page only when a human asks for it. A page that gains a section per task becomes
+  a changelog, and the next agent then cannot tell the load-bearing invariants from the
+  commentary. **No capitals for emphasis** anywhere in `llm-wiki/` — bold, italics, or a
+  sentence that earns the point, and otherwise nothing. A page where six words are urgent
+  has no urgent words left. Capitals are for identifiers, acronyms and literal values a
+  reader will grep for.
 - **Markdown and YAML are yours — edit them directly.** `llm-wiki/*.md`, task specs,
   tickets, `.github/workflows/*.yml`: write them yourself rather than routing the fix
   through the developer. A round trip through msgq costs more than the edit and adds a
@@ -124,10 +134,10 @@ Style: `llm-wiki/coding-style.md`.
 - For large test/regen runs, arm a monitor that reports progress every 2 minutes
   (progress may stall — see build-test.md). A silent stall looks exactly like a long
   run, so the monitor must also match failure signatures, not just progress lines.
-- **A refactor with no intended behavior change is verified with SUBSETS, not full
+- **A refactor with no intended behavior change is verified with *subsets*, not full
   suites** — a representative case per mode/tier per binary, plus the cheap golden/meta
   tier. The goldens are the invariant. Check what a package-wide command actually
-  sweeps before running it: `--features rust-only` selects a BUILD, not a tier, so
+  sweeps before running it: `--features rust-only` selects a *build*, not a tier, so
   `cargo test --features rust-only -p peacockdb-core` runs the whole CPU execution
   suite, not just the golden tier.
 - **No regression in test coverage** unless a human explicitly authorized it.
