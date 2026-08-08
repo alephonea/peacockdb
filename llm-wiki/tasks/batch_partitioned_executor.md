@@ -183,13 +183,13 @@ the kernel-knob analysis in the same ticket.
 | `GpuAccumulateBatchesAndSort` | BatchAccumulator | accumulates sorted batches, one `cudf::merge` at done; output one batch, `PartitionSorted`. No streaming emission — cuDF has no primitive; ranged emission is [#138](../tickets.md#t138) |
 | `GpuMergeSortedPartitions` | PartitionAccumulator | input: N partitions, `MultipleBatches` allowed, `BatchSorted` required; all k·m sorted batches into one `cudf::merge`, `fetch` applied; output: 1 partition, one batch, `PartitionSorted` |
 | `GpuCoalesceAllBatches` | BatchAccumulator | concatenates a partition's batches into one at done |
-| `GpuMergePartitions` | driver-only | N partition streams → 1, forwarding each batch as visited, round-robin (see [Determinism](#determinism-rules)); accumulates nothing, no backend calls |
+| `GpuMergePartitions` | RepartitioningBatchPassthrough | N partition streams → 1, forwarding each batch as visited, round-robin (see [Determinism](#determinism-rules)); accumulates nothing, no backend calls |
 | `GpuEmitPartitions` | PartitionEmitter | 1 → N per batch by hash scatter; streaming, one call per input batch |
 | `GpuAggregate` | Exec | partial (or single-shortcut final) aggregation of one batch |
 | `GpuAggregateBatches` | BatchAccumulator | merges pre-aggregated batches; emits at done |
 | `GpuJoin` | Join | capability matrix below |
 | `GpuCrossJoin`, `GpuNestedLoopJoin` | Join | two inputs, so `JoinExecutor`, not Exec: `set_build(left)`, probe right. Cross and inner NLJ stream the right side (same mechanics as inner hash-join probes); non-inner NLJ keeps a single-batch probe — the #136 finish trick needs keys to accumulate and a predicate join has none. Both inputs 1 partition; broadcast variants are [#140](../tickets.md#t140) |
-| `GpuUnion`, `GpuInterleave` | driver-only | lane relabeling; branch decimal/type normalization becomes explicit per-branch `GpuProject` casts inserted by the planner. Union sums its inputs' lane counts and clears `KeyDistribution`; interleave is chosen (as in DataFusion's `can_interleave`) only when every input carries the same hash distribution — output lane p is lane p of each input, so `KeyDistribution` is preserved |
+| `GpuUnion`, `GpuInterleave` | RepartitioningBatchPassthrough | lane relabeling; branch decimal/type normalization becomes explicit per-branch `GpuProject` casts inserted by the planner — which is what makes union pure routing. Union sums its inputs' lane counts and clears `KeyDistribution`; interleave is chosen (as in DataFusion's `can_interleave`) only when every input carries the same hash distribution — output lane p is lane p of each input, so `KeyDistribution` is preserved |
 | `GpuLimit` | driver + two lowerings | start..limit over a 1-partition stream. The fb node's skip/fetch are frozen per seq, so per-batch GPU calls would truncate every batch — see the lowering rule below the recipe table |
 | `GpuUnload` | Exec | `GpuBatch` in, `CpuBatch` out (Arrow IPC export per handle); 1:1 per batch, `NodeKind::Sink` at plan level |
 
@@ -343,11 +343,29 @@ enum NodeExecutors {
     PartitionAccumulator(ExecutorBackends<dyn PartitionAccumulatorExecutor>),
     PartitionEmitter(ExecutorBackends<dyn PartitionEmitterExecutor>),
     Join(ExecutorBackends<dyn JoinExecutor>),
-    DriverOnly,                       // GpuMergePartitions, GpuUnion, GpuInterleave
+    // GpuMergePartitions, GpuUnion, GpuInterleave — routing only, no backends
+    RepartitioningBatchPassthrough(Box<dyn RepartitioningBatchPassthrough>),
 }
 // GpuNode::make_executors(&self) -> NodeExecutors — a fresh instance set per call,
 // so the driver can instantiate per lane.
+
+// Routes whole batches into a new lane numbering; never touches rows, never buffers.
+// No CPU/GPU backends and no CallStats — routing is driver work, and a batch's bytes
+// are already accounted as driver-held in-flight.
+trait RepartitioningBatchPassthrough {
+    // the (child index, child lane) pairs feeding output lane p, in service order
+    fn sources_of(&self, out_lane: usize) -> Vec<(usize, usize)>;
+}
+// GpuMergePartitions: lane 0 ← [(0,0), (0,1), …, (0,N-1)]     (N → 1)
+// GpuUnion:          lane k ← [(i,j)]                          (exactly one source)
+// GpuInterleave:     lane p ← [(0,p), (1,p), …, (k-1,p)]       (child-major)
 ```
+
+One driver arm serves all three: a visit to output lane p cycles `sources_of(p)` in
+listed order, forwarding one batch per visit, skipping `Pending` sources, retiring
+`Exhausted` ones — the merge's round-robin and the interleave's per-lane child rotation
+are the same rule applied to different mappings, stated once here instead of once per
+node.
 
 `ExecutorBackends<T>` holds constructors for the CPU and GPU implementation; a
 `BackendSelector` trait picks one (`CpuBackendSelector`, `GpuBackendSelector`, and mock
@@ -421,9 +439,9 @@ Progress is guaranteed (every cycle either consumes a batch or pulls exactly one
 upstream batch), raw queued data is bounded by N×Q batches per emit, the queues are
 driver-held in-flight batches the enforcer already counts, and everything is
 single-threaded deterministic. `Pending` propagates through merge visits, which skip
-that input lane for the cycle. `GpuInterleave` gets the same rule scoped per lane:
-output lane p merges lane p of each child, cycling children in index order within the
-visit, `Pending` skipping as above.
+that input lane for the cycle. `GpuInterleave` and `GpuUnion` follow the identical rule
+through `RepartitioningBatchPassthrough::sources_of` (see [Traits](#traits)) — one
+driver arm cycles a lane's declared sources in order, whatever the node.
 
 **Flow and backpressure are a first-class test surface for both drivers**, exercised
 with mock operators behind the mock `BackendSelector` (scripted batch counts, sizes,
@@ -510,7 +528,7 @@ structure. The mapping:
 | `GpuJoin` | `GpuHashJoin`, plus finish-pass seqs (key project, concat, anti/semi join, pad project) per #136 | map arm per (partition, probe batch) |
 | `GpuCrossJoin` / `GpuNestedLoopJoin` | same-kind node | one map-arm call |
 | `GpuLimit` | none, or `GpuCoalescePartitions` + `GpuLimit` | see the lowering rule below |
-| `GpuMergePartitions` / `GpuUnion` / `GpuInterleave` | none (union casts are `GpuProject` seqs) | driver relabeling, zero FFI calls |
+| `GpuMergePartitions` / `GpuUnion` / `GpuInterleave` | none (union casts are `GpuProject` seqs) | `RepartitioningBatchPassthrough` routing in the driver, zero FFI calls |
 | `GpuUnload` | none | `peacock_result_from_handle` per handle |
 
 This mapping is a first-class deliverable: documented here, unit-tested (each `GpuNode`
@@ -542,10 +560,11 @@ Batch boundaries are a pure function of the plan: the loader's come from the
 partitioner's committed mapping, Exec ops are 1:1, accumulators emit at defined points.
 Given that, the remaining scheduling freedoms are pinned:
 
-- **`GpuMergePartitions` polls round-robin by batch**: visit partitions cyclically in
-  index order; a visit yields one batch, `Pending` (skipped this cycle — see the visit
-  contract), or `Exhausted`; exhausted lanes leave the rotation. Emission order is
-  arrival order under this schedule.
+- **Every `RepartitioningBatchPassthrough` lane cycles its `sources_of` list in order**
+  — for `GpuMergePartitions` that is round-robin over partitions by index; a source
+  yields one batch, `Pending` (skipped this cycle — see the visit contract), or
+  `Exhausted` (retired from the rotation). Emission order is arrival order under this
+  schedule.
   Chosen over drain-in-partition-order deliberately: it keeps "partition = a lane that
   makes progress alongside the others" true, at the honest cost of N live lanes — which
   the estimator charges, and which matches what a parallel driver will cost anyway. If a
