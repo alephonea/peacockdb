@@ -9,7 +9,7 @@ does not.
 
 Status (2026-08-07): design final — every open question from the draft review is resolved
 and folded in below; the draft this supersedes lived outside the repo and is no longer
-needed. Implementation has not started; the first hand-off to the developer is T1, on a
+needed. Implementation has not started; the first hand-off to the developer is T0, on a
 new `ENS-` branch when the human says to start. This is a large task spanning many
 branches, so the spec lives on master, committed ahead of the work, rather than riding
 any one task branch. Deferred work is ticketed, not latent: this file plus `tickets.md`
@@ -357,6 +357,16 @@ types and the selector's GPU arm are gated the same way the legacy GPU executors
 
 ## Drivers
 
+> Rework pending. This section is written pull-based — nodes pulling from the nodes
+> below — and the execution model is being redesigned to be DFS-like: partitions run at
+> the same time within one node, and batches are pushed up the tree as far as they can
+> go, rather than pulled. The T0 Python prototype exists to settle that design; the
+> visit contract, backpressure rule and diagrams below are the pull-based formulation
+> and will be rewritten from the prototype's findings. The parts that survive either
+> model: the two-driver split and chunk boundaries, determinism requirements, bounded
+> queues at the shuffle, accumulator state as the home of mandatory residency, and the
+> flow-and-backpressure test surface.
+
 Two drivers, both single-threaded, pull-based, deterministic, generic over
 `BackendSelector`:
 
@@ -584,6 +594,20 @@ Tasks in dependency order; each is one developer hand-off with its own proving t
 Legacy tests stay green throughout — every task that touches shared code runs the
 affected legacy subsets (one query per mode/tier per binary plus the rust-only tier, per
 build-test.md).
+
+**T0 — Python prototype of the whole execution model.** All node types and both drivers
+in Python, operators built with pandas, plans hand-built (no DataFusion, no planner) —
+an emulation of tree execution whose purpose is to settle the DFS-like push model
+(partitions running at the same time within one node, batches pushed up as far as they
+can go) before any Rust exists. Includes the memory enforcer with the accounting formula
+and a mock scratch model, so trip behavior is exercised too. Stress tests: empty
+partitions; operators emitting empty batches; `GpuCoalesceBatches[target=XX]` injected
+at arbitrary tree positions (the node is deferred to #139 in Rust v1, but the prototype
+must prove the drivers tolerate it anywhere); skewed hashes; the full
+flow-and-backpressure surface from the drivers section; determinism (two runs, identical
+batch traces). Deliverables: the prototype under `prototype/batch_partitioned/` with
+pytest tests (not wired to CI), and a rewrite of the drivers section from its findings —
+the pull-based formulation there is provisional until this lands.
 
 **T1 — ParquetBatchPartitioner.** The pure policy class and its unit tests: fewer
 survivors than N; N=3; single row group over target; batching off ⇒ one batch per chunk;
