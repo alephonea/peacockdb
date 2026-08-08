@@ -515,7 +515,9 @@ structure. The mapping:
 
 This mapping is a first-class deliverable: documented here, unit-tested (each `GpuNode`
 kind → expected seq set and call pattern), because it is the load-bearing trick that
-keeps C++ frozen.
+keeps C++ frozen. The fb names in the table are the pre-T1 ones; after the T1 rename
+they read `Cudf*` (`CudfScan`, `CudfRepartition`, …) and this table is updated in that
+commit.
 
 **The limit lowering rule.** A per-batch `GpuLimit` call cannot be correct: the fb node's
 skip/fetch are frozen per seq, so every batch would be truncated to the same bounds
@@ -605,53 +607,69 @@ partitions; operators emitting empty batches; `GpuCoalesceBatches[target=XX]` in
 at arbitrary tree positions (the node is deferred to #139 in Rust v1, but the prototype
 must prove the drivers tolerate it anywhere); skewed hashes; the full
 flow-and-backpressure surface from the drivers section; determinism (two runs, identical
-batch traces). Deliverables: the prototype under `prototype/batch_partitioned/` with
-pytest tests (not wired to CI), and a rewrite of the drivers section from its findings —
-the pull-based formulation there is provisional until this lands.
+batch traces). Validation scope: partitioning checks and `SingleBatch` constraint checks
+are in scope; schema checks are not. The hand-built corpus: 3–4 TPC-H plans (a scan
+filter aggregate, a two-sided shuffle join, a top-N sort, a keyless aggregate) and ~10
+interesting TPC-DS plans — unions and interleaves, rollup aggregates, semi/anti joins,
+cross joins beside aggregates, multi-shuffle trees. Deliverables: the prototype under
+`prototype/batch_partitioned/` with pytest tests (not wired to CI), and a rewrite of the
+drivers section from its findings — the pull-based formulation there is provisional
+until this lands.
 
-**T1 — ParquetBatchPartitioner.** The pure policy class and its unit tests: fewer
+**T1 — flatbuffer operation-name refactor.** Nine of the fifteen legacy node-kind names
+(`GpuFilter`, `GpuProject`, `GpuSort`, `GpuAggregate`, `GpuCrossJoin`,
+`GpuNestedLoopJoin`, `GpuUnion`, `GpuLimit`, `GpuCoalesceBatches`) collide with the new
+mode's node names. Rename the fbs tables and `PlanNodeKind` variants to a `Cudf` prefix
+(`CudfScan`, `CudfFilter`, …) so the two vocabularies are visually distinct everywhere —
+schema, generated code, the C++ `node_type()` switches and serializer identifiers on the
+Rust side. A pure rename: FlatBuffers wire bytes carry no table names and enum ordinals
+do not move, so the proof is `plan_bytes.sha256` staying byte-identical with no
+regeneration, plus green legacy subsets. The same commit sweeps the llm-wiki references
+(architecture.md's fb names, affected tickets, and the recipe-plan table in this spec).
+
+**T2 — ParquetBatchPartitioner.** The pure policy class and its unit tests: fewer
 survivors than N; N=3; single row group over target; batching off ⇒ one batch per chunk;
 empty survivors (explicit error — the fbs "empty map means legacy single partition"
 convention must not leak in); balance bound (max−min partition rows ≤ one row group);
 fixed-output determinism case. No planner integration yet.
 
-**T2 — node and trait skeleton.** `GpuNode`, `PartitionLayout` (with the three-valued
+**T3 — node and trait skeleton.** `GpuNode`, `PartitionLayout` (with the three-valued
 `SortOrder`), `Schema` with semantics annotations, `Batch`/`CpuBatch`/`GpuBatch` shells
 with the move/`!Clone`/`Drop` rules, executor trait definitions with `CallStats`,
 `BackendSelector`. Traits in their own files per coding-style. Compiles under rust-only
 with the GPU side gated. Unit tests: `SortOrder` canonicalization, layout equality.
 
-**T3 — translation layer, single-partition shapes.** DataFusion physical plan (tp1) →
+**T4 — translation layer, single-partition shapes.** DataFusion physical plan (tp1) →
 `GpuNode` tree for chains: load, filter, project, sort (+fetch), limit, coalesce-all,
 single/final aggregates, cross/nested-loop joins. Per-node-kind conscious mapping;
 unrecognized node ⇒ plan-time error naming it; window ⇒ the #143 refusal. Unit tests
 assert emitted constructs for simple queries.
 
-**T4 — translation layer, partitioned shapes.** tp4: shuffle points → Merge+Emit, the
+**T5 — translation layer, partitioned shapes.** tp4: shuffle points → Merge+Emit, the
 aggregate sequence with its shortcuts and the gid rule, join side normalization (type
 remap + column-order-restoring project) and build-side coalesce insertion per the
 capability matrix, union/interleave with explicit branch-cast projects. The
-`hashKeys ⊆ group columns` structure is produced here (validated in T7). Unit tests per
+`hashKeys ⊆ group columns` structure is produced here (validated in T8). Unit tests per
 construct in tp1 and tp4, including side-swap cases.
 
-**T5 — estimator pass and plan goldens.** `estimated_max_resident_size` per node
-(rows × width vocabulary, N-lane charging), `target_batch_bytes` derivation feeding T1's
+**T6 — estimator pass and plan goldens.** `estimated_max_resident_size` per node
+(rows × width vocabulary, N-lane charging), `target_batch_bytes` derivation feeding T2's
 partitioner, integration as `plan_batch_partitioned()`. Canonize all four
 `<mode>.plans.txt` + `<mode>.plan.mem.txt` for TPC-H and TPC-DS (minus #23's four and
 window queries, which appear as refusals).
 
-**T6 — schema registry.** `output_schema()` on all nodes with column semantics
+**T7 — schema registry.** `output_schema()` on all nodes with column semantics
 annotations. Unit tests: hand-crafted plans produce expected types and annotations;
 decimal precision/scale fidelity through project/aggregate/union-cast paths.
 
-**T7 — validation.** `validate_schemas_and_partitions()` on every node type: partition
+**T8 — validation.** `validate_schemas_and_partitions()` on every node type: partition
 topology, key-distribution subset rule, `BatchSorted`/`PartitionSorted` requirements
 (merge requires ≥ BatchSorted; limit-after-sort requires PartitionSorted), `SingleBatch`
 expectations (join build, cross/nlj inputs), captured-index checks. Unit tests: manually
 constructed wrong combinations error, right ones pass; then run validation over every
-canonized corpus plan from T5.
+canonized corpus plan from T6.
 
-**T8 — additive scan ABI.** `peacock_executor_execute_scan_rowgroups` in
+**T9 — additive scan ABI.** `peacock_executor_execute_scan_rowgroups` in
 `gpu_executor.cpp` + `peacock_gpu.h` (the only planned C++/header change; any further
 surface change goes through a proposal to the human, per the constraint section),
 plumbing `row_groups_override`; Rust binding; `GpuBatch` handle plumbing (session ref,
@@ -659,25 +677,25 @@ plumbing `row_groups_override`; Rust binding; `GpuBatch` handle plumbing (sessio
 suite reading disjoint row-group subsets and asserting union == whole-scan; Rust FFI
 smoke on shad-gpu.
 
-**T9 — Exec executors, CPU and GPU.** Filter, project, per-batch sort, aggregate
+**T10 — Exec executors, CPU and GPU.** Filter, project, per-batch sort, aggregate
 (partial/single), unload (`GpuBatch → CpuBatch`), the mid-plan limit call. Reuse legacy operator code by extracting
 helpers — never by calling into strip/wrapper machinery. Per executor: CPU vs
 hand-crafted oracle, GPU vs CPU, empty-batch cases, `CallStats` model ≥ measured on CPU.
 CPU and GPU tests in separate targets so CI hosts split them.
 
-**T10 — accumulators.** `GpuCoalesceAllBatches`, `GpuAggregateBatches` (both finals),
+**T11 — accumulators.** `GpuCoalesceAllBatches`, `GpuAggregateBatches` (both finals),
 `GpuAccumulateBatchesAndSort`, `GpuMergeSortedPartitions`. Edge cases: zero batches, one
 batch, ties for the merge (partition-major stability), fetch interaction, large batch
 counts, gid-carrying aggregate merges.
 
-**T11 — partition ops and joins.** `GpuEmitPartitions` (per-batch scatter, N=3 and large
+**T12 — partition ops and joins.** `GpuEmitPartitions` (per-batch scatter, N=3 and large
 N, empty outputs for skewed hashes), `GpuMergePartitions` round-robin rule,
 `GpuJoin` with `set_build`/`probe_and_fetch`/`finish_and_fetch`, plus cross and
 nested-loop joins on the same trait: the full capability matrix as a test table — per
 (type × layout): stream-vs-refuse, correctness vs the single-batch oracle, the GPU
 finish pass via key accumulation (#136), null_equals_null on the finish join.
 
-**T12 — drivers and enforcer.** Both drivers with mock backends via the selector;
+**T13 — drivers and enforcer.** Both drivers with mock backends via the selector;
 `batch_partitioned_driver` tested against a mocked single-partition driver; round-robin
 determinism cases; the full flow-and-backpressure suite from the drivers section, with
 mock operators: skewed emit (every queue ≤ cap, starved lane returns `Pending` without
@@ -690,12 +708,12 @@ simultaneously, interleave per-lane child rotation; the accounting formula with
 pre/post checks; enforcer trip ⇒ clean query failure; FFI-error ⇒ query-fatal
 semantics.
 
-**T13 — recipe-plan serialization and GPU integration.** The GpuNode → fb-seq mapping
+**T14 — recipe-plan serialization and GPU integration.** The GpuNode → fb-seq mapping
 table implemented and unit-tested (expected seq sets and call patterns per node kind);
 driver-side stats folding across calls into `NodeMemoryStats`; first end-to-end queries
 on shad-gpu (scan → filter → aggregate; a join; a sort+limit), GPU vs CPU.
 
-**T14 — rollout.** New macros `cpu_batch_partitioned_result_test` /
+**T15 — rollout.** New macros `cpu_batch_partitioned_result_test` /
 `gpu_batch_partitioned_test`; `.cpu.txt`/`.cost.txt` wiring incl. `cost_model.conf`
 entries for the new node names; `batch-info.cpu.txt` for ~10 queries; registry columns +
 inventory tests; `pipeline.yml` steps (satisfying `test_ci_coverage`); widget tables with
