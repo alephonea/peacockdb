@@ -183,7 +183,7 @@ the kernel-knob analysis in the same ticket.
 | `GpuAccumulateBatchesAndSort` | BatchAccumulator | accumulates sorted batches, one `cudf::merge` at done; output one batch, `PartitionSorted`. No streaming emission — cuDF has no primitive; ranged emission is [#138](../tickets.md#t138) |
 | `GpuMergeSortedPartitions` | PartitionAccumulator | input: N partitions, `MultipleBatches` allowed, `BatchSorted` required; all k·m sorted batches into one `cudf::merge`, `fetch` applied; output: 1 partition, one batch, `PartitionSorted` |
 | `GpuCoalesceAllBatches` | BatchAccumulator | concatenates a partition's batches into one at done |
-| `GpuMergePartitions` | PartitionAccumulator (driver-only) | N partition streams → 1, round-robin by batch (see [Determinism](#determinism-rules)); no backend calls |
+| `GpuMergePartitions` | driver-only | N partition streams → 1, forwarding each batch as visited, round-robin (see [Determinism](#determinism-rules)); accumulates nothing, no backend calls |
 | `GpuEmitPartitions` | PartitionEmitter | 1 → N per batch by hash scatter; streaming, one call per input batch |
 | `GpuAggregate` | Exec | partial (or single-shortcut final) aggregation of one batch |
 | `GpuAggregateBatches` | BatchAccumulator | merges pre-aggregated batches; emits at done |
