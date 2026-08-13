@@ -16,6 +16,9 @@
 #include <cuda_runtime.h>
 #include <gtest/gtest.h>
 
+#include "rmm_pool.hpp"
+
+
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -158,6 +161,7 @@ inline int32_t days_since_epoch(int y, unsigned m, unsigned d) {
 class TpchSf40 : public ::testing::Test {
  protected:
   void SetUp() override {
+    begin_peak_scope();
     const auto dir = data_dir();
     if (!file_exists(dir + "/lineitem.parquet")) {
       GTEST_SKIP() << "\n"
@@ -172,21 +176,33 @@ class TpchSf40 : public ::testing::Test {
   }
 
   void TearDown() override {
-    size_t free_after = 0, total = 0;
-    cudaMemGetInfo(&free_after, &total);
-    // peak is sampled, not tracked: report the high-water mark we observed during the
-    // query via note_peak(), which is what the CI cost estimate needs.
-    std::fprintf(stderr,
-                 "[gpu-mem] device total %.1f GiB; peak used by this test %.2f GiB\n",
-                 total_ / 1073741824.0, peak_used_ / 1073741824.0);
+    // Read the peak BEFORE popping — the pop discards this test's scope.
+    std::fprintf(stderr, "[gpu-mem] device total %.1f GiB; peak used by this test %.2f GiB (%s)\n",
+                 total_ / 1073741824.0, peak_bytes() / 1073741824.0,
+                 peak_allocated_bytes() ? "allocator high-water" : "free-memory delta");
+    end_peak_scope();
   }
 
   // call after the memory-heaviest step
+  //
+  // Two sources, and which one is right depends on whether a pool is installed. Without a
+  // pool, every cuDF allocation reaches the driver, so the drop in free memory IS the
+  // working set. With a pool, the pool took its memory up front and free memory does not
+  // move during the query at all — that reads as a peak near zero, which is not a small
+  // working set but an unmeasured one. So when a pool is present the allocator's own
+  // high-water mark is the only honest answer, and it is also the better one: it counts
+  // what the query asked for rather than what the allocator reserved.
   void note_peak() {
+    if (peak_allocated_bytes()) return;  // tracked by the allocator; nothing to sample
     size_t free_now = 0, total = 0;
     cudaMemGetInfo(&free_now, &total);
     size_t used = free_before_ > free_now ? free_before_ - free_now : 0;
     if (used > peak_used_) peak_used_ = used;
+  }
+
+  size_t peak_bytes() const {
+    const size_t tracked = peak_allocated_bytes();
+    return tracked ? tracked : peak_used_;
   }
 
   size_t free_before_ = 0, total_ = 0, peak_used_ = 0;
