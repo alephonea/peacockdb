@@ -18,6 +18,8 @@
 #include <string>
 #include <vector>
 
+#include "rmm_pool.hpp"
+
 namespace fb = peacock::plan;
 
 static std::string testdata_dir() {
@@ -724,5 +726,6 @@ TEST(PlanExecutor, JoinProjectSort) {
 
 int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);
+  peacock_test::install_rmm_pool();
   return RUN_ALL_TESTS();
 }

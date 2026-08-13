@@ -199,6 +199,26 @@ set_target_properties(peacock_tpch_tests PROPERTIES CXX_STANDARD 20 CXX_STANDARD
 add_test(NAME peacock_tpch_tests COMMAND peacock_tpch_tests)
 set_tests_properties(peacock_tpch_tests PROPERTIES LABELS "gpu")
 
+# The same four TPC-H queries streamed through a byte-bounded chunked reader, for a device
+# that cannot hold a table. Not registered with add_test and not installed: it is a
+# measurement binary for small-VRAM hosts, it needs the sf40 dataset, and the answer it
+# verifies is already verified by peacock_tpch_tests wherever that one fits. Build it
+# explicitly: cmake --build . --target peacock_tpch_streamed_tests
+add_executable(peacock_tpch_streamed_tests EXCLUDE_FROM_ALL tests/gpu/test_tpch_streamed.cpp)
+target_include_directories(peacock_tpch_streamed_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(peacock_tpch_streamed_tests PRIVATE cudf::cudf GTest::gtest)
+set_target_properties(peacock_tpch_streamed_tests PROPERTIES CXX_STANDARD 20
+                      CXX_STANDARD_REQUIRED ON)
+
+# Per-operator cuDF timings over sf40 columns — what a query benchmark cannot tell you.
+# EXCLUDE_FROM_ALL and no add_test for the same reasons as the streamed binary: it needs the
+# sf40 dataset and it measures rather than verifies.
+add_executable(peacock_cudf_node_tests EXCLUDE_FROM_ALL tests/gpu/test_cudf_nodes.cpp)
+target_include_directories(peacock_cudf_node_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(peacock_cudf_node_tests PRIVATE cudf::cudf GTest::gtest)
+set_target_properties(peacock_cudf_node_tests PROPERTIES CXX_STANDARD 20
+                      CXX_STANDARD_REQUIRED ON)
+
 # TPC-H+V vector query tests — bare cudf + cuVS BRUTE FORCE (exact; an ANN index cannot
 # match an exact DuckDB golden) over the sf40 dataset on the GPU host. Skips itself when
 # that dataset or query_params.jsonl is absent.

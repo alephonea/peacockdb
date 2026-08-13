@@ -6,7 +6,7 @@ anchor that the cost widget links to. Device labels are `tp<N>-<tier>` (micro=10
 mini=2GiB, standard=12GiB).
 
 A ticket carries a **Priority** line only when it is not medium; medium is the default.
-New tickets take the next free number (currently 144). Finished and lapsed tickets move to
+New tickets take the next free number (currently 151). Finished and lapsed tickets move to
 `llm-wiki/archive/archived-tickets.md` (Done / Stale) — numbers are never reused, so an old
 reference still resolves there.
 
@@ -16,7 +16,7 @@ reference still resolves there.
 |---|--:|---|
 | [Critical correctness](#critical-correctness) | 14 | #103 #80 #59 #46 #47 #60 #121 #122 #123 #118 #119 #120 #117 #41 |
 | [Blockers for disabled coverage](#blockers-for-disabled-coverage) | 15 | #97 #23 #32 #65 #62 #91 #95 #57 #45 #63 #56 #55 #115 #96 #143 |
-| [Performance / architecture](#performance--architecture) | 15 | #19 #16 #20 #71 #101 #73 #110 #75 #136 #137 #138 #139 #140 #141 #142 |
+| [Performance / architecture](#performance--architecture) | 18 | #150 #149 #148 #19 #16 #20 #71 #101 #73 #110 #75 #136 #137 #138 #139 #140 #141 #142 |
 | [Infrastructure / process](#infrastructure--process) | 16 | #113 #114 #116 #126 #132 #131 #130 #129 #128 #127 #124 #125 #13 #94 #69 #49 |
 
 ## Critical correctness
@@ -254,6 +254,133 @@ whole-partition aggregate windows need a single batch (coalesce-all first), whil
 rank/dense_rank gaps of #32 carry over unchanged.
 
 ## Performance / architecture
+
+<a id="t150"></a>
+### #150 — store the embedding columns uncompressed; Snappy costs a third of a vector query to save 3%
+
+The sf40 embedding columns are written SNAPPY like everything else, and they do not compress.
+From the parquet footers:
+
+| column | compressed | uncompressed | ratio |
+|---|--:|--:|--:|
+| `partsupp.ps_image_embedding` (96-dim float32, 32M rows) | 12306 MB | 12661 MB | **1.03x** |
+| `part.p_text_embedding` (100-dim float32, 8M rows) | 3205 MB | 3293 MB | **1.03x** |
+
+Float32 embeddings are high-entropy; Snappy finds ~3%. The non-vector columns manage ~1.6x,
+so this is a property of the data rather than of the writer.
+
+The GPU decompresses them anyway, and it is not cheap. q11v profiled (`nsys`, share of GPU
+kernel time):
+
+| kernel | H200 | GB10 |
+|---|--:|--:|
+| page decode | 634.6 ms (42.6%) | 590.2 ms (35.0%) |
+| **`nvcomp::unsnap_kernel`** | **564.7 ms (37.9%)** | **419.5 ms (24.9%)** |
+| cuVS distances + top-k | 60.5 ms (4.0%) | 421.6 ms (25.6%) |
+
+So a quarter to nearly two fifths of the GPU work in a vector query is Snappy decompression
+recovering 3%, and loading altogether is 93.8% of it on the H200 against 4% for the search
+the query exists to do.
+
+**The change.** Write the embedding columns with `compression=NONE` in
+`testdata/generate_testdata.sh`, leaving every other column SNAPPY. Parquet compression is
+lossless, so no value changes and no golden moves — only the file size and the load path.
+
+**The cost.** ~3% more bytes on disk and over the wire: sf40 grows by roughly 440 MB across
+the two columns. Against that, the `unsnap` kernel disappears from every vector load.
+
+**Why it is not free to do.** sf40 is generated, uploaded to `tpch-sf40` and mirrored to
+shad-gpu, so this means regenerating and re-uploading a 40 GB dataset and re-verifying the 16
+committed sf40 goldens. Worth pairing with any other dataset change rather than doing alone.
+
+**Measure it.** `load_ms` per vector probe before and after, plus the `unsnap` line from
+`nsys stats --report cuda_gpu_kern_sum`, which should vanish for the embedding reads.
+
+<a id="t149"></a>
+### #149 — the parquet load must use pinned host memory
+**Priority: high**
+
+Measured on the two benchmark hosts (`llm-wiki/reports/benchmark-minimal.md`), 2 GiB buffers,
+2nd-minimum of 5:
+
+| path | GB10 | H200 |
+|---|--:|--:|
+| H2D `cudaMemcpy`, pageable host memory | 59.5 GB/s | **10.6 GB/s** |
+| H2D `cudaMemcpy`, pinned host memory | 59.2 GB/s | **47.3 GB/s** |
+
+On a discrete GPU the DMA engine transfers by physical address and cannot be handed a page
+the OS may move, so a pageable source is first copied into an internal pinned staging buffer
+and DMA'd from there. That bounce is a host memcpy of every byte, and it is what bounds the
+pageable rate: H200's 10.6 GB/s sits just under its single-core memcpy rate of 11.8 GB/s,
+nowhere near its link rate. Pinning removes the copy and the rate quadruples.
+
+**4.4x on every byte the loader moves**, and the load is not a small term: on the H200 sf40
+queries the load column runs 400-690 ms against execute times of 19-48 ms, so end-to-end is
+dominated by it.
+
+Nothing in the engine sets a host memory resource for IO. cuDF exposes one
+(`cudf::io::set_host_memory_resource`, with a pinned or pooled-pinned host resource); the
+default is pageable. Same shape as [#148](#t148) on the device side: the allocator is left at
+its default and the default is the slow one.
+
+**Condition it on the device, do not assume.** GB10 shows no difference at all (59.5 vs 59.2)
+because there is one physical pool and its GPU addresses pageable host memory directly
+(`cudaDeviceProp::pageableMemoryAccess = 1`); pinning there buys nothing and the pinned
+allocation itself is not free. `integrated` / `pageableMemoryAccess` is the branch.
+
+**Tests.** Load time is the measurement, so it needs the harness that reports it: compare
+`load_ms` per query before and after on both hosts, and assert the discrete host improves
+while the integrated one does not regress. The existing `[bench] … load_ms=` line already
+carries the number.
+
+<a id="t148"></a>
+### #148 — the engine installs no RMM allocator, and `gpu_memory_limit` is accepted and ignored
+**Priority: high**
+
+Nothing under `cpp/src/` or `cpp/include/` ever calls `set_current_device_resource` or
+`set_per_device_resource`. The engine uses rmm types throughout — `device_uvector`,
+`device_async_resource_ref` parameters defaulted to `get_current_device_resource_ref()` —
+but never installs a resource, so every cuDF intermediate the executor allocates goes
+through rmm's default: one `cudaMalloc`/`cudaFree` per allocation, each a driver round trip,
+and on a unified-memory part a page-table walk and a zeroing pass as well.
+
+The same gap was already found and fixed once, on the other side of the tree:
+`cpp/tests/gpu/multi_gpu.cpp` builds a per-device `pool_memory_resource` inside the worker
+that owns each device, sized off that device's free memory. The single-GPU test binaries
+have now been given the same treatment (`cpp/tests/gpu/rmm_pool.hpp`). The engine has not,
+and it is the only one of the three that ships.
+
+**Measured cost.** TPC-H q1 over sf40 whole-table on GB10: 76.5 s execute, 2nd-min of 5,
+every run inside [75.4, 78.8] — so this is steady state, not first-touch. The same query
+streamed through bounded batches is 3.9 s for the same answer, and the streamed form's
+advantage is that its intermediates are small enough that the per-allocation cost stops
+dominating. Numbers and the allocator A/B are in
+`llm-wiki/reports/benchmark-minimal.md`.
+
+**The second half, and why it is the same ticket.**
+`peacock_executor_create(uint64_t gpu_memory_limit, ...)` documents the parameter as
+"Maximum GPU memory (bytes) the executor may use" (`cpp/include/peacock_gpu.h`). The value
+is stored into the executor struct (`gpu_executor.cpp:99`) and never read again — three
+occurrences in the file, all of them the declaration, the parameter and the construction.
+So the FFI has a documented memory bound that does nothing, which is the #132 shape one
+level up: a contract with no consumer.
+
+The two halves have one fix. A pool built with `initial` and `maximum` sizes IS the
+implementation of `gpu_memory_limit`: pass the documented limit as the pool's maximum, and
+the parameter starts meaning what the header says while the per-allocation cost goes away.
+An unset limit (0) sizes off free memory the way the tests do.
+
+**Care required.** The pool must be installed per device, before any cuDF call, and torn
+down on the owning device's thread — `multi_gpu.cpp` documents the teardown footgun
+(`set_per_device_resource(id, nullptr)` resets the pointer map but not the ref map, so
+`reset_per_device_resource_ref` is also needed). Sizing must distinguish the two kinds of
+host: on a discrete part the reservation costs the host nothing, while on an integrated one
+it comes out of the same pool as the page cache and the parquet reader's host buffers, so a
+discrete part's 85% is wrong there. `rmm_pool.hpp` states both regimes.
+
+**Tests.** The existing GPU tiers must stay byte-identical — this changes where memory comes
+from, not what is computed. Worth adding: a case asserting a small `gpu_memory_limit` is
+actually honoured, which today cannot go red because nothing reads the field.
 
 <a id="t19"></a>
 ### #19 — Stats propagation: 55 TPC-DS hash joins blind to cardinality

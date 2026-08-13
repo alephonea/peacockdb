@@ -31,6 +31,8 @@ rmm::cuda_stream_view const get_default_stream() { return cudf::get_default_stre
 
 #include <gtest/gtest.h>
 
+#include "rmm_pool.hpp"
+
 TEST(CudfGpu, SequenceSum) {
   // Generate [1, 2, 3, ..., 100] on the GPU.
   constexpr cudf::size_type N = 100;
@@ -100,5 +102,6 @@ TEST(CudfGpu, SparkPartitionIdsMatchComet2ColWithNulls) {
 
 int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);
+  peacock_test::install_rmm_pool();
   return RUN_ALL_TESTS();
 }
