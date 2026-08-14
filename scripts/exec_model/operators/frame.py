@@ -57,6 +57,11 @@ class PandasBatch(Batch):
     def byte_size(self) -> int:
         return int(self.frame.memory_usage(index=False, deep=True).sum())
 
+    def slice_rows(self, offset: int, length: int) -> "PandasBatch":
+        """A row range — `cudf::slice`, or an Arrow slice once unloaded. See `limit.py`."""
+        stop = offset + length
+        return PandasBatch(self.frame.iloc[offset:stop], f"{self.tag}[{offset}:{stop}]")
+
     def consume(self) -> pd.DataFrame:
         """Take the frame. A second call is a driver bug — on the GPU the handle is gone."""
         if self.consumed:
@@ -82,6 +87,16 @@ def concatenate(frames: list[pd.DataFrame]) -> pd.DataFrame:
 def empty_like(frame: pd.DataFrame) -> pd.DataFrame:
     """A zero-row frame with the same columns and dtypes."""
     return frame.iloc[0:0].copy()
+
+
+def empty_frame(schema) -> pd.DataFrame:
+    """A zero-row frame from a `{column: dtype}` mapping.
+
+    Typed on purpose: a `cudf::column` has a type whether or not it has rows, and an
+    untyped pandas empty defaults to object/float64 and retypes whatever it is later
+    concatenated onto — the key-retyping bug `aggregates._apply` documents.
+    """
+    return pd.DataFrame({column: pd.Series([], dtype=dtype) for column, dtype in schema.items()})
 
 
 def _bytes(frame) -> int:

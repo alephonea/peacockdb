@@ -87,3 +87,22 @@ class SourceExecutor(Executor):
     @abstractmethod
     def next_batch(self) -> tuple[Batch, CallStats] | None:
         """None means this lane is exhausted; it is never called again."""
+
+
+class UnloadExecutor(Executor):
+    """Its own category because it is the one operator whose output is not a `Batch`.
+
+    In Rust that is `B::Batch` in, `CpuBatch` out, which an `ExecExecutor` cannot express
+    once `exec` is `B::Batch -> B::Batch`. Here both are pandas, so the node exists for
+    what it *is*: the one place data crosses the device boundary.
+    """
+
+    @abstractmethod
+    def unload(self, batch: Batch, rows) -> tuple[Batch, CallStats]:
+        """`rows` is a `RowRange`, or None for the whole batch.
+
+        A call argument rather than executor state: it comes from a root-adjacent limit,
+        whose row count is across lanes, and this instance is one lane's. It maps onto
+        `peacock_result_from_handle`'s range, so a trimmed unload moves only the rows
+        wanted.
+        """

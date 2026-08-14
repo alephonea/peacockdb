@@ -107,7 +107,17 @@ def _apply(
         # The empty frame must carry the columns THIS PHASE declares. Getting it wrong is
         # not cosmetic: a partial's state columns leaking out of a final produces a frame
         # `cudf::concatenate` would reject, and an all-empty lane is exactly where it shows.
-        return pd.DataFrame({c: [] for c in out_columns})
+        #
+        # Key columns keep the input's dtype rather than defaulting to float64. cuDF has no
+        # choice about this — a column has a type — but pandas does, and taking the default
+        # is a live bug: concatenating an empty float64 key onto an int64 one retypes the
+        # key, `partition_ids` stringifies 5.0 where another lane stringifies 5, and equal
+        # keys stop co-locating. Wrong answers, only under an empty batch.
+        empty = {
+            c: (frame[c].iloc[0:0] if c in frame.columns else pd.Series([], dtype="float64"))
+            for c in out_columns
+        }
+        return pd.DataFrame(empty)
     return normalize(pd.DataFrame(rows))
 
 

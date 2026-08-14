@@ -44,11 +44,12 @@ package when it is run as a script, so the relative imports resolve either way.
 |---|---|
 | `layout.py` | `NodeKind`, `KeyDistribution`, `SortOrder`, `BatchLayout`, `PartitionLayout` |
 | `batch.py` | the `Batch` value type and `CallStats` |
-| `executors.py` | `Executor` plus the six executor traits and `LaneEvent` |
+| `executors.py` | `Executor` plus the seven executor traits and `LaneEvent` |
 | `forwarder.py` | `BatchForwarder` and the merge / union / interleave mappings |
 | `node.py` | `GpuNode`, `NodeExecutors`, `ExecutorBackends`, `BackendSelector` |
-| `plan.py` | heights, left-to-right order, structural validation |
+| `plan.py` | heights, left-to-right order, structural validation, which limit lowering applies |
 | `accounting.py` | the resident formula, the cached-delta executor total, and the enforcer |
+| `limit.py` | `RowInterval`, `RowRange`, and the per-batch decision behind the two lowerings |
 | `runtime.py` | per-node queue state and one lane's view of its inputs |
 | `batch_single_partition_driver.py` | one lane of one lane-scoped node |
 | `batch_partitioned_driver.py` | the scheduler and everything cross-partition |
@@ -61,6 +62,7 @@ package when it is run as a script, so the relative imports resolve either way.
 | `operators/partition_ops.py` | the hash scatter |
 | `operators/joins.py` | the join capability matrix |
 | `operators/nodes.py` | `GpuNode` implementations wiring the operators into plans |
+| `operators/injection.py` | `LayoutInjector` — rewrite a plan's partitioning, batching and hash placement |
 
 Traits are declarations only. The driver tests drive mocks (`tests/mocks.py`) because the
 strategy under test is *which node runs when*; the operator tests drive the real thing.
@@ -79,9 +81,10 @@ null equality on every join; concatenate requires identical columns. Each has a 
 
 ## The strategy
 
-Plans are binary trees, oriented so a join's build side is always the left child. Each
-node carries a **height** (distance to the root, root = 0) and an **order** (pre-order
-index, which in a tree is left-to-right within a level). Both are computed once.
+Plans are trees — joins take exactly two children, forwarders any number — oriented so a
+join's build side is always the left child. Each node carries a **height** (distance to
+the root, root = 0) and an **order** (pre-order index, which in a tree is left-to-right
+within a level). Both are computed once.
 
 A node is **runnable** when any of its partitions can make progress: a source always can,
 and any other node can once that lane's inputs hold a batch or are known to be finished.
@@ -109,6 +112,54 @@ the schedule and the three cross-lane categories, and delegates each lane-scoped
 `batch_single_partition_driver`. What changed against the spec's formulation is the
 *unit*: a chunk is one node's lane rather than a chain of them, because min-height
 selection walks a batch up a chain node by node on its own.
+
+## Layout injection
+
+A query's answer is a function of its rows, not of how they were divided. `LayoutInjector`
+takes that seriously: give it a plan and it hands back an equivalent one whose lanes, row
+groups, batch sizes and hash placement are whatever preset you name — one lane and one
+batch, a few of each, many small lanes, lanes with nothing in them, re-cut batch
+boundaries — with sources injecting zero-row batches at a given probability, and with
+`GpuEmitPartitions` placing rows by a hash that ranges from well spread to
+everything-in-one-lane. `test_tpch.py` writes each plan once and runs it at every shape.
+
+Rebuilding, not editing: a node's partitioning is baked into a closure at build time, so
+every builder in `nodes.py` records its call and a rewrite re-runs it. Two rules keep the
+rewrite honest. A join may only be re-partitioned when both its sides are hash-partitioned
+on the join keys — otherwise its lane count is load-bearing and splitting it would join
+matching slices and silently return too few rows. And every placement is a pure function
+of the key columns: a shuffle's contract is co-location and nothing above it may depend on
+how evenly the lanes were loaded, so all-to-one-lane is a legal hash and a plan that only
+works under a well-spread one is broken rather than unlucky.
+
+## The limit
+
+`start..limit` is decided by where it sits, because a per-batch call with frozen skip/fetch
+cannot be correct — two batches would yield twice the limit.
+
+Feeding only the sink it is **not a node at all**: `skip`/`fetch` are `GpuUnload`'s, which
+is where they belong, since a limit over a stream about to leave the device is a statement
+about which rows are worth moving across the boundary. The driver counts rows **across
+lanes** — an unload executor is per lane, so only the driver can — and per batch either
+releases the handle without a call, narrows the call to a row range, or passes it whole.
+Once `is_satisfied` holds, the node's whole subtree stops being runnable, the same shape as
+the join's build hold but never lifting; the run then ends with lanes not done and queues
+non-empty, which is what the in-flight release is for.
+
+Anywhere else it **stays a node**, over a one-partition input the planner guarantees
+(`GpuMergePartitions` beneath it — an interval over N lanes names no rows) and any number
+of batches. It streams, holding nothing: a batch outside the interval is released without
+a call, one inside is forwarded untouched, and only the two that straddle its ends are
+sliced, through `peacock_executor_slice_handle`, whose bounds are call arguments rather
+than plan constants. Once satisfied it is held exactly as the sink's is — and marked done
+as it is held, so its parent is not left waiting for a lane that has in fact finished.
+
+`limit.py` holds `RowInterval` and `RowRange`; on the GPU the range is
+`peacock_result_from_handle`'s new arguments, so a trimmed unload moves only the rows
+wanted and allocates nothing. `test_limit.py` asserts on the **unload calls**, not on the
+rows that come back — both look the same for a correct implementation, but only the calls
+can tell a limit from a filter applied after the transfer, and that difference is the whole
+feature.
 
 ## Findings
 
@@ -200,7 +251,6 @@ F10. **The executor total must be cached, not summed.** The spec says "Σ cached
 
 ## Not in this cut
 
-The `GpuLimit` early-exit path (the mid-plan lowering is implemented; the root-adjacent
-one is driver logic), the plan-time `estimated_max_resident_size` estimator, and the
-hand-built TPC-H / TPC-DS plan corpus. Window functions are refused by the design (#143).
-The enforcer is here with the accounting formula, and trips cleanly on a tight budget.
+The plan-time `estimated_max_resident_size` estimator, and the hand-built TPC-H / TPC-DS
+plan corpus. Window functions are refused by the design (#143). The enforcer is here with
+the accounting formula, and trips cleanly on a tight budget.

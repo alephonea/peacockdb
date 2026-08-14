@@ -11,7 +11,6 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass, field
 
-from .accounting import ResidentAccountant
 from .batch import Batch
 from .plan import PlanNodeInfo
 
@@ -59,11 +58,14 @@ class LaneInputs:
 
     `done(slot)` means no further batch can ever arrive on that slot: the producer
     finished *and* its queue for this lane is empty.
+
+    `take` hands the batch over still accounted: a consumed input leaves the resident set
+    *after* the call that consumes it, per the spec's accounting order, so whoever takes a
+    batch owns releasing it.
     """
 
-    def __init__(self, sources: list[tuple[NodeState, int]], accountant: ResidentAccountant):
+    def __init__(self, sources: list[tuple[NodeState, int]]):
         self._sources = sources
-        self._accountant = accountant
 
     def has(self, slot: int) -> bool:
         state, lane = self._sources[slot]
@@ -73,8 +75,11 @@ class LaneInputs:
         state, lane = self._sources[slot]
         return state.out_done[lane] and not state.out_queues[lane]
 
+    def peek(self, slot: int) -> Batch:
+        """Look at the head without consuming it — the driver decides *whether* to call."""
+        state, lane = self._sources[slot]
+        return state.out_queues[lane][0]
+
     def take(self, slot: int) -> Batch:
         state, lane = self._sources[slot]
-        batch = state.out_queues[lane].popleft()
-        self._accountant.release(batch)
-        return batch
+        return state.out_queues[lane].popleft()

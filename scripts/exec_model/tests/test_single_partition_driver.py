@@ -72,14 +72,14 @@ def make_driver(category, executor, name="node"):
 
 def inputs_over(producers, accountant):
     # A batch sitting in a producer's queue is driver-held, so the accountant must know
-    # about it before anything takes it. The real driver holds at enqueue; these tests
-    # seed queues directly, so they hold here — otherwise `release` underflows, which is
-    # a panic in Rust and which the accountant now refuses.
+    # about it before the call that consumes it releases it. The real driver holds at
+    # enqueue; these tests seed queues directly, so they hold here — otherwise `release`
+    # underflows, which is a panic in Rust and which the accountant refuses.
     for producer in producers:
         for queue in producer.out_queues:
             for batch in queue:
                 accountant.hold(batch)
-    return LaneInputs([(p, 0) for p in producers], accountant)
+    return LaneInputs([(p, 0) for p in producers])
 
 
 def test_source_runs_until_it_returns_none():
@@ -201,7 +201,7 @@ def test_the_executor_is_built_on_the_first_step_not_before():
     info = make_info(ExecutorCategory.SOURCE, "load", NodeKind.SOURCE)
     accountant = ResidentAccountant()
     driver = BatchSinglePartitionDriver(info, 0, factory, accountant)
-    empty = LaneInputs([], accountant)
+    empty = LaneInputs([])
 
     assert driver.can_step(empty)
     assert built == []

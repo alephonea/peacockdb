@@ -23,6 +23,17 @@ class Batch(ABC):
     @abstractmethod
     def byte_size(self) -> int: ...
 
+    def slice_rows(self, offset: int, length: int) -> "Batch":
+        """A row range of this batch, materialized — the mid-plan limit's slice.
+
+        Models `peacock_executor_slice_handle`: the bounds are call arguments, not plan
+        constants, which is what lets `accumulators.LimitStream` stream instead of holding
+        the offset prefix (`limit.py`). The root-adjacent trim never comes here — its
+        range rides the `unload` call itself. A backend whose batches cannot be sliced
+        cannot carry a mid-plan limit, which is what the default raise says.
+        """
+        raise NotImplementedError(f"{type(self).__name__} cannot be sliced")
+
 
 @dataclass
 class CallStats:

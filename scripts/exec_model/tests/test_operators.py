@@ -17,13 +17,29 @@ import numpy as np
 import pandas as pd
 
 from .harness import main, raises
+from ..executors import LaneEvent
 from ..operators import aggregates as A
 from ..operators import source
-from ..operators.exec_ops import FilterExec, LimitExec, ProjectExec, SortExec
+from ..limit import RowRange
+from ..operators.accumulators import (
+    AccumulateBatchesAndSort,
+    AggregateBatches,
+    CoalesceAllBatches,
+    LimitStream,
+    MergeSortedPartitions,
+    ReBatchToTarget,
+)
+from ..operators.exec_ops import FilterExec, ProjectExec, SortExec
 from ..operators.expressions import Alias, Binary, Col, IsNotNull, Lit
 from ..operators.frame import PandasBatch, concatenate
 from ..operators.joins import HashJoin, JoinType
-from ..operators.partition_ops import EmitPartitions, partition_ids
+from ..operators.partition_ops import (
+    EmitPartitions,
+    first_lane_ids,
+    last_lane_ids,
+    partition_ids,
+    skewed_ids,
+)
 
 
 def batch(frame, tag="t"):
@@ -101,9 +117,16 @@ def test_per_batch_sort_fetch_is_a_top_n_within_the_batch():
     assert list(out.frame.v) == [5, 4]
 
 
-def test_limit_applies_skip_and_fetch():
-    out, _ = LimitExec(skip=2, fetch=3).exec(batch(pd.DataFrame({"v": list(range(10))})))
-    assert list(out.frame.v) == [2, 3, 4]
+def test_limit_streams_the_interval_out_of_its_input():
+    # skip=2 fetch=3 across a 4-row batch and a 6-row one: both straddle, both are sliced,
+    # and nothing is ever held — the interval comes out in the batches it arrived in.
+    node = LimitStream(skip=2, fetch=3)
+    first, _ = node.accumulate_and_fetch(batch(pd.DataFrame({"v": list(range(4))})))
+    second, _ = node.accumulate_and_fetch(batch(pd.DataFrame({"v": list(range(4, 10))})))
+    assert list(first[0].frame.v) == [2, 3]
+    assert list(second[0].frame.v) == [4]
+    assert node.sliced == [RowRange(2, 2), RowRange(0, 1)]
+    assert node.resident_bytes() == 0
 
 
 # -- aggregates -------------------------------------------------------------------
@@ -277,6 +300,179 @@ def test_the_build_side_is_residency_and_is_reported():
     assert join.resident_bytes() == 0
     join.set_build(batch(pd.DataFrame({"k": list(range(100))}), "B"))
     assert join.resident_bytes() > 0
+
+
+def test_an_empty_partial_does_not_retype_the_key_it_is_concatenated_onto():
+    # An empty batch reaching an aggregate makes it emit a frame with no rows, and that
+    # frame still has to carry types — a cudf::column has one and cannot not have one.
+    # pandas will happily default them to float64 and then let the concatenation retype
+    # the key it lands on. That is not cosmetic: `partition_ids` stringifies 5.0 where it
+    # stringifies 5, so a lane that saw an empty batch stops co-locating with one that
+    # did not, and the shuffled aggregate quietly comes out short.
+    aggs = [A.Agg(A.SUM, "v", "total")]
+    rows = pd.DataFrame({"k": [5, 6], "v": [1.0, 2.0]})
+    merged = concatenate([A.partial(rows, ["k"], aggs), A.partial(rows.iloc[0:0], ["k"], aggs)])
+    assert merged.k.dtype == rows.k.dtype
+
+
+# -- re-batching ------------------------------------------------------------------
+
+
+def rows_out(outputs):
+    return [out.num_rows() for out in outputs]
+
+
+def test_re_batching_upward_merges_and_holds_the_remainder():
+    node = ReBatchToTarget(10)
+    for chunk in range(3):
+        outputs, _ = node.accumulate_and_fetch(batch(pd.DataFrame({"v": [chunk] * 4})))
+        # 4, then 8 — nothing crosses the target until the third arrival takes it to 12.
+        assert rows_out(outputs) == ([10] if chunk == 2 else [])
+    assert node.resident_bytes() > 0                       # the 2-row tail is held
+    assert rows_out(node.mark_done_and_fetch()[0]) == [2]
+    assert node.resident_bytes() == 0
+
+
+def test_re_batching_downward_splits_one_batch_into_several():
+    node = ReBatchToTarget(3)
+    outputs, _ = node.accumulate_and_fetch(batch(pd.DataFrame({"v": list(range(10))})))
+    assert rows_out(outputs) == [3, 3, 3]
+    assert rows_out(node.mark_done_and_fetch()[0]) == [1]
+
+
+def test_re_batching_conserves_rows_in_order():
+    node = ReBatchToTarget(4)
+    emitted = []
+    for chunk in ([1, 2, 3], [4], [5, 6, 7, 8, 9]):
+        outputs, _ = node.accumulate_and_fetch(batch(pd.DataFrame({"v": chunk})))
+        emitted += [out.frame for out in outputs]
+    emitted += [out.frame for out in node.mark_done_and_fetch()[0]]
+    assert list(concatenate(emitted).v) == list(range(1, 10))
+
+
+def test_re_batching_a_stream_of_empty_batches_emits_nothing():
+    # An all-empty lane is ordinary — a filter that kept nothing — and the node must not
+    # invent a batch for it, the way a join's build side deliberately does.
+    node = ReBatchToTarget(4)
+    for _ in range(3):
+        outputs, _ = node.accumulate_and_fetch(batch(pd.DataFrame({"v": []})))
+        assert outputs == []
+    assert node.mark_done_and_fetch()[0] == []
+
+
+# -- the empty single-batch contract ------------------------------------------------
+#
+# A SingleBatch accumulator owes downstream exactly one batch at done, even when it
+# accumulated nothing (F7 — a join's build lane cannot tell an empty build side from a
+# plan error otherwise), and the empty batch must be TYPED, or it retypes whatever it is
+# later concatenated onto.
+
+
+def test_an_empty_coalesce_all_still_emits_one_typed_batch():
+    node = CoalesceAllBatches(schema={"k": "int64", "v": "float64"})
+    outputs, _ = node.mark_done_and_fetch()
+    assert len(outputs) == 1
+    frame = outputs[0].frame
+    assert len(frame) == 0
+    assert list(frame.columns) == ["k", "v"]
+    assert frame.k.dtype == "int64"
+
+
+def test_an_empty_accumulate_and_sort_still_emits_one_typed_batch():
+    node = AccumulateBatchesAndSort(["v"], schema={"v": "int64"})
+    outputs, _ = node.mark_done_and_fetch()
+    assert len(outputs) == 1 and outputs[0].num_rows() == 0
+    assert outputs[0].frame.v.dtype == "int64"
+
+
+def test_an_empty_merge_sorted_still_emits_one_typed_batch():
+    merge = MergeSortedPartitions(2, ["v"], schema={"v": "int64"})
+    first, _ = merge.accumulate_and_fetch(0, LaneEvent.done())
+    assert first == []
+    outputs, _ = merge.accumulate_and_fetch(1, LaneEvent.done())
+    assert len(outputs) == 1 and outputs[0].num_rows() == 0
+    assert outputs[0].frame.v.dtype == "int64"
+
+
+def test_a_zero_input_aggregate_emits_its_declared_typed_empty():
+    aggs = [A.Agg(A.SUM, "v", "total")]
+    node = AggregateBatches(["k"], aggs, final=True, schema={"k": "int64", "total": "float64"})
+    outputs, _ = node.mark_done_and_fetch()
+    frame = outputs[0].frame
+    assert list(frame.columns) == ["k", "total"]
+    assert len(frame) == 0
+    assert frame.k.dtype == "int64"
+
+
+def test_an_empty_single_batch_accumulator_without_a_schema_is_loud():
+    for node in (
+        CoalesceAllBatches(),
+        AggregateBatches(["g"], [A.Agg(A.SUM, "v", "s")], final=True),
+        AccumulateBatchesAndSort(["v"]),
+    ):
+        with raises(ValueError, match="no schema"):
+            node.mark_done_and_fetch()
+    merge = MergeSortedPartitions(1, ["v"])
+    with raises(ValueError, match="no schema"):
+        merge.accumulate_and_fetch(0, LaneEvent.done())
+
+
+# -- the finish pass over an empty probe side ---------------------------------------
+
+
+def test_a_left_outer_finish_with_no_probe_batches_pads_the_declared_schema():
+    # A probe lane may legitimately deliver zero batches; the unmatched build rows must
+    # still come out with the probe columns null-padded, not with a shape that silently
+    # depends on whether a probe batch happened to arrive.
+    build = pd.DataFrame({"k": [1, 2], "bv": ["a", "b"]})
+    join = HashJoin(JoinType.LEFT_OUTER, ["k"], ["k"], probe_schema=["k", "pv"])
+    join.set_build(batch(build, "B"))
+    finish, _ = join.finish_and_fetch()
+    frame = finish[0].frame
+    assert list(frame.columns) == ["k", "bv", "pv"]
+    assert len(frame) == 2
+    assert frame.pv.isna().all()
+
+
+def test_an_outer_finish_with_no_probe_batches_and_no_schema_is_loud():
+    join = HashJoin(JoinType.LEFT_OUTER, ["k"], ["k"])
+    join.set_build(batch(pd.DataFrame({"k": [1]}), "B"))
+    with raises(ValueError, match="probe_schema"):
+        join.finish_and_fetch()
+
+
+def test_a_finished_join_holds_no_residency():
+    join = HashJoin(JoinType.INNER, ["k"], ["k"])
+    join.set_build(batch(pd.DataFrame({"k": list(range(50))}), "B"))
+    assert join.resident_bytes() > 0
+    join.finish_and_fetch()
+    assert join.resident_bytes() == 0
+
+
+# -- degenerate placements --------------------------------------------------------
+
+
+def test_a_skewed_hash_still_co_locates_equal_keys():
+    # The property a shuffle owes its callers is co-location, and nothing more. A
+    # placement may load the lanes as unevenly as it likes and still be correct.
+    frame = pd.DataFrame({"k": [i % 7 for i in range(60)]})
+    for placement in (skewed_ids, first_lane_ids, last_lane_ids):
+        ids = placement(frame, ["k"], 4)
+        by_key = {}
+        for key, lane in zip(frame.k, ids):
+            by_key.setdefault(key, set()).add(lane)
+        assert all(len(lanes) == 1 for lanes in by_key.values()), placement.__name__
+        assert set(ids) <= set(range(4)), placement.__name__
+
+
+def test_the_degenerate_placements_are_actually_degenerate():
+    # Otherwise a sweep over them would be four runs of the same thing.
+    frame = pd.DataFrame({"k": list(range(200))})
+    assert len(set(partition_ids(frame, ["k"], 4))) == 4
+    assert set(first_lane_ids(frame, ["k"], 4)) == {0}
+    assert set(last_lane_ids(frame, ["k"], 4)) == {3}
+    skewed = skewed_ids(frame, ["k"], 4)
+    assert skewed.count(0) > len(skewed) // 2
 
 
 if __name__ == "__main__":

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from ..batch import CallStats
-from ..executors import ExecExecutor
+from ..executors import ExecExecutor, UnloadExecutor
 from . import aggregates
 from .expressions import Expr, project as project_exprs
 from .frame import PandasBatch, no_scratch, scratch_of
@@ -92,33 +92,30 @@ class PartialAggregateExec(_Exec):
         return PandasBatch(out, f"{batch.tag}>{self.name}"), no_scratch()
 
 
-class LimitExec(_Exec):
-    """The mid-plan limit lowering: exact bounds over an already-coalesced input.
+class UnloadExec(UnloadExecutor):
+    """`GpuBatch` in, `CpuBatch` out — the one place data crosses the boundary.
 
-    Only correct on a single batch. The root-adjacent case is driver logic that counts
-    rows and stops pulling — deliberately not an executor, because a per-batch call with
-    frozen bounds would truncate every batch to the same interval.
+    `rows` is the range a root-adjacent limit narrowed this call to; on the GPU it is
+    `peacock_result_from_handle`'s new arguments, so only those rows travel. Both sides are
+    pandas here, so the slice costs nothing and the point is only that the call *records*
+    what it was asked to move — `calls` is what the tests assert on, because a test on the
+    rows that come back passes just as well when everything crossed the bus first.
     """
-
-    def __init__(self, skip: int = 0, fetch: int | None = None, name: str = "limit"):
-        self.skip = skip
-        self.fetch = fetch
-        self.name = name
-
-    def exec(self, batch: PandasBatch):
-        frame = batch.consume()
-        stop = None if self.fetch is None else self.skip + self.fetch
-        out = frame.iloc[self.skip : stop]      # a zero-copy slice
-        return PandasBatch(out, f"{batch.tag}>{self.name}"), no_scratch()
-
-
-class UnloadExec(_Exec):
-    """`GpuBatch` in, `CpuBatch` out. Both are pandas here, so this is identity —
-    the node exists because on the GPU it is the one place data crosses the boundary."""
 
     def __init__(self, name: str = "unload"):
         self.name = name
+        #: one entry per call: the RowRange asked for, or None for the whole batch
+        self.calls: list[object] = []
 
-    def exec(self, batch: PandasBatch):
+    def resident_bytes(self) -> int:
+        return 0
+
+    def scratch_bytes(self, n_rows: int, n_bytes: int) -> int:
+        return n_bytes
+
+    def unload(self, batch: PandasBatch, rows=None):
         frame = batch.consume()
+        self.calls.append(rows)
+        if rows is not None:
+            frame = frame.iloc[rows.offset : rows.stop]
         return PandasBatch(frame, f"{batch.tag}>{self.name}"), CallStats(scratch_bytes=0)

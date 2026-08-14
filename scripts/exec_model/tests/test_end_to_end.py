@@ -91,17 +91,29 @@ def same(got: pd.DataFrame, want: pd.DataFrame, label: str) -> None:
 # -- queries ----------------------------------------------------------------------
 
 
+def agg_schemas(df, keys, aggs):
+    """Typed `{column: dtype}` for each aggregate phase, derived by running the phase
+    over a zero-row slice — the empty-lane case each node may have to emit."""
+    state = A.partial(df.iloc[0:0], keys, aggs)
+    return dict(state.dtypes), dict(A.final(state, keys, aggs).dtypes)
+
+
 def shuffled_aggregate(df, config, aggs, keys=("g",)):
     parts, group, target = config
     keys = list(keys)
+    state_schema, final_schema = agg_schemas(df, keys, aggs)
     scan = N.scan("scan", df, parts, group, target)
     filtered = N.filter_("filter", scan, Binary(">", Col("v"), Lit(20)))
     partial = N.partial_aggregate("agg_partial", filtered, keys, aggs)
-    compacted = N.aggregate_batches("agg_batches", partial, keys, aggs, final=False)
+    compacted = N.aggregate_batches("agg_batches", partial, keys, aggs, final=False, schema=state_schema)
     if parts == 1:
-        return N.unload("unload", N.aggregate_batches("agg_final", compacted, keys, aggs, True))
+        return N.unload(
+            "unload", N.aggregate_batches("agg_final", compacted, keys, aggs, True, schema=final_schema)
+        )
     emitted = N.emit_partitions("emit", N.merge_partitions("merge", compacted), keys, parts)
-    return N.unload("unload", N.aggregate_batches("agg_final", emitted, keys, aggs, True))
+    return N.unload(
+        "unload", N.aggregate_batches("agg_final", emitted, keys, aggs, True, schema=final_schema)
+    )
 
 
 def test_grouped_aggregate_matches_the_oracle_at_every_config():
@@ -159,7 +171,7 @@ def test_inner_join_with_a_shuffle_on_both_sides():
                 ["k"],
                 parts,
             ),
-            schema=list(dim.columns),
+            schema=dict(dim.dtypes),
         )
         probe = N.emit_partitions(
             "probe_emit",
@@ -186,7 +198,7 @@ def test_left_outer_join_finish_pass_matches_the_oracle():
                 ["k"],
                 parts,
             ),
-            schema=list(dim.columns),
+            schema=dict(dim.dtypes),
         )
         probe = N.emit_partitions(
             "probe_emit",
@@ -195,7 +207,13 @@ def test_left_outer_join_finish_pass_matches_the_oracle():
             parts,
         )
         root = N.unload(
-            "unload", N.hash_join("join", build, probe, JoinType.LEFT_OUTER, ["k"], ["k"])
+            "unload",
+            # probe_schema: a post-shuffle probe lane can be empty, and the finish must
+            # still null-pad the probe columns it never saw.
+            N.hash_join(
+                "join", build, probe, JoinType.LEFT_OUTER, ["k"], ["k"],
+                probe_schema=list(fact.columns),
+            ),
         )
         got, _ = execute(root)
         same(got, want, f"left outer join {(parts, group, target)}")
@@ -215,7 +233,7 @@ def test_semi_and_anti_joins_match_the_oracle():
                     ["k"],
                     parts,
                 ),
-                schema=list(dim.columns),
+                schema=dict(dim.dtypes),
             )
             probe = N.emit_partitions(
                 "probe_emit",
@@ -256,6 +274,43 @@ def test_projection_arithmetic_matches_the_oracle():
         ]
         got, _ = execute(N.unload("unload", N.project("p", N.scan("s", df, parts, group, target), exprs)))
         same(got, want, f"projection {(parts, group, target)}")
+
+
+def test_a_root_adjacent_limit_matches_the_oracle_at_every_config():
+    # The lowering with no node, against real operators: `skip`/`fetch` on the unload, the
+    # driver stopping part-way through a sorted stream. `test_limit.py` pins which calls
+    # are made; this pins that the rows they bring back are the right ones.
+    df = fixture()
+    want = df.sort_values(["v", "k"], ascending=[False, True]).head(7).reset_index(drop=True)
+    for parts, group, target in CONFIGS:
+        scan = N.scan("scan", df, parts, group, target)
+        per_batch = N.sort("sort", scan, ["v", "k"], ascending=[False, True], fetch=7)
+        merged = N.merge_sorted_partitions(
+            "merge_sorted", per_batch, ["v", "k"], ascending=[False, True]
+        )
+        got, driver = execute(N.unload("unload", merged, fetch=7))
+        assert driver.plan.row_limit is not None, "the sink should carry the interval"
+        assert list(got.v) == list(want.v), f"root-adjacent limit {(parts, group, target)}"
+
+
+def test_a_mid_plan_limit_matches_the_oracle_at_every_config():
+    # The other lowering: the limit's output feeds more work, so it stays a node,
+    # streaming its one-partition input and holding nothing. `test_limit.py` pins that it
+    # stops as soon as the interval is covered rather than reading the rest.
+    df = fixture()
+    top = df.sort_values(["v", "k"], ascending=[False, True]).iloc[2:9]
+    want = pd.DataFrame({"k": top.k.to_numpy(), "double_v": top.v.to_numpy() * 2})
+    for parts, group, target in CONFIGS:
+        scan = N.scan("scan", df, parts, group, target)
+        per_batch = N.sort("sort", scan, ["v", "k"], ascending=[False, True], fetch=9)
+        merged = N.merge_sorted_partitions(
+            "merge_sorted", per_batch, ["v", "k"], ascending=[False, True]
+        )
+        limited = N.limit("limit", merged, skip=2, fetch=7)
+        exprs = [Alias(Col("k"), "k"), Alias(Binary("*", Col("v"), Lit(2)), "double_v")]
+        got, driver = execute(N.unload("unload", N.project("p", limited, exprs)))
+        assert driver.plan.row_limit is None, "a mid-plan limit stays a node of its own"
+        assert list(got.double_v) == list(want.double_v), f"mid-plan limit {(parts, group, target)}"
 
 
 def test_the_enforcer_is_actually_engaged_in_these_runs():

@@ -25,6 +25,7 @@ class ExecutorCategory(Enum):
     PARTITION_EMITTER = "PartitionEmitter"
     JOIN = "Join"
     BATCH_FORWARDER = "BatchForwarder"
+    UNLOAD = "Unload"
 
 
 #: Categories with one executor instance per (node, lane); the rest are per node.
@@ -34,6 +35,16 @@ LANE_SCOPED = frozenset(
         ExecutorCategory.EXEC,
         ExecutorCategory.BATCH_ACCUMULATOR,
         ExecutorCategory.JOIN,
+        ExecutorCategory.UNLOAD,
+    }
+)
+
+#: Categories that consume one input lane and produce one, 1:1 per batch.
+ONE_TO_ONE = frozenset(
+    {
+        ExecutorCategory.EXEC,
+        ExecutorCategory.BATCH_ACCUMULATOR,
+        ExecutorCategory.UNLOAD,
     }
 )
 
@@ -119,3 +130,8 @@ class GpuNode(ABC):
     @abstractmethod
     def validate_schemas_and_partitions(self) -> None:
         """Raise `PlanError` when a child's layout does not meet this node's needs."""
+
+    def row_interval(self):
+        """`RowInterval` for a mid-plan `GpuLimit` or for a `GpuUnload` that absorbed a
+        root-adjacent one; None for everything else (`limit.py`)."""
+        return None

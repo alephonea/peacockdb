@@ -40,6 +40,7 @@ from ..node import CpuBackendSelector
 from ..operators import aggregates as A
 from ..operators import nodes as N
 from ..operators.expressions import Alias, Binary, Col, Lit
+from ..operators.injection import HashMode, LayoutInjector, LayoutPreset
 from ..operators.joins import JoinType
 from ..plan import Plan
 
@@ -80,6 +81,13 @@ def table(name: str, columns: list[str], limit: int | None = None) -> pd.DataFra
     for column in decimals:
         frame[column] = frame[column].astype("float64")
     return frame.head(limit) if limit is not None else frame
+
+
+def agg_schemas(df, keys, aggs):
+    """Typed `{column: dtype}` per aggregate phase, derived over a zero-row slice — what
+    an empty lane's `aggregate_batches` has to emit."""
+    state = A.partial(df.iloc[0:0], list(keys), aggs)
+    return dict(state.dtypes), dict(A.final(state, list(keys), aggs).dtypes)
 
 
 def execute(root, budget: int | None = BUDGET):
@@ -133,15 +141,19 @@ def test_filter_into_a_shuffled_grouped_aggregate():
         A.Agg(A.COUNT, None, "n"),
     ]
     lanes = 4
+    state_schema, final_schema = agg_schemas(customer, ["c_mktsegment"], aggs)
     scan = N.scan("customer", customer, lanes, 2000, 4000)
     filtered = N.filter_("positive", scan, Binary(">", Col("c_acctbal"), Lit(0.0)))
     partial = N.partial_aggregate("agg_partial", filtered, ["c_mktsegment"], aggs)
-    compacted = N.aggregate_batches("agg_batches", partial, ["c_mktsegment"], aggs, False)
+    compacted = N.aggregate_batches(
+        "agg_batches", partial, ["c_mktsegment"], aggs, False, schema=state_schema
+    )
     emitted = N.emit_partitions(
         "emit", N.merge_partitions("merge", compacted), ["c_mktsegment"], lanes
     )
     root = N.unload(
-        "unload", N.aggregate_batches("agg_final", emitted, ["c_mktsegment"], aggs, True)
+        "unload",
+        N.aggregate_batches("agg_final", emitted, ["c_mktsegment"], aggs, True, schema=final_schema),
     )
     got, driver = execute(root)
 
@@ -162,7 +174,7 @@ def test_a_small_build_side_against_a_streamed_probe():
     nation = table("nation", ["n_nationkey", "n_name"])
     customer = table("customer", ["c_custkey", "c_nationkey"], SHUFFLE_ROWS)
 
-    build = N.coalesce_all("nation_all", N.scan("nation", nation, 1, 25), schema=list(nation.columns))
+    build = N.coalesce_all("nation_all", N.scan("nation", nation, 1, 25), schema=dict(nation.dtypes))
     probe = N.scan("customer", customer, 1, 2000)
     root = N.unload(
         "unload",
@@ -179,7 +191,7 @@ def test_a_join_over_two_small_tables():
     nation = table("nation", ["n_nationkey", "n_name", "n_regionkey"])
     region = table("region", ["r_regionkey", "r_name"])
 
-    build = N.coalesce_all("region_all", N.scan("region", region, 1, 5), schema=list(region.columns))
+    build = N.coalesce_all("region_all", N.scan("region", region, 1, 5), schema=dict(region.dtypes))
     probe = N.scan("nation", nation, 1, 10)
     root = N.unload(
         "unload",
@@ -195,7 +207,7 @@ def test_a_semi_join_finds_the_nations_that_have_customers():
     nation = table("nation", ["n_nationkey", "n_name"])
     customer = table("customer", ["c_custkey", "c_nationkey"], SHUFFLE_ROWS)
 
-    build = N.coalesce_all("nation_all", N.scan("nation", nation, 1, 25), schema=list(nation.columns))
+    build = N.coalesce_all("nation_all", N.scan("nation", nation, 1, 25), schema=dict(nation.dtypes))
     probe = N.scan("customer", customer, 1, 2000)
     root = N.unload(
         "unload",
@@ -306,6 +318,259 @@ def test_the_accumulator_is_what_makes_the_budget_bind():
     # And the collected plan does complete once the budget covers the whole table.
     _, driver = execute(collected, budget=BUDGET)
     assert driver.accountant.peak > budget
+
+
+# -- injected layouts -------------------------------------------------------------
+#
+# The plans above are each written at one partitioning, chosen for readability. These run
+# a handful of them at every shape `LayoutInjector` can produce and demand one answer:
+# lanes from 1 to 8, batches from one-per-table to fragments, lanes with nothing in them,
+# re-cut batch boundaries, zero-row batches arriving mid-stream, and hash placements from
+# well-spread to everything-in-one-lane. `test_end_to_end.py` varies partitioning too, but
+# by writing the query five times; here the query is written once and rewritten.
+
+#: Small enough that 70 runs of the row-wise hash stay inside a CI step, large enough for
+#: several batches per lane at the finest preset.
+INJECT_ROWS = 5_000
+#: Fixed, so a failing configuration reproduces exactly.
+INJECT_SEED = 17
+#: Per source call. High enough that empty batches land in most lanes at most presets.
+EMPTY_BATCH_PROBABILITY = 0.3
+
+ALL_HASHES = tuple(HashMode)
+
+
+def sound(driver, label: str) -> None:
+    """What must hold at the end of any run, whatever the layout was.
+
+    `run()` already refuses to finish with a batch stranded in a queue; this adds the two
+    things it cannot see. Every lane must have reached done — a lane the scheduler simply
+    forgot would leave the queues clean — and the accountant's in-flight total must be back
+    to zero, which is the statement that every batch that was held was also released.
+    """
+    assert driver.accountant.in_flight_bytes == 0, f"{label}: batches still held"
+    assert 0 < driver.accountant.peak <= BUDGET, f"{label}: peak {driver.accountant.peak}"
+    for state in driver.states:
+        assert all(state.out_done), f"{label}: {state.info} did not finish every lane"
+        assert state.queued_batches() == 0, f"{label}: {state.info} still holds batches"
+
+
+def execution_shape(driver) -> tuple:
+    """Enough of how the run went to tell two layouts apart."""
+    return (
+        tuple(info.n_lanes for info in driver.plan.nodes),
+        len(driver.trace),
+        driver.steps,
+    )
+
+
+def sweep(build_plan, want, label, hash_modes=(HashMode.SPREAD,), compare=None):
+    """Run one plan at every preset and hash mode; return each run's shape."""
+    compare = compare or same
+    shapes = []
+    for preset in LayoutPreset:
+        for hash_mode in hash_modes:
+            injector = LayoutInjector(
+                preset, hash_mode, EMPTY_BATCH_PROBABILITY, INJECT_SEED
+            )
+            got, driver = execute(injector.apply(build_plan()))
+            compare(got, want, f"{label} {injector.label}")
+            sound(driver, f"{label} {injector.label}")
+            shapes.append(execution_shape(driver))
+    return shapes
+
+
+# -- the plans the sweep runs -----------------------------------------------------
+
+
+def customers(columns):
+    return table("customer", columns, INJECT_ROWS)
+
+
+def aggregate_plan(customer, keys):
+    aggs = [
+        A.Agg(A.SUM, "c_acctbal", "total"),
+        A.Agg(A.MEAN, "c_acctbal", "avg_bal"),
+        A.Agg(A.COUNT, None, "n"),
+    ]
+    state_schema, final_schema = agg_schemas(customer, keys, aggs)
+    scan = N.scan("customer", customer, 4, 500, 1000)
+    filtered = N.filter_("positive", scan, Binary(">", Col("c_acctbal"), Lit(0.0)))
+    partial = N.partial_aggregate("agg_partial", filtered, keys, aggs)
+    compacted = N.aggregate_batches("agg_batches", partial, keys, aggs, False, schema=state_schema)
+    emitted = N.emit_partitions("emit", N.merge_partitions("merge", compacted), keys, 4)
+    return N.unload(
+        "unload", N.aggregate_batches("agg_final", emitted, keys, aggs, True, schema=final_schema)
+    )
+
+
+def aggregate_oracle(customer, key):
+    kept = customer[customer.c_acctbal > 0]
+    return (
+        kept.groupby(key, dropna=False)
+        .agg(total=("c_acctbal", "sum"), avg_bal=("c_acctbal", "mean"), n=("c_acctbal", "size"))
+        .reset_index()
+    )
+
+
+def shuffled_join_plan(nation, customer):
+    """Both sides hashed on the join key, so the join is correct at any lane count."""
+    build = N.coalesce_all(
+        "nation_all",
+        N.emit_partitions(
+            "build_emit",
+            N.merge_partitions("build_merge", N.scan("nation", nation, 2, 8)),
+            ["n_nationkey"],
+            4,
+        ),
+        schema=dict(nation.dtypes),
+    )
+    probe = N.emit_partitions(
+        "probe_emit",
+        N.merge_partitions("probe_merge", N.scan("customer", customer, 4, 500, 1000)),
+        ["c_nationkey"],
+        4,
+    )
+    return N.unload(
+        "unload",
+        N.hash_join("join", build, probe, JoinType.INNER, ["n_nationkey"], ["c_nationkey"]),
+    )
+
+
+def streamed_join_plan(nation, customer):
+    """Neither side shuffled — the join's one lane is load-bearing, and stays one."""
+    build = N.coalesce_all("nation_all", N.scan("nation", nation, 1, 25), schema=dict(nation.dtypes))
+    probe = N.scan("customer", customer, 1, 500)
+    return N.unload(
+        "unload",
+        N.hash_join("join", build, probe, JoinType.INNER, ["n_nationkey"], ["c_nationkey"]),
+    )
+
+
+# -- the sweeps -------------------------------------------------------------------
+
+
+def test_every_layout_gives_the_same_shuffled_aggregate():
+    customer = customers(["c_custkey", "c_mktsegment", "c_acctbal"])
+    sweep(
+        lambda: aggregate_plan(customer, ["c_mktsegment"]),
+        aggregate_oracle(customer, "c_mktsegment"),
+        "shuffled aggregate",
+        ALL_HASHES,
+    )
+
+
+def test_every_layout_gives_the_same_aggregate_over_an_integer_key():
+    # Deliberately an integer key, not the string one above: the shuffle hashes the key's
+    # rendered value, so it is sensitive to the key column's type surviving the trip, and
+    # empty batches are what threaten that (see test_operators.py's retyping test). This
+    # covers the composed path; the type rule itself is pinned there, where it can be
+    # stated rather than hoped for.
+    customer = customers(["c_custkey", "c_nationkey", "c_acctbal"])
+    sweep(
+        lambda: aggregate_plan(customer, ["c_nationkey"]),
+        aggregate_oracle(customer, "c_nationkey"),
+        "integer-key aggregate",
+        ALL_HASHES,
+    )
+
+
+def test_every_layout_gives_the_same_shuffled_join():
+    nation = table("nation", ["n_nationkey", "n_name"])
+    customer = customers(["c_custkey", "c_nationkey"])
+    want = nation.merge(customer, how="inner", left_on="n_nationkey", right_on="c_nationkey")
+    sweep(lambda: shuffled_join_plan(nation, customer), want, "shuffled join", ALL_HASHES)
+
+
+def test_every_layout_gives_the_same_streamed_probe_join():
+    nation = table("nation", ["n_nationkey", "n_name"])
+    customer = customers(["c_custkey", "c_nationkey"])
+    want = nation.merge(customer, how="inner", left_on="n_nationkey", right_on="c_nationkey")
+    sweep(lambda: streamed_join_plan(nation, customer), want, "streamed join")
+
+
+def test_every_layout_gives_the_same_top_n():
+    customer = customers(["c_custkey", "c_acctbal"])
+    by, ascending = ["c_acctbal", "c_custkey"], [False, True]
+
+    def plan():
+        per_batch = N.sort("sort", N.scan("customer", customer, 4, 500, 1000), by, ascending, fetch=20)
+        return N.unload(
+            "unload", N.merge_sorted_partitions("merge_sorted", per_batch, by, ascending, fetch=20)
+        )
+
+    want = customer.sort_values(by, ascending=ascending).head(20)
+
+    def positionally(got, expected, label):
+        # A top-N is order-sensitive, so this one is not compared as a set.
+        assert list(got.c_custkey) == list(expected.c_custkey), label
+
+    sweep(plan, want, "top-n", compare=positionally)
+
+
+# -- the injector itself ----------------------------------------------------------
+
+
+def test_the_presets_really_do_execute_differently():
+    # Without this the sweeps above could be five runs of one layout and still pass, which
+    # is the failure mode a parameterized test has that a hand-written one does not.
+    customer = customers(["c_custkey", "c_mktsegment", "c_acctbal"])
+    shapes = sweep(
+        lambda: aggregate_plan(customer, ["c_mktsegment"]),
+        aggregate_oracle(customer, "c_mktsegment"),
+        "distinctness",
+    )
+    assert len(set(shapes)) == len(LayoutPreset), shapes
+    lane_counts = {shape[0] for shape in shapes}
+    assert len(lane_counts) == len(LayoutPreset), lane_counts
+
+
+def test_an_unshuffled_join_keeps_the_lane_count_its_plan_was_written_with():
+    # The injector may not repartition a join whose sides were never hashed on the key:
+    # splitting nation and customer into 8 lanes each would join matching slices and
+    # return roughly an eighth of the rows. The sweep above would catch the wrong answer;
+    # this states the rule that prevents it.
+    nation = table("nation", ["n_nationkey", "n_name"])
+    customer = customers(["c_custkey", "c_nationkey"])
+    injector = LayoutInjector(LayoutPreset.MANY_SMALL_PARTITIONS, seed=INJECT_SEED)
+
+    pinned = Plan.build(injector.apply(streamed_join_plan(nation, customer)))
+    assert {info.n_lanes for info in pinned.nodes} == {1}
+
+    # ...and that it is a decision about the join, not a refusal to touch joins at all.
+    shuffled = Plan.build(injector.apply(shuffled_join_plan(nation, customer)))
+    assert max(info.n_lanes for info in shuffled.nodes) == 8
+
+
+def test_the_injected_sources_really_do_emit_empty_batches():
+    # The empty-batch probability is the one injection with no structural trace, so it is
+    # the one that could silently be doing nothing.
+    customer = customers(["c_custkey", "c_acctbal"])
+    plan = LayoutInjector(
+        LayoutPreset.FEW_PARTITIONS_FEW_BATCHES,
+        empty_batch_probability=EMPTY_BATCH_PROBABILITY,
+        seed=INJECT_SEED,
+    ).apply(N.unload("unload", N.scan("customer", customer, 4, 500, 1000)))
+    _, driver = execute(plan)
+    assert any(batch.num_rows() == 0 for batch in driver.results)
+    assert sum(len(batch.frame) for batch in driver.results) == len(customer)
+
+
+def test_the_same_injector_twice_runs_identically():
+    # Randomized injection is only usable if a failure reproduces.
+    customer = customers(["c_custkey", "c_mktsegment", "c_acctbal"])
+
+    def once():
+        injector = LayoutInjector(
+            LayoutPreset.REBATCHED, HashMode.SKEWED, EMPTY_BATCH_PROBABILITY, INJECT_SEED
+        )
+        got, driver = execute(injector.apply(aggregate_plan(customer, ["c_mktsegment"])))
+        return got, driver.trace
+
+    first, first_trace = once()
+    second, second_trace = once()
+    assert first_trace == second_trace
+    same(first, second, "the same injector twice")
 
 
 if __name__ == "__main__":

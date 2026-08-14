@@ -35,7 +35,7 @@ from ..operators.expressions import Binary, Col, Lit
 from ..operators.frame import PandasBatch
 from ..operators.joins import HashJoin, JoinType
 from ..plan import Plan
-from .mocks import MockBatch, MockSelector, coalesce_all, sink, source
+from .mocks import MockBatch, MockSelector, coalesce_all, exec_node, sink, source
 
 
 class StatefulExecutor:
@@ -150,18 +150,22 @@ def test_the_peak_is_the_high_water_mark_not_the_final_value():
 def shuffle_plan(rows=40, lanes=4):
     df = pd.DataFrame({"g": ["x", "y"] * (rows // 2), "v": list(range(rows))})
     aggs = [A.Agg(A.SUM, "v", "s"), A.Agg(A.MEAN, "v", "m")]
+    state = A.partial(df.iloc[0:0], ["g"], aggs)
+    state_schema, final_schema = dict(state.dtypes), dict(A.final(state, ["g"], aggs).dtypes)
     scan = N.scan("scan", df, lanes, 5, 10)
     filtered = N.filter_("filter", scan, Binary(">", Col("v"), Lit(3)))
     partial = N.partial_aggregate("agg_partial", filtered, ["g"], aggs)
-    compacted = N.aggregate_batches("agg_batches", partial, ["g"], aggs, final=False)
+    compacted = N.aggregate_batches("agg_batches", partial, ["g"], aggs, final=False, schema=state_schema)
     emitted = N.emit_partitions("emit", N.merge_partitions("merge", compacted), ["g"], lanes)
-    return N.unload("unload", N.aggregate_batches("agg_final", emitted, ["g"], aggs, True))
+    return N.unload(
+        "unload", N.aggregate_batches("agg_final", emitted, ["g"], aggs, True, schema=final_schema)
+    )
 
 
 def join_plan():
     dim = pd.DataFrame({"k": [0, 1, 2], "label": list("ABC")})
     fact = pd.DataFrame({"k": [0, 1, 1, 2, 2, 2], "v": list(range(6))})
-    build = N.coalesce_all("build", N.scan("dim", dim, 1, 2), schema=list(dim.columns))
+    build = N.coalesce_all("build", N.scan("dim", dim, 1, 2), schema=dict(dim.dtypes))
     probe = N.scan("fact", fact, 1, 2)
     return N.unload("unload", N.hash_join("join", build, probe, JoinType.INNER, ["k"], ["k"]))
 
@@ -238,6 +242,19 @@ def test_a_tight_budget_fails_the_query_cleanly():
 def test_a_generous_budget_completes_and_records_a_peak():
     driver = run(shuffle_plan(), budget=50_000_000)
     assert 0 < driver.accountant.peak <= 50_000_000
+
+
+def test_a_consumed_input_stays_accounted_through_its_call():
+    # The spec's order: the input is alive on the device while the call runs, so the
+    # pre-check counts it; it leaves the resident set after the call. A budget that fits
+    # the scratch model alone but not input + model must therefore trip.
+    def plan():
+        return sink("u", exec_node("filter", source("load", [[1]])))
+
+    # The batch is 10 bytes and MapExec models 10 bytes of scratch: the pre-check sees 20.
+    with raises(ResidentBudgetExceeded):
+        batch_partitioned_driver(Plan.build(plan()), MockSelector(), budget=15).run()
+    batch_partitioned_driver(Plan.build(plan()), MockSelector(), budget=25).run()
 
 
 def test_an_absent_measurement_is_not_recorded_as_an_underestimate():

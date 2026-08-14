@@ -19,6 +19,7 @@ from ..executors import (
     PartitionAccumulatorExecutor,
     PartitionEmitterExecutor,
     SourceExecutor,
+    UnloadExecutor,
 )
 from ..forwarder import (
     BatchForwarder,
@@ -26,7 +27,9 @@ from ..forwarder import (
     MergePartitionsForwarder,
     UnionForwarder,
 )
+from ..errors import PlanError
 from ..layout import BatchLayout, KeyDistribution, NodeKind, PartitionLayout, SortOrder
+from ..limit import RowInterval, RowRange
 from ..node import (
     BackendSelector,
     ExecutorBackends,
@@ -52,6 +55,9 @@ class MockBatch(Batch):
 
     def byte_size(self) -> int:
         return self.nbytes
+
+    def slice_rows(self, offset: int, length: int) -> "MockBatch":
+        return MockBatch(f"{self.tag}[{offset}:{offset + length}]", length)
 
     def consume(self) -> "MockBatch":
         if self.consumed:
@@ -98,6 +104,48 @@ class MapExec(MockExecutor, ExecExecutor):
         batch.consume()
         rows = int(batch.num_rows() * self.selectivity)
         return MockBatch(f"{batch.tag}>{self.name}", rows), CallStats(scratch_bytes=batch.nbytes)
+
+
+class MockUnload(MockExecutor, UnloadExecutor):
+    """Records the range it was asked for; that record is what the limit tests assert on."""
+
+    def __init__(self, name: str):
+        self.name = name
+        self.calls: list[object] = []
+
+    def unload(self, batch: MockBatch, rows=None):
+        self.calls.append(rows)
+        batch.consume()
+        kept = batch.num_rows() if rows is None else rows.length
+        return MockBatch(f"{batch.tag}>{self.name}", kept), CallStats(scratch_bytes=0)
+
+
+class LimitStream(MockExecutor, BatchAccumulatorExecutor):
+    """The mid-plan limit: drop, forward, or slice — never hold."""
+
+    def __init__(self, name: str, skip: int = 0, fetch: int | None = None):
+        self.name = name
+        self.interval = RowInterval(skip, fetch)
+        self.seen = 0
+        self.sliced: list[RowRange] = []
+        self.dropped = 0
+        self.passed = 0
+
+    def accumulate_and_fetch(self, batch: MockBatch):
+        rows = self.interval.range_of(self.seen, batch.num_rows())
+        self.seen += batch.num_rows()
+        batch.consume()
+        if rows is None:
+            self.dropped += 1
+            return [], CallStats(scratch_bytes=0)
+        if rows.covers(batch.num_rows()):
+            self.passed += 1
+            return [MockBatch(f"{batch.tag}>{self.name}", batch.num_rows())], CallStats(scratch_bytes=0)
+        self.sliced.append(rows)
+        return [MockBatch(f"{batch.tag}>{self.name}", rows.length)], CallStats(scratch_bytes=0)
+
+    def mark_done_and_fetch(self):
+        return [], CallStats(scratch_bytes=0)
 
 
 class CollectAccumulator(MockExecutor, BatchAccumulatorExecutor):
@@ -268,10 +316,10 @@ class RecordingJoin(MockExecutor, JoinExecutor):
         return [out], CallStats(scratch_bytes=batch.byte_size())
 
     def finish_and_fetch(self):
+        self.build_bytes = 0  # the build side is released at finish, as the real join's is
         if not self.emit_on_finish:
             return [], CallStats(scratch_bytes=0)
         out = MockBatch(f"({self.build_tag}⋈unmatched)>{self.name}", self.emit_on_finish)
-        self.build_bytes = 0
         return [out], CallStats(scratch_bytes=out.byte_size())
 
 
@@ -307,7 +355,9 @@ class MockNode(GpuNode):
         children: Iterable[GpuNode] = (),
         factory: Callable[[int | None], Executor] | None = None,
         forwarder: BatchForwarder | None = None,
+        row_interval: RowInterval | None = None,
     ):
+        self._row_interval = row_interval
         self._name = name
         self._kind = kind
         self._layout = layout
@@ -325,6 +375,9 @@ class MockNode(GpuNode):
     def output_partitions(self):
         return self._layout
 
+    def row_interval(self):
+        return self._row_interval
+
     def output_schema(self):
         return None
 
@@ -337,7 +390,9 @@ class MockNode(GpuNode):
         return NodeExecutors(self._category, backends=ExecutorBackends(cpu=self._factory))
 
     def validate_schemas_and_partitions(self) -> None:
-        return None
+        validator = getattr(self, "validator", None)
+        if validator is not None:
+            validator(self)
 
 
 def _layout(n, batch_layout=BatchLayout.MULTIPLE_BATCHES, hash_keys=None, sort=None):
@@ -383,14 +438,40 @@ def exec_node(name: str, child: MockNode, selectivity: float = 1.0, **layout_kwa
     )
 
 
-def sink(name: str, child: MockNode) -> MockNode:
+def limit(name: str, child: MockNode, skip: int = 0, fetch: int | None = None) -> MockNode:
+    """The mid-plan `GpuLimit`: one partition in, any number of batches, streaming out."""
+    node = MockNode(
+        name,
+        NodeKind.INTERMEDIATE,
+        _layout(1, batch_layout=child.output_partitions().batch_layout),
+        ExecutorCategory.BATCH_ACCUMULATOR,
+        children=[child],
+        factory=lambda lane: LimitStream(name, skip, fetch),
+        row_interval=RowInterval(skip, fetch),
+    )
+    node.validator = _one_partition_in
+    return node
+
+
+def _one_partition_in(node: MockNode) -> None:
+    lanes = node.children()[0].output_partitions().n
+    if lanes != 1:
+        raise PlanError(
+            f"{node.name()}: a limit is an interval over one stream, and its input has "
+            f"{lanes} lanes — the planner inserts GpuMergePartitions below it"
+        )
+
+
+def sink(name: str, child: MockNode, skip: int = 0, fetch: int | None = None) -> MockNode:
+    """`skip`/`fetch` are a root-adjacent limit, which is not a node — see `limit.py`."""
     return MockNode(
         name,
         NodeKind.SINK,
         None,
-        ExecutorCategory.EXEC,
+        ExecutorCategory.UNLOAD,
         children=[child],
-        factory=lambda lane: MapExec(name),
+        factory=lambda lane: MockUnload(name),
+        row_interval=RowInterval(skip, fetch) if (skip or fetch is not None) else None,
     )
 
 

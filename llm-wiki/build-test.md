@@ -4,7 +4,7 @@ Code and tests are authoritative; this page maps them.
 
 ## Test categories
 
-**Grand total: 814 test cases — Rust 606, C++ 37, Python 171.**
+**Grand total: 866 test cases — Rust 606, C++ 37, Python 223.**
 
 **Runs** — `cpp-cpu` = pipeline.yml's cpp-cpu job, both cuDF legs · `cost-report` = the
 cost-report job · `shad-gpu` = CI GPU job on the remote host, `--test-threads=1` ·
@@ -38,8 +38,8 @@ and `2gpu` rows also runs locally; large CPU batches go to verda.
 | FFI smoke (Rust) | the crate links; executor lifecycle | [test_executor_lifecycle](../peacockdb-ffi/tests/test_ffi.rs#L17) | cpp-cpu | 2 |
 | Cost-report renderer (Rust) | glyphs, links, ratio bucket, regression gate, history | [bucket_threshold_is_1_4](../cost-report/src/main.rs#L1552), [regression_count_drives_exit_decision](../cost-report/src/main.rs#L1623) | cost-report | 23 |
 | DuckDB cost extraction (Python) | classifier / pruning / dynamic-filter logic — fails CI before generation | [scan_count_mismatch_fails_loud](../testdata/test_duckdb_cost.py#L280), [compute_pruning_from_rowgroups](../testdata/test_duckdb_cost.py#L226) | cost-report | 41 |
-| Exec-model prototype (Python) | the batch-partitioned scheduler over mock traits, plus pandas-backed operators checked against a single-shot oracle at five partitioning configs — no project code | [test_a_join_in_its_build_phase_holds_back_its_probe_subtree](../scripts/exec_model/tests/test_scheduling.py), [test_traces_are_identical_across_runs](../scripts/exec_model/tests/test_determinism.py) | cost-report | 120 |
-| Exec-model prototype, TPC-H (Python) | the same drivers over real sf1 tables under a live resident budget; needs the generated dataset, so it rides cpp-cpu rather than cost-report | [test_the_accumulator_is_what_makes_the_budget_bind](../scripts/exec_model/tests/test_tpch.py) | cpp-cpu (25.02 leg) | 10 |
+| Exec-model prototype (Python) | the batch-partitioned scheduler over mock traits, plus pandas-backed operators checked against a single-shot oracle at five partitioning configs, and both limit lowerings — no project code | [test_a_join_in_its_build_phase_holds_back_its_probe_subtree](../scripts/exec_model/tests/test_scheduling.py), [test_a_root_adjacent_limit_stops_the_run_early](../scripts/exec_model/tests/test_limit.py) | cost-report | 163 |
+| Exec-model prototype, TPC-H (Python) | the same drivers over real sf1 tables under a live resident budget, each plan re-run at every layout `LayoutInjector` can produce; needs the generated dataset, so it rides cpp-cpu rather than cost-report | [test_the_accumulator_is_what_makes_the_budget_bind](../scripts/exec_model/tests/test_tpch.py), [test_every_layout_gives_the_same_shuffled_join](../scripts/exec_model/tests/test_tpch.py) | cpp-cpu (25.02 leg) | 19 |
 | C++ CPU/FFI unit | decimal binop typing, AST routability, lifecycle; no GPU needed | [DecimalScale.BinopOutputType](../cpp/tests/cpu/test_executor.cpp#L26), [AstRouting.IsAstAble](../cpp/tests/cpu/test_executor.cpp#L81) | cpp-cpu (`ctest -L cpu`) + shad-gpu | 5 |
 | cuDF GPU smoke (C++) | the GPU is alive; the Spark-murmur3 kernel matches comet in C++ | [CudfGpu.SparkPartitionIdsMatchComet2ColWithNulls](../cpp/tests/gpu/test_cudf.cpp#L84) | shad-gpu | 3 |
 | Plan-executor (C++) | hand-built plan IR through the C++ executor, node by node | [PlanExecutor.HashJoinNationRegion](../cpp/tests/gpu/test_plan_executor.cpp#L255) | shad-gpu | 12 |
@@ -51,7 +51,7 @@ and `2gpu` rows also runs locally; large CPU batches go to verda.
 | Dataset validators (Python) | row counts / clustering / embedding stats over whatever dataset they are pointed at; each check tags itself `EXHAUSTIVE` or `SAMPLED` | [validate_tpch.py](../scripts/validate_tpch.py), [check_s3_datasets.py](../scripts/check_s3_datasets.py) | cpp-cpu (sf1) · validate-large (sf40/sf200) | n/a¹ |
 
 ¹ Data-driven — the check count depends on the dataset and SF, so these are excluded from
-the 684. Everything else in the repo that can be enumerated as a test case is counted.
+the 866. Everything else in the repo that can be enumerated as a test case is counted.
 
 Notes
 

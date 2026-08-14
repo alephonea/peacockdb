@@ -66,6 +66,11 @@ class BatchPartitionedDriver:
         self.results: list[Batch] = []
         self.trace: list[TraceEvent] = []
         self.steps = 0
+        #: per node: rows of its input stream seen so far, summed over every lane. Only
+        #: the driver can hold this — an Unload instance is one lane's.
+        self.rows_seen: list[int] = [0] * len(plan.nodes)
+        #: rows released without an unload call, per node — the saving, made visible
+        self.rows_skipped: list[int] = [0] * len(plan.nodes)
         self.states: list[NodeState] = [
             NodeState.create(info, self._input_lane_count(info)) for info in plan.nodes
         ]
@@ -74,11 +79,20 @@ class BatchPartitionedDriver:
     # -- public ------------------------------------------------------------------
 
     def run(self, max_steps: int = DEFAULT_MAX_STEPS) -> list[Batch]:
+        self._settle_limits()   # a zero-row interval is satisfied before anything runs
         while self.step():
             if self.steps > max_steps:
                 raise DriverError(f"no termination after {max_steps} steps")
-        self._assert_drained()
+        if self.early_exit:
+            self._drop_in_flight()
+        else:
+            self._assert_drained()
         return self.results
+
+    @property
+    def early_exit(self) -> bool:
+        """The run stopped because a limit was satisfied, not because work ran out."""
+        return any(self._is_satisfied(state) for state in self.states)
 
     def step(self) -> bool:
         """Run one node — every lane of it. False when nothing is runnable."""
@@ -87,6 +101,7 @@ class BatchPartitionedDriver:
             return False
         self.steps += 1
         self._run(chosen)
+        self._settle_limits()
         self._drain_root()
         return True
 
@@ -103,7 +118,7 @@ class BatchPartitionedDriver:
         return min(candidates, key=lambda s: (s.info.height, s.info.order))
 
     def _runnable(self, state: NodeState) -> bool:
-        if self._held_by_a_join_build(state):
+        if self._held_by_a_join_build(state) or self._held_by_a_satisfied_limit(state):
             return False
         category = state.info.category
         if category in LANE_SCOPED:
@@ -153,6 +168,39 @@ class BatchPartitionedDriver:
             info = parent.info
         return False
 
+    def _held_by_a_satisfied_limit(self, state: NodeState) -> bool:
+        """A satisfied limit holds its whole subtree, and itself.
+
+        The same shape as the join hold, and for the same reason: blocking one node would
+        leave its child producing into a queue nothing drains. It differs in never lifting
+        — no later batch can change an answer that is already complete — so a run ends here
+        with lanes not done and queues non-empty, which is what `_drop_in_flight` is for.
+        """
+        info = state.info
+        while True:
+            if self._is_satisfied(self.states[info.id]):
+                return True
+            if info.parent is None:
+                return False
+            info = self.states[info.parent].info
+
+    def _is_satisfied(self, state: NodeState) -> bool:
+        """Enough rows have reached this node that no later one can change its answer."""
+        interval = state.info.node.row_interval()
+        return interval is not None and interval.satisfied_by(self.rows_seen[state.info.id])
+
+    def _settle_limits(self) -> None:
+        """A satisfied limit will never produce again, so say so before anything waits.
+
+        Without this the hold below would also stop the node itself from reporting done,
+        and its parent would wait forever for a lane that had in fact finished. The
+        pathological case is a zero-row interval, satisfied before a single step: the plan
+        has to complete and return nothing, not stall.
+        """
+        for state in self.states:
+            if self._is_satisfied(state) and not all(state.out_done):
+                state.out_done = [True] * len(state.out_done)
+
     def _awaits_build(self, state: NodeState) -> bool:
         """True while any of the join's lanes has yet to leave its build phase.
 
@@ -183,17 +231,47 @@ class BatchPartitionedDriver:
         )
 
     def _run_lane_scoped(self, state: NodeState) -> None:
+        interval = self._interval_of(state)
+        unloading = state.info.category is ExecutorCategory.UNLOAD
         for lane in range(state.info.n_lanes):
             driver = self._lane_driver(state, lane)
             inputs = self._lane_inputs(state, lane)
             if not driver.can_step(inputs):
                 continue
-            result = driver.step(inputs)
+            rows = None
+            arriving = 0
+            if interval is not None and inputs.has(0):
+                arriving = inputs.peek(0).num_rows()
+                # Only an unload's drop-narrow-or-pass decision is made here, because its
+                # range is an argument of the driver's own call. A mid-plan limit makes
+                # the same three-way decision inside its executor — releasing, forwarding,
+                # or slicing through `peacock_executor_slice_handle` — so for it the
+                # driver only counts, to feed `is_satisfied`. See `accumulators.LimitStream`.
+                if unloading:
+                    rows = interval.range_of(self.rows_seen[state.info.id], arriving)
+                    if rows is None:
+                        # Not one row is wanted, so it never crosses the boundary: the
+                        # handle is released here. Unbounded saving on the skip prefix,
+                        # and the property a test on the rows returned cannot see.
+                        unwanted = inputs.take(0)
+                        self.rows_seen[state.info.id] += arriving
+                        self.rows_skipped[state.info.id] += unwanted.num_rows()
+                        self.accountant.release(unwanted)
+                        self._record(state, lane, "release/unwanted", 0)
+                        continue
+                    if rows.covers(arriving):
+                        rows = None   # every row wanted: the fetch needs no range
+            result = driver.step(inputs, rows)
+            self.rows_seen[state.info.id] += arriving
             for batch in result.outputs:
                 self._enqueue(state, lane, batch)
             if result.finished:
                 state.out_done[lane] = True
             self._record(state, lane, result.call, len(result.outputs))
+
+    def _interval_of(self, state: NodeState):
+        """This node's row interval: an absorbed root-adjacent limit, or a mid-plan one."""
+        return state.info.node.row_interval()
 
     def _run_emitter(self, state: NodeState) -> None:
         inputs = self._lane_inputs(state, 0)
@@ -202,12 +280,14 @@ class BatchPartitionedDriver:
             state.emitter_finished = True
             for lane in range(state.info.n_lanes):
                 state.out_done[lane] = True
+            self.accountant.forget(str(state.info))
             self._record(state, 0, "emit/done", 0)
             return
         batch = inputs.take(0)
         label = str(state.info)
         modelled = self.accountant.begin_call(label, executor, batch.num_rows(), batch.byte_size())
         outputs, stats = executor.emit(batch)
+        self.accountant.release(batch)
         if len(outputs) != state.info.n_lanes:
             raise DriverError(
                 f"{state.info}: emit returned {len(outputs)} lanes, expected {state.info.n_lanes}"
@@ -227,7 +307,7 @@ class BatchPartitionedDriver:
         executor = self._cross_executor(state)
         child = self.states[state.info.children[0]]
         for lane in range(len(state.lane_done_sent)):
-            inputs = LaneInputs([(child, lane)], self.accountant)
+            inputs = LaneInputs([(child, lane)])
             label = str(state.info)
             if inputs.has(0):
                 batch = inputs.take(0)
@@ -242,12 +322,15 @@ class BatchPartitionedDriver:
             else:
                 continue
             outputs, stats = executor.accumulate_and_fetch(lane, event)
+            if event.batch is not None:
+                self.accountant.release(event.batch)
             for out in outputs:
                 self._enqueue(state, 0, out)
             self.accountant.end_call(label, executor, stats, modelled)
             self._record(state, lane, call, len(outputs))
         if all(state.lane_done_sent):
             state.out_done[0] = True
+            self.accountant.forget(str(state.info))
 
     def _run_forwarder(self, state: NodeState) -> None:
         forwarder = state.info.executors.forwarder
@@ -311,7 +394,7 @@ class BatchPartitionedDriver:
 
     def _lane_inputs(self, state: NodeState, lane: int) -> LaneInputs:
         sources = [(self.states[child], lane) for child in state.info.children]
-        return LaneInputs(sources, self.accountant)
+        return LaneInputs(sources)
 
     def _accumulator_lane_ready(self, state: NodeState, lane: int) -> bool:
         child = self.states[state.info.children[0]]
@@ -345,6 +428,13 @@ class BatchPartitionedDriver:
                 batch = queue.popleft()
                 self.accountant.release(batch)
                 self.results.append(batch)
+
+    def _drop_in_flight(self) -> None:
+        """Release every batch still queued. Nothing will consume them now."""
+        for state in self.states:
+            for queue in state.out_queues:
+                while queue:
+                    self.accountant.release(queue.popleft())
 
     def _record(self, state: NodeState, lane: int, call: str, n_out: int) -> None:
         self.trace.append(TraceEvent(self.steps, str(state.info), lane, call, n_out))

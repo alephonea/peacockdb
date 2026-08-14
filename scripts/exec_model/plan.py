@@ -18,7 +18,8 @@ from dataclasses import dataclass
 
 from .errors import PlanError
 from .layout import BatchLayout, NodeKind
-from .node import ExecutorCategory, GpuNode, NodeExecutors
+from .limit import RowInterval
+from .node import ONE_TO_ONE, ExecutorCategory, GpuNode, NodeExecutors
 
 
 @dataclass(frozen=True)
@@ -48,6 +49,15 @@ class Plan:
         self.nodes = nodes
         self.root = root
 
+    @property
+    def row_limit(self) -> RowInterval | None:
+        """The sink's interval, when a root-adjacent limit was lowered onto it.
+
+        Read off the node rather than stored beside it: the interval is a property of
+        `GpuUnload`, which is what puts it in the plan golden instead of a side channel.
+        """
+        return self.nodes[self.root].node.row_interval()
+
     def __getitem__(self, node_id: int) -> PlanNodeInfo:
         return self.nodes[node_id]
 
@@ -59,9 +69,12 @@ class Plan:
 
     def validate(self) -> None:
         for info in self.nodes:
+            # The node's own check first: it knows what it needs of its children and can
+            # name the fix, where the generic structural rules can only say what is wrong.
+            info.node.validate_schemas_and_partitions()
             _validate_kind(self, info)
             _validate_structure(self, info)
-            info.node.validate_schemas_and_partitions()
+            _validate_limit(self, info)
 
     @classmethod
     def build(cls, root: GpuNode) -> "Plan":
@@ -96,6 +109,31 @@ class Plan:
         return plan
 
 
+def _validate_limit(plan: Plan, info: PlanNodeInfo) -> None:
+    """Which lowering a limit got is a question about position, so it is checked here."""
+    if info.node.row_interval() is None:
+        return
+
+    if info.id == plan.root:
+        # The root-adjacent lowering: the interval lives on the sink and the driver runs
+        # it. No lane or batch requirement — the count is across lanes on purpose.
+        return
+
+    if info.parent == plan.root:
+        raise PlanError(
+            f"{info}: a limit feeding only the sink is not a node — the planner puts its "
+            "skip/fetch on GpuUnload, so the driver can release batches it does not want "
+            "instead of unloading them and throwing the rows away"
+        )
+    if not info.children:
+        raise PlanError(f"{info}: a limit needs a child")
+    # That its input is one partition is the node's own check, in
+    # validate_schemas_and_partitions() — a statement about its child's layout, which is
+    # what that method is for. Its input may be any number of batches: requiring one would
+    # put a GpuCoalesceAllBatches under every mid-plan limit and read whole tables to
+    # answer for a hundred rows.
+
+
 def _lane_count(node: GpuNode, children: list[PlanNodeInfo]) -> int:
     """A sink declares no layout, so it inherits its child's lane count."""
     layout = node.output_partitions()
@@ -108,17 +146,16 @@ def _lane_count(node: GpuNode, children: list[PlanNodeInfo]) -> int:
     return children[0].n_lanes
 
 
-#: Categories that legitimately take two children. Everything else is a pipe.
-_BINARY = frozenset({ExecutorCategory.JOIN, ExecutorCategory.BATCH_FORWARDER})
+#: Categories that legitimately take more than one child: a join's two sides, a
+#: forwarder's branches (a union or interleave takes any number). Everything else is a pipe.
+_MULTI_CHILD = frozenset({ExecutorCategory.JOIN, ExecutorCategory.BATCH_FORWARDER})
 
 
 def _validate_structure(plan: Plan, info: PlanNodeInfo) -> None:
     category = info.category
     n_children = len(info.children)
 
-    if n_children > 2:
-        raise PlanError(f"{info}: {n_children} children — the plan tree is binary")
-    if n_children == 2 and category not in _BINARY:
+    if n_children >= 2 and category not in _MULTI_CHILD:
         raise PlanError(f"{info}: {category.value} takes at most one child")
 
     if category is ExecutorCategory.SOURCE:
@@ -129,7 +166,7 @@ def _validate_structure(plan: Plan, info: PlanNodeInfo) -> None:
     if n_children == 0:
         raise PlanError(f"{info}: {category.value} needs a child")
 
-    if category in (ExecutorCategory.EXEC, ExecutorCategory.BATCH_ACCUMULATOR):
+    if category in ONE_TO_ONE:
         child = plan.child(info.id, 0)
         if child.n_lanes != info.n_lanes:
             raise PlanError(

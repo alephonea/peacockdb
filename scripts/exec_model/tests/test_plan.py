@@ -102,23 +102,30 @@ def test_exec_may_not_change_lane_count():
         Plan.build(sink("unload", bad))
 
 
-def test_plan_tree_is_binary():
+def test_a_forwarder_may_take_more_than_two_children():
+    # DataFusion unions are n-ary, and the forwarder mappings generalize to any child
+    # count, so the tree does too. Joins stay binary by their own arity check.
     three = union("union", [source(f"s{i}", [[1]]) for i in range(3)])
-    with raises(PlanError, match="binary"):
-        Plan.build(sink("unload", three))
+    plan = Plan.build(sink("unload", three))
+    assert plan[plan.root].n_lanes == 3
 
 
-def test_only_join_and_forwarder_take_two_children():
-    two_child_exec = MockNode(
-        "bad_exec",
-        NodeKind.INTERMEDIATE,
-        PartitionLayout(n=1),
-        ExecutorCategory.EXEC,
-        children=[source("a", [[1]]), source("b", [[1]])],
-        factory=lambda lane: None,
-    )
+def test_only_join_and_forwarder_take_multiple_children():
+    def exec_over(children):
+        return MockNode(
+            "bad_exec",
+            NodeKind.INTERMEDIATE,
+            PartitionLayout(n=1),
+            ExecutorCategory.EXEC,
+            children=children,
+            factory=lambda lane: None,
+        )
+
     with raises(PlanError, match="at most one child"):
-        Plan.build(sink("unload", two_child_exec))
+        Plan.build(sink("unload", exec_over([source("a", [[1]]), source("b", [[1]])])))
+    # Three children must not slip past now that the tree itself is no longer binary.
+    with raises(PlanError, match="at most one child"):
+        Plan.build(sink("unload", exec_over([source(f"c{i}", [[1]]) for i in range(3)])))
 
 
 def test_forwarder_lane_declaration_must_match_the_mapping():

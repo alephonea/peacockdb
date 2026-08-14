@@ -45,6 +45,9 @@ def run(root, budget=None):
     driver.run()
     for info in driver.plan.nodes:
         assert driver.peak_queued[info.id] <= info.n_lanes, f"{info}: queue bound broken"
+    # Every plan here drains fully, so every executor finished — and a finished executor
+    # stops contributing to the accounted resident set.
+    assert driver.accountant.executor_bytes == 0, "a finished executor still counted"
     return driver
 
 
@@ -152,6 +155,22 @@ def test_union_relabels_lanes_and_forwards_every_batch():
     driver = run(sink("unload", union("union", [left, right])))
     assert len(driver.results) == 7
     assert driver.plan[driver.plan.root].n_lanes == 4
+
+
+def test_a_three_branch_union_forwards_every_batch():
+    branches = [exec_node(f"f{i}", source(f"s{i}", [[1, 1]])) for i in range(3)]
+    driver = run(sink("unload", union("union", branches)))
+    assert driver.plan[driver.plan.root].n_lanes == 3
+    assert len(driver.results) == 6
+
+
+def test_a_finished_join_releases_its_build_side():
+    # The build side is executor residency while the join runs and must leave the
+    # accounted total at finish — on the GPU nothing stays resident after the last call.
+    build = coalesce_all("build_collect", source("build_scan", [[4]]))
+    driver = run(sink("unload", join("join", build, source("probe_scan", [[2, 2]]))))
+    state = next(s for s in driver.states if s.info.node.name() == "join")
+    assert state.lane_drivers[0].executor.resident_bytes() == 0
 
 
 def test_interleave_preserves_the_lane_count_and_rotates_children():

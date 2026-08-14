@@ -83,12 +83,23 @@ class BatchSinglePartitionDriver:
             return inputs.has(slot) or inputs.done(slot)
         return inputs.has(0) or inputs.done(0)
 
-    def step(self, inputs: LaneInputs) -> StepResult:
+    def step(self, inputs: LaneInputs, rows=None) -> StepResult:
+        """`rows` is the `RowRange` for an unload; every other category ignores it."""
         if self.finished:
             raise DriverError(f"{self.label}: stepped after finishing")
+        result = self._dispatch(inputs, rows)
+        if result.finished:
+            # A finished executor stops contributing to the accounted resident set: the
+            # enforcer's total is over live executors.
+            self._accountant.forget(self.label)
+        return result
+
+    def _dispatch(self, inputs: LaneInputs, rows) -> StepResult:
         category = self.info.category
         if category is ExecutorCategory.SOURCE:
             return self._step_source()
+        if category is ExecutorCategory.UNLOAD:
+            return self._step_unload(inputs, rows)
         if category is ExecutorCategory.EXEC:
             return self._step_exec(inputs)
         if category is ExecutorCategory.BATCH_ACCUMULATOR:
@@ -117,6 +128,24 @@ class BatchSinglePartitionDriver:
         batch = inputs.take(0)
         outputs, _ = self._call(batch, self._exec_one)
         return StepResult(outputs, False, "exec")
+
+    def _step_unload(self, inputs: LaneInputs, rows) -> StepResult:
+        """The boundary crossing, over the row range the partitioned driver chose.
+
+        The driver never sends a batch here that it wants none of — that batch is released
+        without a call, which is the whole saving. So a range reaching this point always
+        names at least one row.
+        """
+        if not inputs.has(0):
+            self.finished = True
+            return StepResult([], True, "done")
+        batch = inputs.take(0)
+        outputs, _ = self._call(batch, lambda b: self._unload_one(b, rows))
+        return StepResult(outputs, False, "unload" if rows is None else "unload/range")
+
+    def _unload_one(self, batch, rows):
+        out, stats = self.executor.unload(batch, rows)
+        return [out], stats
 
     def _exec_one(self, batch):
         """`exec` is the one method returning a single batch rather than a list."""
@@ -155,15 +184,19 @@ class BatchSinglePartitionDriver:
         return StepResult(outputs, False, "probe_and_fetch")
 
     def _call(self, batch, invoke):
-        """Pre-check, call, then refresh this executor's residency and post-check.
+        """Pre-check, call, release the consumed input, then refresh residency and post-check.
 
-        `batch` is None for the calls the spec models with 0 rows and 0 bytes —
+        The input is released *after* the call, per the spec's accounting order: it is
+        alive on the device while the call runs, so the pre-check counts it. `batch` is
+        None for the calls the spec models with 0 rows and 0 bytes —
         `mark_done_and_fetch` and `finish_and_fetch`, which take no input.
         """
         n_rows = batch.num_rows() if batch is not None else 0
         n_bytes = batch.byte_size() if batch is not None else 0
         modelled = self._accountant.begin_call(self.label, self.executor, n_rows, n_bytes)
         outputs, stats = invoke(batch)
+        if batch is not None:
+            self._accountant.release(batch)
         self._accountant.end_call(self.label, self.executor, stats, modelled)
         return list(outputs), stats
 

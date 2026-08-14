@@ -517,7 +517,10 @@ downstream kernel pays per-launch overhead on each fragment. A `BatchAccumulator
 concatenates to a minimum target size (DataFusion semantics: merge only, never split),
 streaming out one batch whenever the threshold is crossed. `cudf::concatenate` via the
 existing collapse arm — no C++ change; target size from the same budget rule that sizes
-loader batches.
+loader batches. The T0 prototype has the node
+(`scripts/exec_model/operators/accumulators.py`, `ReBatchToTarget`) so the drivers are
+shown to tolerate one at any tree position; it also splits, which the ticket's node does
+not need, because the prototype uses it to make a stream's batches any shape.
 
 <a id="t140"></a>
 ### #140 — batch-partitioned broadcast joins (1:N partition broadcast)

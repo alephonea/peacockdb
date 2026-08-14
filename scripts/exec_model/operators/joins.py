@@ -71,6 +71,7 @@ class HashJoin(JoinExecutor):
         null_equals_null: bool = False,
         name: str = "join",
         fanout: float = TRIVIAL_FANOUT,
+        probe_schema: list[str] | None = None,
     ):
         if join_type is not JoinType.CROSS and len(build_keys) != len(probe_keys):
             raise ValueError("join key lists must have equal length")
@@ -83,9 +84,13 @@ class HashJoin(JoinExecutor):
         # executor at construction — which is how the estimate reaches scratch_bytes
         # without changing its signature.
         self.fanout = fanout
+        #: the probe side's declared columns — consulted only when an outer finish must
+        #: null-pad columns no probe batch ever showed it
+        self.probe_schema = probe_schema
         self.build: pd.DataFrame | None = None
         self.matched: np.ndarray | None = None
         self.probe_calls = 0
+        self._probe_columns: list[str] | None = None
 
     # -- Executor ---------------------------------------------------------------
 
@@ -140,8 +145,18 @@ class HashJoin(JoinExecutor):
         )
 
     def finish_and_fetch(self):
+        outputs = self._finish_outputs()
+        # The build side is released at finish: nothing stays resident afterwards, so the
+        # enforcer can drop this executor from its total.
+        self.build = None
+        self.matched = None
+        return outputs, no_scratch()
+
+    # -- internals --------------------------------------------------------------
+
+    def _finish_outputs(self) -> list[PandasBatch]:
         if self.join_type not in _NEEDS_FINISH:
-            return [], CallStats(scratch_bytes=0)
+            return []
         build = self._build_columns()
         if self.join_type is JoinType.LEFT_SEMI:
             out = build[self.matched]
@@ -149,17 +164,28 @@ class HashJoin(JoinExecutor):
             out = build[~self.matched]
         else:  # LEFT_OUTER / FULL_OUTER: unmatched build rows, probe columns null-padded
             out = build[~self.matched]
-            for column in self._probe_only_columns():
+            for column in self._pad_columns(build):
                 out = out.assign(**{column: np.nan})
-        return [PandasBatch(out, f"({self.name}⋈finish)")], no_scratch()
-
-    # -- internals --------------------------------------------------------------
+        return [PandasBatch(out, f"({self.name}⋈finish)")]
 
     def _build_columns(self) -> pd.DataFrame:
         return normalize(self.build.drop(columns=[_BUILD_KEY]))
 
-    def _probe_only_columns(self) -> list[str]:
-        return getattr(self, "_probe_columns", [])
+    def _pad_columns(self, build: pd.DataFrame) -> list[str]:
+        """The probe columns an outer finish must null-pad.
+
+        Learned from the first probe batch; a probe lane that never produced one falls
+        back to the declared `probe_schema`. Without either the output's shape would
+        silently depend on whether a probe batch happened to arrive, so the miss is loud.
+        """
+        if self._probe_columns is not None:
+            return self._probe_columns
+        if self.probe_schema is None:
+            raise ValueError(
+                f"{self.name}: a {self.join_type.value} finish saw no probe batch and "
+                "has no probe_schema — the probe columns to null-pad are unknown"
+            )
+        return [c for c in self.probe_schema if c not in build.columns]
 
     def _probe(self, probe: pd.DataFrame) -> pd.DataFrame:
         build_columns = self._build_columns()
