@@ -277,6 +277,13 @@ Either way the record has to carry which allocator produced it, beside `build_pr
 it was produced must travel with that fact. Until then, node times are comparable with each
 other and not with the C++ numbers in `llm-wiki/reports/benchmark-minimal.md`.
 
+The same sweep settles a second divergence: the committed records were measured before the
+hash scatter stopped opening a region of its own, so every repartition node in them carries
+one floor and roughly 2.5% more than the current instrument produces (shuffle-additive tp8
+reads 931us committed against 865-890us measured after). Nothing asserts the records, so
+nothing is red; the set and the code simply disagree by one timed region per shuffle until
+someone re-sweeps.
+
 <a id="t150"></a>
 ### #150 — store the embedding columns uncompressed; Snappy costs a third of a vector query to save 3%
 
