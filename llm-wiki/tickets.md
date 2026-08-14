@@ -814,7 +814,7 @@ impact.
 
 <a id="t132"></a>
 ### #132 — Two batch-size fields cross the IR and nothing on the C++ side reads them
-`GpuScan.batch_size` and `GpuCoalesceBatches.target_batch_size` are both computed by
+`CudfScan.batch_size` and `CudfCoalesceBatches.target_batch_size` are both computed by
 `GpuMemoryBudgetRule`, serialized by the plan serializer, and pinned byte-for-byte by
 `goldens/plan_bytes.sha256` — and `grep -rn 'batch_size' cpp/src cpp/include` returns
 nothing. Neither is read: the GPU scan reads by row group (`set_row_groups`), so there is no
