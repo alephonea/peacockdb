@@ -175,8 +175,8 @@ TEST(PlanExecutor, ScanNation) {
       {"n_comment", fb::DataType_Utf8View},
   });
 
-  auto scan = fb::CreateGpuScan(fbb, paths, schema);
-  auto node = make_plan_node(fbb, fb::PlanNodeKind_GpuScan, scan.Union());
+  auto scan = fb::CreateCudfScan(fbb, paths, schema);
+  auto node = make_plan_node(fbb, fb::PlanNodeKind_CudfScan, scan.Union());
   auto buf = finish_plan(fbb, node);
 
   auto result = peacock::execute_plan(buf.data(), buf.size());
@@ -207,8 +207,8 @@ TEST(PlanExecutor, ScanNationProjected) {
   std::vector<uint32_t> proj{1, 2};
   auto proj_vec = fbb.CreateVector(proj);
 
-  auto scan = fb::CreateGpuScan(fbb, paths, schema, proj_vec);
-  auto node = make_plan_node(fbb, fb::PlanNodeKind_GpuScan, scan.Union());
+  auto scan = fb::CreateCudfScan(fbb, paths, schema, proj_vec);
+  auto node = make_plan_node(fbb, fb::PlanNodeKind_CudfScan, scan.Union());
   auto buf = finish_plan(fbb, node);
 
   auto result = peacock::execute_plan(buf.data(), buf.size());
@@ -231,8 +231,8 @@ TEST(PlanExecutor, FilterNation) {
       {"n_regionkey", fb::DataType_Int32},
       {"n_comment", fb::DataType_Utf8View},
   });
-  auto scan = fb::CreateGpuScan(fbb, paths, schema);
-  auto scan_node = make_plan_node(fbb, fb::PlanNodeKind_GpuScan, scan.Union());
+  auto scan = fb::CreateCudfScan(fbb, paths, schema);
+  auto scan_node = make_plan_node(fbb, fb::PlanNodeKind_CudfScan, scan.Union());
 
   // Filter: n_regionkey (col 2) > 2. Cast the Int32 column to Int64 so it matches
   // the Int64 literal rather than relying on cuDF AST implicit promotion.
@@ -241,9 +241,9 @@ TEST(PlanExecutor, FilterNation) {
   auto lit2 = make_int64_literal(fbb, 2);
   auto predicate = make_binary_expr(fbb, cast_col2, fb::BinaryOp_Gt, lit2);
 
-  auto filter = fb::CreateGpuFilter(fbb, predicate, scan_node);
+  auto filter = fb::CreateCudfFilter(fbb, predicate, scan_node);
   auto filter_node =
-      make_plan_node(fbb, fb::PlanNodeKind_GpuFilter, filter.Union());
+      make_plan_node(fbb, fb::PlanNodeKind_CudfFilter, filter.Union());
   auto buf = finish_plan(fbb, filter_node);
 
   auto result = peacock::execute_plan(buf.data(), buf.size());
@@ -267,9 +267,9 @@ TEST(PlanExecutor, HashJoinNationRegion) {
       {"n_regionkey", fb::DataType_Int32},
       {"n_comment", fb::DataType_Utf8View},
   });
-  auto nation_scan = fb::CreateGpuScan(fbb, nation_paths, nation_schema);
+  auto nation_scan = fb::CreateCudfScan(fbb, nation_paths, nation_schema);
   auto nation_node = make_plan_node(
-      fbb, fb::PlanNodeKind_GpuScan, nation_scan.Union());
+      fbb, fb::PlanNodeKind_CudfScan, nation_scan.Union());
 
   // Right: region (r_regionkey, r_name, r_comment)
   auto region_path = fbb.CreateString(parquet_path("region"));
@@ -280,9 +280,9 @@ TEST(PlanExecutor, HashJoinNationRegion) {
       {"r_name", fb::DataType_Utf8View},
       {"r_comment", fb::DataType_Utf8View},
   });
-  auto region_scan = fb::CreateGpuScan(fbb, region_paths, region_schema);
+  auto region_scan = fb::CreateCudfScan(fbb, region_paths, region_schema);
   auto region_node = make_plan_node(
-      fbb, fb::PlanNodeKind_GpuScan, region_scan.Union());
+      fbb, fb::PlanNodeKind_CudfScan, region_scan.Union());
 
   // Join keys: n_regionkey (col 2 in left) = r_regionkey (col 0 in right)
   auto lk = make_col_ref(fbb, 2);
@@ -291,11 +291,11 @@ TEST(PlanExecutor, HashJoinNationRegion) {
   auto keys_vec = fbb.CreateVector(
       std::vector<flatbuffers::Offset<fb::JoinKey>>{join_key});
 
-  auto join = fb::CreateGpuHashJoin(
+  auto join = fb::CreateCudfHashJoin(
       fbb, fb::JoinType_Inner, keys_vec,
       /*filter=*/0, /*filter_columns=*/0, nation_node, region_node);
   auto join_node =
-      make_plan_node(fbb, fb::PlanNodeKind_GpuHashJoin, join.Union());
+      make_plan_node(fbb, fb::PlanNodeKind_CudfHashJoin, join.Union());
   auto buf = finish_plan(fbb, join_node);
 
   auto result = peacock::execute_plan(buf.data(), buf.size());
@@ -318,9 +318,9 @@ TEST(PlanExecutor, HashJoinWithProjection) {
       {"n_regionkey", fb::DataType_Int32},
       {"n_comment", fb::DataType_Utf8View},
   });
-  auto nation_scan = fb::CreateGpuScan(fbb, nation_paths, nation_schema);
+  auto nation_scan = fb::CreateCudfScan(fbb, nation_paths, nation_schema);
   auto nation_node = make_plan_node(
-      fbb, fb::PlanNodeKind_GpuScan, nation_scan.Union());
+      fbb, fb::PlanNodeKind_CudfScan, nation_scan.Union());
 
   // region
   auto region_path = fbb.CreateString(parquet_path("region"));
@@ -331,9 +331,9 @@ TEST(PlanExecutor, HashJoinWithProjection) {
       {"r_name", fb::DataType_Utf8View},
       {"r_comment", fb::DataType_Utf8View},
   });
-  auto region_scan = fb::CreateGpuScan(fbb, region_paths, region_schema);
+  auto region_scan = fb::CreateCudfScan(fbb, region_paths, region_schema);
   auto region_node = make_plan_node(
-      fbb, fb::PlanNodeKind_GpuScan, region_scan.Union());
+      fbb, fb::PlanNodeKind_CudfScan, region_scan.Union());
 
   // Join keys: n_regionkey (col 2) = r_regionkey (col 0)
   auto lk = make_col_ref(fbb, 2);
@@ -348,11 +348,11 @@ TEST(PlanExecutor, HashJoinWithProjection) {
   std::vector<uint32_t> proj{1, 2, 5};
   auto proj_vec = fbb.CreateVector(proj);
 
-  auto join = fb::CreateGpuHashJoin(
+  auto join = fb::CreateCudfHashJoin(
       fbb, fb::JoinType_Inner, keys_vec,
       /*filter=*/0, /*filter_columns=*/0, nation_node, region_node, proj_vec);
   auto join_node =
-      make_plan_node(fbb, fb::PlanNodeKind_GpuHashJoin, join.Union());
+      make_plan_node(fbb, fb::PlanNodeKind_CudfHashJoin, join.Union());
   auto buf = finish_plan(fbb, join_node);
 
   auto result = peacock::execute_plan(buf.data(), buf.size());
@@ -379,9 +379,9 @@ TEST(PlanExecutor, SortNationByName) {
   });
   std::vector<uint32_t> proj_cols{1};
   auto proj_vec = fbb.CreateVector(proj_cols);
-  auto scan = fb::CreateGpuScan(fbb, paths, schema, proj_vec);
+  auto scan = fb::CreateCudfScan(fbb, paths, schema, proj_vec);
   auto scan_node =
-      make_plan_node(fbb, fb::PlanNodeKind_GpuScan, scan.Union());
+      make_plan_node(fbb, fb::PlanNodeKind_CudfScan, scan.Union());
 
   // Sort by col 0 (n_name) ascending.
   auto sort_expr = make_col_ref(fbb, 0);
@@ -390,9 +390,9 @@ TEST(PlanExecutor, SortNationByName) {
   auto sort_specs = fbb.CreateVector(
       std::vector<flatbuffers::Offset<fb::SortExprNode>>{sort_spec});
 
-  auto sort = fb::CreateGpuSort(fbb, sort_specs, /*fetch=*/-1, scan_node);
+  auto sort = fb::CreateCudfSort(fbb, sort_specs, /*fetch=*/-1, scan_node);
   auto sort_node =
-      make_plan_node(fbb, fb::PlanNodeKind_GpuSort, sort.Union());
+      make_plan_node(fbb, fb::PlanNodeKind_CudfSort, sort.Union());
   auto buf = finish_plan(fbb, sort_node);
 
   auto result = peacock::execute_plan(buf.data(), buf.size());
@@ -422,9 +422,9 @@ TEST(PlanExecutor, SortWithFetch) {
   });
   std::vector<uint32_t> proj_cols{1};
   auto proj_vec = fbb.CreateVector(proj_cols);
-  auto scan = fb::CreateGpuScan(fbb, paths, schema, proj_vec);
+  auto scan = fb::CreateCudfScan(fbb, paths, schema, proj_vec);
   auto scan_node =
-      make_plan_node(fbb, fb::PlanNodeKind_GpuScan, scan.Union());
+      make_plan_node(fbb, fb::PlanNodeKind_CudfScan, scan.Union());
 
   auto sort_expr = make_col_ref(fbb, 0);
   auto sort_spec = fb::CreateSortExprNode(fbb, sort_expr, /*asc=*/true,
@@ -433,9 +433,9 @@ TEST(PlanExecutor, SortWithFetch) {
       std::vector<flatbuffers::Offset<fb::SortExprNode>>{sort_spec});
 
   // LIMIT 5
-  auto sort = fb::CreateGpuSort(fbb, sort_specs, /*fetch=*/5, scan_node);
+  auto sort = fb::CreateCudfSort(fbb, sort_specs, /*fetch=*/5, scan_node);
   auto sort_node =
-      make_plan_node(fbb, fb::PlanNodeKind_GpuSort, sort.Union());
+      make_plan_node(fbb, fb::PlanNodeKind_CudfSort, sort.Union());
   auto buf = finish_plan(fbb, sort_node);
 
   auto result = peacock::execute_plan(buf.data(), buf.size());
@@ -454,9 +454,9 @@ TEST(PlanExecutor, AggregateCount) {
       {"r_name", fb::DataType_Utf8View},
       {"r_comment", fb::DataType_Utf8View},
   });
-  auto scan = fb::CreateGpuScan(fbb, paths, schema);
+  auto scan = fb::CreateCudfScan(fbb, paths, schema);
   auto scan_node =
-      make_plan_node(fbb, fb::PlanNodeKind_GpuScan, scan.Union());
+      make_plan_node(fbb, fb::PlanNodeKind_CudfScan, scan.Union());
 
   // Aggregate: count(*) with no group-by.
   auto func_name = fbb.CreateString("count");
@@ -466,11 +466,11 @@ TEST(PlanExecutor, AggregateCount) {
   auto agg_funcs = fbb.CreateVector(
       std::vector<flatbuffers::Offset<fb::AggregateFuncNode>>{agg_func});
 
-  auto agg = fb::CreateGpuAggregate(
+  auto agg = fb::CreateCudfAggregate(
       fbb, fb::AggregateMode_Single,
       /*group_exprs=*/0, /*group_names=*/0, agg_funcs, scan_node);
   auto agg_node =
-      make_plan_node(fbb, fb::PlanNodeKind_GpuAggregate, agg.Union());
+      make_plan_node(fbb, fb::PlanNodeKind_CudfAggregate, agg.Union());
   auto buf = finish_plan(fbb, agg_node);
 
   auto result = peacock::execute_plan(buf.data(), buf.size());
@@ -496,9 +496,9 @@ TEST(PlanExecutor, AggregateGroupBy) {
       {"n_regionkey", fb::DataType_Int32},
       {"n_comment", fb::DataType_Utf8View},
   });
-  auto nation_scan = fb::CreateGpuScan(fbb, nation_paths, nation_schema);
+  auto nation_scan = fb::CreateCudfScan(fbb, nation_paths, nation_schema);
   auto nation_node = make_plan_node(
-      fbb, fb::PlanNodeKind_GpuScan, nation_scan.Union());
+      fbb, fb::PlanNodeKind_CudfScan, nation_scan.Union());
 
   auto region_path = fbb.CreateString(parquet_path("region"));
   auto region_paths = fbb.CreateVector(
@@ -508,9 +508,9 @@ TEST(PlanExecutor, AggregateGroupBy) {
       {"r_name", fb::DataType_Utf8View},
       {"r_comment", fb::DataType_Utf8View},
   });
-  auto region_scan = fb::CreateGpuScan(fbb, region_paths, region_schema);
+  auto region_scan = fb::CreateCudfScan(fbb, region_paths, region_schema);
   auto region_node = make_plan_node(
-      fbb, fb::PlanNodeKind_GpuScan, region_scan.Union());
+      fbb, fb::PlanNodeKind_CudfScan, region_scan.Union());
 
   // Join: n_regionkey (col 2) = r_regionkey (col 0)
   // Output projection: r_name only → col 5 in full output
@@ -522,11 +522,11 @@ TEST(PlanExecutor, AggregateGroupBy) {
   std::vector<uint32_t> join_proj{5};
   auto join_proj_vec = fbb.CreateVector(join_proj);
 
-  auto join = fb::CreateGpuHashJoin(
+  auto join = fb::CreateCudfHashJoin(
       fbb, fb::JoinType_Inner, keys_vec,
       /*filter=*/0, /*filter_columns=*/0, nation_node, region_node, join_proj_vec);
   auto join_node =
-      make_plan_node(fbb, fb::PlanNodeKind_GpuHashJoin, join.Union());
+      make_plan_node(fbb, fb::PlanNodeKind_CudfHashJoin, join.Union());
 
   // Aggregate: GROUP BY r_name (col 0), count(*)
   auto group_expr = make_col_ref(fbb, 0);
@@ -543,11 +543,11 @@ TEST(PlanExecutor, AggregateGroupBy) {
   auto agg_funcs = fbb.CreateVector(
       std::vector<flatbuffers::Offset<fb::AggregateFuncNode>>{agg_func});
 
-  auto agg = fb::CreateGpuAggregate(
+  auto agg = fb::CreateCudfAggregate(
       fbb, fb::AggregateMode_Single, group_exprs, group_names_vec,
       agg_funcs, join_node);
   auto agg_node =
-      make_plan_node(fbb, fb::PlanNodeKind_GpuAggregate, agg.Union());
+      make_plan_node(fbb, fb::PlanNodeKind_CudfAggregate, agg.Union());
   auto buf = finish_plan(fbb, agg_node);
 
   auto result = peacock::execute_plan(buf.data(), buf.size());
@@ -576,9 +576,9 @@ TEST(PlanExecutor, ProjectRename) {
       {"r_name", fb::DataType_Utf8View},
       {"r_comment", fb::DataType_Utf8View},
   });
-  auto scan = fb::CreateGpuScan(fbb, paths, schema);
+  auto scan = fb::CreateCudfScan(fbb, paths, schema);
   auto scan_node =
-      make_plan_node(fbb, fb::PlanNodeKind_GpuScan, scan.Union());
+      make_plan_node(fbb, fb::PlanNodeKind_CudfScan, scan.Union());
 
   // Project: select col 1 as "region_name", col 0 as "key"
   auto e1 = make_col_ref(fbb, 1);
@@ -590,9 +590,9 @@ TEST(PlanExecutor, ProjectRename) {
   auto aliases = fbb.CreateVector(
       std::vector<flatbuffers::Offset<flatbuffers::String>>{a1, a2});
 
-  auto proj = fb::CreateGpuProject(fbb, exprs, aliases, scan_node);
+  auto proj = fb::CreateCudfProject(fbb, exprs, aliases, scan_node);
   auto proj_node =
-      make_plan_node(fbb, fb::PlanNodeKind_GpuProject, proj.Union());
+      make_plan_node(fbb, fb::PlanNodeKind_CudfProject, proj.Union());
   auto buf = finish_plan(fbb, proj_node);
 
   auto result = peacock::execute_plan(buf.data(), buf.size());
@@ -614,18 +614,18 @@ TEST(PlanExecutor, PassthroughNodes) {
       {"r_name", fb::DataType_Utf8View},
       {"r_comment", fb::DataType_Utf8View},
   });
-  auto scan = fb::CreateGpuScan(fbb, paths, schema);
+  auto scan = fb::CreateCudfScan(fbb, paths, schema);
   auto scan_node =
-      make_plan_node(fbb, fb::PlanNodeKind_GpuScan, scan.Union());
+      make_plan_node(fbb, fb::PlanNodeKind_CudfScan, scan.Union());
 
-  auto cb = fb::CreateGpuCoalesceBatches(fbb, /*target_batch_size=*/8192,
+  auto cb = fb::CreateCudfCoalesceBatches(fbb, /*target_batch_size=*/8192,
                                           scan_node);
   auto cb_node = make_plan_node(
-      fbb, fb::PlanNodeKind_GpuCoalesceBatches, cb.Union());
+      fbb, fb::PlanNodeKind_CudfCoalesceBatches, cb.Union());
 
-  auto cp = fb::CreateGpuCoalescePartitions(fbb, cb_node);
+  auto cp = fb::CreateCudfCoalescePartitions(fbb, cb_node);
   auto cp_node = make_plan_node(
-      fbb, fb::PlanNodeKind_GpuCoalescePartitions, cp.Union());
+      fbb, fb::PlanNodeKind_CudfCoalescePartitions, cp.Union());
   auto buf = finish_plan(fbb, cp_node);
 
   auto result = peacock::execute_plan(buf.data(), buf.size());
@@ -647,9 +647,9 @@ TEST(PlanExecutor, JoinProjectSort) {
       {"n_regionkey", fb::DataType_Int32},
       {"n_comment", fb::DataType_Utf8View},
   });
-  auto nation_scan = fb::CreateGpuScan(fbb, nation_paths, nation_schema);
+  auto nation_scan = fb::CreateCudfScan(fbb, nation_paths, nation_schema);
   auto nation_node = make_plan_node(
-      fbb, fb::PlanNodeKind_GpuScan, nation_scan.Union());
+      fbb, fb::PlanNodeKind_CudfScan, nation_scan.Union());
 
   // region scan
   auto region_path = fbb.CreateString(parquet_path("region"));
@@ -660,9 +660,9 @@ TEST(PlanExecutor, JoinProjectSort) {
       {"r_name", fb::DataType_Utf8View},
       {"r_comment", fb::DataType_Utf8View},
   });
-  auto region_scan = fb::CreateGpuScan(fbb, region_paths, region_schema);
+  auto region_scan = fb::CreateCudfScan(fbb, region_paths, region_schema);
   auto region_node = make_plan_node(
-      fbb, fb::PlanNodeKind_GpuScan, region_scan.Union());
+      fbb, fb::PlanNodeKind_CudfScan, region_scan.Union());
 
   // Join: n_regionkey (col 2) = r_regionkey (col 0)
   // Project: n_name(1), r_name(5) from full join output
@@ -674,16 +674,16 @@ TEST(PlanExecutor, JoinProjectSort) {
   std::vector<uint32_t> join_proj{1, 5};
   auto join_proj_vec = fbb.CreateVector(join_proj);
 
-  auto join = fb::CreateGpuHashJoin(
+  auto join = fb::CreateCudfHashJoin(
       fbb, fb::JoinType_Inner, keys_vec,
       /*filter=*/0, /*filter_columns=*/0, nation_node, region_node, join_proj_vec);
   auto join_node =
-      make_plan_node(fbb, fb::PlanNodeKind_GpuHashJoin, join.Union());
+      make_plan_node(fbb, fb::PlanNodeKind_CudfHashJoin, join.Union());
 
-  auto cb = fb::CreateGpuCoalesceBatches(fbb, /*target_batch_size=*/65536,
+  auto cb = fb::CreateCudfCoalesceBatches(fbb, /*target_batch_size=*/65536,
                                           join_node);
   auto cb_node = make_plan_node(
-      fbb, fb::PlanNodeKind_GpuCoalesceBatches, cb.Union());
+      fbb, fb::PlanNodeKind_CudfCoalesceBatches, cb.Union());
 
   auto pe1 = make_col_ref(fbb, 0);
   auto pe2 = make_col_ref(fbb, 1);
@@ -694,9 +694,9 @@ TEST(PlanExecutor, JoinProjectSort) {
   auto proj_aliases = fbb.CreateVector(
       std::vector<flatbuffers::Offset<flatbuffers::String>>{pa1, pa2});
 
-  auto project = fb::CreateGpuProject(fbb, proj_exprs, proj_aliases, cb_node);
+  auto project = fb::CreateCudfProject(fbb, proj_exprs, proj_aliases, cb_node);
   auto proj_node =
-      make_plan_node(fbb, fb::PlanNodeKind_GpuProject, project.Union());
+      make_plan_node(fbb, fb::PlanNodeKind_CudfProject, project.Union());
 
   // Sort by n_name (col 0) ascending.
   auto sort_expr = make_col_ref(fbb, 0);
@@ -704,9 +704,9 @@ TEST(PlanExecutor, JoinProjectSort) {
                                            /*nulls_first=*/false);
   auto sort_specs = fbb.CreateVector(
       std::vector<flatbuffers::Offset<fb::SortExprNode>>{sort_spec});
-  auto sort = fb::CreateGpuSort(fbb, sort_specs, /*fetch=*/-1, proj_node);
+  auto sort = fb::CreateCudfSort(fbb, sort_specs, /*fetch=*/-1, proj_node);
   auto sort_node =
-      make_plan_node(fbb, fb::PlanNodeKind_GpuSort, sort.Union());
+      make_plan_node(fbb, fb::PlanNodeKind_CudfSort, sort.Union());
   auto buf = finish_plan(fbb, sort_node);
 
   auto result = peacock::execute_plan(buf.data(), buf.size());

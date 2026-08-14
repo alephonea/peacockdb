@@ -59,7 +59,7 @@ use datafusion::physical_expr::PhysicalSortExpr;
 use crate::plan_serializer::{serialize_expr, serialize_plan_node};
 use crate::PartitionMode;
 
-pub(crate) fn serialize_gpu_sort<'a>(
+pub(crate) fn serialize_cudf_sort<'a>(
     b: &mut FlatBufferBuilder<'a>,
     plan: &Arc<dyn ExecutionPlan>,
     pm: PartitionMode,
@@ -92,18 +92,18 @@ pub(crate) fn serialize_gpu_sort<'a>(
 
     let input = serialize_plan_node(b, sort.input(), pm)?;
 
-    let node = fb::GpuSort::create(
+    let node = fb::CudfSort::create(
         b,
-        &fb::GpuSortArgs {
+        &fb::CudfSortArgs {
             exprs: Some(exprs_vec),
             fetch,
             preserve_partitioning: sort.preserve_partitioning(),
             input: Some(input),
         },
     );
-    Ok((fb::PlanNodeKind::GpuSort, node.as_union_value()))
+    Ok((fb::PlanNodeKind::CudfSort, node.as_union_value()))
 }
-pub(crate) fn serialize_gpu_sort_preserving_merge<'a>(
+pub(crate) fn serialize_cudf_sort_preserving_merge<'a>(
     b: &mut FlatBufferBuilder<'a>,
     plan: &Arc<dyn ExecutionPlan>,
     pm: PartitionMode,
@@ -135,15 +135,15 @@ pub(crate) fn serialize_gpu_sort_preserving_merge<'a>(
 
     let fetch = spm.fetch().map(|f| f as i64).unwrap_or(-1);
 
-    let node = fb::GpuSortPreservingMerge::create(
+    let node = fb::CudfSortPreservingMerge::create(
         b,
-        &fb::GpuSortPreservingMergeArgs {
+        &fb::CudfSortPreservingMergeArgs {
             exprs: Some(exprs_vec),
             fetch,
             input: Some(input),
         },
     );
-    Ok((fb::PlanNodeKind::GpuSortPreservingMerge, node.as_union_value()))
+    Ok((fb::PlanNodeKind::CudfSortPreservingMerge, node.as_union_value()))
 }
 
 // ---------------------------------------------------------------------------
@@ -152,11 +152,11 @@ pub(crate) fn serialize_gpu_sort_preserving_merge<'a>(
 // easy to break by editing one side alone. Keep them together.
 // ---------------------------------------------------------------------------
 
-pub(crate) fn deserialize_gpu_sort(
-    sort: &fb::GpuSort,
+pub(crate) fn deserialize_cudf_sort(
+    sort: &fb::CudfSort,
     _node: &fb::PlanNode,
 ) -> Result<Arc<dyn ExecutionPlan>, String> {
-    let input = deserialize_plan_node(&sort.input().ok_or("GpuSort missing input")?)?;
+    let input = deserialize_plan_node(&sort.input().ok_or("CudfSort missing input")?)?;
 
     let sort_exprs: Vec<PhysicalSortExpr> = sort
         .exprs()
@@ -187,13 +187,13 @@ pub(crate) fn deserialize_gpu_sort(
     Ok(Arc::new(GpuSortExec::new(Arc::new(sort_exec))))
 }
 
-pub(crate) fn deserialize_gpu_sort_preserving_merge(
-    spm: &fb::GpuSortPreservingMerge,
+pub(crate) fn deserialize_cudf_sort_preserving_merge(
+    spm: &fb::CudfSortPreservingMerge,
 ) -> Result<Arc<dyn ExecutionPlan>, String> {
     use datafusion::physical_plan::sorts::sort_preserving_merge::SortPreservingMergeExec;
 
     let input = deserialize_plan_node(
-        &spm.input().ok_or("GpuSortPreservingMerge missing input")?,
+        &spm.input().ok_or("CudfSortPreservingMerge missing input")?,
     )?;
 
     let sort_exprs: Vec<PhysicalSortExpr> = spm

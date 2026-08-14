@@ -44,7 +44,7 @@ use crate::plan_serializer::deserialize_plan_node;
 use crate::plan_serializer::serialize_plan_node;
 use crate::PartitionMode;
 
-pub(crate) fn serialize_gpu_coalesce_batches<'a>(
+pub(crate) fn serialize_cudf_coalesce_batches<'a>(
     b: &mut FlatBufferBuilder<'a>,
     plan: &Arc<dyn ExecutionPlan>,
     pm: PartitionMode,
@@ -57,16 +57,16 @@ pub(crate) fn serialize_gpu_coalesce_batches<'a>(
         .ok_or("GpuCoalesceBatchesExec inner is not CoalesceBatchesExec")?;
 
     let input = serialize_plan_node(b, cb.input(), pm)?;
-    let node = fb::GpuCoalesceBatches::create(
+    let node = fb::CudfCoalesceBatches::create(
         b,
-        &fb::GpuCoalesceBatchesArgs {
+        &fb::CudfCoalesceBatchesArgs {
             target_batch_size: cb.target_batch_size() as u32,
             input: Some(input),
         },
     );
-    Ok((fb::PlanNodeKind::GpuCoalesceBatches, node.as_union_value()))
+    Ok((fb::PlanNodeKind::CudfCoalesceBatches, node.as_union_value()))
 }
-pub(crate) fn serialize_gpu_coalesce_partitions<'a>(
+pub(crate) fn serialize_cudf_coalesce_partitions<'a>(
     b: &mut FlatBufferBuilder<'a>,
     plan: &Arc<dyn ExecutionPlan>,
     pm: PartitionMode,
@@ -79,13 +79,13 @@ pub(crate) fn serialize_gpu_coalesce_partitions<'a>(
         .ok_or("GpuCoalescePartitionsExec inner is not CoalescePartitionsExec")?;
 
     let input = serialize_plan_node(b, cp.input(), pm)?;
-    let node = fb::GpuCoalescePartitions::create(
+    let node = fb::CudfCoalescePartitions::create(
         b,
-        &fb::GpuCoalescePartitionsArgs {
+        &fb::CudfCoalescePartitionsArgs {
             input: Some(input),
         },
     );
-    Ok((fb::PlanNodeKind::GpuCoalescePartitions, node.as_union_value()))
+    Ok((fb::PlanNodeKind::CudfCoalescePartitions, node.as_union_value()))
 }
 
 // ---------------------------------------------------------------------------
@@ -94,23 +94,23 @@ pub(crate) fn serialize_gpu_coalesce_partitions<'a>(
 // easy to break by editing one side alone. Keep them together.
 // ---------------------------------------------------------------------------
 
-pub(crate) fn deserialize_gpu_coalesce_batches(
-    cb: &fb::GpuCoalesceBatches,
+pub(crate) fn deserialize_cudf_coalesce_batches(
+    cb: &fb::CudfCoalesceBatches,
 ) -> Result<Arc<dyn ExecutionPlan>, String> {
     use datafusion::physical_plan::coalesce_batches::CoalesceBatchesExec;
 
-    let input = deserialize_plan_node(&cb.input().ok_or("GpuCoalesceBatches missing input")?)?;
+    let input = deserialize_plan_node(&cb.input().ok_or("CudfCoalesceBatches missing input")?)?;
     let inner: Arc<dyn ExecutionPlan> =
         Arc::new(CoalesceBatchesExec::new(input, cb.target_batch_size() as usize));
     Ok(Arc::new(GpuCoalesceBatchesExec::new(inner)))
 }
 
-pub(crate) fn deserialize_gpu_coalesce_partitions(
-    cp: &fb::GpuCoalescePartitions,
+pub(crate) fn deserialize_cudf_coalesce_partitions(
+    cp: &fb::CudfCoalescePartitions,
 ) -> Result<Arc<dyn ExecutionPlan>, String> {
     use datafusion::physical_plan::coalesce_partitions::CoalescePartitionsExec;
 
-    let input = deserialize_plan_node(&cp.input().ok_or("GpuCoalescePartitions missing input")?)?;
+    let input = deserialize_plan_node(&cp.input().ok_or("CudfCoalescePartitions missing input")?)?;
     let inner: Arc<dyn ExecutionPlan> = Arc::new(CoalescePartitionsExec::new(input));
     Ok(Arc::new(GpuCoalescePartitionsExec::new(inner)))
 }

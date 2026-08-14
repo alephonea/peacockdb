@@ -12,7 +12,7 @@
 
 namespace peacock {
 
-TableResult execute_limit(const fb::GpuLimit* limit, NodeInputs* in) {
+TableResult execute_limit(const fb::CudfLimit* limit, NodeInputs* in) {
   auto input = execute_node(limit->input(), in);
   auto tv = input.table->view();
   auto num_rows = tv.num_rows();

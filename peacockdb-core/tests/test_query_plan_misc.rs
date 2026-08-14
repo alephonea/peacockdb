@@ -16,7 +16,7 @@ use common::{
 };
 
 // ── mergeable_agg_state flag serialization ───────────────────────────────
-/// The `mergeable_agg_state` flag on `GpuAggregate` must be driven by the
+/// The `mergeable_agg_state` flag on `CudfAggregate` must be driven by the
 /// serializer's [`PartitionMode`] (set iff RealMultiPartition). shuffle-stddev is
 /// a grouped aggregate, so serializing the SAME lowered plan at RealMultiPartition
 /// vs SinglePartition must differ in bytes (the flag is honored); SinglePartition

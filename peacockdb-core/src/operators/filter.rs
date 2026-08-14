@@ -49,7 +49,7 @@ use crate::plan_serializer::{deserialize_expr, deserialize_plan_node};
 use crate::plan_serializer::{serialize_expr, serialize_plan_node};
 use crate::PartitionMode;
 
-pub(crate) fn serialize_gpu_filter<'a>(
+pub(crate) fn serialize_cudf_filter<'a>(
     b: &mut FlatBufferBuilder<'a>,
     plan: &Arc<dyn ExecutionPlan>,
     pm: PartitionMode,
@@ -73,15 +73,15 @@ pub(crate) fn serialize_gpu_filter<'a>(
         b.create_vector(&indices)
     });
 
-    let node = fb::GpuFilter::create(
+    let node = fb::CudfFilter::create(
         b,
-        &fb::GpuFilterArgs {
+        &fb::CudfFilterArgs {
             predicate: Some(predicate),
             input: Some(input),
             projection,
         },
     );
-    Ok((fb::PlanNodeKind::GpuFilter, node.as_union_value()))
+    Ok((fb::PlanNodeKind::CudfFilter, node.as_union_value()))
 }
 
 // ---------------------------------------------------------------------------
@@ -90,12 +90,12 @@ pub(crate) fn serialize_gpu_filter<'a>(
 // easy to break by editing one side alone. Keep them together.
 // ---------------------------------------------------------------------------
 
-pub(crate) fn deserialize_gpu_filter(
-    filter: &fb::GpuFilter,
+pub(crate) fn deserialize_cudf_filter(
+    filter: &fb::CudfFilter,
     _node: &fb::PlanNode,
 ) -> Result<Arc<dyn ExecutionPlan>, String> {
-    let input = deserialize_plan_node(&filter.input().ok_or("GpuFilter missing input")?)?;
-    let predicate = deserialize_expr(&filter.predicate().ok_or("GpuFilter missing predicate")?)?;
+    let input = deserialize_plan_node(&filter.input().ok_or("CudfFilter missing input")?)?;
+    let predicate = deserialize_expr(&filter.predicate().ok_or("CudfFilter missing predicate")?)?;
     let mut filter_exec =
         FilterExec::try_new(predicate, input).map_err(|e| format!("FilterExec: {e}"))?;
     if let Some(proj) = filter.projection() {

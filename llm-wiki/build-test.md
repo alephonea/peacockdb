@@ -181,7 +181,12 @@ Consequences worth knowing before you regenerate:
   quietly rewritten expectation.
 - **`plan_bytes.sha256` needs a second, deliberate variable.** Under plain
   `UPDATE_CANONICAL=1` the test verifies instead of rewriting, and says so — a bulk regen that moved the wire
-  format goes red during the regen, before the goldens are pulled home.
+  format goes red during the regen, before the goldens are pulled home. It is also the only
+  thing pinning the FlatBuffers union ordinals: `test_plan_serialiser` checks `node_type()`
+  against the enum, but both come from the same generated code, so a reordered union agrees
+  with itself and passes. It pins a kind only where the corpus plans one — true for all
+  fifteen today (thinnest: cross join and interleave at 7 goldens each), and not structural,
+  so a sixteenth kind no query plans would be unpinned with nothing going red.
 - **The `.duckdb_cost.txt` path is re-runnable without DuckDB**: `--extract-only` rebuilds
   the goldens from the committed profiles plus the parquet, so only a genuine oracle change
   needs the 1.5.4 pin.

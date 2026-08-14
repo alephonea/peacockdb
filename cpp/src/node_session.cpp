@@ -109,42 +109,42 @@ uint64_t measure_timing_floor_us(unsigned samples) {
 // order so the caller's input handles line up with each node's inputs.
 static std::vector<const fb::PlanNode*> node_children(const fb::PlanNode* node) {
   switch (node->node_type()) {
-    case fb::PlanNodeKind_GpuScan:
+    case fb::PlanNodeKind_CudfScan:
       return {};
-    case fb::PlanNodeKind_GpuFilter:
-      return {node->node_as_GpuFilter()->input()};
-    case fb::PlanNodeKind_GpuProject:
-      return {node->node_as_GpuProject()->input()};
-    case fb::PlanNodeKind_GpuAggregate:
-      return {node->node_as_GpuAggregate()->input()};
-    case fb::PlanNodeKind_GpuHashJoin:
-      return {node->node_as_GpuHashJoin()->left(), node->node_as_GpuHashJoin()->right()};
-    case fb::PlanNodeKind_GpuCrossJoin:
-      return {node->node_as_GpuCrossJoin()->left(), node->node_as_GpuCrossJoin()->right()};
-    case fb::PlanNodeKind_GpuNestedLoopJoin:
-      return {node->node_as_GpuNestedLoopJoin()->left(),
-              node->node_as_GpuNestedLoopJoin()->right()};
-    case fb::PlanNodeKind_GpuSort:
-      return {node->node_as_GpuSort()->input()};
-    case fb::PlanNodeKind_GpuCoalesceBatches:
-      return {node->node_as_GpuCoalesceBatches()->input()};
-    case fb::PlanNodeKind_GpuCoalescePartitions:
-      return {node->node_as_GpuCoalescePartitions()->input()};
-    case fb::PlanNodeKind_GpuRepartition:
-      return {node->node_as_GpuRepartition()->input()};
-    case fb::PlanNodeKind_GpuSortPreservingMerge:
-      return {node->node_as_GpuSortPreservingMerge()->input()};
-    case fb::PlanNodeKind_GpuUnion: {
+    case fb::PlanNodeKind_CudfFilter:
+      return {node->node_as_CudfFilter()->input()};
+    case fb::PlanNodeKind_CudfProject:
+      return {node->node_as_CudfProject()->input()};
+    case fb::PlanNodeKind_CudfAggregate:
+      return {node->node_as_CudfAggregate()->input()};
+    case fb::PlanNodeKind_CudfHashJoin:
+      return {node->node_as_CudfHashJoin()->left(), node->node_as_CudfHashJoin()->right()};
+    case fb::PlanNodeKind_CudfCrossJoin:
+      return {node->node_as_CudfCrossJoin()->left(), node->node_as_CudfCrossJoin()->right()};
+    case fb::PlanNodeKind_CudfNestedLoopJoin:
+      return {node->node_as_CudfNestedLoopJoin()->left(),
+              node->node_as_CudfNestedLoopJoin()->right()};
+    case fb::PlanNodeKind_CudfSort:
+      return {node->node_as_CudfSort()->input()};
+    case fb::PlanNodeKind_CudfCoalesceBatches:
+      return {node->node_as_CudfCoalesceBatches()->input()};
+    case fb::PlanNodeKind_CudfCoalescePartitions:
+      return {node->node_as_CudfCoalescePartitions()->input()};
+    case fb::PlanNodeKind_CudfRepartition:
+      return {node->node_as_CudfRepartition()->input()};
+    case fb::PlanNodeKind_CudfSortPreservingMerge:
+      return {node->node_as_CudfSortPreservingMerge()->input()};
+    case fb::PlanNodeKind_CudfUnion: {
       std::vector<const fb::PlanNode*> kids;
-      if (auto* in = node->node_as_GpuUnion()->inputs()) {
+      if (auto* in = node->node_as_CudfUnion()->inputs()) {
         for (flatbuffers::uoffset_t i = 0; i < in->size(); ++i) kids.push_back(in->Get(i));
       }
       return kids;
     }
-    case fb::PlanNodeKind_GpuLimit:
-      return {node->node_as_GpuLimit()->input()};
-    case fb::PlanNodeKind_GpuWindow:
-      return {node->node_as_GpuWindow()->input()};
+    case fb::PlanNodeKind_CudfLimit:
+      return {node->node_as_CudfLimit()->input()};
+    case fb::PlanNodeKind_CudfWindow:
+      return {node->node_as_CudfWindow()->input()};
     default:
       throw std::runtime_error("node_children: unsupported PlanNodeKind: " +
                                std::to_string(node->node_type()));
@@ -199,13 +199,13 @@ void NodeSession::execute_node(uint64_t seq, const uint64_t* input_handles,
     off += cnt;
   }
 
-  // GpuScan with an explicit RG→batch→partition MAP → emit N partitions, one per
+  // CudfScan with an explicit RG→batch→partition MAP → emit N partitions, one per
   // ScanBatch, each a set_row_groups read of that entry's row groups. This is the
   // SAME map the Rust CpuNodeExecutor / golden generator replay, so per-partition
   // row counts match by construction. EMPTY map => fall through to the generic
   // path (single-partition read of `row_groups`).
-  if (node->node_type() == fb::PlanNodeKind_GpuScan) {
-    const fb::GpuScan* scan = node->node_as_GpuScan();
+  if (node->node_type() == fb::PlanNodeKind_CudfScan) {
+    const fb::CudfScan* scan = node->node_as_CudfScan();
     if (scan->batches() && scan->batches()->size() > 0) {
       size_t n = scan->batches()->size();
       if (n > out_cap)
@@ -232,10 +232,10 @@ void NodeSession::execute_node(uint64_t seq, const uint64_t* input_handles,
   // output (BUFFERING: the full table goes resident), in partition-index order to
   // match the Rust CpuNodeExecutor's `collapses_partitions` concat. NOT a
   // per-partition passthrough.
-  //   - GpuCoalescePartitions: the explicit M→1 concat before a Hash repartition.
-  //   - GpuSortPreservingMerge: N sorted partitions → one (q1's top ORDER BY node).
-  if (node->node_type() == fb::PlanNodeKind_GpuCoalescePartitions ||
-      node->node_type() == fb::PlanNodeKind_GpuSortPreservingMerge) {
+  //   - CudfCoalescePartitions: the explicit M→1 concat before a Hash repartition.
+  //   - CudfSortPreservingMerge: N sorted partitions → one (q1's top ORDER BY node).
+  if (node->node_type() == fb::PlanNodeKind_CudfCoalescePartitions ||
+      node->node_type() == fb::PlanNodeKind_CudfSortPreservingMerge) {
     if (out_cap < 1)
       throw std::runtime_error("NodeSession::execute_node: out_handles buffer too small");
     std::vector<TableResult> owned;
@@ -253,9 +253,9 @@ void NodeSession::execute_node(uint64_t seq, const uint64_t* input_handles,
     TableResult result;
     result.column_names = owned.empty() ? std::vector<std::string>{} : owned[0].column_names;
 
-    const fb::GpuSortPreservingMerge* spm =
-        (node->node_type() == fb::PlanNodeKind_GpuSortPreservingMerge)
-            ? node->node_as_GpuSortPreservingMerge()
+    const fb::CudfSortPreservingMerge* spm =
+        (node->node_type() == fb::PlanNodeKind_CudfSortPreservingMerge)
+            ? node->node_as_CudfSortPreservingMerge()
             : nullptr;
     // Everything above is host-side bookkeeping (handle lookups, table_view moves);
     // the device work is the merge/concat + optional top-N slice below.
@@ -264,7 +264,7 @@ void NodeSession::execute_node(uint64_t seq, const uint64_t* input_handles,
       // (#99) SortPreservingMerge is a K-WAY MERGE by the SPM's sort keys, NOT a
       // concat: concat leaves the output only per-partition-sorted, so a downstream
       // LIMIT/fetch picks the wrong top-N. cudf::merge's precondition holds because
-      // each input was sorted upstream by the SAME GpuSort spec. Column-ref keys
+      // each input was sorted upstream by the SAME CudfSort spec. Column-ref keys
       // only; an expression sort key would need per-partition materialization, so
       // throw rather than silently mis-merge.
       std::vector<cudf::size_type> key_cols;
@@ -275,7 +275,7 @@ void NodeSession::execute_node(uint64_t seq, const uint64_t* input_handles,
         auto* expr = se->expr();
         if (!expr || expr->node_type() != fb::ExprNode_ColumnRef)
           throw std::runtime_error(
-              "GpuSortPreservingMerge: expression sort key not supported by the k-way "
+              "CudfSortPreservingMerge: expression sort key not supported by the k-way "
               "merge (needs per-partition materialization) — file an increment");
         key_cols.push_back(
             static_cast<cudf::size_type>(expr->node_as_ColumnRef()->index()));
@@ -293,7 +293,7 @@ void NodeSession::execute_node(uint64_t seq, const uint64_t* input_handles,
         result.table = std::make_unique<cudf::table>(sliced[0]);
       }
     } else {
-      // GpuCoalescePartitions, or an SPM with no sort keys / a single partition:
+      // CudfCoalescePartitions, or an SPM with no sort keys / a single partition:
       // a plain in-order concat is the correct collapse.
       result.table = cudf::concatenate(views);
     }
@@ -308,20 +308,20 @@ void NodeSession::execute_node(uint64_t seq, const uint64_t* input_handles,
     return;
   }
 
-  // GpuRepartition Hash → scatter the ONE input table into N partitions by
+  // CudfRepartition Hash → scatter the ONE input table into N partitions by
   // Spark-murmur3 (comet-identical) hash of the key columns, so per-partition row
   // counts match the CPU twin by construction; the live conformance gate proves
   // the kernel is bit-equal to comet. Post-lowering the child is a
-  // GpuCoalescePartitions (single handle), but concat defensively anyway.
+  // CudfCoalescePartitions (single handle), but concat defensively anyway.
   //
   // That concat has no caller and is scheduled to go. The legacy budget rule always
   // lowers a shuffle to CoalescePartitions + Repartition, and the batch-partitioned
   // mode also hands this arm exactly one handle per call — its planner puts a
   // GpuCoalesceAllBatches above the merge feeding an emit. Retire the branch when the
   // legacy modes retire, rather than growing a second caller for it.
-  if (node->node_type() == fb::PlanNodeKind_GpuRepartition &&
-      node->node_as_GpuRepartition()->kind() == fb::PartitioningKind_Hash) {
-    const fb::GpuRepartition* rp = node->node_as_GpuRepartition();
+  if (node->node_type() == fb::PlanNodeKind_CudfRepartition &&
+      node->node_as_CudfRepartition()->kind() == fb::PartitioningKind_Hash) {
+    const fb::CudfRepartition* rp = node->node_as_CudfRepartition();
     size_t n = static_cast<size_t>(rp->num_partitions());
     if (n == 0 || n > out_cap)
       throw std::runtime_error("NodeSession::execute_node: bad Hash repartition out count");
@@ -362,7 +362,7 @@ void NodeSession::execute_node(uint64_t seq, const uint64_t* input_handles,
       for (flatbuffers::uoffset_t i = 0; i < exprs->size(); ++i) {
         const fb::Expr* e = exprs->Get(i);
         if (e->node_type() != fb::ExprNode_ColumnRef)
-          throw std::runtime_error("GpuRepartition: only ColumnRef hash keys supported (Inc2)");
+          throw std::runtime_error("CudfRepartition: only ColumnRef hash keys supported (Inc2)");
         key_cols.push_back(static_cast<cudf::size_type>(e->node_as_ColumnRef()->index()));
       }
     }
@@ -400,7 +400,7 @@ void NodeSession::execute_node(uint64_t seq, const uint64_t* input_handles,
 
   // Output partition count. Ordinary ops MAP over their children's partitions (all
   // children carry the same count), so n_out = child[0]'s count. Partition-changing
-  // ops (GpuScan map, GpuCoalescePartitions, Hash repartition) returned above.
+  // ops (CudfScan map, CudfCoalescePartitions, Hash repartition) returned above.
   size_t n_out = (n_children > 0) ? child[0].size() : 1;
   if (n_out == 0) n_out = 1;
   if (n_out > out_cap)

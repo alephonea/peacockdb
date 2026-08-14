@@ -1,4 +1,4 @@
-// GpuSort -- sort by expressions.
+// CudfSort -- sort by expressions.
 
 #include "peacock/operators.h"
 #include "peacock/expr.h"
@@ -14,7 +14,7 @@
 
 namespace peacock {
 
-TableResult execute_sort(const fb::GpuSort* sort, NodeInputs* in) {
+TableResult execute_sort(const fb::CudfSort* sort, NodeInputs* in) {
   auto input = execute_node(sort->input(), in);
   auto tv = input.table->view();
 
@@ -33,7 +33,7 @@ TableResult execute_sort(const fb::GpuSort* sort, NodeInputs* in) {
     auto* se = sort->exprs()->Get(i);
     auto* expr = se->expr();
     if (!expr)
-      throw std::runtime_error("GpuSort: missing sort key expression");
+      throw std::runtime_error("CudfSort: missing sort key expression");
     if (expr->node_type() == fb::ExprNode_ColumnRef) {
       auto idx = static_cast<cudf::size_type>(expr->node_as_ColumnRef()->index());
       key_cols.push_back(tv.column(idx));

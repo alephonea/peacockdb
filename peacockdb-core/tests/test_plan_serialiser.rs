@@ -31,7 +31,7 @@ async fn test_serialize_filter_agg() {
 
     let plan = flatbuffers::root::<fb::GpuPlan>(&bytes).unwrap();
     let root = plan.root().unwrap();
-    assert_eq!(root.node_type(), fb::PlanNodeKind::GpuAggregate);
+    assert_eq!(root.node_type(), fb::PlanNodeKind::CudfAggregate);
 }
 
 #[tokio::test]
@@ -46,7 +46,7 @@ async fn test_serialize_join_sort() {
 
     let plan = flatbuffers::root::<fb::GpuPlan>(&bytes).unwrap();
     let root = plan.root().unwrap();
-    assert_eq!(root.node_type(), fb::PlanNodeKind::GpuSort);
+    assert_eq!(root.node_type(), fb::PlanNodeKind::CudfSort);
 }
 
 /// Fast regression guard for the IR round-trip's bytes-equal oracle, focused on
@@ -141,16 +141,16 @@ fn collect_nodes<'a>(node: fb::PlanNode<'a>, out: &mut Vec<fb::PlanNode<'a>>) {
     use fb::PlanNodeKind as K;
     out.push(node);
     let single_input = match node.node_type() {
-        K::GpuFilter => node.node_as_gpu_filter().unwrap().input(),
-        K::GpuProject => node.node_as_gpu_project().unwrap().input(),
-        K::GpuAggregate => node.node_as_gpu_aggregate().unwrap().input(),
-        K::GpuSort => node.node_as_gpu_sort().unwrap().input(),
-        K::GpuCoalesceBatches => node.node_as_gpu_coalesce_batches().unwrap().input(),
-        K::GpuCoalescePartitions => node.node_as_gpu_coalesce_partitions().unwrap().input(),
-        K::GpuRepartition => node.node_as_gpu_repartition().unwrap().input(),
-        K::GpuSortPreservingMerge => node.node_as_gpu_sort_preserving_merge().unwrap().input(),
-        K::GpuLimit => node.node_as_gpu_limit().unwrap().input(),
-        K::GpuWindow => node.node_as_gpu_window().unwrap().input(),
+        K::CudfFilter => node.node_as_cudf_filter().unwrap().input(),
+        K::CudfProject => node.node_as_cudf_project().unwrap().input(),
+        K::CudfAggregate => node.node_as_cudf_aggregate().unwrap().input(),
+        K::CudfSort => node.node_as_cudf_sort().unwrap().input(),
+        K::CudfCoalesceBatches => node.node_as_cudf_coalesce_batches().unwrap().input(),
+        K::CudfCoalescePartitions => node.node_as_cudf_coalesce_partitions().unwrap().input(),
+        K::CudfRepartition => node.node_as_cudf_repartition().unwrap().input(),
+        K::CudfSortPreservingMerge => node.node_as_cudf_sort_preserving_merge().unwrap().input(),
+        K::CudfLimit => node.node_as_cudf_limit().unwrap().input(),
+        K::CudfWindow => node.node_as_cudf_window().unwrap().input(),
         _ => None,
     };
     if let Some(child) = single_input {
@@ -158,8 +158,8 @@ fn collect_nodes<'a>(node: fb::PlanNode<'a>, out: &mut Vec<fb::PlanNode<'a>>) {
         return;
     }
     match node.node_type() {
-        K::GpuHashJoin => {
-            let j = node.node_as_gpu_hash_join().unwrap();
+        K::CudfHashJoin => {
+            let j = node.node_as_cudf_hash_join().unwrap();
             if let Some(l) = j.left() {
                 collect_nodes(l, out);
             }
@@ -167,8 +167,8 @@ fn collect_nodes<'a>(node: fb::PlanNode<'a>, out: &mut Vec<fb::PlanNode<'a>>) {
                 collect_nodes(r, out);
             }
         }
-        K::GpuCrossJoin => {
-            let j = node.node_as_gpu_cross_join().unwrap();
+        K::CudfCrossJoin => {
+            let j = node.node_as_cudf_cross_join().unwrap();
             if let Some(l) = j.left() {
                 collect_nodes(l, out);
             }
@@ -176,8 +176,8 @@ fn collect_nodes<'a>(node: fb::PlanNode<'a>, out: &mut Vec<fb::PlanNode<'a>>) {
                 collect_nodes(r, out);
             }
         }
-        K::GpuNestedLoopJoin => {
-            let j = node.node_as_gpu_nested_loop_join().unwrap();
+        K::CudfNestedLoopJoin => {
+            let j = node.node_as_cudf_nested_loop_join().unwrap();
             if let Some(l) = j.left() {
                 collect_nodes(l, out);
             }
@@ -185,14 +185,14 @@ fn collect_nodes<'a>(node: fb::PlanNode<'a>, out: &mut Vec<fb::PlanNode<'a>>) {
                 collect_nodes(r, out);
             }
         }
-        K::GpuUnion => {
-            if let Some(inputs) = node.node_as_gpu_union().unwrap().inputs() {
+        K::CudfUnion => {
+            if let Some(inputs) = node.node_as_cudf_union().unwrap().inputs() {
                 for i in inputs.iter() {
                     collect_nodes(i, out);
                 }
             }
         }
-        _ => {} // GpuScan and other leaves
+        _ => {} // CudfScan and other leaves
     }
 }
 
@@ -214,21 +214,21 @@ fn assert_roundtrip_bytes_equal(bytes: &[u8]) {
 }
 
 #[tokio::test]
-async fn test_roundtrip_gpu_cross_join() {
-    // No join predicate → CrossJoinExec → GpuCrossJoin.
+async fn test_roundtrip_cudf_cross_join() {
+    // No join predicate → CrossJoinExec → CudfCrossJoin.
     let bytes = serialize_query("SELECT * FROM region, nation").await;
     let nodes = nodes_of(&bytes);
     assert!(
         nodes
             .iter()
-            .any(|n| n.node_type() == fb::PlanNodeKind::GpuCrossJoin),
-        "plan must contain a GpuCrossJoin node"
+            .any(|n| n.node_type() == fb::PlanNodeKind::CudfCrossJoin),
+        "plan must contain a CudfCrossJoin node"
     );
     assert_roundtrip_bytes_equal(&bytes);
 }
 
 #[tokio::test]
-async fn test_roundtrip_gpu_nested_loop_join() {
+async fn test_roundtrip_cudf_nested_loop_join() {
     // A non-equi predicate → NestedLoopJoinExec; selecting a strict subset of the
     // joined columns drives a projection embedded into the join node, so this
     // exercises both the filter and projection fields of the IR variant.
@@ -241,9 +241,9 @@ async fn test_roundtrip_gpu_nested_loop_join() {
     let nodes = nodes_of(&bytes);
     let nlj = nodes
         .iter()
-        .find(|n| n.node_type() == fb::PlanNodeKind::GpuNestedLoopJoin)
-        .expect("plan must contain a GpuNestedLoopJoin node")
-        .node_as_gpu_nested_loop_join()
+        .find(|n| n.node_type() == fb::PlanNodeKind::CudfNestedLoopJoin)
+        .expect("plan must contain a CudfNestedLoopJoin node")
+        .node_as_cudf_nested_loop_join()
         .unwrap();
     assert!(nlj.filter().is_some(), "NLJ should carry its filter predicate");
     assert!(
@@ -282,11 +282,11 @@ fn write_clustered_fixture(tag: &str, count: i32, rg_size: usize) -> PathBuf {
 }
 
 /// Survivor selection + roundtrip: a 12-row fixture in 3 row groups (k: [0-3],
-/// [4-7], [8-11]); `WHERE k >= 8` can only match the last group, so the GpuScan
+/// [4-7], [8-11]); `WHERE k >= 8` can only match the last group, so the CudfScan
 /// must carry row_groups == [2] (same pruning DataFusion applies on the CPU path),
 /// and that field must survive serialize -> deserialize -> serialize byte-for-byte.
 #[tokio::test]
-async fn test_gpu_scan_row_group_pruning() {
+async fn test_cudf_scan_row_group_pruning() {
     let dir = write_clustered_fixture("prune", 12, 4);
     let ctx = peacockdb_core::create_context_with_tables(&dir, 1, 2 * 1024 * 1024 * 1024)
         .await
@@ -303,13 +303,13 @@ async fn test_gpu_scan_row_group_pruning() {
     let nodes = nodes_of(&bytes);
     let scan = nodes
         .iter()
-        .find(|n| n.node_type() == fb::PlanNodeKind::GpuScan)
-        .expect("plan must contain a GpuScan node")
-        .node_as_gpu_scan()
+        .find(|n| n.node_type() == fb::PlanNodeKind::CudfScan)
+        .expect("plan must contain a CudfScan node")
+        .node_as_cudf_scan()
         .unwrap();
     let rgs: Vec<u32> = scan
         .row_groups()
-        .expect("GpuScan must carry pruned row_groups for a clustered predicate")
+        .expect("CudfScan must carry pruned row_groups for a clustered predicate")
         .iter()
         .collect();
     assert_eq!(rgs, vec![2u32], "only the k in [8,11] group survives k>=8");
@@ -320,7 +320,7 @@ async fn test_gpu_scan_row_group_pruning() {
 
 /// No predicate -> no pruning -> row_groups absent/empty (read all groups, as today).
 #[tokio::test]
-async fn test_gpu_scan_no_pruning_without_predicate() {
+async fn test_cudf_scan_no_pruning_without_predicate() {
     let dir = write_clustered_fixture("nopred", 12, 4);
     let ctx = peacockdb_core::create_context_with_tables(&dir, 1, 2 * 1024 * 1024 * 1024)
         .await
@@ -336,9 +336,9 @@ async fn test_gpu_scan_no_pruning_without_predicate() {
     let nodes = nodes_of(&bytes);
     let scan = nodes
         .iter()
-        .find(|n| n.node_type() == fb::PlanNodeKind::GpuScan)
-        .expect("GpuScan node")
-        .node_as_gpu_scan()
+        .find(|n| n.node_type() == fb::PlanNodeKind::CudfScan)
+        .expect("CudfScan node")
+        .node_as_cudf_scan()
         .unwrap();
     assert!(
         scan.row_groups().map(|r| r.is_empty()).unwrap_or(true),
@@ -347,12 +347,12 @@ async fn test_gpu_scan_no_pruning_without_predicate() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The explicit RG→batch→partition MAP on GpuScan survives
+/// The explicit RG→batch→partition MAP on CudfScan survives
 /// serialize→deserialize→serialize with POPULATED (non-default) values — the
 /// tp1/empty fixtures can't exercise the map field, so pin the populated path here
 /// (mirroring the null_equals_null test).
 #[tokio::test]
-async fn test_gpu_scan_batch_map_roundtrip() {
+async fn test_cudf_scan_batch_map_roundtrip() {
     use datafusion::physical_plan::ExecutionPlan;
     use peacockdb_core::gpu_rule::{GpuScanExec, ScanBatchMap};
 
@@ -384,9 +384,9 @@ async fn test_gpu_scan_batch_map_roundtrip() {
     let nodes = nodes_of(&bytes);
     let fbscan = nodes
         .iter()
-        .find(|n| n.node_type() == fb::PlanNodeKind::GpuScan)
-        .expect("GpuScan node")
-        .node_as_gpu_scan()
+        .find(|n| n.node_type() == fb::PlanNodeKind::CudfScan)
+        .expect("CudfScan node")
+        .node_as_cudf_scan()
         .unwrap();
     let fbatches = fbscan.batches().expect("batches map present on the wire");
     assert_eq!(fbatches.len(), 2, "two scan batches serialized");
@@ -412,7 +412,7 @@ async fn test_gpu_scan_batch_map_roundtrip() {
 /// place a mis-map silently drops data). 3 groups [0-3],[4-7],[8-11]; `WHERE k>=4
 /// AND k<8` matches only the middle group, so survivors must be [1] (not [0] or [2]).
 #[tokio::test]
-async fn test_gpu_scan_row_group_pruning_middle() {
+async fn test_cudf_scan_row_group_pruning_middle() {
     let dir = write_clustered_fixture("middle", 12, 4);
     let ctx = peacockdb_core::create_context_with_tables(&dir, 1, 2 * 1024 * 1024 * 1024)
         .await
@@ -428,13 +428,13 @@ async fn test_gpu_scan_row_group_pruning_middle() {
     let nodes = nodes_of(&bytes);
     let scan = nodes
         .iter()
-        .find(|n| n.node_type() == fb::PlanNodeKind::GpuScan)
-        .expect("plan must contain a GpuScan node")
-        .node_as_gpu_scan()
+        .find(|n| n.node_type() == fb::PlanNodeKind::CudfScan)
+        .expect("plan must contain a CudfScan node")
+        .node_as_cudf_scan()
         .unwrap();
     let rgs: Vec<u32> = scan
         .row_groups()
-        .expect("GpuScan must carry pruned row_groups")
+        .expect("CudfScan must carry pruned row_groups")
         .iter()
         .collect();
     assert_eq!(rgs, vec![1u32], "only the MIDDLE group (k in [4,7]) survives 4<=k<8");
@@ -442,7 +442,7 @@ async fn test_gpu_scan_row_group_pruning_middle() {
 }
 
 #[tokio::test]
-async fn test_roundtrip_gpu_left_mark_join() {
+async fn test_roundtrip_cudf_left_mark_join() {
     // EXISTS inside a disjunction can't be decorrelated to a plain semi-join, so
     // DataFusion emits a HashJoinExec with JoinType::LeftMark (one row per left
     // row + a boolean "mark"). This pins the LeftMark JoinType on the wire.
@@ -455,17 +455,17 @@ async fn test_roundtrip_gpu_left_mark_join() {
     let nodes = nodes_of(&bytes);
     let has_left_mark = nodes
         .iter()
-        .filter(|n| n.node_type() == fb::PlanNodeKind::GpuHashJoin)
-        .any(|n| n.node_as_gpu_hash_join().unwrap().join_type() == fb::JoinType::LeftMark);
+        .filter(|n| n.node_type() == fb::PlanNodeKind::CudfHashJoin)
+        .any(|n| n.node_as_cudf_hash_join().unwrap().join_type() == fb::JoinType::LeftMark);
     assert!(
         has_left_mark,
-        "plan must contain a GpuHashJoin with JoinType::LeftMark"
+        "plan must contain a CudfHashJoin with JoinType::LeftMark"
     );
     assert_roundtrip_bytes_equal(&bytes);
 }
 
 #[tokio::test]
-async fn test_roundtrip_gpu_hash_join_null_equals_null_true() {
+async fn test_roundtrip_cudf_hash_join_null_equals_null_true() {
     // INTERSECT is set semantics where NULL = NULL, so DataFusion emits the semi
     // HashJoinExec with null_equals_null = TRUE (unlike IN/EXISTS, which is
     // false). All other fixtures serialize false, so the bytes-equal oracle alone
@@ -482,11 +482,11 @@ async fn test_roundtrip_gpu_hash_join_null_equals_null_true() {
     let nodes = nodes_of(&bytes);
     let has_null_eq_true = nodes
         .iter()
-        .filter(|n| n.node_type() == fb::PlanNodeKind::GpuHashJoin)
-        .any(|n| n.node_as_gpu_hash_join().unwrap().null_equals_null());
+        .filter(|n| n.node_type() == fb::PlanNodeKind::CudfHashJoin)
+        .any(|n| n.node_as_cudf_hash_join().unwrap().null_equals_null());
     assert!(
         has_null_eq_true,
-        "INTERSECT must produce a GpuHashJoin with null_equals_null = true"
+        "INTERSECT must produce a CudfHashJoin with null_equals_null = true"
     );
 
     // The field must survive serialize -> deserialize -> serialize. (If
@@ -497,8 +497,8 @@ async fn test_roundtrip_gpu_hash_join_null_equals_null_true() {
     let reserialized = serialize_plan(&reconstructed).expect("re-serialize failed");
     let still_true = nodes_of(&reserialized)
         .iter()
-        .filter(|n| n.node_type() == fb::PlanNodeKind::GpuHashJoin)
-        .any(|n| n.node_as_gpu_hash_join().unwrap().null_equals_null());
+        .filter(|n| n.node_type() == fb::PlanNodeKind::CudfHashJoin)
+        .any(|n| n.node_as_cudf_hash_join().unwrap().null_equals_null());
     assert!(
         still_true,
         "null_equals_null = true must survive deserialize -> re-serialize"

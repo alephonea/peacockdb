@@ -142,7 +142,7 @@ table CastExprNode {
   decimal_scale: int8;
 }
 
-/// An aggregate function invocation (used inside GpuAggregate).
+/// An aggregate function invocation (used inside CudfAggregate).
 table AggregateFuncNode {
   /// Function name: "count", "sum", "min", "max", "avg", etc.
   name: string;
@@ -314,7 +314,7 @@ table ScanBatch {
   partition: uint32;
 }
 
-table GpuScan {
+table CudfScan {
   /// Absolute filesystem paths to the Parquet files to read. Each path must
   /// be non-empty and begin with `/`; the consumer rejects relative paths
   /// rather than resolving them against an implicit root.
@@ -343,7 +343,7 @@ table GpuScan {
 }
 
 /// Apply a boolean predicate, discarding non-matching rows.
-table GpuFilter {
+table CudfFilter {
   predicate: Expr;
   input: PlanNode;
   /// Optional post-filter column projection. When present, the filter emits
@@ -355,7 +355,7 @@ table GpuFilter {
 }
 
 /// Compute new columns / select a subset of columns.
-table GpuProject {
+table CudfProject {
   /// Expressions to evaluate for each output column.
   exprs: [Expr];
   /// Output column names (parallel to exprs).
@@ -372,7 +372,7 @@ table GroupingSetMask {
 }
 
 /// Group-by aggregation.
-table GpuAggregate {
+table CudfAggregate {
   mode: AggregateMode;
   /// GROUP BY expressions.
   group_exprs: [Expr];
@@ -409,7 +409,7 @@ table GpuAggregate {
 }
 
 /// Hash join (equi-join on key pairs, with optional residual filter).
-table GpuHashJoin {
+table CudfHashJoin {
   join_type: JoinType;
   /// Equi-join key pairs: keys[i].left = keys[i].right.
   keys: [JoinKey];
@@ -431,15 +431,15 @@ table GpuHashJoin {
 }
 
 /// Cross join (cartesian product). Output is [left_cols..., right_cols...].
-table GpuCrossJoin {
+table CudfCrossJoin {
   left: PlanNode;
   right: PlanNode;
 }
 
 /// Nested-loop join: a cross product filtered by a non-equi predicate. The
 /// `filter` ColumnRefs index the filter's intermediate schema described by
-/// `filter_columns` (same convention as GpuHashJoin), NOT the post-join table.
-table GpuNestedLoopJoin {
+/// `filter_columns` (same convention as CudfHashJoin), NOT the post-join table.
+table CudfNestedLoopJoin {
   join_type: JoinType;
   /// Join predicate (null = pure cross product).
   filter: Expr;
@@ -452,7 +452,7 @@ table GpuNestedLoopJoin {
 }
 
 /// Sort by one or more columns.
-table GpuSort {
+table CudfSort {
   /// Sort specifications (first = primary key, etc.).
   exprs: [SortExprNode];
   /// Maximum rows to emit (-1 = unlimited). Corresponds to LIMIT / FETCH.
@@ -461,18 +461,18 @@ table GpuSort {
   /// True = sort each input partition independently (output keeps the input's
   /// partition count); false = global sort that collapses to one partition.
   /// Affects the output partitioning that parent nodes observe. Appended last to
-  /// keep the generated CreateGpuSort positional args stable for C++ callers.
+  /// keep the generated CreateCudfSort positional args stable for C++ callers.
   preserve_partitioning: bool;
 }
 
 /// Coalesce small batches into larger ones of up to target_batch_size rows.
-table GpuCoalesceBatches {
+table CudfCoalesceBatches {
   target_batch_size: uint32;
   input: PlanNode;
 }
 
 /// Merge all input partitions into a single output partition.
-table GpuCoalescePartitions {
+table CudfCoalescePartitions {
   input: PlanNode;
 }
 
@@ -483,7 +483,7 @@ enum PartitioningKind : byte {
 }
 
 /// Repartition the input across a given number of output partitions.
-table GpuRepartition {
+table CudfRepartition {
   kind: PartitioningKind;
   num_partitions: uint32;
   /// Hash expressions (only for Hash partitioning).
@@ -492,7 +492,7 @@ table GpuRepartition {
 }
 
 /// Merge pre-sorted partitions, preserving sort order.
-table GpuSortPreservingMerge {
+table CudfSortPreservingMerge {
   /// Sort specifications.
   exprs: [SortExprNode];
   /// Maximum rows to emit (-1 = unlimited).
@@ -505,7 +505,7 @@ table GpuSortPreservingMerge {
 /// same-hash-partitioned inputs); both produce the same row multiset, which on
 /// the single-table GPU path is just `cudf::concatenate` of the input tables.
 /// All inputs share one schema.
-table GpuUnion {
+table CudfUnion {
   inputs: [PlanNode];
   /// True if this came from an `InterleaveExec` rather than a `UnionExec`.
   /// Only affects the Rust roundtrip (which DataFusion node to rebuild); the
@@ -523,7 +523,7 @@ table GpuUnion {
 /// Skip the first `skip` rows, then emit at most `fetch` (LIMIT/OFFSET).
 /// Corresponds to DataFusion's `GlobalLimitExec`. The GPU path runs as a single
 /// materialized table, so this is a row slice `[skip, skip + fetch)`.
-table GpuLimit {
+table CudfLimit {
   skip: uint64;
   /// Maximum rows to emit after the skip (-1 = unlimited, i.e. skip only).
   fetch: int64;
@@ -539,7 +539,7 @@ enum WindowFrameBound : byte {
   UnboundedFollowing,
 }
 
-/// One window-function invocation inside a GpuWindow node, appending one output
+/// One window-function invocation inside a CudfWindow node, appending one output
 /// column. Covers DataFusion's WindowAggExec / BoundedWindowAggExec.
 table WindowExprNode {
   /// Function name: "sum", "avg", "max", "min", "count", "rank", "row_number".
@@ -570,7 +570,7 @@ table WindowExprNode {
 /// Window functions: append one column per window expr to the input rows,
 /// preserving input row order. Maps DataFusion's WindowAggExec (whole-partition
 /// frames) and BoundedWindowAggExec (running / ranking frames).
-table GpuWindow {
+table CudfWindow {
   window_exprs: [WindowExprNode];
   input: PlanNode;
 }
@@ -578,21 +578,21 @@ table GpuWindow {
 // --- Plan node union ---
 
 union PlanNodeKind {
-  GpuScan,
-  GpuFilter,
-  GpuProject,
-  GpuAggregate,
-  GpuHashJoin,
-  GpuCrossJoin,
-  GpuNestedLoopJoin,
-  GpuSort,
-  GpuCoalesceBatches,
-  GpuCoalescePartitions,
-  GpuRepartition,
-  GpuSortPreservingMerge,
-  GpuUnion,
-  GpuLimit,
-  GpuWindow,
+  CudfScan,
+  CudfFilter,
+  CudfProject,
+  CudfAggregate,
+  CudfHashJoin,
+  CudfCrossJoin,
+  CudfNestedLoopJoin,
+  CudfSort,
+  CudfCoalesceBatches,
+  CudfCoalescePartitions,
+  CudfRepartition,
+  CudfSortPreservingMerge,
+  CudfUnion,
+  CudfLimit,
+  CudfWindow,
 }
 
 /// A single node in the physical plan tree.

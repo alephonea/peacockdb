@@ -24,23 +24,23 @@ struct NodeInputs {
   size_t idx = 0;
 };
 
-// GpuScan is the one LEAF: it reads Parquet and takes no NodeInputs, which is why
+// CudfScan is the one LEAF: it reads Parquet and takes no NodeInputs, which is why
 // execute_one's consume-all invariant is trivially satisfied for zero-input nodes.
 //
 // Default argument on the DECLARATION only -- repeating it on the definition is a
 // hard error.
-TableResult execute_scan(const fb::GpuScan* scan,
+TableResult execute_scan(const fb::CudfScan* scan,
                          const flatbuffers::Vector<uint32_t>* row_groups_override = nullptr);
-TableResult execute_filter(const fb::GpuFilter* filter, NodeInputs* in);
-TableResult execute_project(const fb::GpuProject* proj, NodeInputs* in);
-TableResult execute_aggregate(const fb::GpuAggregate* agg, NodeInputs* in);
-TableResult execute_hash_join(const fb::GpuHashJoin* join, NodeInputs* in);
-TableResult execute_cross_join(const fb::GpuCrossJoin* join, NodeInputs* in);
-TableResult execute_nested_loop_join(const fb::GpuNestedLoopJoin* join, NodeInputs* in);
-TableResult execute_sort(const fb::GpuSort* sort, NodeInputs* in);
-TableResult execute_union(const fb::GpuUnion* u, NodeInputs* in);
-TableResult execute_limit(const fb::GpuLimit* limit, NodeInputs* in);
-TableResult execute_window(const fb::GpuWindow* win, NodeInputs* in);
+TableResult execute_filter(const fb::CudfFilter* filter, NodeInputs* in);
+TableResult execute_project(const fb::CudfProject* proj, NodeInputs* in);
+TableResult execute_aggregate(const fb::CudfAggregate* agg, NodeInputs* in);
+TableResult execute_hash_join(const fb::CudfHashJoin* join, NodeInputs* in);
+TableResult execute_cross_join(const fb::CudfCrossJoin* join, NodeInputs* in);
+TableResult execute_nested_loop_join(const fb::CudfNestedLoopJoin* join, NodeInputs* in);
+TableResult execute_sort(const fb::CudfSort* sort, NodeInputs* in);
+TableResult execute_union(const fb::CudfUnion* u, NodeInputs* in);
+TableResult execute_limit(const fb::CudfLimit* limit, NodeInputs* in);
+TableResult execute_window(const fb::CudfWindow* win, NodeInputs* in);
 
 // The recursive driver. Every operator TU calls it to resolve its children, as do
 // execute_plan.cpp and node_session.cpp, so it has to be header-declared. Its

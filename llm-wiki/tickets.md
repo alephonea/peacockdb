@@ -6,7 +6,7 @@ anchor that the cost widget links to. Device labels are `tp<N>-<tier>` (micro=10
 mini=2GiB, standard=12GiB).
 
 A ticket carries a **Priority** line only when it is not medium; medium is the default.
-New tickets take the next free number (currently 152). Finished and lapsed tickets move to
+New tickets take the next free number (currently 153). Finished and lapsed tickets move to
 `llm-wiki/archive/archived-tickets.md` (Done / Stale) — numbers are never reused, so an old
 reference still resolves there.
 
@@ -16,7 +16,7 @@ reference still resolves there.
 |---|--:|---|
 | [Critical correctness](#critical-correctness) | 14 | #103 #80 #59 #46 #47 #60 #121 #122 #123 #118 #119 #120 #117 #41 |
 | [Blockers for disabled coverage](#blockers-for-disabled-coverage) | 15 | #97 #23 #32 #65 #62 #91 #95 #57 #45 #63 #56 #55 #115 #96 #143 |
-| [Performance / architecture](#performance--architecture) | 23 | #151 #150 #149 #148 #147 #146 #145 #19 #16 #20 #71 #101 #73 #110 #75 #136 #137 #138 #139 #140 #141 #144 #142 |
+| [Performance / architecture](#performance--architecture) | 24 | #152 #151 #150 #149 #148 #147 #146 #145 #19 #16 #20 #71 #101 #73 #110 #75 #136 #137 #138 #139 #140 #141 #144 #142 |
 | [Infrastructure / process](#infrastructure--process) | 16 | #113 #114 #116 #126 #132 #131 #130 #129 #128 #127 #124 #125 #13 #94 #69 #49 |
 
 ## Critical correctness
@@ -254,6 +254,39 @@ whole-partition aggregate windows need a single batch (coalesce-all first), whil
 rank/dense_rank gaps of #32 carry over unchanged.
 
 ## Performance / architecture
+
+<a id="t152"></a>
+### #152 — batch-partitioned GpuJoin: the build handle does not survive a streamed probe
+
+`NodeSession::execute_node` erases every input handle it reads (`cpp/src/node_session.cpp`
+~L250, ~L339, ~L427), and the header states it: input handles are consumed. The
+batch-partitioned join calls the `CudfHashJoin` seq once per (partition, probe batch) with
+the build handle and that batch — so the build table is gone after the first probe call, and
+a lane with B probe batches needs it B times.
+
+[#136](#t136) assumes the table is there ("every call rebuilds the join from scratch"), and
+so does the recipe mapping in `llm-wiki/tasks/batch_partitioned_executor.md`; neither says
+how. [#140](#t140) records the same constraint one axis over — one build feeding N lanes —
+and [#145](#t145) is the mechanism both want: a handle that is an owner plus a view, so
+siblings share one table. Across probe calls the sharing is in time rather than across
+lanes, but it is the same refcount.
+
+Until then the choices are a device copy of the build side per probe batch, which is the
+cost streaming exists to avoid, or a single-batch probe, which is what the capability
+matrix already forces for filtered and non-inner-NLJ joins. Decide before T12 builds the
+join executors; the finish pass (#136) is unaffected either way, since it addresses the
+build seq once at done.
+
+Whether the copy is tolerable in v1 is a quantitative question, and the numbers already
+exist: each join's two `GpuCoalescePartitionsExec` lines in the committed `.cpu.txt`
+goldens carry both sides' `output_bytes`, and B copies of the build cost `B × build_bytes`
+against one probe stream of `probe_bytes`. Take the ratio on **bytes, not rows** — a copy
+costs bytes, and the two ratios disagree by a factor of three on the first join anyone will
+look at. tpch q3 at `partitioned-tp8-standard`: build 30142 rows / 244904 bytes, probe
+727305 rows / 17818976 bytes, so 24:1 by rows and 73:1 by bytes. Rows understate the margin
+here only because this build side is the narrow one, which is a property of this join and
+not of joins; invert the widths and rows would flatter the copy instead. Answer it from the
+goldens before commissioning a measurement.
 
 <a id="t151"></a>
 ### #151 — the per-node benchmarks measure the engine with no RMM pool
@@ -814,7 +847,7 @@ impact.
 
 <a id="t132"></a>
 ### #132 — Two batch-size fields cross the IR and nothing on the C++ side reads them
-`GpuScan.batch_size` and `GpuCoalesceBatches.target_batch_size` are both computed by
+`CudfScan.batch_size` and `CudfCoalesceBatches.target_batch_size` are both computed by
 `GpuMemoryBudgetRule`, serialized by the plan serializer, and pinned byte-for-byte by
 `goldens/plan_bytes.sha256` — and `grep -rn 'batch_size' cpp/src cpp/include` returns
 nothing. Neither is read: the GPU scan reads by row group (`set_row_groups`), so there is no

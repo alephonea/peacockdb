@@ -20,6 +20,7 @@ consumed by both engines (two-engine correctness: no CPU-only or GPU-only plan n
   - [What each operator is](#what-each-operator-is)
   - [CPU execution](#cpu-execution)
   - [GPU execution](#gpu-execution)
+  - [From flat buffer to cuDF call](#from-flat-buffer-to-cudf-call)
   - [Pipeline breakers](#pipeline-breakers)
   - [Cross-partition operators](#cross-partition-operators)
     - [GpuCrossJoin vs GpuNestedLoopJoin](#gpucrossjoin-vs-gpunestedloopjoin)
@@ -132,8 +133,8 @@ row-group→partition map instead. The re-batch node is
 [`execute_passthrough`](../cpp/src/operators/dispatch.cpp#L66) on the GPU: the node returns
 its child's table untouched, so the target it carries is never consulted.
 
-Both numbers are nonetheless serialized into the flat buffers — `GpuScan.batch_size`
-([fbs](../flatbuffers/gpu_plan.fbs#L327)) and `GpuCoalesceBatches.target_batch_size`
+Both numbers are nonetheless serialized into the flat buffers — `CudfScan.batch_size`
+([fbs](../flatbuffers/gpu_plan.fbs#L327)) and `CudfCoalesceBatches.target_batch_size`
 ([fbs](../flatbuffers/gpu_plan.fbs#L470)) — and pinned byte-for-byte by
 `plan_bytes.sha256`, while `grep -rn 'batch_size' cpp/src cpp/include` finds nothing. Two
 fields of wire-format contract with no consumer on the far side (#132). So the honest
@@ -252,7 +253,7 @@ and is deliberately *not* displayed, because it would make every golden budget-d
 > **Naming trap.** `ScanBatch` in the flat buffers and `GpuScanExec::batches_map()` are **partitions**,
 > not Arrow batches: `build_scan_map` splits the surviving row groups into `n_parts`
 > contiguous chunks and entry *i* becomes partition *i*. The word "batch" there predates the
-> partition vocabulary. `GpuCoalesceBatches.target_batch_size` is the other sense — real Arrow
+> partition vocabulary. `CudfCoalesceBatches.target_batch_size` is the other sense — real Arrow
 > batches — in the same buffers.
 
 ### The six execution modes
@@ -520,6 +521,56 @@ files stay so the operator set is discoverable by name.
 [eun]: ../cpp/src/operators/union.cpp#L16
 [elim]: ../cpp/src/operators/limit.cpp#L15
 [ewin]: ../cpp/src/operators/window.cpp#L35
+
+### From flat buffer to cuDF call
+
+One row per wire node kind: what the plan hands the C++ side, and the cuDF it turns into.
+
+**Two vocabularies, and the prefix is the tell.** `Cudf*` is a flat-buffer node table — the
+wire form, and what the C++ side dispatches on; the root table wrapping them is still
+`GpuPlan`, since it is not a node kind. `Gpu*Exec` is the DataFusion wrapper, and prose
+that drops the `Exec` suffix still means the wrapper. They were the same word until T1
+renamed the wire half, which is why a comment naming `GpuRepartition` beside a table row
+naming `CudfRepartition` is two different things and not a typo.
+The middle column is the fields that change what the call does — `input` / `left` / `right`
+are the tree and are not repeated, and a field nothing reads is called out, because a wire
+field with no consumer reads as a knob (#132). Line links are to the deciding call, not to
+the whole function.
+
+| Node | What steers it | The cuDF it becomes |
+|---|---|---|
+| [`CudfScan`](../flatbuffers/gpu_plan.fbs#L317) | `file_paths`, `projection`, `row_groups` (pruning survivors) or `batches[p]` (this partition's slice of them), `limit`; `batch_size` **is read by nobody** (#132) | [`scan.cpp#L83`](../cpp/src/operators/scan.cpp#L83) — `cudf::io::read_parquet(opts)`, with `.columns(projected)`, `set_row_groups(...)` and `set_num_rows(limit)` set on `opts` first |
+| [`CudfFilter`](../flatbuffers/gpu_plan.fbs#L346) | `predicate`, `projection` | [`filter.cpp#L25`](../cpp/src/operators/filter.cpp#L25) — `cudf::compute_column(tv, predicate)` for the mask, then `cudf::apply_boolean_mask(tv, mask->view())` |
+| [`CudfProject`](../flatbuffers/gpu_plan.fbs#L358) | `exprs`, `aliases` | [`project.cpp#L49`](../cpp/src/operators/project.cpp#L49) — `cudf::compute_column(tv, ast)` per AST-able expr; a bare `ColumnRef` is a column copy, and LIKE/CASE/scalar functions take `build_column` instead |
+| [`CudfAggregate`](../flatbuffers/gpu_plan.fbs#L375) | `mode` (Partial/Final/FinalPartitioned), `group_exprs`, `aggr_funcs` (each with its out decimal scale and `distinct`), `grouping_sets`, `mergeable_agg_state`, `aggr_input_schema` | [`aggregate.cpp#L666`](../cpp/src/operators/aggregate.cpp#L666) — `gb.aggregate(requests)` over [`groupby{keys, null_policy::INCLUDE}`](../cpp/src/operators/aggregate.cpp#L435); with no group keys it is [`cudf::reduce`](../cpp/src/operators/aggregate.cpp#L258) to one row |
+| [`CudfHashJoin`](../flatbuffers/gpu_plan.fbs#L412) | `join_type`, `keys`, `filter` + `filter_columns` (residual), `null_equals_null`, `projection` | [`join.cpp#L290`](../cpp/src/operators/join.cpp#L290) — `cudf::inner_join` / `left_join` / `full_join(left_keys, right_keys, kJoinNulls)`; semi/anti take [`left_semi_join` / `left_anti_join`](../cpp/src/operators/join.cpp#L126), or their `mixed_*` forms when a residual filter must be evaluated during the join |
+| [`CudfCrossJoin`](../flatbuffers/gpu_plan.fbs#L434) | nothing — the node is its two inputs | [`join.cpp#L394`](../cpp/src/operators/join.cpp#L394) — `cudf::cross_join(ltv, rtv)` |
+| [`CudfNestedLoopJoin`](../flatbuffers/gpu_plan.fbs#L442) | `join_type`, `filter` + `filter_columns`, `projection` | [`join.cpp#L432`](../cpp/src/operators/join.cpp#L432) — `cudf::cross_join`, then [`apply_boolean_mask`](../cpp/src/operators/join.cpp#L478) over the filter evaluated on the crossed table |
+| [`CudfSort`](../flatbuffers/gpu_plan.fbs#L455) | `exprs` (`asc`, `nulls_first` per key), `fetch`, `preserve_partitioning` | [`sort.cpp#L50`](../cpp/src/operators/sort.cpp#L50) — `cudf::sorted_order(keys, orders, null_orders)` then `cudf::gather`, and [`cudf::slice`](../cpp/src/operators/sort.cpp#L58) when `fetch` makes it a top-N |
+| [`CudfCoalesceBatches`](../flatbuffers/gpu_plan.fbs#L469) | `target_batch_size` — **read by nobody** (#132) | [`dispatch.cpp#L66`](../cpp/src/operators/dispatch.cpp#L66) — `execute_passthrough`: the child's table, untouched. A GPU node is one materialized table, so there is no batching to do |
+| [`CudfCoalescePartitions`](../flatbuffers/gpu_plan.fbs#L475) | nothing | [`node_session.cpp#L298`](../cpp/src/node_session.cpp#L298) — `cudf::concatenate(views)` over the input partitions; passthrough in the two single-partition modes, which have nothing to collapse |
+| [`CudfRepartition`](../flatbuffers/gpu_plan.fbs#L486) | `kind`, `num_partitions`, `hash_exprs` (key ordinals) | [`node_session.cpp#L371`](../cpp/src/node_session.cpp#L371) — `spark_hash_partition(tv, key_cols, n)`, ours rather than cuDF's murmur3, then [`cudf::slice`](../cpp/src/node_session.cpp#L384) per partition into an owning table |
+| [`CudfSortPreservingMerge`](../flatbuffers/gpu_plan.fbs#L495) | `exprs`, `fetch` | [`node_session.cpp#L286`](../cpp/src/node_session.cpp#L286) — `cudf::merge(views, key_cols, orders, null_orders)`, k-way and order-preserving; a concat fallback with no keys or one input (#118) |
+| [`CudfUnion`](../flatbuffers/gpu_plan.fbs#L508) | `inputs`, `interleave`, `output_schema` | [`union.cpp#L62`](../cpp/src/operators/union.cpp#L62) — `cudf::concatenate(views)`, after [`cudf::cast`](../cpp/src/operators/union.cpp#L51) retypes each branch column to the declared output type (#41) |
+| [`CudfLimit`](../flatbuffers/gpu_plan.fbs#L526) | `skip`, `fetch` | [`limit.cpp#L31`](../cpp/src/operators/limit.cpp#L31) — `cudf::slice(tv, {skip, end})`, and the whole table returned untouched when the range covers it |
+| [`CudfWindow`](../flatbuffers/gpu_plan.fbs#L573) | `window_exprs` (partition keys, order keys, frame bounds, out decimal scale) | [`window.cpp#L106`](../cpp/src/operators/window.cpp#L106) — `cudf::grouped_rolling_window(keys, arg, preceding, following, min_periods, agg)`, which preserves input row order |
+
+Two things recur. **Four nodes reach no kernel at all** — coalesce-batches always, and
+coalesce-partitions, repartition and sort-preserving-merge in the modes that have one
+partition — because what they change is the layout rows sit in, and a single resident
+table has no layout to change.
+
+And **three nodes need more than one call**, because cuDF has no fused form: filter
+computes a mask and then applies it; sort takes `sorted_order` then `gather`, and a third
+call to `slice` when a `fetch` makes it a top-N; union casts each branch column whose type
+differs from the declared output, then concatenates once. Each intermediate in those
+sequences exists because the pair could not be one call.
+
+The nested-loop join is the one to read separately rather than filing beside filter. It
+materialises the **full cartesian product** first and only then evaluates its predicate
+over it — cross join, build the mask on the crossed table, apply it. That is three calls
+whose first is the expensive one, and it is why the operator is a GPU-only hole at tp8
+(#97) and why broadcast joins (#140) would change the shape rather than the constant.
 
 ### Pipeline breakers
 
@@ -920,18 +971,18 @@ struct NodeInputs {
   size_t idx = 0;
 };
 
-TableResult execute_scan(const fb::GpuScan* scan,
+TableResult execute_scan(const fb::CudfScan* scan,
                          const flatbuffers::Vector<uint32_t>* row_groups_override = nullptr);
-TableResult execute_filter(const fb::GpuFilter* filter, NodeInputs* in);
-TableResult execute_project(const fb::GpuProject* proj, NodeInputs* in);
-TableResult execute_aggregate(const fb::GpuAggregate* agg, NodeInputs* in);
-TableResult execute_hash_join(const fb::GpuHashJoin* join, NodeInputs* in);
-TableResult execute_cross_join(const fb::GpuCrossJoin* join, NodeInputs* in);
-TableResult execute_nested_loop_join(const fb::GpuNestedLoopJoin* join, NodeInputs* in);
-TableResult execute_sort(const fb::GpuSort* sort, NodeInputs* in);
-TableResult execute_union(const fb::GpuUnion* u, NodeInputs* in);
-TableResult execute_limit(const fb::GpuLimit* limit, NodeInputs* in);
-TableResult execute_window(const fb::GpuWindow* win, NodeInputs* in);
+TableResult execute_filter(const fb::CudfFilter* filter, NodeInputs* in);
+TableResult execute_project(const fb::CudfProject* proj, NodeInputs* in);
+TableResult execute_aggregate(const fb::CudfAggregate* agg, NodeInputs* in);
+TableResult execute_hash_join(const fb::CudfHashJoin* join, NodeInputs* in);
+TableResult execute_cross_join(const fb::CudfCrossJoin* join, NodeInputs* in);
+TableResult execute_nested_loop_join(const fb::CudfNestedLoopJoin* join, NodeInputs* in);
+TableResult execute_sort(const fb::CudfSort* sort, NodeInputs* in);
+TableResult execute_union(const fb::CudfUnion* u, NodeInputs* in);
+TableResult execute_limit(const fb::CudfLimit* limit, NodeInputs* in);
+TableResult execute_window(const fb::CudfWindow* win, NodeInputs* in);
 
 TableResult execute_node(const fb::PlanNode* node, NodeInputs* in);
 TableResult execute_one(const fb::PlanNode* node, std::vector<TableResult> inputs);
@@ -1234,21 +1285,21 @@ inference could drift from DataFusion's is serialized rather than inferred.
 
 | Flat-buffer field | Written by | Taken from | Becomes |
 |---|---|---|---|
-| `GpuHashJoin.null_equals_null` | [`join.rs#L172`](../peacockdb-core/src/operators/join.rs#L172) | `HashJoinExec::`<br>`null_equals_null()` | `cudf::null_equality` (except anti/mark, below) |
+| `CudfHashJoin.null_equals_null` | [`join.rs#L172`](../peacockdb-core/src/operators/join.rs#L172) | `HashJoinExec::`<br>`null_equals_null()` | `cudf::null_equality` (except anti/mark, below) |
 | `JoinFilterColumn{side, index}` | [`join.rs#L337`](../peacockdb-core/src/operators/join.rs#L337) | the join filter's `ColumnIndex` list | `cudf::ast::`<br>`table_reference::LEFT` / `RIGHT`,<br>plus an ordinal |
 | `SortExpr.asc`, `.nulls_first` | [`sort.rs#L84`](../peacockdb-core/src/operators/sort.rs#L84) (sort), [`#L129`](../peacockdb-core/src/operators/sort.rs#L129) (merge), [`window.rs#L127`](../peacockdb-core/src/operators/window.rs#L127) | `PhysicalSortExpr::options` | `cudf::order`,<br>`cudf::null_order` |
-| `GpuSort.fetch`,<br>`GpuSortPreservingMerge.fetch` | [`sort.rs#L91`](../peacockdb-core/src/operators/sort.rs#L91) | `SortExec::fetch()` | a post-sort / post-merge slice |
+| `CudfSort.fetch`,<br>`CudfSortPreservingMerge.fetch` | [`sort.rs#L91`](../peacockdb-core/src/operators/sort.rs#L91) | `SortExec::fetch()` | a post-sort / post-merge slice |
 | `AggregateFuncNode`<br>`.out_decimal_precision/scale` | [`aggregate.rs#L125`](../peacockdb-core/src/operators/aggregate.rs#L125) | the aggregate's output `Field` type | `cudf::data_type{id, -scale}` |
 | `BinaryExpr`<br>`.out_decimal_precision/scale` | [`plan_serializer.rs`<br>`#L149`](../peacockdb-core/src/plan_serializer.rs#L149) | `bin.data_type(schema)` | the binop output type, and division pre-scales to hit it |
 | `WindowExpr.out_decimal_scale` | [`window.rs#L156`](../peacockdb-core/src/operators/window.rs#L156) | the window output `Field` type | `cudf::data_type` scale |
-| `GpuUnion.output_schema` | [`union.rs#L61`](../peacockdb-core/src/operators/union.rs#L61) | `plan.schema()` | per-branch `cudf::cast` target before concatenate |
-| `GpuAggregate.mode` | [`aggregate.rs#L73`](../peacockdb-core/src/operators/aggregate.rs#L73) | `AggregateExec::mode()` —<br>Partial / Final / FinalPartitioned | which cuDF aggregation runs, and whether state columns are merged |
+| `CudfUnion.output_schema` | [`union.rs#L61`](../peacockdb-core/src/operators/union.rs#L61) | `plan.schema()` | per-branch `cudf::cast` target before concatenate |
+| `CudfAggregate.mode` | [`aggregate.rs#L73`](../peacockdb-core/src/operators/aggregate.rs#L73) | `AggregateExec::mode()` —<br>Partial / Final / FinalPartitioned | which cuDF aggregation runs, and whether state columns are merged |
 | `AggregateFuncNode.distinct` | [`aggregate.rs#L134`](../peacockdb-core/src/operators/aggregate.rs#L134) | `aggr.is_distinct()` | nothing yet — a guard throws rather than silently ignoring it (#62) |
-| `GpuRepartition.hash_exprs`,<br>`num_partitions` | [`repartition.rs#L84`](../peacockdb-core/src/operators/repartition.rs#L84) | `Partitioning::Hash(exprs, n)` | key ordinals and N for<br>`spark_hash_partition` |
-| `GpuScan.row_groups`,<br>`batches` | [`scan.rs#L339`](../peacockdb-core/src/operators/scan.rs#L339) | the pruning result and `build_scan_map` | `parquet_reader_options::`<br>`set_row_groups` |
-| `GpuScan.limit` | [`scan.rs#L339`](../peacockdb-core/src/operators/scan.rs#L339) | a pushed-down limit | `set_num_rows` |
-| `GpuScan.batch_size` | [`scan.rs#L339`](../peacockdb-core/src/operators/scan.rs#L339) | `GpuMemoryBudgetRule`'s derived batch size | **nothing** — no C++ code reads it (#132) |
-| `GpuCoalesceBatches`<br>`.target_batch_size` | [`coalesce.rs#L63`](../peacockdb-core/src/operators/coalesce.rs#L63) | `CoalesceBatchesExec::`<br>`target_batch_size()` | **nothing** — the node is passthrough on the GPU (#132) |
+| `CudfRepartition.hash_exprs`,<br>`num_partitions` | [`repartition.rs#L84`](../peacockdb-core/src/operators/repartition.rs#L84) | `Partitioning::Hash(exprs, n)` | key ordinals and N for<br>`spark_hash_partition` |
+| `CudfScan.row_groups`,<br>`batches` | [`scan.rs#L339`](../peacockdb-core/src/operators/scan.rs#L339) | the pruning result and `build_scan_map` | `parquet_reader_options::`<br>`set_row_groups` |
+| `CudfScan.limit` | [`scan.rs#L339`](../peacockdb-core/src/operators/scan.rs#L339) | a pushed-down limit | `set_num_rows` |
+| `CudfScan.batch_size` | [`scan.rs#L339`](../peacockdb-core/src/operators/scan.rs#L339) | `GpuMemoryBudgetRule`'s derived batch size | **nothing** — no C++ code reads it (#132) |
+| `CudfCoalesceBatches`<br>`.target_batch_size` | [`coalesce.rs#L63`](../peacockdb-core/src/operators/coalesce.rs#L63) | `CoalesceBatchesExec::`<br>`target_batch_size()` | **nothing** — the node is passthrough on the GPU (#132) |
 
 Two shapes are worth separating here. Most rows carry a value the GPU must not recompute —
 decimal scales above all, since cuDF derives its own per operation and DataFusion's is what the

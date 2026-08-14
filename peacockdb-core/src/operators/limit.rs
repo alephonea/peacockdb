@@ -47,7 +47,7 @@ use crate::plan_serializer::deserialize_plan_node;
 use crate::plan_serializer::serialize_plan_node;
 use crate::PartitionMode;
 
-pub(crate) fn serialize_gpu_limit<'a>(
+pub(crate) fn serialize_cudf_limit<'a>(
     b: &mut FlatBufferBuilder<'a>,
     plan: &Arc<dyn ExecutionPlan>,
     pm: PartitionMode,
@@ -64,15 +64,15 @@ pub(crate) fn serialize_gpu_limit<'a>(
     let input = serialize_plan_node(b, limit.input(), pm)?;
     let fetch = limit.fetch().map(|f| f as i64).unwrap_or(-1);
 
-    let node = fb::GpuLimit::create(
+    let node = fb::CudfLimit::create(
         b,
-        &fb::GpuLimitArgs {
+        &fb::CudfLimitArgs {
             skip: limit.skip() as u64,
             fetch,
             input: Some(input),
         },
     );
-    Ok((fb::PlanNodeKind::GpuLimit, node.as_union_value()))
+    Ok((fb::PlanNodeKind::CudfLimit, node.as_union_value()))
 }
 
 // ---------------------------------------------------------------------------
@@ -81,10 +81,10 @@ pub(crate) fn serialize_gpu_limit<'a>(
 // easy to break by editing one side alone. Keep them together.
 // ---------------------------------------------------------------------------
 
-pub(crate) fn deserialize_gpu_limit(l: &fb::GpuLimit) -> Result<Arc<dyn ExecutionPlan>, String> {
+pub(crate) fn deserialize_cudf_limit(l: &fb::CudfLimit) -> Result<Arc<dyn ExecutionPlan>, String> {
     use datafusion::physical_plan::limit::GlobalLimitExec;
 
-    let input = deserialize_plan_node(&l.input().ok_or("GpuLimit missing input")?)?;
+    let input = deserialize_plan_node(&l.input().ok_or("CudfLimit missing input")?)?;
     let fetch = if l.fetch() >= 0 {
         Some(l.fetch() as usize)
     } else {
