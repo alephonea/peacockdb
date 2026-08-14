@@ -1,0 +1,24 @@
+GpuSortExec: expr=[d_year@0 ASC NULLS LAST, sum_agg@3 DESC, brand_id@1 ASC NULLS LAST], fetch=100, time_us=749
+  GpuProjectExec: expr=[d_year@0 as d_year, i_brand_id@2 as brand_id, i_brand@1 as brand, sum(store_sales.ss_ext_sales_price)@3 as sum_agg], time_us=130
+    GpuAggregateExec: group_by=[d_year, i_brand, i_brand_id], aggr=[sum(store_sales.ss_ext_sales_price)], time_us=1606
+      GpuProjectExec: expr=[d_year@2 as d_year, ss_ext_sales_price@3 as ss_ext_sales_price, i_brand_id@0 as i_brand_id, i_brand@1 as i_brand], time_us=130
+        GpuCoalesceBatchesExec, time_us=1
+          GpuHashJoinExec: join_type=Inner, on=[(i_item_sk@0, ss_item_sk@1)], projection=[1, 2, 3, 5], time_us=985
+            GpuCoalesceBatchesExec, time_us=1
+              GpuFilterExec: predicate=i_manufact_id@3 = 128, projection=[0, 1, 2], time_us=478
+                GpuScanExec: table=item, projections=[i_item_sk, i_brand_id, i_brand, i_manufact_id], time_us=6643
+            GpuCoalesceBatchesExec, time_us=1
+              GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ss_sold_date_sk@0)], projection=[1, 3, 4], time_us=1875
+                GpuCoalesceBatchesExec, time_us=1
+                  GpuFilterExec: predicate=d_moy@2 = 11, projection=[0, 1], time_us=341
+                    GpuScanExec: table=date_dim, projections=[d_date_sk, d_year, d_moy], time_us=17475
+                GpuScanExec: table=store_sales, projections=[ss_sold_date_sk, ss_item_sk, ss_ext_sales_price], time_us=15679
+
+# sync_floor_us = cost of the measurement itself (empty timed region: clock + cudaStreamSynchronize on an idle stream). Each node time INCLUDES one PER OUTPUT PARTITION, since a node line is the Σ over its partitions; a node at or below its own floor (sync_floor_us x partitions) is unresolved, not cheap. Do not subtract it.
+# nodes_total_us = Σ of the per-node times above; total_us = the whole query, end to end (parse + plan + serialize + node walk + materialize)
+# build_profile = how the harness itself was compiled. total_us MINUS nodes_total_us is that Rust; records from different profiles are not comparable on it. Node times are device work and barely move.
+build_profile=benchmarks opt-level=3
+sync_floor_us=1
+nodes_at_or_below_floor=4/15
+nodes_total_us=46095
+total_us=50216

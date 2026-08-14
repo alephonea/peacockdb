@@ -1,0 +1,83 @@
+GpuCoalesceBatchesExec, time_us=8
+  p0: time_us=1
+  p1: time_us=1
+  p2: time_us=1
+  p3: time_us=1
+  p4: time_us=1
+  p5: time_us=1
+  p6: time_us=1
+  p7: time_us=1
+  GpuHashJoinExec: join_type=RightSemi, on=[(c_custkey@0, o_custkey@1)], time_us=8306
+    p0: time_us=1235
+    p1: time_us=944
+    p2: time_us=1166
+    p3: time_us=940
+    p4: time_us=1019
+    p5: time_us=964
+    p6: time_us=1056
+    p7: time_us=982
+    GpuCoalesceBatchesExec, time_us=8
+      p0: time_us=1
+      p1: time_us=1
+      p2: time_us=1
+      p3: time_us=1
+      p4: time_us=1
+      p5: time_us=1
+      p6: time_us=1
+      p7: time_us=1
+      GpuRepartitionExec: partitioning=Hash([c_custkey@0], 8), input_partitions=1, time_us=223
+        p0: time_us=142
+        p1: time_us=12
+        p2: time_us=11
+        p3: time_us=11
+        p4: time_us=11
+        p5: time_us=11
+        p6: time_us=11
+        p7: time_us=14
+        GpuCoalescePartitionsExec, time_us=18
+          GpuCoalesceBatchesExec, time_us=2
+            p0: time_us=1
+            p1: time_us=1
+            GpuFilterExec: predicate=c_mktsegment@1 = BUILDING, projection=[0], time_us=1075
+              p0: time_us=602
+              p1: time_us=473
+              GpuScanExec: table=customer, projections=[c_custkey, c_mktsegment], time_us=41280
+                p0: time_us=33267
+                p1: time_us=8013
+    GpuCoalesceBatchesExec, time_us=10
+      p0: time_us=3
+      p1: time_us=1
+      p2: time_us=1
+      p3: time_us=1
+      p4: time_us=1
+      p5: time_us=1
+      p6: time_us=1
+      p7: time_us=1
+      GpuRepartitionExec: partitioning=Hash([o_custkey@1], 8), input_partitions=1, time_us=7556
+        p0: time_us=3583
+        p1: time_us=545
+        p2: time_us=610
+        p3: time_us=563
+        p4: time_us=590
+        p5: time_us=560
+        p6: time_us=557
+        p7: time_us=548
+        GpuCoalescePartitionsExec, time_us=2029
+          GpuScanExec: table=orders, projections=[o_orderkey, o_custkey, o_orderstatus, o_totalprice, o_orderdate, o_orderpriority, o_clerk, o_shippriority, o_comment], time_us=913459
+            p0: time_us=129592
+            p1: time_us=130007
+            p2: time_us=131460
+            p3: time_us=131164
+            p4: time_us=130845
+            p5: time_us=116786
+            p6: time_us=117274
+            p7: time_us=26331
+
+# sync_floor_us = cost of the measurement itself (empty timed region: clock + cudaStreamSynchronize on an idle stream). Each node time INCLUDES one PER OUTPUT PARTITION, since a node line is the Σ over its partitions; a node at or below its own floor (sync_floor_us x partitions) is unresolved, not cheap. Do not subtract it.
+# nodes_total_us = Σ of the per-node times above; total_us = the whole query, end to end (parse + plan + serialize + node walk + materialize)
+# build_profile = how the harness itself was compiled. total_us MINUS nodes_total_us is that Rust; records from different profiles are not comparable on it. Node times are device work and barely move.
+build_profile=benchmarks opt-level=3
+sync_floor_us=1
+nodes_at_or_below_floor=3/12
+nodes_total_us=973974
+total_us=1012622

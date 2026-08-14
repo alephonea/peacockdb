@@ -1,0 +1,44 @@
+GpuSortExec: expr=[item_sk@0 ASC, d_date@1 ASC], fetch=100, time_us=956
+  GpuProjectExec: expr=[item_sk@0 as item_sk, d_date@1 as d_date, web_sales@2 as web_sales, store_sales@3 as store_sales, max(x.web_sales) PARTITION BY [x.item_sk] ORDER BY [x.d_date ASC NULLS LAST] ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW@4 as web_cumulative, max(x.store_sales) PARTITION BY [x.item_sk] ORDER BY [x.d_date ASC NULLS LAST] ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW@5 as store_cumulative], time_us=163
+    GpuCoalesceBatchesExec, time_us=1
+      GpuFilterExec: predicate=max(x.web_sales) PARTITION BY [x.item_sk] ORDER BY [x.d_date ASC NULLS LAST] ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW@4 > max(x.store_sales) PARTITION BY [x.item_sk] ORDER BY [x.d_date ASC NULLS LAST] ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW@5, time_us=742
+        GpuWindowExec: wdw=[max(x.web_sales) PARTITION BY [x.item_sk] ORDER BY [x.d_date ASC NULLS LAST] ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW, max(x.store_sales) PARTITION BY [x.item_sk] ORDER BY [x.d_date ASC NULLS LAST] ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW], time_us=1643
+          GpuSortExec: expr=[item_sk@0 ASC NULLS LAST, d_date@1 ASC NULLS LAST], time_us=1293
+            GpuProjectExec: expr=[CASE WHEN item_sk@0 IS NOT NULL THEN item_sk@0 ELSE item_sk@3 END as item_sk, CASE WHEN d_date@1 IS NOT NULL THEN d_date@1 ELSE d_date@4 END as d_date, cume_sales@2 as web_sales, cume_sales@5 as store_sales], time_us=994
+              GpuCoalesceBatchesExec, time_us=1
+                GpuHashJoinExec: join_type=Full, on=[(item_sk@0, item_sk@0), (d_date@1, d_date@1)], time_us=1740
+                  GpuProjectExec: expr=[ws_item_sk@0 as item_sk, d_date@1 as d_date, sum(sum(web_sales.ws_sales_price)) PARTITION BY [web_sales.ws_item_sk] ORDER BY [date_dim.d_date ASC NULLS LAST] ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW@3 as cume_sales], time_us=166
+                    GpuWindowExec: wdw=[sum(sum(web_sales.ws_sales_price)) PARTITION BY [web_sales.ws_item_sk] ORDER BY [date_dim.d_date ASC NULLS LAST] ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW], time_us=611
+                      GpuSortExec: expr=[ws_item_sk@0 ASC NULLS LAST, d_date@1 ASC NULLS LAST], time_us=618
+                        GpuAggregateExec: group_by=[ws_item_sk, d_date], aggr=[sum(web_sales.ws_sales_price)], time_us=1266
+                          GpuProjectExec: expr=[ws_item_sk@1 as ws_item_sk, ws_sales_price@2 as ws_sales_price, d_date@0 as d_date], time_us=149
+                            GpuCoalesceBatchesExec, time_us=1
+                              GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ws_sold_date_sk@0)], projection=[1, 3, 4], time_us=1343
+                                GpuCoalesceBatchesExec, time_us=1
+                                  GpuFilterExec: predicate=d_month_seq@2 >= 1200 AND d_month_seq@2 <= 1211, projection=[0, 1], time_us=413
+                                    GpuScanExec: table=date_dim, projections=[d_date_sk, d_date, d_month_seq], time_us=18601
+                                GpuCoalesceBatchesExec, time_us=1
+                                  GpuFilterExec: predicate=ws_item_sk@1 IS NOT NULL, time_us=467
+                                    GpuScanExec: table=web_sales, projections=[ws_sold_date_sk, ws_item_sk, ws_sales_price], time_us=9006
+                  GpuProjectExec: expr=[ss_item_sk@0 as item_sk, d_date@1 as d_date, sum(sum(store_sales.ss_sales_price)) PARTITION BY [store_sales.ss_item_sk] ORDER BY [date_dim.d_date ASC NULLS LAST] ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW@3 as cume_sales], time_us=252
+                    GpuWindowExec: wdw=[sum(sum(store_sales.ss_sales_price)) PARTITION BY [store_sales.ss_item_sk] ORDER BY [date_dim.d_date ASC NULLS LAST] ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW], time_us=770
+                      GpuSortExec: expr=[ss_item_sk@0 ASC NULLS LAST, d_date@1 ASC NULLS LAST], time_us=815
+                        GpuAggregateExec: group_by=[ss_item_sk, d_date], aggr=[sum(store_sales.ss_sales_price)], time_us=1788
+                          GpuProjectExec: expr=[ss_item_sk@1 as ss_item_sk, ss_sales_price@2 as ss_sales_price, d_date@0 as d_date], time_us=317
+                            GpuCoalesceBatchesExec, time_us=1
+                              GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ss_sold_date_sk@0)], projection=[1, 3, 4], time_us=1965
+                                GpuCoalesceBatchesExec, time_us=1
+                                  GpuFilterExec: predicate=d_month_seq@2 >= 1200 AND d_month_seq@2 <= 1211, projection=[0, 1], time_us=426
+                                    GpuScanExec: table=date_dim, projections=[d_date_sk, d_date, d_month_seq], time_us=18179
+                                GpuCoalesceBatchesExec, time_us=1
+                                  GpuFilterExec: predicate=ss_item_sk@1 IS NOT NULL, time_us=633
+                                    GpuScanExec: table=store_sales, projections=[ss_sold_date_sk, ss_item_sk, ss_sales_price], time_us=13352
+
+# sync_floor_us = cost of the measurement itself (empty timed region: clock + cudaStreamSynchronize on an idle stream). Each node time INCLUDES one PER OUTPUT PARTITION, since a node line is the Σ over its partitions; a node at or below its own floor (sync_floor_us x partitions) is unresolved, not cheap. Do not subtract it.
+# nodes_total_us = Σ of the per-node times above; total_us = the whole query, end to end (parse + plan + serialize + node walk + materialize)
+# build_profile = how the harness itself was compiled. total_us MINUS nodes_total_us is that Rust; records from different profiles are not comparable on it. Node times are device work and barely move.
+build_profile=benchmarks opt-level=3
+sync_floor_us=1
+nodes_at_or_below_floor=8/35
+nodes_total_us=78676
+total_us=88592

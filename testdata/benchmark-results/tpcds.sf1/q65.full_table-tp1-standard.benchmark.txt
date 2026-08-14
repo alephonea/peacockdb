@@ -1,0 +1,37 @@
+GpuSortExec: expr=[s_store_name@0 ASC, i_item_desc@1 ASC], fetch=100, time_us=1340
+  GpuProjectExec: expr=[s_store_name@0 as s_store_name, i_item_desc@2 as i_item_desc, revenue@1 as revenue, i_current_price@3 as i_current_price, i_wholesale_cost@4 as i_wholesale_cost, i_brand@5 as i_brand], time_us=277
+    GpuCoalesceBatchesExec, time_us=1
+      GpuHashJoinExec: join_type=Inner, on=[(ss_store_sk@1, ss_store_sk@0)], filter=CAST(revenue@0 AS Decimal128(30, 15)) <= CAST(0.1 * CAST(ave@1 AS Float64) AS Decimal128(30, 15)), projection=[0, 2, 3, 4, 5, 6], time_us=2953
+        GpuCoalesceBatchesExec, time_us=1
+          GpuHashJoinExec: join_type=Inner, on=[(ss_item_sk@2, i_item_sk@0)], projection=[0, 1, 3, 5, 6, 7, 8], time_us=2173
+            GpuCoalesceBatchesExec, time_us=1
+              GpuHashJoinExec: join_type=Inner, on=[(s_store_sk@0, ss_store_sk@0)], projection=[1, 2, 3, 4], time_us=897
+                GpuScanExec: table=store, projections=[s_store_sk, s_store_name], time_us=1302
+                GpuProjectExec: expr=[ss_store_sk@0 as ss_store_sk, ss_item_sk@1 as ss_item_sk, sum(store_sales.ss_sales_price)@2 as revenue], time_us=108
+                  GpuAggregateExec: group_by=[ss_store_sk, ss_item_sk], aggr=[sum(store_sales.ss_sales_price)], time_us=2024
+                    GpuCoalesceBatchesExec, time_us=1
+                      GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ss_sold_date_sk@0)], projection=[2, 3, 4], time_us=2058
+                        GpuCoalesceBatchesExec, time_us=1
+                          GpuFilterExec: predicate=d_month_seq@1 >= 1176 AND d_month_seq@1 <= 1187, projection=[0], time_us=353
+                            GpuScanExec: table=date_dim, projections=[d_date_sk, d_month_seq], time_us=18531
+                        GpuScanExec: table=store_sales, projections=[ss_sold_date_sk, ss_item_sk, ss_store_sk, ss_sales_price], time_us=13898
+            GpuScanExec: table=item, projections=[i_item_sk, i_item_desc, i_current_price, i_wholesale_cost, i_brand], time_us=46866
+        GpuProjectExec: expr=[ss_store_sk@0 as ss_store_sk, avg(sa.revenue)@1 as ave], time_us=44
+          GpuAggregateExec: group_by=[ss_store_sk], aggr=[avg(sa.revenue)], time_us=823
+            GpuProjectExec: expr=[ss_store_sk@0 as ss_store_sk, sum(store_sales.ss_sales_price)@2 as revenue], time_us=56
+              GpuAggregateExec: group_by=[ss_store_sk, ss_item_sk], aggr=[sum(store_sales.ss_sales_price)], time_us=1966
+                GpuCoalesceBatchesExec, time_us=1
+                  GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ss_sold_date_sk@0)], projection=[2, 3, 4], time_us=2095
+                    GpuCoalesceBatchesExec, time_us=1
+                      GpuFilterExec: predicate=d_month_seq@1 >= 1176 AND d_month_seq@1 <= 1187, projection=[0], time_us=292
+                        GpuScanExec: table=date_dim, projections=[d_date_sk, d_month_seq], time_us=19682
+                    GpuScanExec: table=store_sales, projections=[ss_sold_date_sk, ss_item_sk, ss_store_sk, ss_sales_price], time_us=14002
+
+# sync_floor_us = cost of the measurement itself (empty timed region: clock + cudaStreamSynchronize on an idle stream). Each node time INCLUDES one PER OUTPUT PARTITION, since a node line is the Σ over its partitions; a node at or below its own floor (sync_floor_us x partitions) is unresolved, not cheap. Do not subtract it.
+# nodes_total_us = Σ of the per-node times above; total_us = the whole query, end to end (parse + plan + serialize + node walk + materialize)
+# build_profile = how the harness itself was compiled. total_us MINUS nodes_total_us is that Rust; records from different profiles are not comparable on it. Node times are device work and barely move.
+build_profile=benchmarks opt-level=3
+sync_floor_us=1
+nodes_at_or_below_floor=7/28
+nodes_total_us=131747
+total_us=140275

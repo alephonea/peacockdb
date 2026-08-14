@@ -1,0 +1,48 @@
+GpuProjectExec: expr=[sum(lineitem.l_extendedprice * lineitem.l_discount)@0 as revenue], time_us=16
+  GpuAggregateExec: group_by=[], aggr=[sum(lineitem.l_extendedprice * lineitem.l_discount)], time_us=259
+    GpuCoalescePartitionsExec, time_us=48
+      GpuAggregateExec: group_by=[], aggr=[sum(lineitem.l_extendedprice * lineitem.l_discount)], time_us=4332
+        p0: time_us=615
+        p1: time_us=588
+        p2: time_us=515
+        p3: time_us=487
+        p4: time_us=559
+        p5: time_us=529
+        p6: time_us=523
+        p7: time_us=516
+        GpuCoalesceBatchesExec, time_us=8
+          p0: time_us=1
+          p1: time_us=1
+          p2: time_us=1
+          p3: time_us=1
+          p4: time_us=1
+          p5: time_us=1
+          p6: time_us=1
+          p7: time_us=1
+          GpuFilterExec: predicate=l_shipdate@3 >= 1994-01-01 AND l_shipdate@3 < 1995-01-01 AND l_discount@2 >= Some(5),15,2 AND l_discount@2 <= Some(7),15,2 AND l_quantity@0 < Some(2400),15,2, projection=[1, 2], time_us=7361
+            p0: time_us=1124
+            p1: time_us=886
+            p2: time_us=943
+            p3: time_us=877
+            p4: time_us=835
+            p5: time_us=927
+            p6: time_us=842
+            p7: time_us=927
+            GpuScanExec: table=lineitem, projections=[l_quantity, l_extendedprice, l_discount, l_shipdate], time_us=218141
+              p0: time_us=27180
+              p1: time_us=27349
+              p2: time_us=27420
+              p3: time_us=27327
+              p4: time_us=27099
+              p5: time_us=27252
+              p6: time_us=27320
+              p7: time_us=27194
+
+# sync_floor_us = cost of the measurement itself (empty timed region: clock + cudaStreamSynchronize on an idle stream). Each node time INCLUDES one PER OUTPUT PARTITION, since a node line is the Σ over its partitions; a node at or below its own floor (sync_floor_us x partitions) is unresolved, not cheap. Do not subtract it.
+# nodes_total_us = Σ of the per-node times above; total_us = the whole query, end to end (parse + plan + serialize + node walk + materialize)
+# build_profile = how the harness itself was compiled. total_us MINUS nodes_total_us is that Rust; records from different profiles are not comparable on it. Node times are device work and barely move.
+build_profile=benchmarks opt-level=3
+sync_floor_us=1
+nodes_at_or_below_floor=1/7
+nodes_total_us=230165
+total_us=233916

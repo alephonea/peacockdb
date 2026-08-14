@@ -1,0 +1,64 @@
+GpuProjectExec: expr=[l_returnflag@0 as l_returnflag, l_linestatus@1 as l_linestatus, count(*)@2 as cnt, sum(lineitem.l_quantity)@3 as sum_qty, sum(lineitem.l_extendedprice)@4 as sum_base_price], time_us=422
+  p0: time_us=103
+  p1: time_us=97
+  p2: time_us=4
+  p3: time_us=107
+  p4: time_us=4
+  p5: time_us=4
+  p6: time_us=4
+  p7: time_us=99
+  GpuAggregateExec: group_by=[l_returnflag, l_linestatus], aggr=[count(*), sum(lineitem.l_quantity), sum(lineitem.l_extendedprice)], time_us=2645
+    p0: time_us=699
+    p1: time_us=644
+    p2: time_us=9
+    p3: time_us=654
+    p4: time_us=8
+    p5: time_us=6
+    p6: time_us=6
+    p7: time_us=619
+    GpuCoalesceBatchesExec, time_us=9
+      p0: time_us=2
+      p1: time_us=1
+      p2: time_us=1
+      p3: time_us=1
+      p4: time_us=1
+      p5: time_us=1
+      p6: time_us=1
+      p7: time_us=1
+      GpuRepartitionExec: partitioning=Hash([l_returnflag@0, l_linestatus@1], 8), input_partitions=1, time_us=931
+        p0: time_us=583
+        p1: time_us=112
+        p2: time_us=5
+        p3: time_us=109
+        p4: time_us=5
+        p5: time_us=4
+        p6: time_us=4
+        p7: time_us=109
+        GpuCoalescePartitionsExec, time_us=324
+          GpuAggregateExec: group_by=[l_returnflag, l_linestatus], aggr=[count(*), sum(lineitem.l_quantity), sum(lineitem.l_extendedprice)], time_us=21651
+            p0: time_us=3043
+            p1: time_us=2907
+            p2: time_us=2835
+            p3: time_us=2859
+            p4: time_us=2531
+            p5: time_us=2444
+            p6: time_us=2491
+            p7: time_us=2541
+            GpuScanExec: table=lineitem, projections=[l_quantity, l_extendedprice, l_returnflag, l_linestatus], time_us=242807
+              p0: time_us=30337
+              p1: time_us=30578
+              p2: time_us=30526
+              p3: time_us=30664
+              p4: time_us=30163
+              p5: time_us=30154
+              p6: time_us=30094
+              p7: time_us=30291
+
+# sync_floor_us = cost of the measurement itself (empty timed region: clock + cudaStreamSynchronize on an idle stream). Each node time INCLUDES one PER OUTPUT PARTITION, since a node line is the Σ over its partitions; a node at or below its own floor (sync_floor_us x partitions) is unresolved, not cheap. Do not subtract it.
+# nodes_total_us = Σ of the per-node times above; total_us = the whole query, end to end (parse + plan + serialize + node walk + materialize)
+# build_profile = how the harness itself was compiled. total_us MINUS nodes_total_us is that Rust; records from different profiles are not comparable on it. Node times are device work and barely move.
+build_profile=benchmarks opt-level=3
+sync_floor_us=1
+nodes_at_or_below_floor=0/7
+nodes_total_us=268789
+total_us=272505
