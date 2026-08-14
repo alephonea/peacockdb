@@ -893,12 +893,13 @@ what wrote them and either bring them under the sweep or remove them.
 
 <a id="t124"></a>
 ### #124 — common/mod.rs is over the 1000-line bar
-`peacockdb-core/tests/common/mod.rs` is 1410 lines against coding-style.md's "under 1000".
-Pre-existing; the exec-mode refactor moved it the right way (`common/exec_mode.rs` split
-out) but added net lines. Next extraction is the obvious one: ~250 lines of
-`macro_rules!` (the test-macro definitions) into `common/macros.rs`, which puts the file
-under on its own. Deliberately not done inside the refactor — the same page forbids
-scope-creep refactors.
+`peacockdb-core/tests/common/mod.rs` is 1359 lines against coding-style.md's "under 1000".
+Pre-existing, and each refactor has moved it the right way while leaving it over:
+`common/exec_mode.rs` first, then `common/benchmark.rs` (the GPU benchmark harness, 294
+lines, split out as it was written rather than after). The obvious next extraction is
+~250 lines of `macro_rules!` into `common/macros.rs` — which no longer suffices on its
+own, so whoever takes this should expect a second cut, most likely the golden
+assert/compare helpers. Accepted at 1359 for now.
 
 <a id="t125"></a>
 ### #125 — `elsewhere` parameter in assert_registry_matches_csv is dead
