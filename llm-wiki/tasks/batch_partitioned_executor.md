@@ -46,6 +46,7 @@ into tasks that hand off to the developer one at a time.
 - [Node set](#node-set)
   - [Join capability matrix](#join-capability-matrix)
 - [Traits](#traits)
+  - [Aggregators](#aggregators)
 - [Drivers](#drivers)
   - [The scheduling rule](#the-scheduling-rule)
   - [There is no `Pending`](#there-is-no-pending)
@@ -151,25 +152,93 @@ owner — the opposite of the #130 shape, where a fact declared in one place is 
 in three.
 
 ```rust
-struct RowGroupMeta { index: u32, rows: u64 }        // survivors, file order
+struct RowGroupMeta { index: u32, rows: u64, bytes: u64 }   // survivors, file order
 enum Batching { Off, On { target_batch_bytes: usize } }
 
 fn partition(
     survivors: &[RowGroupMeta],
-    row_width: usize,            // from the plan schema
-    n_partitions: usize,         // small-table rule already applied by the caller
+    n_partitions: usize,         // lane count for this source's region, already decided
     batching: Batching,
 ) -> Vec<Vec<Vec<u32>>>          // partitions → batches → row groups
 ```
 
 Policy: survivors (after pruning, same source as legacy) split into `n_partitions`
-contiguous chunks balanced by row count; within a chunk, consecutive row groups are
-packed greedily into batches while estimated bytes (rows × row width) stay under target;
-a single row group over target still becomes its own batch — minimum granularity is one
-row group, and the planner always produces a plan (the enforcer owns the runtime
-consequence; recourse for oversized batches is [#142](../tickets.md#t142)). Batching off
-means one batch per chunk. Contiguity is a policy choice, not a cuDF requirement —
-changing it later is a golden-regenerating change and is treated as one.
+contiguous chunks balanced by row count; within a chunk, consecutive row groups are packed
+greedily into batches while bytes stay under target; a single row group over target still
+becomes its own batch — minimum granularity is one row group, and the planner always
+produces a plan (the enforcer owns the runtime consequence; recourse for oversized batches
+is [#142](../tickets.md#t142)). Batching off means one batch per chunk. Contiguity is a
+policy choice, not a cuDF requirement — changing it later is a golden-regenerating change
+and is treated as one.
+
+`bytes` is the parquet column-chunk total over the columns the scan projects, not rows ×
+a width derived from types. A varchar's width is a property of the data and the file
+metadata already holds the answer; type widths are for columns the plan creates rather
+than reads.
+
+**`target_batch_bytes` is derived, not configured.** The budget is what the hardware
+fixes; batch size is how the planner spends it, so an estimator pass solves for it per
+source and the budget tier survives only as the fallback when statistics are missing.
+
+The walk starts at each source and follows its batch upward until it reaches an
+accumulator. Every node in between is a per-batch transform, so what it holds is
+proportional to the source batch, and the amplification is a product along the path:
+filter selectivity, the width change across a project, a join's cardinality times the
+bytes the other side contributes, and the lane count in force at that point. A source's
+figure is the maximum over its path, not the value at either end — a batch is rarely
+widest where it starts, and above a merge point the same batch costs one lane's worth
+rather than n.
+
+Accumulators end the walk because they are exactly where resident stops scaling with batch
+size: a join's build side holds a whole relation, an aggregate's state one row per group.
+Those are constants, so they come off the budget before anything is divided.
+
+```
+Σ_sources  amplification_s × lanes_s × batch_bytes_s   ≤   budget − Σ held_by_accumulators
+```
+
+The remainder is split equally across sources, each dividing by its own amplification.
+Equal shares rather than proportional ones: a proportional split hands the most budget to
+the source already producing the most bytes.
+
+Four things this does not do, each worth knowing before trusting a number it produces.
+
+The sum over sources is an upper bound rather than a peak. The driver runs one node at a
+time, so two sources are rarely at their widest in the same instant; enumerating the
+reachable states would be tighter and is not worth what it costs.
+
+If the constants alone exceed the budget no batch size helps, and the planner says so
+rather than emitting a plan that cannot run. This is the common shape of a build side
+larger than vram, not an edge case.
+
+The output is a target and not a bound. The mapping is quantized to whole row groups and
+an oversized row group is still its own batch, so what the planner guarantees is that it
+aimed at the budget.
+
+The inputs are the optimizer's estimates, and on 55 of 103 TPC-DS joins the cardinality is
+missing outright ([#19](../tickets.md#t19)). Underestimating amplification produces a batch
+too large and a query the enforcer kills; overestimating produces one too small and a
+query that is merely slower, so the derived target rounds down, onto a coarse grid — an
+estimate that drifts slightly should not regenerate every golden.
+
+**The small-table rule is per region, and a region ends at the nearest shuffle.** A source
+arrives with `KeyDistribution::NotSpecified`, so a co-partitioned join has to shuffle both
+sides on the join keys whatever the scans were partitioned into; the Merge and the Emit
+between each side and the join re-establish the lane count, and the sides agree at the
+join rather than at the scan. Below that shuffle a source's lane count is its own business.
+Regions reach across more than one source only where lanes are combined positionally, as
+in `GpuInterleave`'s lane p ← [(0,p), (1,p), …], or under the streamed join, which has no
+shuffle to re-establish anything and so is one lane-count decision for its whole subtree.
+
+Demoting a region is a change of lowering, not of a number, and the two halves of a
+shuffle answer to different things. The Merge goes, because there is nothing to merge: a
+single-lane input feeds `GpuEmitPartitions` directly. The Emit stays whenever its consumer
+still wants n lanes hashed on its keys — a small dimension table joins a four-lane fact
+table by emitting into four lanes, having merged nothing first — and goes only when the
+consumer is itself at one lane, which is the aggregate shortcut already stated. A
+stream-sorted result becomes `GpuAccumulateBatchesAndSort` rather than sort-then-merge.
+That is why the decision belongs in translation and not after it: a one-lane Merge is not
+a harmless no-op but a different plan, and it renders as one in the golden.
 
 ### The sort decomposition
 
@@ -921,6 +990,57 @@ The rust-only tier boundary holds structurally and more cleanly than with a sele
 rust-only target instantiates the driver only at `CpuBackend`, so the GPU backend's types
 are never named and never monomorphized. `GpuBackend` itself stays gated as the legacy GPU
 executors are.
+
+### Aggregators
+
+Two enums, not one trait. The [Aggregates](#aggregates) table becomes a `const`
+declaration keyed by what sql asked for; nothing dispatches on an aggregate at execution
+time, because the plan already names what to run.
+
+```rust
+enum AggFunc { Sum, Min, Max, Count, Avg, Stddev, Var }        // what sql asked for
+enum PlanAgg { Sum, Min, Max, Count, Mean, M2, MergeM2 }       // what a node runs
+
+struct Decomposition {
+    state: &'static [(&'static str, PlanAgg)],   // suffix and the aggregator producing it
+    merge: Merge,
+}
+enum Merge {
+    PerColumn(&'static [PlanAgg]),   // positionally, one per state column
+    Combined(PlanAgg),               // merge_m2: three columns in, three out
+}
+
+const fn decomposition(f: AggFunc) -> Decomposition { /* the Aggregates table, verbatim */ }
+fn finalize(f: AggFunc, call: &AggCall, state: &[ColumnRef]) -> Expr;
+```
+
+`state` is pairs rather than two parallel lists so a column and the aggregator producing
+it cannot desync. `merge` is listed rather than derived from `state`: the rule would be
+"same aggregator, except count merges by sum", and that exception is the whole content.
+`Combined` exists only because `merge_m2` is not a per-column reduction; a general
+(inputs, aggregator, outputs) form would cover it and buy nothing.
+
+Finalize stays a function. It needs `ddof`, the declared decimal type and the null guard,
+none of them per-aggregator constants — as data it would need an expression dsl in a
+`const`.
+
+The two enums overlap on four names and that is not a reason to merge them: `Avg` is never
+a `PlanAgg` (decomposing it is the point) and `MergeM2` is never an `AggFunc`. One enum
+would make some variants illegal by convention in each position, which is the defect this
+design removes.
+
+`PlanAgg` is declared in `gpu_plan.fbs` so flatc generates it for both languages and the
+C++ copy is not hand-maintained; the wire cost is paid regardless, since
+`AggregateFuncNode.name` stops meaning the sql function. The fbs trades `AggregateMode`
+for it. What remains in C++ is two exhaustive matches over the generated enum — groupby
+and reduce — replacing today's two independent string chains in
+`cpp/src/operators/aggregate.cpp`, which already disagree about `count`. Note that
+exhaustiveness there is `-Wswitch`, a warning: the compile-time guarantee is real only on
+the rust side unless the build promotes it.
+
+The table grows a row per aggregate. It does not grow a variant for an aggregate that
+cannot be decomposed at all (a true median): that is an absent `Decomposition` and a
+planner that declines to split the phase.
 
 ## Drivers
 

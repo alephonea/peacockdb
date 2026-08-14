@@ -16,7 +16,7 @@ reference still resolves there.
 |---|--:|---|
 | [Critical correctness](#critical-correctness) | 14 | #103 #80 #59 #46 #47 #60 #121 #122 #123 #118 #119 #120 #117 #41 |
 | [Blockers for disabled coverage](#blockers-for-disabled-coverage) | 15 | #97 #23 #32 #65 #62 #91 #95 #57 #45 #63 #56 #55 #115 #96 #143 |
-| [Performance / architecture](#performance--architecture) | 21 | #150 #149 #148 #146 #145 #19 #16 #20 #71 #101 #73 #110 #75 #136 #137 #138 #139 #140 #141 #144 #142 |
+| [Performance / architecture](#performance--architecture) | 22 | #150 #149 #148 #147 #146 #145 #19 #16 #20 #71 #101 #73 #110 #75 #136 #137 #138 #139 #140 #141 #144 #142 |
 | [Infrastructure / process](#infrastructure--process) | 16 | #113 #114 #116 #126 #132 #131 #130 #129 #128 #127 #124 #125 #13 #94 #69 #49 |
 
 ## Critical correctness
@@ -539,6 +539,45 @@ input is already one partition or the aggregate is keyless. Skipping when the ke
 merely small (collapse to one partition, run `GpuAggregateBatches[final]` once, avoid the
 shuffle) needs a cardinality estimate that does not exist — the estimators are constants
 (#19). When stats land, add the rule and regenerate the affected plan goldens.
+
+<a id="t147"></a>
+### #147 — PlanEstimates: a tree the planner emits and the runtime refines
+The batch-partitioned planner derives `target_batch_bytes` by walking amplification up from
+each source to the nearest accumulator
+(`llm-wiki/tasks/batch_partitioned_executor.md`, ParquetBatchPartitioner). That walk already
+computes a per-node maximum resident size and then throws all but one number away. Keep it:
+`ParquetBatchPartitioner` emits `PlanEstimates` beside the row-group mapping, a tree shaped
+like the plan carrying the estimate per node.
+
+Nothing in the plan's executability depends on it: whatever the partitioner emits, the plan
+runs, so this is additive. It does not follow that a wrong estimate is free. Too low and
+the query dies — at the enforcer's `scratch_bytes` pre-check if the model catches it, and
+as a cuda out-of-memory below that if the model was under too. Neither is a wrong answer,
+and both are meant to be handled gracefully rather than fatally in later work (#142's
+adaptive replanning is the same need seen from the batch-size end). What a better estimate
+buys is fewer queries reaching either.
+
+Two consumers, neither of which exists yet.
+
+**Placement.** A separate planning component reads the tree and moves subtrees onto the CPU
+where the estimate says the GPU cannot hold them. The `Backend` trait already makes this
+expressible — executors are chosen per node, so a mixed plan is a matter of choosing
+differently, not of new machinery.
+
+**Refinement in flight.** The estimates rest on the optimizer's selectivity and cardinality,
+which are constants on most TPC-DS joins (#19). One batch actually read from a source is
+enough to do better by extrapolation: real rows, real bytes per column, a real filter
+selectivity at that node. Feeding measurements back rewrites the subtree's estimates for the
+batches still to come. This is where the estimate stops being a plan-time guess, and it is
+the reason to make it a first-class tree rather than a field on a node.
+
+What a refined estimate may change grows in two steps. The first version changes only what
+needs no re-planning — the remaining batch sizes of a loader still reading. Later revisions
+lift that entirely: a refined estimate may replace the plan, killing in-progress gpu
+execution and moving large subtrees to the cpu, which means dropping the driver and
+building a new one rather than editing the running tree. That is the reason the driver
+owns no state a caller needs to survive it, and the reason this is a tree the planner emits
+rather than a field the driver mutates.
 
 <a id="t146"></a>
 ### #146 — aggregate shaping beyond the fixed sequence
