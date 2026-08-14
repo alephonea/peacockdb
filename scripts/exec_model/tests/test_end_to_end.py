@@ -80,7 +80,11 @@ def same(got: pd.DataFrame, want: pd.DataFrame, label: str) -> None:
     assert len(got) == len(want), f"{label}: {len(got)} rows vs {len(want)}"
     for column in want.columns:
         left, right = got[column].to_numpy(), want[column].to_numpy()
-        if np.issubdtype(want[column].dtype, np.number):
+        # pandas' own predicate, not np.issubdtype: from pandas 3 a string column is a
+        # StringDtype rather than object, and numpy cannot interpret an extension dtype
+        # at all — it raises instead of answering "not a number". CI installs the current
+        # pandas, so the prototype has to hold across the 2/3 boundary.
+        if pd.api.types.is_numeric_dtype(want[column]):
             assert np.allclose(left.astype(float), right.astype(float), equal_nan=True), (
                 f"{label}: column {column} differs"
             )

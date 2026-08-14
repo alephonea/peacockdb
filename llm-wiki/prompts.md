@@ -105,6 +105,12 @@ arrive from the human one at a time.
   sentence that earns the point, and otherwise nothing. A page where six words are urgent
   has no urgent words left. Capitals are for identifiers, acronyms and literal values a
   reader will grep for.
+- **Keep the prose short.** Everywhere in `llm-wiki/`, not just those two pages. Say it
+  once: no restating a point in other words, no summary of what the section just said, no
+  paragraph where a clause will do. Skip what the code already says — signatures, field
+  lists, a walk through what a function does — and name the file instead. What belongs
+  here is what the code cannot say: why the shape is this shape, what breaks if it
+  changes, which alternative lost.
 - **Markdown and YAML are yours — edit them directly.** `llm-wiki/*.md`, task specs,
   tickets, `.github/workflows/*.yml`: write them yourself rather than routing the fix
   through the developer. A round trip through msgq costs more than the edit and adds a

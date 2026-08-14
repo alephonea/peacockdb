@@ -106,7 +106,9 @@ def same(got: pd.DataFrame, want: pd.DataFrame, label: str) -> None:
     assert len(got) == len(want), f"{label}: {len(got)} rows vs {len(want)}"
     for column in want.columns:
         left, right = got[column].to_numpy(), want[column].to_numpy()
-        if np.issubdtype(want[column].dtype, np.number):
+        # pandas' predicate rather than np.issubdtype — see test_end_to_end.same(): a
+        # pandas 3 string column is an extension dtype numpy refuses to classify.
+        if pd.api.types.is_numeric_dtype(want[column]):
             assert np.allclose(left.astype(float), right.astype(float), equal_nan=True), (
                 f"{label}: column {column}"
             )

@@ -184,13 +184,23 @@ Consequences worth knowing before you regenerate:
 
 ## CI structure (`.github/workflows/pipeline.yml`)
 
-`pipeline.yml` runs on pushes to master and on every PR. Four independent job chains:
+`pipeline.yml` runs on pushes to master and on every PR, but not on documentation —
+`**.md` and `llm-wiki/**`, which nothing builds, tests or reads. It takes two layers:
+`paths-ignore` skips a wholly-documentation diff, and the **changes** job skips a
+documentation-only push to a PR that carries code, which `paths-ignore` cannot see because
+it judges the whole PR diff. Both fail open, and a doc file that ever becomes an input to
+something has to come off both lists.
+
+Five independent job chains:
 
 ```
+changes ──► everything below
 cpp-cpu (2 legs)          cpp-build-2502 ──► gpu-tests
 cost-report ──► deploy-pages (master push only)          s3-datasets
 ```
 
+- **changes** — the documentation gate above; every other job carries `needs: changes`
+  and runs only on its `code == 'true'`.
 - **cpp-cpu** — two matrix legs, each in a RAPIDS container: `cudf: 25.02`
   (`rapidsai/base:25.02-cuda12.0-py3.12`) and `cudf: 26.02`
   (`rapidsai/base:25.10a-cuda12-py3.12` — the leg's label is ahead of its image, #129).
@@ -231,6 +241,11 @@ cost-report ──► deploy-pages (master push only)          s3-datasets
   named datasets in place on shad-gpu with the scale-safe validators, then runs the S3
   metadata check. The `datasets` input defaults to `tpch.sf40 tpcds.sf200`; `tpch.sf200` is
   allow-listed but deliberately not defaulted, because it does not exist yet.
+
+Two traps before adding a step: a container job defaults `run:` to `sh`, not bash, so the
+two of them declare `defaults.run.shell: bash` to get `-o pipefail` at all; and the python
+steps install the current pandas — 3 on the runner's 3.12, 2.3 on a dev box's 3.10 — so the
+prototype has to hold across that boundary, unpinned on purpose.
 
 Which Rust targets run where is not folklore — `test_ci_coverage` fails when a target
 exists that no workflow step names. Doctests are the one class outside that guard (#128).
