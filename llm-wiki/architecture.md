@@ -828,7 +828,9 @@ int  peacock_execute(peacock_executor_t* executor, const uint8_t* plan_bytes,
 void peacock_result_free(uint8_t* result_bytes);
 
 /* node-by-node: one session, one node at a time, intermediates stay resident */
-typedef struct PeacockNodeStats { uint64_t rows; uint64_t varlen_content_bytes; } PeacockNodeStats;
+typedef struct PeacockNodeStats {
+  uint64_t rows; uint64_t varlen_content_bytes; uint64_t time_us;
+} PeacockNodeStats;
 
 int  peacock_executor_begin_plan(peacock_executor_t* executor, const uint8_t* plan_bytes,
                                  uint64_t plan_len, uint64_t* out_node_count);
@@ -841,6 +843,15 @@ int  peacock_result_from_handle(peacock_executor_t* executor, uint64_t handle,
                                 uint8_t** out_ipc, uint64_t* out_ipc_len);
 void peacock_handle_release(peacock_executor_t* executor, uint64_t handle);
 void peacock_executor_end_plan(peacock_executor_t* executor);
+
+/* benchmark instrumentation: process-global, off by default. Enabling it makes
+   execute_node synchronize the default stream at every measurement boundary, so
+   time_us measures execution rather than kernel submission — and serializes what
+   cuDF would otherwise pipeline, which is why the correctness path never sets it.
+   The floor is what an empty timed region costs; a node at or below it is
+   unresolved, not cheap, and it is never subtracted. */
+void     peacock_set_node_timing(int enable);
+uint64_t peacock_measure_timing_floor_us(unsigned samples);
 
 /* the conformance hook: Spark-murmur3 partition ids over one Arrow C-data batch */
 int  peacock_spark_partition_ids(const void* schema, const void* array,
@@ -893,6 +904,7 @@ struct TableResult {
 struct NodeStats {
   uint64_t rows = 0;
   uint64_t varlen_content_bytes = 0;   // Σ over varlen columns of offsets[n]-offsets[0]
+  uint64_t time_us = 0;                // per output partition; 0 unless timing is on
 };
 ```
 

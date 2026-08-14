@@ -6,7 +6,7 @@ anchor that the cost widget links to. Device labels are `tp<N>-<tier>` (micro=10
 mini=2GiB, standard=12GiB).
 
 A ticket carries a **Priority** line only when it is not medium; medium is the default.
-New tickets take the next free number (currently 151). Finished and lapsed tickets move to
+New tickets take the next free number (currently 152). Finished and lapsed tickets move to
 `llm-wiki/archive/archived-tickets.md` (Done / Stale) — numbers are never reused, so an old
 reference still resolves there.
 
@@ -16,7 +16,7 @@ reference still resolves there.
 |---|--:|---|
 | [Critical correctness](#critical-correctness) | 14 | #103 #80 #59 #46 #47 #60 #121 #122 #123 #118 #119 #120 #117 #41 |
 | [Blockers for disabled coverage](#blockers-for-disabled-coverage) | 15 | #97 #23 #32 #65 #62 #91 #95 #57 #45 #63 #56 #55 #115 #96 #143 |
-| [Performance / architecture](#performance--architecture) | 22 | #150 #149 #148 #147 #146 #145 #19 #16 #20 #71 #101 #73 #110 #75 #136 #137 #138 #139 #140 #141 #144 #142 |
+| [Performance / architecture](#performance--architecture) | 23 | #151 #150 #149 #148 #147 #146 #145 #19 #16 #20 #71 #101 #73 #110 #75 #136 #137 #138 #139 #140 #141 #144 #142 |
 | [Infrastructure / process](#infrastructure--process) | 16 | #113 #114 #116 #126 #132 #131 #130 #129 #128 #127 #124 #125 #13 #94 #69 #49 |
 
 ## Critical correctness
@@ -254,6 +254,28 @@ whole-partition aggregate windows need a single batch (coalesce-all first), whil
 rank/dense_rank gaps of #32 carry over unchanged.
 
 ## Performance / architecture
+
+<a id="t151"></a>
+### #151 — the per-node benchmarks measure the engine with no RMM pool
+
+`peacock_gpu_benchmarks` times the engine through the FFI, and the engine installs no
+device resource ([#148](#t148)) — so every intermediate it allocates is a
+`cudaMalloc`/`cudaFree` round trip, and a node's `time_us` includes that. The C++ gtest
+binaries stopped measuring it: `cpp/tests/gpu/rmm_pool.hpp` installs a pooled resource in
+`main()`, with `PEACOCK_RMM_POOL=0` to turn it back off and price the allocator itself. The
+two families of numbers in the tree are therefore taken under different allocators, and the
+per-node records charge a node for the default resource — worst exactly where its output is
+largest, which is where a reader is most likely to draw a conclusion.
+
+The fix is to land #148: the engine installs the pool, the benchmark inherits it, and no
+test-only path exists that the shipping engine does not take. Failing that, an install hook
+for the benchmark binary with the same `PEACOCK_RMM_POOL=0` switch and the sizing rule
+shared with `rmm_pool.hpp` rather than copied — it is one rule either way.
+
+Either way the record has to carry which allocator produced it, beside `build_profile` and
+`sync_floor_us`, for the same reason those are there: a number whose meaning depends on how
+it was produced must travel with that fact. Until then, node times are comparable with each
+other and not with the C++ numbers in `llm-wiki/reports/benchmark-minimal.md`.
 
 <a id="t150"></a>
 ### #150 — store the embedding columns uncompressed; Snappy costs a third of a vector query to save 3%
