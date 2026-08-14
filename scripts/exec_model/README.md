@@ -64,7 +64,7 @@ as a script, so the relative imports resolve either way.
 | `operators/partition_ops.py` | the hash scatter |
 | `operators/joins.py` | the join capability matrix |
 | `operators/nodes.py` | `GpuNode` implementations wiring the operators into plans |
-| `operators/validation.py` | the reusable checks `validate_schemas_and_partitions()` is composed from — layout expectations and the aggregate state chain; the method itself is on each node in `nodes.py` |
+| `operators/validation.py` | the checks a node's `_validator` is composed from with `all_of` — layout expectations and the aggregate state chain. The method is abstract on `GpuNode` (`node.py`) and implemented once, on `PandasNode` (`operators/nodes.py`), which just runs that validator |
 | `operators/injection.py` | `LayoutInjector` — rewrite a plan's partitioning, batching and hash placement |
 
 Traits are declarations only. The driver tests drive mocks (`tests/mocks.py`) because the
@@ -135,7 +135,7 @@ Both lowerings are implemented, as the spec's limit rule states them.
 Feeding only the sink it is **not a node at all**: `skip`/`fetch` are `GpuUnload`'s. The
 driver counts rows **across lanes** — an unload executor is per lane, so only the driver
 can — and per batch either releases the handle without a call, narrows the call to a row
-range, or passes it whole. Once `is_satisfied` holds, the node's whole subtree stops being
+range, or passes it whole. Once `_is_satisfied` holds, the node's whole subtree stops being
 runnable: the join hold's shape, but never lifting, so the run ends with lanes not done and
 queues non-empty and the in-flight release is what cleans up.
 
@@ -197,8 +197,8 @@ F4. **Multi-child forwarders degenerate to left-first.** A source with nothing a
    skipped rather than waited on (as the spec requires), and under min-height the leftmost
    child is always the one holding a batch — so a union or interleave drains its left
    child first instead of alternating. Deterministic, but not round-robin. Only
-   `GpuMergePartitions` genuinely rotates, because it has one child and "run every
-   partition" fills all its lanes in a single step —
+   `GpuMergePartitions` genuinely rotates, because its one child feeds all of its input
+   lanes and "run every partition" fills them in a single step —
    `test_a_multi_child_forwarder_skips_a_pending_source_instead_of_waiting`.
 
 F5. **`Pending` does not exist in this model.** The `Batch` / `Pending` / `Exhausted`
@@ -220,8 +220,8 @@ F7. **A join's build lane must deliver exactly one batch — including an empty 
 F8. **Validation splits by what the rule is about, not by convenience.** Whole-tree facts —
    arity, lane-count agreement, the emitter's single-lane input, the build side's
    `SingleBatch` — live in `plan.py`, one owner. What a node needs *of its children* lives
-   in its `validate_schemas_and_partitions()`, composed from the checks in
-   `operators/validation.py`, because only there can the message name the fix: "the planner inserts GpuMergePartitions below it" rather
+   in its `_validator`, composed from the checks in `operators/validation.py` and run by
+   `validate_schemas_and_partitions()`, because only there can the message name the fix: "the planner inserts GpuMergePartitions below it" rather
    than "this category is 1:1 per lane". That half covers hash distribution, sortedness,
    batch layout, and the aggregate state chain — a merge checks that the state it reads is
    the state its own partial declared, same aggregate and same positions, which is

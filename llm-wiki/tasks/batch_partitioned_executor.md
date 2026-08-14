@@ -386,7 +386,7 @@ column (existing C++ behavior, #65 caveats unchanged), every node downstream gro
 this falls out of: the input to a finalizing `GpuAggregateBatches` must have
 `KeyDistribution.hashKeys ⊆ its group columns` — subset, not equality.
 
-Two costs. The expression IR gains `sqrt` (a `UnaryOp` variant —
+Two costs, both small. The expression IR gains `sqrt` (a `UnaryOp` variant —
 cuDF's `unary_operator::SQRT` is what the hardwired finalize already calls), and the
 translation layer gains a decomposition registry of about six entries, whose state names
 and types come from DataFusion's `AggregateExpr::state_fields()` so our split cannot drift
@@ -1303,8 +1303,8 @@ prefix and every bound shifts by where the batch boundaries fell, a runtime amou
 on upstream selectivity and fan-out. So a frozen-bounds node must hold the prefix, and
 `OFFSET 1000000 LIMIT 10` would hold a million rows to return ten.
 
-Two additive C++/header changes, both in `gpu_executor.cpp` + `peacock_gpu.h`, both
-additive next to the existing symbols with legacy paths untouched:
+Three additive C++/header changes, all in `gpu_executor.cpp` + `peacock_gpu.h`, all
+beside the existing symbols with legacy paths untouched:
 
 - `peacock_executor_execute_scan_rowgroups(executor, seq, const uint32_t* row_groups,
   uint64_t n, uint64_t* out_handle, PeacockNodeStats* out_stats)` — reads the named
