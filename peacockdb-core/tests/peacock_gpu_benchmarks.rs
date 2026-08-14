@@ -12,10 +12,10 @@
 //!   testdata/benchmark-results/<dataset>.sf<sf>/<query>.<label>.benchmark.txt
 //!
 //! as the plan tree with `time_us` per node, then `build_profile` (how the harness
-//! itself was compiled — see [`common::BUILD_PROFILE`]), `sync_floor_us` (what the
+//! itself was compiled — see [`common::benchmark::BUILD_PROFILE`]), `sync_floor_us` (what the
 //! measurement costs when there is nothing to measure — every node time includes
 //! one), `nodes_at_or_below_floor`, `nodes_total_us` and `total_us`.
-//! See `common::run_gpu_benchmark` for why one whole run is picked rather than a
+//! See `common::benchmark::run_gpu_benchmark` for why one whole run is picked rather than a
 //! per-node minimum, and `executors::backend::gpu_node_executor::set_node_timing`
 //! for why measuring at all requires synchronizing the CUDA stream.
 //!
@@ -65,7 +65,7 @@ macro_rules! bench_case {
         paste::paste! {
             #[tokio::test]
             async fn [<bench_ $dataset _sf $sf _ $query _ $label>]() {
-                common::run_gpu_benchmark(
+                common::benchmark::run_gpu_benchmark(
                     stringify!($dataset),
                     stringify!($sf),
                     &stringify!($query).replace('_', "-"),
