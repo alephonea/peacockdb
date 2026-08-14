@@ -7,26 +7,23 @@ GPU before the filter ever runs; with batches, small slices flow through the fil
 only the aggregate's state stays resident, so the query fits in a VRAM budget the table
 does not.
 
-Status (2026-08-11): design final, and the parts of it that could only be settled by
-running are settled. **A Python prototype of the whole execution model lives in
+Status (2026-08-11): design final, including the parts only a running model could settle.
+**A Python prototype of the whole execution model lives in
 [`scripts/exec_model/`](../../scripts/exec_model/README.md)** (task T0): the trait set,
 both drivers, the scheduler, the enforcer, pandas-backed operators checked against a
 single-shot oracle, and a plan rewriter that re-runs each query at every partitioning and
-batching shape. Where this document and the prototype disagree the prototype is wrong and
-gets fixed; where the document was written before the prototype existed, it has been
-rewritten from what the prototype established — the Drivers section most of all.
+batching shape. Where the two disagree the prototype is wrong and gets fixed; where this
+document predates it, it has been rewritten from what the prototype established — the
+Drivers section most of all.
 
-This is a large task spanning many branches, so the spec lives on master, committed ahead
-of the work, rather than riding any one task branch. Deferred work is ticketed, not
-latent: this file plus `tickets.md` is the complete state.
+The spec lives on master, committed ahead of the work, because the task spans many
+branches. Deferred work is ticketed rather than latent: this file plus `tickets.md` is the
+complete state.
 
 Companion tickets: [#136](../tickets.md#t136),
 [#137](../tickets.md#t137), [#138](../tickets.md#t138), [#139](../tickets.md#t139),
 [#140](../tickets.md#t140), [#141](../tickets.md#t141), [#142](../tickets.md#t142),
 [#143](../tickets.md#t143).
-
-The first part of this file is the design; the second is the implementation plan, cut
-into tasks that hand off to the developer one at a time.
 
 ## Contents
 
@@ -201,7 +198,7 @@ The remainder is split equally across sources, each dividing by its own amplific
 Equal shares rather than proportional ones: a proportional split hands the most budget to
 the source already producing the most bytes.
 
-Four things this does not do, each worth knowing before trusting a number it produces.
+Four limits on the number it produces.
 
 The sum over sources is an upper bound rather than a peak. The driver runs one node at a
 time, so two sources are rarely at their widest in the same instant; enumerating the
@@ -249,8 +246,8 @@ sorted is `GpuAccumulateBatchesAndSort`, and a `SortPreservingMergeExec`'s N-int
 `GpuMergeSortedPartitions`. Both merge everything they have received at done, so both are
 pipeline breakers ([#138](../tickets.md#t138) would relax the first).
 
-**Where the `fetch` comes from.** DataFusion, and only DataFusion — peacock never derives
-one. A `SELECT … ORDER BY … LIMIT n` is planned with the limit pushed *into* the sort, so
+**Where the `fetch` comes from.** DataFusion alone; peacock never derives one. A
+`SELECT … ORDER BY … LIMIT n` is planned with the limit pushed *into* the sort, so
 `SortExec::fetch()` returns `Some(n)`, and a `SortPreservingMergeExec` above it carries
 `Some(n)` as well; the serializer copies both onto the wire and the deserializer restores
 them (`peacockdb-core/src/operators/sort.rs`). The consequence is that a top-N usually
@@ -265,14 +262,13 @@ GpuSortPreservingMergeExec: [revenue@1 DESC, o_orderdate@2 ASC], partitions=1, o
 ```
 
 Eight lanes of ten rows enter the merge and ten leave, so the merge is applying a `fetch` of
-its own. It is not shown on that line because `GpuSortPreservingMergeExec`'s
-`extra_display_info` renders only the sort keys while `GpuSortExec`'s appends `fetch=` —
-peacock's own display gap, not DataFusion's, and the reason the number has to be inferred
-from the row counts. The new mode's renderer closes it; see [Node
-display](#node-display).
+its own. The line does not say so because `GpuSortPreservingMergeExec`'s `extra_display_info`
+renders only the sort keys while `GpuSortExec`'s appends `fetch=` — peacock's display gap,
+not DataFusion's, which is why the number has to be inferred from the row counts. The new
+mode's renderer closes it; see [Node display](#node-display).
 
-**Whether the GPU honours it today.** In the partitioned node-by-node mode, yes: the merge
-arm runs `cudf::merge` over the k inputs and then `cudf::slice`s to `spm->fetch()`
+**Whether the GPU honours it today.** In the partitioned node-by-node mode yes — the merge
+arm runs `cudf::merge` over the k inputs, then `cudf::slice`s to `spm->fetch()`
 (`cpp/src/node_session.cpp` ~L196). Two paths do not. The same arm's fallback — no sort
 keys, or a single input partition — is a plain `cudf::concatenate` with no slice, which is
 [#118](../tickets.md#t118); and in full-table and all-at-once mode a
@@ -295,10 +291,9 @@ the limit lowering rule exists to avoid elsewhere. A `fetch` is
 therefore a node property in this mode, printed by the golden on every node that carries
 one.
 
-One coverage note falls out of the same audit: every `GpuGlobalLimitExec` in the corpus has
-`skip=0`. No benchmark query has an `OFFSET`, so the offset half of both limit lowerings —
-the released prefix, the two straddling slices — is exercised only by the prototype's and
-the unit suites' synthetic cases, never by a corpus plan.
+One coverage note falls out of the same audit: no benchmark query has an `OFFSET`, so every
+`GpuGlobalLimitExec` in the corpus has `skip=0` and the offset half of both limit lowerings
+runs only in synthetic tests — the reason T15 adds a query for it.
 
 ### The aggregate sequence
 
@@ -391,7 +386,7 @@ column (existing C++ behavior, #65 caveats unchanged), every node downstream gro
 this falls out of: the input to a finalizing `GpuAggregateBatches` must have
 `KeyDistribution.hashKeys ⊆ its group columns` — subset, not equality.
 
-Two costs, both small and both real. The expression IR gains `sqrt` (a `UnaryOp` variant —
+Two costs. The expression IR gains `sqrt` (a `UnaryOp` variant —
 cuDF's `unary_operator::SQRT` is what the hardwired finalize already calls), and the
 translation layer gains a decomposition registry of about six entries, whose state names
 and types come from DataFusion's `AggregateExpr::state_fields()` so our split cannot drift
@@ -511,8 +506,10 @@ N             NULL          2              12.0
 NULL          NULL          3              49.0     <- the grand total, both masked
 ```
 
-A masked column is a typed NULL rather than an absent one, which is what lets the three
-sets share a schema and sit in a single table.
+A masked column is a typed NULL rather than an absent one — chosen to be
+concatenate-compatible with the real column at that position — which is what lets every set
+share a schema and sit in one `cudf::table`, distinguished by the gid. That is already what
+the `cudf::concatenate` at the end of the expansion produces.
 
 Not a Spark-style expand, either. Spark multiplies rows *before* aggregating — k×N rows
 materialized for k sets — whereas the C++ here runs k groupbys over the same input and
@@ -523,13 +520,7 @@ a new category (1 → k rows) where the current shape is an ordinary Exec.
 [#144](../tickets.md#t144)'s multi-distinct lowering is the one that genuinely needs such a
 node: both use a gid, only one needs the rows multiplied.
 
-**One batch holds every set, and it has to.** All sets share a schema — each key column is
-present, and a masked one is a typed all-NULL placeholder chosen to be concatenate-compatible
-with the real column at that position — so one `cudf::table` carries every set's rows,
-distinguished by the gid. That is already what the `cudf::concatenate` at the end of the
-expansion produces.
-
-It must be one batch rather than k, and the reason is the driver rather than cuDF: **no
+**It must be one batch rather than k**, and the reason is the driver rather than cuDF: **no
 executor may return more than one batch per call per output lane.** That is the queue bound
 the whole flow-control argument rests on, and the prototype keeps a deliberately
 non-conforming accumulator around solely as the input that turns the assertion red. An init
@@ -574,23 +565,21 @@ scatter once per arriving batch and emit L×N batches in total. The planner ther
 call, and emits N.
 
 The reason is batch *shape*, not residency. All L pre-shuffle batches are resident either
-way — the driver runs every lane of a node in one step, so they land in the producing
-node's out-queues together, and the coalesce moves them from L queues into one table rather
-than turning L into 1. What the coalesce buys is that the scatter's outputs are N batches of
-about G/N rows instead of L×N of about G/(L·N): every downstream operator pays per batch,
-and the repartition arm allocates one owning table per output partition
-(`cpp/src/node_session.cpp` ~L270), so L scatter calls make L×N allocations where one makes
-N. [#145](../tickets.md#t145) removes those copies altogether — `cudf::partition` already
+way — the driver runs every lane of a node in one step, so they land in the producing node's
+out-queues together, and the coalesce moves them from L queues into one table rather than
+turning L into 1. What it buys is scatter outputs of N batches at about G/N rows instead of
+L×N at about G/(L·N): every downstream operator pays per batch, and the repartition arm
+allocates one owning table per output partition (`cpp/src/node_session.cpp` ~L270), so L
+scatter calls make L×N allocations where one makes N. [#145](../tickets.md#t145) removes those copies altogether — `cudf::partition` already
 returns the N partitions contiguous in one table, and only the handle model's insistence
 that each own its memory forces the deep copy — but until it lands their count is worth
 minimizing.
 
-What it costs is one concat, since the per-batch path would not concatenate at all — a
-single-handle call takes the `std::move` side of `owned.size() == 1 ? … :
-cudf::concatenate(views)` at ~L248, and that `concatenate` is a defensive branch no lowering
-reaches. That concat is bounded by the smallest data in the plan: this point is
-post-partial-aggregate, at group cardinality, which is exactly why the coalesce is
-affordable here and nowhere else. A join's probe-side shuffle is **not** coalesced — its
+It costs one concat, which the per-batch path would not pay at all — a single-handle call
+takes the `std::move` side of `owned.size() == 1 ? … : cudf::concatenate(views)` at ~L248,
+and that `concatenate` is a defensive branch no lowering reaches. The concat is bounded by
+the smallest data in the plan, since this point is post-partial-aggregate at group
+cardinality — which is why the coalesce is affordable here and nowhere else. A join's probe-side shuffle is **not** coalesced — its
 input is unbounded and streaming past the build side is the whole point.
 
 ### Implicit casts become explicit
@@ -611,13 +600,12 @@ finds nine, of which the first seven become plan nodes:
 | the loader's decimal width | [scan.cpp ~L112](../../cpp/src/operators/scan.cpp#L112), repeated at the IPC boundary in [gpu_executor.cpp ~L53](../../cpp/src/gpu_executor.cpp#L53) | cuDF's parquet reader picks the narrowest fixed_point width, while DataFusion uses Decimal128 throughout and `binary_operation` rejects mixed widths. Not a coercion of its own: the source honouring the output schema it already declares |
 | hash key normalization | [spark_hash_partition.cu ~L148](../../cpp/src/spark_hash_partition.cu#L148) | INT8/INT16 are value-cast to INT32 and TIMESTAMP_DAYS bit-cast, so the 4-byte kernel hashes Spark-identical bytes. Feeds the hash alone and never reaches a returned value, like `merge_m2`'s INT32 count ([#94](../tickets.md#t94)) |
 
-Every one of the first seven is invisible in all of today's goldens, so a coercion that is
-wrong presents as a wrong number rather than a wrong plan, and the two engines can disagree
-about a cast neither plan states. In the new mode each is a `CastExprNode` the planner
-emits — the aggregate ones inside the `final` expressions above, the union ones as the
-per-branch `GpuProject` casts the node set already calls for, the expression ones at the
-point of use — so the plan golden shows every type change and a reviewer sees the coercion
-instead of inferring it.
+All seven are invisible in today's goldens, so a wrong coercion presents as a wrong number
+rather than a wrong plan, and the two engines can disagree about a cast neither plan states.
+In the new mode each is a `CastExprNode` the planner emits — the aggregate ones inside the
+`final` expressions above, the union ones as the per-branch `GpuProject` casts the node set
+already calls for, the expression ones at the point of use — so every type change appears in
+the plan golden.
 
 ### DISTINCT lowers to grouping
 
@@ -883,13 +871,12 @@ Backend choice is a turbofish at the entry point — `batch_partitioned_driver::
 — not a `BackendSelector` consulted per node. The whole driver is instantiated twice, once
 per backend, and the mock backend the driver tests use is a third instantiation.
 
-Going static also *simplifies* the typestate: consuming methods take a plain `self`, and
-`JoinExecutor` can carry an associated `type Probing`. Both had to be spelled around when
-these traits were stored as `Box<dyn …>` — `self: Box<Self>` because a bare receiver is not
-`dyn`-compatible, and a returned `Box<dyn ProbingJoin>` because an associated type forces
-every `dyn JoinExecutor` to name it (`E0038` and `E0191` respectively; both were compiled to
-confirm). Neither constraint survives the switch, so the declarations above are the simpler
-form and they compile as written.
+Going static also *simplifies* the typestate. Stored as `Box<dyn …>`, consuming methods
+needed `self: Box<Self>` (a bare receiver is not `dyn`-compatible), and `JoinExecutor` could
+not carry an associated `type Probing` — it had to return a `Box<dyn ProbingJoin>`, since an
+associated type forces every `dyn JoinExecutor` to name it. `E0038` and `E0191`
+respectively, both compiled to confirm. Neither constraint survives the
+switch, so the declarations above are both the simpler form and the one that compiles.
 
 The cost is one type per category per backend: `B::Exec` has to cover filter, project,
 sort and partial aggregate, so each backend defines an enum over its operators and
@@ -923,10 +910,10 @@ executor state because the count it derives from is *cross-lane*, and an `Unload
 is per lane — only the driver can hold that count (see [Drivers](#drivers)).
 
 Under a backend-agnostic `Batch` this could be an ordinary `ExecExecutor` with a `GpuBatch`
-in and a `CpuBatch` out; once `exec` is `B::Batch -> B::Batch` it cannot. That is an
-improvement rather than a tax: unload is the only place data leaves the device, and it now
-says so in the type. The driver still collects the root node's output batches, and
-`NodeKind::Sink` remains a plan-level fact.
+in and a `CpuBatch` out; once `exec` is `B::Batch -> B::Batch` it cannot. An improvement
+rather than a tax: unload is the only place data leaves the device, and the type now says
+so. The driver still collects the root node's output batches, and `NodeKind::Sink` remains a
+plan-level fact.
 
 **Instantiation model.** Lane-scoped categories — Source, Exec, BatchAccumulator, Join,
 Unload — get one executor instance per (node, lane), created when the driver first enters
@@ -1056,9 +1043,8 @@ what follows is that design, not a sketch of it.
   decides which call the lane's current input state calls for, makes exactly one call, and
   reports the outputs plus whether the lane will ever produce again.
 
-The unit changed against the draft. A chunk is **one node's lane**, not a chain of them,
-because min-height selection walks a batch up a chain node by node on its own and a
-chain-walking driver would duplicate the scheduler.
+A chunk is **one node's lane**, not a chain of them: min-height selection walks a batch up a
+chain node by node on its own, so a chain-walking driver would duplicate the scheduler.
 
 ### The scheduling rule
 
@@ -1163,11 +1149,10 @@ non-empty. A satisfied node is marked done as it is held, so the hold cannot sto
 reporting and strand its parent — the case that forces this is `LIMIT 0`, satisfied before
 a single step.
 
-Per batch the driver then decides, before calling `unload`, whether the batch falls
-entirely outside the interval (release the handle, **no call**), straddles an end (call with
-a row range), or lies inside it (call with the full range). A mid-plan `GpuLimit` makes the
-same three-way decision inside its own executor, slicing rather than narrowing an export.
-See the limit lowering rule.
+Per batch the driver then makes the three-way decision the limit lowering rule states —
+outside the interval, straddling an end, inside it — before calling `unload`. A mid-plan
+`GpuLimit` makes the same decision inside its own executor, slicing rather than narrowing an
+export.
 
 ### The test surface
 
@@ -1218,12 +1203,14 @@ consumed inputs, add outputs at actual `byte_size()`, refresh the one executor's
 `resident_bytes()` delta, and post-check. The measured `CallStats.scratch_bytes` exists so model
 quality is observable: under-estimates are recorded with their magnitude. Both backends
 measure — the CPU directly, the GPU through RMM allocator hooks — so `None` means this run
-was not instrumented, not that the backend cannot report. **It is not an invariant that the model is never under.** `scratch_bytes` is an
-estimate — a join's rests on the optimizer's cardinality figure, a filter's on assumed
-selectivity — so it will sometimes come in low, and asserting otherwise would make the
-suite red for something that is not a defect. The enforcer's contract is "fail cleanly when the accounted
-peak exceeds budget", not "the budget is never exceeded" — same class of guarantee as the
-legacy `ResidentEnforcer`.
+was not instrumented, not that the backend cannot report.
+
+**Model ≥ measured is not an invariant.** `scratch_bytes` rests on the optimizer's
+cardinality figure for a join and on assumed selectivity for a filter, so it will sometimes
+come in low, and asserting otherwise would make the suite red for something that is not a
+defect. The enforcer's contract is "fail cleanly when the accounted peak exceeds budget",
+not "the budget is never exceeded" — the same class of guarantee as the legacy
+`ResidentEnforcer`.
 
 ## GPU execution through the frozen FFI
 
@@ -1249,25 +1236,25 @@ structure. The mapping:
 
 | GpuNode | fb seqs emitted | driven as |
 |---|---|---|
-| `GpuLoadParquet` | `GpuScan` | `peacock_executor_execute_scan_rowgroups(seq, row_groups…)` once per batch — the additive entry point, plumbing the existing `row_groups_override` parameter (`cpp/src/peacock/operators.h` ~L32) to the ABI |
-| `GpuFilter` / `GpuProject` / `GpuAggregate` | same-kind node | generic map arm, one call per batch |
-| `GpuSort` | `GpuSort` | map arm per batch; per-batch `fetch` for top-N |
-| `GpuAccumulateBatchesAndSort` | `GpuSort` + `GpuSortPreservingMerge` | per-batch sort calls, then one merge-arm call at done |
-| `GpuMergeSortedPartitions` | `GpuSortPreservingMerge` | one merge-arm call over all sorted handles, partition-major order |
-| `GpuCoalesceAllBatches` | `GpuCoalescePartitions` | one collapse-arm call over the partition's batch handles |
-| `GpuAggregateBatches` | `GpuCoalescePartitions` + `GpuAggregate` (merge aggregators, with `final` when it finalizes) | one concat + one aggregate call per compaction, and again at done |
-| `GpuEmitPartitions` | `GpuRepartition(Hash, 1→N)` | repartition arm, one call per batch → N handles |
-| `GpuJoin` | `GpuHashJoin`, plus finish-pass seqs (key project, concat, anti/semi join, pad project) per #136 | map arm per (partition, probe batch) |
-| `GpuCrossJoin` / `GpuNestedLoopJoin` | same-kind node | one map-arm call |
+| `GpuLoadParquet` | `CudfScan` | `peacock_executor_execute_scan_rowgroups(seq, row_groups…)` once per batch — the additive entry point, plumbing the existing `row_groups_override` parameter (`cpp/src/peacock/operators.h` ~L32) to the ABI |
+| `GpuFilter` / `GpuProject` / `GpuAggregate` | same-kind node (`CudfFilter` / `CudfProject` / `CudfAggregate`) | generic map arm, one call per batch |
+| `GpuSort` | `CudfSort` | map arm per batch; per-batch `fetch` for top-N |
+| `GpuAccumulateBatchesAndSort` | `CudfSort` + `CudfSortPreservingMerge` | per-batch sort calls, then one merge-arm call at done |
+| `GpuMergeSortedPartitions` | `CudfSortPreservingMerge` | one merge-arm call over all sorted handles, partition-major order |
+| `GpuCoalesceAllBatches` | `CudfCoalescePartitions` | one collapse-arm call over the partition's batch handles |
+| `GpuAggregateBatches` | `CudfCoalescePartitions` + `CudfAggregate` (merge aggregators, with `final` when it finalizes) | one concat + one aggregate call per compaction, and again at done |
+| `GpuEmitPartitions` | `CudfRepartition(Hash, 1→N)` | repartition arm, one call per batch → N handles |
+| `GpuJoin` | `CudfHashJoin`, plus finish-pass seqs (key project, concat, anti/semi join, pad project) per #136 | map arm per (partition, probe batch) |
+| `GpuCrossJoin` / `GpuNestedLoopJoin` | same-kind node (`CudfCrossJoin` / `CudfNestedLoopJoin`) | one map-arm call |
 | `GpuLimit` | none — `peacock_executor_slice_handle` on the two straddling batches, and nothing at all on the rest | not a seq: the bounds are runtime values. Root-adjacent there is no node either — the interval rides `GpuUnload`'s fetch |
-| `GpuMergePartitions` / `GpuUnion` / `GpuInterleave` | none (union casts are `GpuProject` seqs) | `BatchForwarder` routing in the driver, zero FFI calls |
+| `GpuMergePartitions` / `GpuUnion` / `GpuInterleave` | none (union casts are `CudfProject` seqs) | `BatchForwarder` routing in the driver, zero FFI calls |
 | `GpuUnload` | none | `peacock_result_from_handle` per handle, over the row range the driver supplies; batches outside a root-adjacent limit's interval are released without a call |
 
 This mapping is a first-class deliverable: documented here, unit-tested (each `GpuNode`
 kind → expected seq set and call pattern), because it is the load-bearing trick that
-keeps C++ frozen. The fb names in the table are the pre-T1 ones; after the T1 rename
-they read `Cudf*` (`CudfScan`, `CudfRepartition`, …) and this table is updated in that
-commit.
+keeps C++ frozen. The fb names in the table are the post-T1 ones (`CudfScan`, `CudfRepartition`, …); the
+`GpuNode` column is this mode's own vocabulary, and keeping the two visually apart is what
+the rename bought.
 
 **The limit lowering rule.** A per-batch `GpuLimit` call cannot be correct: the fb node's
 skip/fetch are frozen per seq, so every batch would be truncated to the same bounds
@@ -1311,11 +1298,10 @@ layout follows the input — a limit is a prefix of its stream, so it neither in
 batch count nor disturbs an order.
 
 The slice is where the third ABI symbol goes, and holding nothing is what it buys. Frozen
-skip/fetch would only be correct against a table starting at row 0 of the stream: drop the
-offset prefix and every bound shifts by a runtime amount — where the batch boundaries fell,
-which depends on upstream selectivity and fan-out — that a plan constant cannot carry. So
-with frozen bounds the node must hold the prefix, and `OFFSET 1000000 LIMIT 10` would hold
-a million rows to return ten. With call-time bounds it holds none.
+skip/fetch are correct only against a table starting at row 0 of the stream: drop the offset
+prefix and every bound shifts by where the batch boundaries fell, a runtime amount depending
+on upstream selectivity and fan-out. So a frozen-bounds node must hold the prefix, and
+`OFFSET 1000000 LIMIT 10` would hold a million rows to return ten.
 
 Two additive C++/header changes, both in `gpu_executor.cpp` + `peacock_gpu.h`, both
 additive next to the existing symbols with legacy paths untouched:
@@ -1339,13 +1325,10 @@ additive next to the existing symbols with legacy paths untouched:
   The copy is bounded by the rows kept — which are the rows about to be used — and at most
   two batches per limit are ever sliced.
 
-Three additive symbols is more than the design would like, so each earns its place: the
-first because incremental loading is impossible without it, and the other two because a
-limit that cannot narrow a batch at runtime has to hold everything ahead of the rows it
-wants. They are not interchangeable — one produces a result, the other a handle — though
-the fetch range could in principle be dropped in favour of slicing and then exporting
-whole, at the cost of one bounded device copy immediately before a PCIe transfer of the
-same rows.
+The two limit symbols are not interchangeable — one produces a result, the other a handle —
+though the fetch range could in principle be dropped in favour of slicing and then exporting
+whole, at the cost of one bounded device copy immediately before a PCIe transfer of the same
+rows.
 
 ## Determinism rules
 
@@ -1399,9 +1382,9 @@ output_bytes=B`, with a `pK: in_rows=… out_rows=… out_bytes=…` sub-line pe
 skeleton is kept — it is what makes the two mode families comparable by eye — and four
 things change inside it.
 
-**Every column reference renders `name@ordinal`.** Today three conventions coexist, and all
-three are ours: each wrapper's `extra_display_info` composes its own text, so none of this
-is DataFusion's to fix. Filter predicates, project expressions, sort keys, join keys and
+**Every column reference renders `name@ordinal`.** Three conventions coexist today, all
+three ours — each wrapper's `extra_display_info` composes its own text, so none of it is
+DataFusion's to fix. Filter predicates, project expressions, sort keys, join keys and
 hash keys already print `name@ordinal` (`on=[(c_custkey@0, o_custkey@1)]`,
 `partitioning=Hash([c_count@0], 8)`). Against that, `group_by=[c_count]` and the scan's
 `projections=[c_custkey, c_mktsegment]` print a bare name with no position
@@ -1487,8 +1470,7 @@ Done — struck through, and folded into this document where it changed a decisi
 
 - ~~the trait set, both drivers, and the memory enforcer with the accounting formula~~;
 - ~~the scheduling rule~~ — height, order, min-height-first with leftmost ties, every lane
-  of the chosen node. Push behaviour falls out of it rather than being programmed, and the
-  Drivers section is rewritten from that;
+  of the chosen node; the Drivers section is rewritten from it;
 - ~~the backpressure rules~~ — a join in its build phase holds its whole probe subtree; a
   satisfied limit holds its whole subtree for good. Both were findings, not designs;
 - ~~queues need no cap~~ and ~~`Pending` does not exist~~ — the draft's two flow-control
@@ -1500,20 +1482,16 @@ Done — struck through, and folded into this document where it changed a decisi
   intersection with the divergences named;
 - ~~every query checked against a single-shot oracle at five partitioning configs~~, the
   prototype's version of two-engine correctness;
-- ~~both limit lowerings~~ — `GpuUnload` carries `skip`/`fetch` and is its own executor
-  category taking a row range per call; the driver holds the cross-lane count, releases
-  batches it wants nothing from without calling `unload`, and narrows the two that
-  straddle. The mid-plan `GpuLimit` streams over a one-partition input, holding nothing.
-  Tests assert on the *calls*, since only those distinguish a limit from a filter applied
-  after the transfer;
+- ~~both limit lowerings~~, as the limit rule now states them. One finding survives here:
+  the tests must assert on the *calls*, since only those distinguish a limit from a filter
+  applied after the transfer;
 - ~~the stress surface~~ — a plan rewriter (`operators/injection.py`) rather than
   hand-written variants: one plan re-run at every partitioning, batch size, empty-lane and
   hash-placement preset, with `GpuCoalesceBatches[target]` injected above every source
   (#139's node, proving the drivers tolerate it anywhere) and sources emitting zero-row
-  batches at a set probability. It carries one rule worth quoting into the planner's tests
-  — a join may be re-partitioned only when both sides are hash-partitioned on the join
-  keys, since otherwise its lane count is load-bearing and splitting it joins matching
-  slices;
+  batches at a set probability. It carries one rule the planner's tests should quote: a
+  join may be re-partitioned only when both sides are hash-partitioned on the join keys,
+  since otherwise its lane count is load-bearing and splitting it joins matching slices;
 - ~~empty partitions, empty batches, skewed hashes, the flow-and-backpressure surface,
   determinism (two runs, identical batch traces)~~;
 - ~~validation scope~~ — partitioning and `SingleBatch` constraints in scope, schema checks
@@ -1591,13 +1569,9 @@ expectations (join build, cross/nlj inputs), captured-index checks. Unit tests: 
 constructed wrong combinations error, right ones pass; then run validation over every
 canonized corpus plan from T6.
 
-**T9 — additive ABI.** Both planned C++/header changes in `gpu_executor.cpp` +
-`peacock_gpu.h`; any *further* surface change goes through a proposal to the human, per
-the constraint section. `peacock_executor_execute_scan_rowgroups`, plumbing
-`row_groups_override`. A row interval on `peacock_result_from_handle` —
-`(offset, length)`, `length = UINT64_MAX` meaning to the end, so existing callers change
-by two arguments and legacy behaviour is the default. And
-`peacock_executor_slice_handle`, consuming its input handle and returning a new one.
+**T9 — additive ABI.** The three approved symbols in `gpu_executor.cpp` + `peacock_gpu.h`,
+signatures as [GPU execution](#gpu-execution-through-the-frozen-ffi) gives them; any
+*further* surface change goes through a proposal to the human, per the constraint section.
 Rust bindings for all three; `GpuBatch` handle plumbing (session ref, `Drop` release,
 `ManuallyDrop` consume boundary). Tests: a C++ gtest in the plan-executor suite reading
 disjoint row-group subsets and asserting union == whole-scan; a gtest exporting ranges of
@@ -1630,21 +1604,12 @@ nested-loop joins on the same trait: the full capability matrix as a test table 
 finish pass via key accumulation (#136), null_equals_null on the finish join.
 
 **T13 — drivers and enforcer.** Both drivers over a mock `Backend` impl — the third
-instantiation, alongside CPU and GPU;
-`batch_partitioned_driver` tested against a mocked single-partition driver; round-robin
-determinism cases; the full flow-and-backpressure suite from the drivers section, with
-mock operators: skewed emit (every queue ≤ one batch per lane, starved lane never
-runnable), accumulator-ended lane (one batch per visit, bytes in `resident_bytes()`),
-merge-sorted over a skewed emit (no livelock), limit early exit as a release case
-(`is_satisfied` makes the whole subtree non-runnable, pulls cease through merges and
-emits, all in-flight batches dropped; `unload` is never *called* for a batch outside
-`start..limit` and is called with the right range for the two that straddle — asserted
-call by call, since a test on the returned rows alone passes just as well when every batch
-crossed the bus first), union with one child exhausted and one still producing, two-phase
-join with emits on both sides (probe queues empty until the build drains), nested shuffles
-holding all bounds simultaneously, interleave per-lane child rotation; the accounting
-formula with pre/post checks; enforcer trip ⇒ clean query failure; FFI-error ⇒
-query-fatal semantics.
+instantiation, alongside CPU and GPU; `batch_partitioned_driver` tested against a mocked
+single-partition driver; round-robin determinism cases; [the test
+surface](#the-test-surface) in full, with mock operators, each case asserting pull counts,
+queue bounds and batch release rather than returned rows. Plus the accounting formula with
+pre/post checks, enforcer trip ⇒ clean query failure, and FFI-error ⇒ query-fatal
+semantics.
 
 **T14 — recipe-plan serialization and GPU integration.** The GpuNode → fb-seq mapping
 table implemented and unit-tested (expected seq sets and call patterns per node kind);

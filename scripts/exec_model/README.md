@@ -34,22 +34,23 @@ python3 -m pytest scripts/exec_model/tests/test_plan.py::test_height_is_distance
 ```
 
 `tests/harness.py` is what makes both work: a `raises` context manager and a runner over
-the module's `test_*` functions, which is all this suite ever used pytest for. Each test
-file carries a four-line header that puts the repo root on `sys.path` and names its
-package when it is run as a script, so the relative imports resolve either way.
+the module's `test_*` functions, which is all this suite ever used pytest for. Each test file carries a
+five-line header that puts the repo root on `sys.path` and names its package when it is run
+as a script, so the relative imports resolve either way.
 
 ## What is here
 
 | File | Holds |
 |---|---|
 | `layout.py` | `NodeKind`, `KeyDistribution`, `SortOrder`, `BatchLayout`, `PartitionLayout` |
+| `errors.py` | `PlanError`, `DriverError`, `ResidentBudgetExceeded` — what each failure class means |
 | `batch.py` | the `Batch` value type and `CallStats` |
 | `executors.py` | `Executor` plus the seven executor traits and `LaneEvent` |
 | `forwarder.py` | `BatchForwarder` and the merge / union / interleave mappings |
 | `node.py` | `GpuNode`, `NodeExecutors`, `ExecutorBackends`, `BackendSelector` |
 | `plan.py` | heights, left-to-right order, whole-tree structural validation, which limit lowering applies |
 | `schema.py` | what a node declares about its columns — annotations, not types |
-| `accounting.py` | the resident formula, the cached-delta executor total, and the enforcer |
+| `accounting.py` | `ResidentAccountant` — the resident formula, the cached-delta executor total, and the budget trip (`ResidentBudgetExceeded`) |
 | `limit.py` | `RowInterval`, `RowRange`, and the per-batch decision behind the two lowerings |
 | `runtime.py` | per-node queue state and one lane's view of its inputs |
 | `batch_single_partition_driver.py` | one lane of one lane-scoped node |
@@ -63,13 +64,13 @@ package when it is run as a script, so the relative imports resolve either way.
 | `operators/partition_ops.py` | the hash scatter |
 | `operators/joins.py` | the join capability matrix |
 | `operators/nodes.py` | `GpuNode` implementations wiring the operators into plans |
-| `operators/validation.py` | `validate_schemas_and_partitions()` — layout expectations and the aggregate state chain |
+| `operators/validation.py` | the reusable checks `validate_schemas_and_partitions()` is composed from — layout expectations and the aggregate state chain; the method itself is on each node in `nodes.py` |
 | `operators/injection.py` | `LayoutInjector` — rewrite a plan's partitioning, batching and hash placement |
 
 Traits are declarations only. The driver tests drive mocks (`tests/mocks.py`) because the
 strategy under test is *which node runs when*; the operator tests drive the real thing.
-Both go through the same two drivers, selected by `BackendSelector` — which is the point
-of the selector existing.
+Both reach the same two drivers through `BackendSelector`, which is what the selector is
+for.
 
 ### Keeping pandas inside cuDF's vocabulary
 
@@ -101,19 +102,12 @@ join waiting on its other side, and putting the build side on the left removes t
 `run()` fails loudly if it ever ends with nothing runnable and a queue non-empty.
 
 One rule sits on top of the height rule: **a join in its build phase holds back its whole
-probe subtree**. Until `set_build` has run the join cannot consume a probe batch, so
-without the hold the probe side runs anyway and piles up in a queue nothing will drain.
-The hold is transitive over every edge on the path to the root — blocking only the join's
-direct child would move the pile one node down rather than remove it. It cannot deadlock:
-plans are trees, so a join's build subtree is disjoint from its probe subtree and is never
-held by this rule, and completing the build is what lifts the hold. Nested joins resolve
-outermost-first for the same reason.
+probe subtree**, transitively to the root. F3 below has the reasoning and the evidence.
 
-The driver split follows the spec: `batch_partitioned_driver` owns the tree, the queues,
-the schedule and the three cross-lane categories, and delegates each lane-scoped call to
-`batch_single_partition_driver`. What changed against the spec's formulation is the
-*unit*: a chunk is one node's lane rather than a chain of them, because min-height
-selection walks a batch up a chain node by node on its own.
+`batch_partitioned_driver` owns the tree, the queues, the schedule and the three cross-lane
+categories, and delegates each lane-scoped call to `batch_single_partition_driver`. The unit
+is one node's lane rather than a chain of them: min-height selection walks a batch up a
+chain node by node on its own.
 
 ## Layout injection
 
@@ -136,25 +130,21 @@ works under a well-spread one is broken rather than unlucky.
 
 ## The limit
 
-`start..limit` is decided by where it sits, because a per-batch call with frozen skip/fetch
-cannot be correct — two batches would yield twice the limit.
+Both lowerings are implemented, as the spec's limit rule states them.
 
-Feeding only the sink it is **not a node at all**: `skip`/`fetch` are `GpuUnload`'s, which
-is where they belong, since a limit over a stream about to leave the device is a statement
-about which rows are worth moving across the boundary. The driver counts rows **across
-lanes** — an unload executor is per lane, so only the driver can — and per batch either
-releases the handle without a call, narrows the call to a row range, or passes it whole.
-Once `is_satisfied` holds, the node's whole subtree stops being runnable, the same shape as
-the join's build hold but never lifting; the run then ends with lanes not done and queues
-non-empty, which is what the in-flight release is for.
+Feeding only the sink it is **not a node at all**: `skip`/`fetch` are `GpuUnload`'s. The
+driver counts rows **across lanes** — an unload executor is per lane, so only the driver
+can — and per batch either releases the handle without a call, narrows the call to a row
+range, or passes it whole. Once `is_satisfied` holds, the node's whole subtree stops being
+runnable: the join hold's shape, but never lifting, so the run ends with lanes not done and
+queues non-empty and the in-flight release is what cleans up.
 
-Anywhere else it **stays a node**, over a one-partition input the planner guarantees
-(`GpuMergePartitions` beneath it — an interval over N lanes names no rows) and any number
-of batches. It streams, holding nothing: a batch outside the interval is released without
-a call, one inside is forwarded untouched, and only the two that straddle its ends are
-sliced, through `peacock_executor_slice_handle`, whose bounds are call arguments rather
-than plan constants. Once satisfied it is held exactly as the sink's is — and marked done
-as it is held, so its parent is not left waiting for a lane that has in fact finished.
+Anywhere else it **stays a node**, over the one-partition input the planner guarantees and
+any number of batches, streaming and holding nothing: only the two batches straddling
+`start..limit` are sliced, through `peacock_executor_slice_handle`, whose bounds are call
+arguments rather than plan constants. Once satisfied it is held exactly as
+the sink's is — and marked done as it is held, so its parent is not left waiting for a lane
+that has in fact finished.
 
 `limit.py` holds `RowInterval` and `RowRange`; on the GPU the range is
 `peacock_result_from_handle`'s new arguments, so a trimmed unload moves only the rows
@@ -165,10 +155,9 @@ feature.
 
 ## Findings
 
-Numbered because the spec's Drivers section is to be rewritten from them. **Cite them by
-title, not by number** — the numbers have already shifted once as findings merged, and
-three of these are meant to be quoted into `llm-wiki/tasks/batch_partitioned_executor.md`.
-F2, F3 and F5 are the three that bear on that rewrite.
+The spec's Drivers section was rewritten from these. **Cite them by title, not by
+number** — the numbers have already shifted once as findings merged. F2, F3 and F5 are the
+three that rewrite carried.
 
 F1. **The push behaviour falls out of the height rule alone.** No chain-walking logic is
    needed — `test_a_batch_is_carried_to_the_root_before_the_next_one_is_produced`.
@@ -231,8 +220,8 @@ F7. **A join's build lane must deliver exactly one batch — including an empty 
 F8. **Validation splits by what the rule is about, not by convenience.** Whole-tree facts —
    arity, lane-count agreement, the emitter's single-lane input, the build side's
    `SingleBatch` — live in `plan.py`, one owner. What a node needs *of its children* lives
-   in `validate_schemas_and_partitions()` (`operators/validation.py`), because only there
-   can the message name the fix: "the planner inserts GpuMergePartitions below it" rather
+   in its `validate_schemas_and_partitions()`, composed from the checks in
+   `operators/validation.py`, because only there can the message name the fix: "the planner inserts GpuMergePartitions below it" rather
    than "this category is 1:1 per lane". That half covers hash distribution, sortedness,
    batch layout, and the aggregate state chain — a merge checks that the state it reads is
    the state its own partial declared, same aggregate and same positions, which is
