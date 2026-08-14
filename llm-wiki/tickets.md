@@ -16,7 +16,7 @@ reference still resolves there.
 |---|--:|---|
 | [Critical correctness](#critical-correctness) | 14 | #103 #80 #59 #46 #47 #60 #121 #122 #123 #118 #119 #120 #117 #41 |
 | [Blockers for disabled coverage](#blockers-for-disabled-coverage) | 15 | #97 #23 #32 #65 #62 #91 #95 #57 #45 #63 #56 #55 #115 #96 #143 |
-| [Performance / architecture](#performance--architecture) | 18 | #150 #149 #148 #19 #16 #20 #71 #101 #73 #110 #75 #136 #137 #138 #139 #140 #141 #142 |
+| [Performance / architecture](#performance--architecture) | 19 | #150 #149 #148 #19 #16 #20 #71 #101 #73 #110 #75 #136 #137 #138 #139 #140 #141 #144 #142 |
 | [Infrastructure / process](#infrastructure--process) | 16 | #113 #114 #116 #126 #132 #131 #130 #129 #128 #127 #124 #125 #13 #94 #69 #49 |
 
 ## Critical correctness
@@ -539,6 +539,30 @@ input is already one partition or the aggregate is keyless. Skipping when the ke
 merely small (collapse to one partition, run `GpuAggregateBatches[final]` once, avoid the
 shuffle) needs a cardinality estimate that does not exist — the estimators are constants
 (#19). When stats land, add the rule and regenerate the affected plan goldens.
+
+<a id="t144"></a>
+### #144 — multiple DISTINCT arguments need a gid-multiplying expand
+**Priority: low** — no query in either benchmark has this shape.
+
+`count(DISTINCT a), count(DISTINCT b)` over *different* expressions is the one distinct shape
+the batch-partitioned lowering cannot express. Single-distinct lowers to grouping on the
+distinct argument (see the DISTINCT subsection of
+`llm-wiki/tasks/batch_partitioned_executor.md`), and non-distinct companions ride along
+because grouping by the distinct argument partitions the rows without losing their
+multiplicity — Σ over the inner groups recovers each companion's total. Two distinct
+arguments break that: one inner grouping can dedup `a` or `b`, not both, and grouping by
+`(a, b)` dedups neither.
+
+The standard fix is Spark's `RewriteDistinctAggregates`: an expand step multiplies each input
+row into one row per distinct argument, tagged with a group id, the inner aggregate groups by
+`(group keys, gid, the arguments)`, and the outer aggregate computes each distinct count from
+the rows carrying its own gid. That needs a new node — the row-multiplying expand — which is
+why it is a ticket rather than a planner tweak.
+
+Not to be confused with [#65](#t65), whose gid is the ROLLUP/CUBE `__grouping_id` and a
+different mechanism entirely; the two would coexist, and a query with both would carry two
+independent gid columns. Until this lands the planner refuses the shape at plan time, which
+is the scope section's rule for unsupported shapes inside supported features.
 
 <a id="t142"></a>
 ### #142 — batch-partitioned: no recourse for oversized batches

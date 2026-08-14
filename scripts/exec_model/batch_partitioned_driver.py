@@ -20,8 +20,8 @@ out-queue is drained by its parent before the producer runs again, since the par
 height is strictly lower. The one shape that breaks it is a join in its build phase — it
 cannot consume a probe batch yet, so nothing drains its probe child — and that is closed
 by holding the join's whole probe subtree until the build is set (`_held_by_a_join_build`).
-With the hold in place the bound is unconditional, and the spec's cap-Q mechanism is
-unnecessary.
+With the hold in place the bound is unconditional, and the draft's cap-Q mechanism is
+unnecessary — nothing here caps a queue.
 
 Lane-scoped work is delegated to `batch_single_partition_driver`; this driver owns the
 tree, the queues, the schedule, and the three cross-lane categories.

@@ -171,7 +171,7 @@ F2, F3 and F5 are the three that bear on that rewrite.
 F1. **The push behaviour falls out of the height rule alone.** No chain-walking logic is
    needed — `test_a_batch_is_carried_to_the_root_before_the_next_one_is_produced`.
 
-F2. **Queues are self-bounding; the spec's cap-Q is unnecessary.** A producer's out-queue
+F2. **Queues are self-bounding; the draft's cap-Q is unnecessary.** A producer's out-queue
    is drained by its parent before the producer can run again, because the parent's height
    is strictly lower. No node holds more than one batch per lane, on any shape — the check
    runs inside the `run()` helper of `test_partitioned_driver.py`, so every plan the suite
