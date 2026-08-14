@@ -13,13 +13,97 @@
 #include <cudf/table/table.hpp>
 #include <cudf/utilities/default_stream.hpp>
 
+#include <cuda_runtime.h>
+
 #include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
 namespace peacock {
+
+// ============================================================================
+// Per-node timing (benchmark mode)
+// ============================================================================
+// OFF by default; see the contract on `set_node_timing` in plan_executor.h for
+// why measuring at all requires a stream sync, and why that sync must not be
+// paid by the normal path.
+
+namespace {
+std::atomic<bool> g_node_timing{false};
+
+/// Stopwatch over one unit of GPU work. Reports 0 (and touches neither the clock
+/// nor the driver) when timing is off, so the disabled path stays a bool load.
+///
+/// PRECONDITION: the default stream is IDLE at construction. Every timed region
+/// ends in `stop_us`, which synchronizes, so consecutive timers satisfy this by
+/// induction — the first one after a node boundary inherits an already-drained
+/// stream from the previous node's last `stop_us`.
+class ScopedNodeTimer {
+ public:
+  ScopedNodeTimer() : on_(g_node_timing.load(std::memory_order_relaxed)) {
+    if (on_) start_ = std::chrono::steady_clock::now();
+  }
+
+  /// Drain the stream, then read the clock. Idempotent: a second call returns 0,
+  /// so a region can be stopped early without double-counting.
+  uint64_t stop_us() {
+    if (!on_) return 0;
+    on_ = false;
+    auto err = cudaStreamSynchronize(cudf::get_default_stream().value());
+    if (err != cudaSuccess)
+      throw std::runtime_error(std::string("CUDA error while timing a plan node: ") +
+                               cudaGetErrorString(err));
+    auto dt = std::chrono::steady_clock::now() - start_;
+    return static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::microseconds>(dt).count());
+  }
+
+ private:
+  bool on_;
+  std::chrono::steady_clock::time_point start_{};
+};
+}  // namespace
+
+void set_node_timing(bool enabled) { g_node_timing.store(enabled, std::memory_order_relaxed); }
+
+bool node_timing_enabled() { return g_node_timing.load(std::memory_order_relaxed); }
+
+uint64_t measure_timing_floor_us(unsigned samples) {
+  // Second-smallest needs two; the header promises the clamp rather than UB.
+  if (samples < 2) samples = 2;
+
+  // Measure the REAL ScopedNodeTimer rather than an open-coded imitation of it —
+  // an imitation would drift from the thing it claims to characterize the moment
+  // the timer changes. That means the switch has to be on, whatever the caller
+  // left it at, so save and restore it (RAII: `stop_us` can throw).
+  struct SwitchGuard {
+    bool prev;
+    explicit SwitchGuard(bool p) : prev(p) { g_node_timing.store(true, std::memory_order_relaxed); }
+    ~SwitchGuard() { g_node_timing.store(prev, std::memory_order_relaxed); }
+  } guard(g_node_timing.load(std::memory_order_relaxed));
+
+  // ScopedNodeTimer's precondition is an idle stream. Inside `execute_node` that
+  // holds by induction from the previous node's sync; here nothing guarantees it,
+  // so establish it once — otherwise the first sample would bill this function for
+  // whatever the caller left in flight.
+  if (auto err = cudaStreamSynchronize(cudf::get_default_stream().value()); err != cudaSuccess)
+    throw std::runtime_error(std::string("CUDA error while measuring the timing floor: ") +
+                             cudaGetErrorString(err));
+
+  std::vector<uint64_t> samples_us;
+  samples_us.reserve(samples);
+  for (unsigned i = 0; i < samples; ++i) {
+    ScopedNodeTimer timer;  // no work in between: this IS the floor
+    samples_us.push_back(timer.stop_us());
+  }
+  std::sort(samples_us.begin(), samples_us.end());
+  return samples_us[1];
+}
 
 // Children of a plan node in canonical order — MUST match the Rust walk's child
 // order so the caller's input handles line up with each node's inputs.
@@ -128,10 +212,13 @@ void NodeSession::execute_node(uint64_t seq, const uint64_t* input_handles,
         throw std::runtime_error("NodeSession::execute_node: out_handles buffer too small");
       for (size_t p = 0; p < n; ++p) {
         const fb::ScanBatch* b = scan->batches()->Get(static_cast<flatbuffers::uoffset_t>(p));
+        ScopedNodeTimer timer;
         TableResult result = execute_scan(scan, b->row_groups());
+        const uint64_t us = timer.stop_us();
         auto tv = result.table->view();
         if (out_stats)
-          out_stats[p] = NodeStats{static_cast<uint64_t>(tv.num_rows()), varlen_content_bytes(tv)};
+          out_stats[p] =
+              NodeStats{static_cast<uint64_t>(tv.num_rows()), varlen_content_bytes(tv), us};
         uint64_t handle = impl_->next_handle++;
         impl_->registry.emplace(handle, std::move(result));
         out_handles[p] = handle;  // map entries are stored in partition order 0..n-1
@@ -170,6 +257,9 @@ void NodeSession::execute_node(uint64_t seq, const uint64_t* input_handles,
         (node->node_type() == fb::PlanNodeKind_GpuSortPreservingMerge)
             ? node->node_as_GpuSortPreservingMerge()
             : nullptr;
+    // Everything above is host-side bookkeeping (handle lookups, table_view moves);
+    // the device work is the merge/concat + optional top-N slice below.
+    ScopedNodeTimer timer;
     if (spm && spm->exprs() && spm->exprs()->size() > 0 && views.size() > 1) {
       // (#99) SortPreservingMerge is a K-WAY MERGE by the SPM's sort keys, NOT a
       // concat: concat leaves the output only per-partition-sorted, so a downstream
@@ -207,9 +297,10 @@ void NodeSession::execute_node(uint64_t seq, const uint64_t* input_handles,
       // a plain in-order concat is the correct collapse.
       result.table = cudf::concatenate(views);
     }
+    const uint64_t us = timer.stop_us();
     auto tv = result.table->view();
     if (out_stats)
-      out_stats[0] = NodeStats{static_cast<uint64_t>(tv.num_rows()), varlen_content_bytes(tv)};
+      out_stats[0] = NodeStats{static_cast<uint64_t>(tv.num_rows()), varlen_content_bytes(tv), us};
     uint64_t handle = impl_->next_handle++;
     impl_->registry.emplace(handle, std::move(result));
     out_handles[0] = handle;
@@ -250,6 +341,17 @@ void NodeSession::execute_node(uint64_t seq, const uint64_t* input_handles,
     }
     std::vector<std::string> column_names =
         owned.empty() ? std::vector<std::string>{} : owned[0].column_names;
+    // The concat + hash-scatter is work shared by all N output partitions; it is
+    // charged to partition 0 so that Σ-over-partitions still equals the node's
+    // total. Only the per-partition slice copies below are separable.
+    //
+    // Partition 0's region stays open across both rather than being closed here and
+    // reopened in the loop: N output partitions must cost N timed regions, because
+    // that is what `nodes_at_or_below_floor` assumes when it compares a node against
+    // `sync_floor_us × partitions`. An extra region would put the node one floor
+    // above the threshold it is judged by, in the direction that reports unresolved
+    // work as resolved. Every other arm is already N-for-N.
+    ScopedNodeTimer shared_timer;
     std::unique_ptr<cudf::table> combined =
         (owned.size() == 1) ? std::move(owned[0].table) : cudf::concatenate(views);
 
@@ -273,14 +375,21 @@ void NodeSession::execute_node(uint64_t seq, const uint64_t* input_handles,
     for (size_t p = 0; p < n; ++p) {
       cudf::size_type start = offsets[p];
       cudf::size_type end = (p + 1 < n) ? offsets[p + 1] : total;
+      // p0 finishes the shared region opened above; p1..N-1 open their own. Each
+      // starts on a stream the previous stop_us drained, which is the timer's
+      // precondition.
+      std::optional<ScopedNodeTimer> own;
+      if (p > 0) own.emplace();
       // One owning table per partition (slice → deep copy so each handle owns memory).
       cudf::table_view slice = cudf::slice(pv, {start, end}).front();
       TableResult part;
       part.column_names = column_names;
       part.table = std::make_unique<cudf::table>(slice);
+      uint64_t us = (p == 0) ? shared_timer.stop_us() : own->stop_us();
       auto ptv = part.table->view();
       if (out_stats)
-        out_stats[p] = NodeStats{static_cast<uint64_t>(ptv.num_rows()), varlen_content_bytes(ptv)};
+        out_stats[p] =
+            NodeStats{static_cast<uint64_t>(ptv.num_rows()), varlen_content_bytes(ptv), us};
       uint64_t handle = impl_->next_handle++;
       impl_->registry.emplace(handle, std::move(part));
       out_handles[p] = handle;
@@ -317,10 +426,12 @@ void NodeSession::execute_node(uint64_t seq, const uint64_t* input_handles,
       inputs.push_back(std::move(it->second));
       impl_->registry.erase(it);
     }
+    ScopedNodeTimer timer;
     TableResult result = execute_one(node, std::move(inputs));
+    const uint64_t us = timer.stop_us();
     auto tv = result.table->view();
     if (out_stats)
-      out_stats[p] = NodeStats{static_cast<uint64_t>(tv.num_rows()), varlen_content_bytes(tv)};
+      out_stats[p] = NodeStats{static_cast<uint64_t>(tv.num_rows()), varlen_content_bytes(tv), us};
     uint64_t handle = impl_->next_handle++;
     impl_->registry.emplace(handle, std::move(result));
     out_handles[p] = handle;

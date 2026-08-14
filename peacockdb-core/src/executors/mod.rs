@@ -44,6 +44,8 @@ pub use partitioned_cpu_executor::PartitionedCpuExecutor;
 #[cfg(not(feature = "rust-only"))]
 pub use all_at_once_gpu_executor::{AllAtOnceGpuExecutor, GpuExecutor};
 #[cfg(not(feature = "rust-only"))]
+pub use backend::gpu_node_executor::{measure_timing_floor_us, set_node_timing};
+#[cfg(not(feature = "rust-only"))]
 pub use full_table_gpu_executor::FullTableGpuExecutor;
 #[cfg(not(feature = "rust-only"))]
 pub use partitioned_gpu_executor::PartitionedGpuExecutor;

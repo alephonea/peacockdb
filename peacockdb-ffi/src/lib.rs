@@ -19,6 +19,9 @@ pub mod raw {
     pub struct PeacockNodeStats {
         pub rows: u64,
         pub varlen_content_bytes: u64,
+        /// Microseconds this output partition took; 0 unless
+        /// [`peacock_set_node_timing`] is on. A node's time is Σ over partitions.
+        pub time_us: u64,
     }
 
     #[link(name = "peacock_gpu")]
@@ -42,6 +45,23 @@ pub mod raw {
 
         pub fn peacock_result_free(result_bytes: *mut u8);
         pub fn peacock_last_error(executor: *mut PeacockExecutor) -> *const c_char;
+
+        /// Turn per-node timing on/off (process-global; OFF by default). When on,
+        /// `peacock_executor_execute_node` synchronizes the default stream at every
+        /// measurement boundary and fills `PeacockNodeStats::time_us`. The sync is
+        /// what makes the number real (cuDF work is async and this path has no sync
+        /// of its own) and also what makes it costly — hence opt-in. Used by the
+        /// `peacock_gpu_benchmarks` target.
+        pub fn peacock_set_node_timing(enable: i32);
+
+        /// Cost of the measurement itself, in microseconds: the same timed region a
+        /// node pays, around no work. A node's `time_us` is real work PLUS one of
+        /// these, so a node at or below this is below the method's resolution rather
+        /// than cheap. Report alongside; never subtract. Returns the second-smallest
+        /// of `samples` (clamped to >= 2), or 0 if CUDA errored.
+        ///
+        /// Needs a live CUDA context and no concurrent work on the default stream.
+        pub fn peacock_measure_timing_floor_us(samples: u32) -> u64;
 
         // --- node-by-node execution (unified node-executor interface) ---
         pub fn peacock_executor_begin_plan(

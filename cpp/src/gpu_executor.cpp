@@ -89,6 +89,28 @@ const char* peacock_gpu_version() {
 }
 
 // ---------------------------------------------------------------------------
+// Benchmark instrumentation
+// ---------------------------------------------------------------------------
+
+void peacock_set_node_timing(int enable) { peacock::set_node_timing(enable != 0); }
+
+uint64_t peacock_measure_timing_floor_us(unsigned samples) {
+  // No executor handle here, so no `last_error` to park a message in — print and
+  // return 0. A 0 floor is self-announcing in the output file (a floor of zero
+  // claims the instrumentation is free, which nothing believes), so it degrades
+  // to "unknown" rather than to a plausible lie.
+  try {
+    return peacock::measure_timing_floor_us(samples);
+  } catch (const std::exception& e) {
+    std::fprintf(stderr, "[peacock_measure_timing_floor_us] error: %s\n", e.what());
+    return 0;
+  } catch (...) {
+    std::fprintf(stderr, "[peacock_measure_timing_floor_us] unknown exception\n");
+    return 0;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Executor lifecycle
 // ---------------------------------------------------------------------------
 
@@ -178,7 +200,7 @@ int peacock_executor_execute_node(peacock_executor_t* executor, uint64_t seq,
   try {
     // out_stats is a caller array of out_cap, filled PER PARTITION (parallel to
     // out_handles); PeacockNodeStats and peacock::NodeStats are layout-identical
-    // ({uint64 rows; uint64 varlen_content_bytes}).
+    // ({uint64 rows; uint64 varlen_content_bytes; uint64 time_us}).
     size_t n_out = 0;
     executor->session->execute_node(
         seq, input_handles, input_child_counts, static_cast<size_t>(n_children),

@@ -35,3 +35,10 @@ __pycache__/
 
 # Local-only embedding source cache (fetch_embeddings.sh); never committed — data ships as parquet
 testdata/embeddings-cache/
+
+# Claude
+.claude/
+
+# The 26.02 build tree; cpp/build (25.02) is covered above and this one was not,
+# so a `git add cpp` swept 1069 build artifacts into a commit once.
+cpp/build26/

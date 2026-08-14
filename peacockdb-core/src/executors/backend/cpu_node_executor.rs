@@ -184,6 +184,7 @@ async fn cpu_scan_partitions(
             out_rows: stat.row_count,
             out_bytes: stat.output_bytes,
             row_groups: entry.row_groups.clone(),
+            time_us: 0, // CPU backend: timings are a GPU-benchmark concern only
         });
         out_parts.push(batches);
         merge_stats(&mut acc, stat);
@@ -265,7 +266,7 @@ fn cpu_hash_repartition(
         acc.row_count += out_rows;
         acc.output_bytes += out_bytes;
         acc.max_batch_rows = acc.max_batch_rows.max(out_rows);
-        part_stats.push(PartitionStat { out_rows, out_bytes, row_groups: Vec::new() });
+        part_stats.push(PartitionStat { out_rows, out_bytes, row_groups: Vec::new(), time_us: 0 });
         // Empty partition ⇒ no batch (the mapped-over child stream is just empty).
         out_parts.push(if out_rows == 0 { Vec::new() } else { vec![part] });
     }
@@ -351,6 +352,7 @@ impl NodeExecutor for CpuNodeExecutor {
                     out_rows: stat.row_count,
                     out_bytes: stat.output_bytes,
                     row_groups: Vec::new(),
+                    time_us: 0,
                 });
                 handles.push(self.store(batches));
                 merge_stats(&mut acc, stat);
@@ -385,6 +387,7 @@ impl NodeExecutor for CpuNodeExecutor {
                     out_rows: stat.row_count,
                     out_bytes: stat.output_bytes,
                     row_groups: Vec::new(),
+                    time_us: 0,
                 });
                 handles.push(self.store(batches));
                 merge_stats(&mut acc, stat);

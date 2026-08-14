@@ -24,7 +24,48 @@ struct NodeStats {
   /// Σ over var-length (string) output columns of content bytes
   /// (offsets[n]-offsets[0]); additive across columns, so one total suffices.
   uint64_t varlen_content_bytes = 0;
+  /// Wall-clock microseconds this OUTPUT PARTITION's work took, measured only
+  /// when node timing is enabled (see `set_node_timing`); 0 otherwise. A node's
+  /// time is Σ over its partitions, so the caller can sum without knowing which
+  /// arm of `execute_node` produced them.
+  uint64_t time_us = 0;
 };
+
+/// Enable/disable per-node timing. OFF by default, and deliberately so: measuring
+/// device work requires SYNCHRONIZING the default stream at every measurement
+/// boundary, which serializes what cuDF would otherwise pipeline. That is the right
+/// trade for a benchmark and the wrong one for everything else.
+///
+/// Without the sync a host-side timer around a cuDF call measures kernel
+/// SUBMISSION, not execution — and the node-by-node path (`NodeSession::execute_node`)
+/// has no sync of its own: `debug_sync` is only reached from `run_op`, i.e. the
+/// recursive all-at-once path. The one incidental sync here is
+/// `varlen_content_bytes`, which reads `chars_size` back to the host, and only for
+/// STRING columns — so timings taken without this flag would be skewed by whether a
+/// node happens to output strings.
+void set_node_timing(bool enabled);
+
+/// Current state of the timing switch (see `set_node_timing`).
+bool node_timing_enabled();
+
+/// Cost of the MEASUREMENT ITSELF, in microseconds: the same timed region every
+/// node pays, wrapped around no work at all (two `steady_clock` reads plus
+/// `cudaStreamSynchronize` on an already-idle stream).
+///
+/// Why a caller wants this. A node's reported `time_us` is real work PLUS one of
+/// these, and the sync's return latency is not small next to a cheap node. Without
+/// the floor printed alongside them, a reader cannot tell "this node is cheap" from
+/// "this node is below what the method can resolve" — the two look identical.
+///
+/// Returns the SECOND-smallest of `samples` (min 2, forced), matching how the
+/// benchmark picks a run: the outright minimum is the one most likely to be a
+/// scheduling accident. Deliberately NOT subtracted from node times anywhere —
+/// subtracting a floor from numbers that are individually noisier than it would
+/// manufacture zeros and hide exactly what it claims to expose.
+///
+/// PRECONDITION: no concurrent execution on the default stream (it synchronizes,
+/// and it flips the global timing switch for the duration).
+uint64_t measure_timing_floor_us(unsigned samples);
 
 /// Execute a FlatBuffer-encoded GPU plan and return the result table.
 /// Thin recursive wrapper over the single-node executor — the production fast path.

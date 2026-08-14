@@ -43,6 +43,14 @@ const INTENTIONALLY_NOT_IN_CI: &[(&str, Exemption)] = &[
         "needs the linked C++/CUDA executor; not built in the CPU tiers and not staged \
          for the GPU job",
     )),
+    ("peacock_gpu_benchmarks", Exemption::NotRun(
+        "GPU host only, tens of minutes, and it MEASURES rather than asserts — there is \
+         nothing for a merge gate to go red on. Correctness for the very same case list \
+         (all three targets include! common/gpu_cases.inc) is owned by \
+         test_gpu_full_table / test_gpu_partitioned, which is where a regression shows up. \
+         NOT Exemption::GpuJob: that variant claims membership in the gpu-tests staging \
+         array and is verified against it — this target is deliberately not in it",
+    )),
     ("diag_flip_audit", Exemption::NotRun(
         "diagnostic printer, no assertions — run by hand while #97/#95 gate the tp8 \
          rollout; wiring it to CI would add a step that cannot fail",
