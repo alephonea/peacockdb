@@ -448,6 +448,7 @@ the plan with `time_us` per node (and `p<k>:` sub-lines where N>1), then a trail
 | Field | Reading |
 |---|---|
 | `build_profile` | how the harness was compiled. `total_us − nodes_total_us` is that Rust; records from different profiles are not comparable on it |
+| `shared_work_charged_to` | which `p<k>` sub-line carries work a node does once for all its partitions — the hash scatter concatenates and scatters in one operation and bills p0, so a p0 far above its siblings is the accounting, not skew. Written whether or not the plan has a repartition, so absence means only "written before the field" |
 | `sync_floor_us` | what the timed region costs around no work. **Every node time includes one; do not subtract it** — a node at or below it is unresolved, not cheap |
 | `nodes_at_or_below_floor` | how much of the tree this file cannot resolve. 2/40 is a profile; 35/40 measured mostly its own instrument |
 | `nodes_total_us` | Σ of the node times |
