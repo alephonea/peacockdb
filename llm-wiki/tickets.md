@@ -277,12 +277,16 @@ Either way the record has to carry which allocator produced it, beside `build_pr
 it was produced must travel with that fact. Until then, node times are comparable with each
 other and not with the C++ numbers in `llm-wiki/reports/benchmark-minimal.md`.
 
-The same sweep settles a second divergence: the committed records were measured before the
-hash scatter stopped opening a region of its own, so every repartition node in them carries
-one floor and roughly 2.5% more than the current instrument produces (shuffle-additive tp8
-reads 931us committed against 865-890us measured after). Nothing asserts the records, so
-nothing is red; the set and the code simply disagree by one timed region per shuffle until
-someone re-sweeps.
+A sweep settles a second, smaller thing, and the two halves of it are worth separating. The
+records' SHAPE is current — verified across all 127 on 2026-08-14: all 88 hash-repartition
+nodes bill their shared concat+scatter to p0, every node with sub-lines sums exactly to its
+node line, and every at-floor count uses floor x partitions. Their VALUES are not. They were
+measured before the scatter stopped opening a timed region of its own, and that region ended
+in a stream sync sitting between the scatter and the slice copies, so it barriered execution
+as well as costing a floor — which is why the move is larger than a floor. Re-running the
+same cases after the change put 66 of 88 repartition nodes faster, median -2.5% against
+-0.6% for whole records; shuffle-additive tp8 reads 931us committed against 865-890us since.
+Nothing asserts the records, so nothing is red.
 
 <a id="t150"></a>
 ### #150 — store the embedding columns uncompressed; Snappy costs a third of a vector query to save 3%
