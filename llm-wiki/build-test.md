@@ -25,13 +25,13 @@ and `2gpu` rows also runs locally; large CPU batches go to verda.
 | CPU exec, resident OOM micro (Rust) | the enforcer trips at a tight budget, and the boundary is real | [q78 oom](../peacockdb-core/tests/test_cpu_oom.rs#L24), [q7 fits](../peacockdb-core/tests/test_cpu_oom.rs#L27) | cpp-cpu | 3 |
 | CPU exec bespoke (Rust) | wrapper stripping, routing predicate, instrumented stats | [test_execution_strips_gpu_nodes](../peacockdb-core/tests/test_cpu_executor_misc.rs#L102) | cpp-cpu | 5 |
 | CPU node-by-node parity (Rust) | the unified walk must equal the recursive path, byte for byte | [cpu_node_executor_matches_recursive](../peacockdb-core/tests/test_node_executor.rs#L16) | cpp-cpu | 1 |
-| GPU exec, full_table tp1-standard (Rust) | one run asserts per-node rows+cost vs `.cpu.txt` AND the final result | [scan_limit](../peacockdb-core/tests/test_gpu_full_table.rs#L24) | shad-gpu | 110 |
-| GPU exec, partitioned tp8-standard (Rust) | same on the real 8-way path, with per-partition asserts | [q6](../peacockdb-core/tests/test_gpu_partitioned.rs#L29) | shad-gpu | 17 |
+| GPU exec, full_table tp1-standard (Rust) | one run asserts per-node rows+cost vs `.cpu.txt` AND the final result | [scan_limit](../peacockdb-core/tests/common/gpu_cases.inc#L29) | shad-gpu | 110 |
+| GPU exec, partitioned tp8-standard (Rust) | same on the real 8-way path, with per-partition asserts | [q6](../peacockdb-core/tests/common/gpu_cases.inc#L154) | shad-gpu | 17 |
 | GPU↔comet murmur3 (Rust) | the linchpin gate: both sides place every row in the same partition, bit-exact | [gpu_spark_partition_ids_match_comet_live](../peacockdb-core/tests/test_inc2_conformance.rs#L131) | shad-gpu | 10 |
 | GPU all-at-once smoke (Rust) | whole-plan `peacock_execute` FFI; retires with [#110](tickets.md) | [scan_nation](../peacockdb-core/tests/test_gpu_executor_misc.rs#L18) | manual | 6 |
 | GPU per-node timing (Rust) | measures, asserts nothing: one `.benchmark.txt` per case, same list as the two GPU tiers ([`gpu_cases.inc`](../peacockdb-core/tests/common/gpu_cases.inc)) | [run_gpu_benchmark](../peacockdb-core/tests/peacock_gpu_benchmarks.rs) | manual | 127 |
 | Cost-model goldens (Rust) | `.cost.txt` derivation from `.cpu.txt` × `cost_model.conf` | [cost_goldens_match_and_total_is_byte_identical](../peacockdb-core/tests/test_cost_model.rs#L36) | cost-report | 2 |
-| Registry ↔ CSV (Rust) | each `cost-registry.csv` mode column matches the tests that exist, both directions | [full_table_columns](../peacockdb-core/tests/test_cpu_full_table.rs#L313), [partitioned_gpu_column](../peacockdb-core/tests/test_gpu_partitioned.rs#L88) | cpp-cpu ×4, shad-gpu ×2 | 6 |
+| Registry ↔ CSV (Rust) | each `cost-registry.csv` mode column matches the tests that exist, both directions | [full_table_columns](../peacockdb-core/tests/test_cpu_full_table.rs#L313), [partitioned_gpu_column](../peacockdb-core/tests/test_gpu_partitioned.rs#L46) | cpp-cpu ×4, shad-gpu ×2 | 6 |
 | CI wiring guard (Rust) | every Rust target must be named by a CI step — CI does not glob | [every_rust_test_target_is_named_by_ci](../peacockdb-core/tests/test_ci_coverage.rs#L284) | cost-report | 2 |
 | tp8 flip diagnostic (Rust) | prints would-be flips; a printer, no assertions | [diag_flip_audit](../peacockdb-core/tests/diag_flip_audit.rs#L135) | manual | 1 |
 | Lib unit (Rust) | config tiers, batch-size rule, resident model | [tiers_are_strictly_increasing](../peacockdb-core/src/config.rs#L119), [nested_join_build_sides_stack](../peacockdb-core/src/resident.rs#L165) | cpp-cpu | 9 |
@@ -297,10 +297,10 @@ stack on every switch):
 The benchmark row shares the target *root* with the correctness builds on purpose:
 `[profile.benchmarks]` (`inherits = "release"`) already separates the artifacts into
 `benchmarks/`, and a second root would fork the `.peacock-ffi-cudf-root` stamp — a
-spurious `cargo clean -p peacockdb-ffi` on first use — without saving a rebuild. The
-profile exists because `[profile.dev.package."*"] opt-level = 3` covers dependencies
-and **not** workspace members, so under the default test profile `peacockdb-core`
-itself compiles at opt-level 1; `total_us − nodes_total_us` in a record is that Rust.
+spurious `cargo clean -p peacockdb-ffi` on first use — without saving a rebuild. Why the
+profile exists at all is argued once, in `Cargo.toml`; the consequence here is that a
+record's `total_us − nodes_total_us` is only a measurement when it was built under it,
+which is why `build_profile` is in the record.
 Two costs, one-time per profile: the first `--build-benchmarks` cold-compiles the whole
 DataFusion stack **and** builds `libpeacock_gpu.so` a third time (peacockdb-ffi's cmake
 runs in `OUT_DIR`, which lives inside the profile dir). It leaves the correctness caches
