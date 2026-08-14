@@ -277,6 +277,13 @@ matrix already forces for filtered and non-inner-NLJ joins. Decide before T12 bu
 join executors; the finish pass (#136) is unaffected either way, since it addresses the
 build seq once at done.
 
+Whether the copy is tolerable in v1 is a quantitative question, and the numbers already
+exist: the committed `.cpu.txt` goldens carry each join's build-side and probe-side
+`output_rows`, so B copies of the build cost `B × build_bytes` against a probe stream of
+`probe_bytes` — tpch q3 at tp8 is 30142 build rows against 727305 probe rows, the shape
+that makes copying cheap, and a join whose sides are comparable is the shape that does not.
+Answer it from the goldens before commissioning a measurement.
+
 <a id="t151"></a>
 ### #151 — the per-node benchmarks measure the engine with no RMM pool
 
