@@ -30,15 +30,14 @@ opt-level = 3
 
 # For `peacock_gpu_benchmarks` ONLY (scripts/build-test-shadgpu.sh --build-benchmarks).
 #
-# `[profile.dev.package."*"]` above covers DEPENDENCIES, not workspace members, so
-# under the default test profile peacockdb-core itself compiles at opt-level 1.
-# Per-node `time_us` is device work bracketed by cudaStreamSynchronize and barely
-# notices — but `total_us - nodes_total_us`, which the record documents as the
-# per-query host overhead (parse, plan, serialize, materialize), is entirely that
-# Rust. Unoptimized, that number is an upper bound rather than a measurement.
+# The opt-level-1 plateau measured above is right for the test suite and wrong here.
+# Per-node `time_us` is device work and barely notices, but `total_us -
+# nodes_total_us` — the per-query host overhead a record documents — is entirely
+# workspace Rust, and unoptimized that number is an upper bound rather than a
+# measurement.
 #
 # A custom profile rather than raising `[profile.test]`: the latter would rebuild
-# the whole workspace at opt-3 for EVERY `cargo test` in the repo — the rust-only
+# the whole workspace at opt-3 for every `cargo test` in the repo — the rust-only
 # fast loop, all nine CPU tiers, the GPU correctness binaries — and invalidate
 # every warm cache including CI's.
 #

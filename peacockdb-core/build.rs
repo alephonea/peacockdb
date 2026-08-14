@@ -30,11 +30,10 @@ fn main() {
 /// Bake how this crate was compiled into it, for `peacock_gpu_benchmarks` to write
 /// into every measurement record (`build_profile=`).
 ///
-/// Two records built under different profiles look directly comparable and are not:
-/// the workspace sets `[profile.dev] opt-level = 1` for its own members, so the
-/// default test profile measures a per-query host overhead that
-/// `[profile.benchmarks]` does not. Same trap `sync_floor_us` exists to close —
-/// a number whose meaning depends on how it was produced has to carry that with it.
+/// Two records built under different profiles look directly comparable and are not
+/// (`[profile.benchmarks]` in the workspace Cargo.toml says why). Same trap
+/// `sync_floor_us` exists to close: a number whose meaning depends on how it was
+/// produced has to carry that with it.
 ///
 /// Cargo hands a build script `OPT_LEVEL` directly, but not the profile NAME:
 /// `PROFILE` collapses every release-inheriting profile to "release". The profile

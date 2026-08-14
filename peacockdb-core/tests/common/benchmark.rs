@@ -144,7 +144,20 @@ pub fn bench_stats_str(
          comparable on it. Node times are device work and barely move."
             .to_string(),
     );
+    // Written for every tree, including trees with no repartition in them. A line
+    // emitted only where it applies cannot be read: absence would mean either "this
+    // plan has no scatter" or "this record predates the line", which is the same
+    // ambiguity the disclosure exists to remove.
+    lines.push(
+        "# shared_work_charged_to = which p<k> sub-line carries work a node does once \
+         for all of its output partitions. A hash repartition concatenates its input \
+         and scatters it in a single operation, and that time is billed to p0 — so p0 \
+         standing far above its siblings is the accounting, not skew. Sub-lines sum to \
+         their node line either way. Written whether or not this plan has a repartition."
+            .to_string(),
+    );
     lines.push(format!("build_profile={build_profile}"));
+    lines.push("shared_work_charged_to=p0".to_string());
     lines.push(format!("sync_floor_us={sync_floor_us}"));
     lines.push(format!("nodes_at_or_below_floor={at_floor}/{}", stats.len()));
     lines.push(format!("nodes_total_us={nodes_total_us}"));
@@ -158,10 +171,8 @@ pub fn bench_stats_str(
 ///
 /// The one thing a reader cannot recover from the numbers themselves. Built by
 /// `--build-benchmarks` this reads `benchmarks opt-level=3`; from a plain
-/// `cargo test` it reads `debug opt-level=1`, because `[profile.dev.package."*"]`
-/// covers dependencies and not workspace members — and at opt-level 1 the
-/// `total_us` / `nodes_total_us` gap is an upper bound on host overhead rather
-/// than a measurement of it.
+/// `cargo test` it reads `debug opt-level=1`, which measures a different host
+/// overhead — see `[profile.benchmarks]` in the workspace Cargo.toml for why.
 pub const BUILD_PROFILE: &str =
     concat!(env!("PEACOCK_BUILD_PROFILE"), " opt-level=", env!("PEACOCK_BUILD_OPT_LEVEL"));
 

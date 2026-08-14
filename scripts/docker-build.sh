@@ -56,10 +56,10 @@ IMAGE_ONLY=0
 SKIP_IMAGE=0
 INNER_CMD=()
 
-# Prints the header block above verbatim, so -h cannot drift from it. The range ends
-# at the last comment line before `set -euo pipefail`; keep it in step when the
-# header grows, or --help truncates mid-USAGE.
-usage() { sed -n '2,39p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+# Prints the header block above verbatim, so -h cannot drift from it: every comment
+# line after the shebang, stopping at the first line that is not one. Derived rather
+# than a fixed range, which truncated the help the moment the header grew.
+usage() { sed -n '2,${/^#/!q;p;}' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -76,6 +76,20 @@ while [ $# -gt 0 ]; do
     *)             echo "Unknown flag: $1" >&2; usage 1 ;;
   esac
 done
+
+# --- validation: before the first side effect ---------------------------------
+# Both of these used to exit 0 having done nothing, which is the worst outcome
+# available: a build script that reports success without building.
+if [ "$IMAGE_ONLY" -eq 1 ] && [ "$SKIP_IMAGE" -eq 1 ]; then
+  echo "ERROR: --image-only with --no-image: one asks for the image and nothing else," >&2
+  echo "       the other for everything but the image. That leaves no work." >&2
+  exit 1
+fi
+if [ "$IMAGE_ONLY" -eq 1 ] && [ ${#INNER_CMD[@]} -gt 0 ]; then
+  echo "ERROR: --image-only with a command (-- <cmd>, or --shell): --image-only stops" >&2
+  echo "       after the image, so the command would never run." >&2
+  exit 1
+fi
 
 : "${BASE_IMAGE:=rapidsai/base:${CUDF_VERSION}-cuda12.0-py3.12}"
 : "${BUILDER_TAG:=peacockdb-build:cudf-${CUDF_VERSION}}"

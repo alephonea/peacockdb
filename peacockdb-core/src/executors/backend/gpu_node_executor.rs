@@ -34,17 +34,10 @@ use crate::cpu_executor::logical_size_from_schema;
 /// Turn per-node GPU timing on or off (process-global, OFF by default).
 ///
 /// With it on, every unit of work inside the C++ `NodeSession` is bracketed by a
-/// `cudaStreamSynchronize`, and [`NodeMemoryStats::time_us`] / [`PartitionStat::time_us`]
-/// carry real microseconds instead of zeros. Without the sync those numbers would
-/// measure kernel SUBMISSION: cuDF work is asynchronous and this path — unlike the
-/// recursive all-at-once path, which has `debug_sync` — never drains the stream on
-/// its own. The only incidental drain is the `chars_size` readback behind
-/// `varlen_content_bytes`, and it happens only for STRING outputs, which would bias
-/// every measurement by a node's column types.
-///
-/// The sync is not free: it serializes work cuDF would otherwise pipeline across
-/// node boundaries. That is the right trade for `peacock_gpu_benchmarks` and the
-/// wrong one for the correctness suite, so this stays opt-in.
+/// `cudaStreamSynchronize`, and [`NodeMemoryStats::time_us`] /
+/// [`PartitionStat::time_us`] carry real microseconds instead of zeros. Why the sync
+/// is both what makes the number real and what makes it costly — hence opt-in — is
+/// argued once, on `set_node_timing` in `cpp/src/plan_executor.h`.
 ///
 /// Process-global, and the GPU suite already runs `--test-threads=1` (cuDF/RMM share
 /// one process-wide pool), so there is no cross-test interleaving to guard against.

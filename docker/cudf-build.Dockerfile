@@ -4,10 +4,10 @@
 # ---------------
 # The committed build scripts hardcode one developer's machine:
 #
-#   scripts/build-test-shadgpu.sh:5   CUDF_ROOT=/home/dmitry/data/miniforge3/envs/rapids-cuda-12.2
-#   scripts/build-test-shadgpu.sh:14  CC=/usr/bin/gcc-12
+#   scripts/lib/shadgpu-env.sh:15  CUDF_ROOT=/home/dmitry/data/miniforge3/envs/rapids-cuda-12.2
+#   scripts/lib/shadgpu-env.sh:23  CC=/usr/bin/gcc-12
 #
-# Instead of editing them, this image MATERIALIZES those exact paths as symlinks
+# Instead of editing them, this image materializes those exact paths as symlinks
 # onto the RAPIDS image's own /opt/conda and its conda-forge gcc. The committed
 # scripts then run here unmodified, and the developer's own machine keeps working
 # exactly as before. Both hardcoded paths are ARGs, so a different fork of the

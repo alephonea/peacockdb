@@ -87,14 +87,12 @@ typedef struct PeacockNodeStats {
   uint64_t time_us;
 } PeacockNodeStats;
 
-/// Turn per-node timing on/off (process-global; OFF by default).
+/// Turn per-node timing on/off (process-global; off by default).
 ///
-/// Enabling it makes peacock_executor_execute_node SYNCHRONIZE the default stream
-/// at every measurement boundary and fill PeacockNodeStats::time_us. Without that
-/// sync a host-side timer would measure kernel SUBMISSION — cuDF work is async and
-/// this path has no sync of its own. The sync serializes what cuDF would otherwise
-/// pipeline, which is why it is opt-in: correct for a benchmark, wrong for
-/// production. Intended for the peacock_gpu_benchmarks target.
+/// Enabling it makes peacock_executor_execute_node synchronize the default stream at
+/// every measurement boundary and fill PeacockNodeStats::time_us. That sync is what
+/// makes the number real and also what makes it costly, so this is opt-in: correct
+/// for a benchmark, wrong for production. Intended for peacock_gpu_benchmarks.
 void peacock_set_node_timing(int enable);
 
 /// Cost of the measurement itself, in microseconds: the timed region every node

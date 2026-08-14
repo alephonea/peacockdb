@@ -13,6 +13,7 @@
 
 #include <cuda_runtime.h>
 
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -198,9 +199,16 @@ int peacock_executor_execute_node(peacock_executor_t* executor, uint64_t seq,
     return 1;
   }
   try {
-    // out_stats is a caller array of out_cap, filled PER PARTITION (parallel to
-    // out_handles); PeacockNodeStats and peacock::NodeStats are layout-identical
-    // ({uint64 rows; uint64 varlen_content_bytes; uint64 time_us}).
+    // out_stats is a caller array of out_cap, filled per partition (parallel to
+    // out_handles). The cast is sound only while the two structs are laid out
+    // identically, so the compiler checks it: adding a member to one and not the
+    // other, or reordering either, fails here rather than silently handing Rust
+    // fields from the wrong offsets.
+    static_assert(sizeof(PeacockNodeStats) == sizeof(peacock::NodeStats));
+    static_assert(offsetof(PeacockNodeStats, rows) == offsetof(peacock::NodeStats, rows));
+    static_assert(offsetof(PeacockNodeStats, varlen_content_bytes) ==
+                  offsetof(peacock::NodeStats, varlen_content_bytes));
+    static_assert(offsetof(PeacockNodeStats, time_us) == offsetof(peacock::NodeStats, time_us));
     size_t n_out = 0;
     executor->session->execute_node(
         seq, input_handles, input_child_counts, static_cast<size_t>(n_children),

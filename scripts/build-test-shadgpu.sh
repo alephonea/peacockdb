@@ -55,12 +55,9 @@ RUST_TESTS_STAGING=cpp/install/rust-tests
 # The measurement target and its own staging dir. setup-glibc.sh patches both.
 BENCH_TARGET=peacock_gpu_benchmarks
 BENCH_STAGING=cpp/install/rust-benchmarks
-# opt-3 rather than the default test profile, under which peacockdb-core itself
-# compiles at opt-level 1: `[profile.dev.package."*"]` covers dependencies only.
-# Per-node time_us is device work and barely notices, but `total_us -
-# nodes_total_us` is entirely that Rust, and unoptimized it is an upper bound
-# rather than a measurement. Raising [profile.test] instead would recompile the
-# workspace at opt-3 for every cargo test in the repo, CI's caches included.
+# opt-3, where the default test profile leaves workspace crates at opt-level 1 and
+# so measures a host overhead that is not the engine's. `[profile.benchmarks]` in
+# the workspace Cargo.toml carries the argument.
 BENCH_PROFILE=benchmarks
 
 # Runner, log, exit code and run id of a detached run, per phase. Outside
@@ -573,20 +570,30 @@ fi
 
 if [ "$PULL_BENCH" -eq 1 ]; then
   # The detached workflow is two invocations, and this is the second one: pulling
-  # mid-run brings home a partial tree that looks like a finished measurement. A run
-  # that died leaves its records intact, so that case pulls with a warning.
-  if ssh "$REMOTE" bash <<EOF
-    id=\$(cat $REMOTE_STATE/benchmark.id 2>/dev/null || true)
-    if [ -n "\$id" ] && ! grep -q "^\$id " $REMOTE_STATE/benchmark.rc 2>/dev/null \\
-       && pgrep -f $REMOTE_STATE/benchmark.sh > /dev/null; then
-      exit 0
+  # mid-run brings home a partial tree that looks like a finished measurement. Three
+  # states, and only the first is a refusal — a run that died left its records intact,
+  # and collecting them is the documented recovery, so that one says so and pulls.
+  remote_state_paths benchmark
+  pull_state=$(ssh "$REMOTE" bash <<EOF
+    id=\$(cat $phase_id 2>/dev/null || true)
+    if [ -z "\$id" ] || grep -q "^\$id " $phase_rc 2>/dev/null; then
+      echo settled
+    elif pgrep -f $phase_runner > /dev/null; then
+      echo running
+    else
+      echo died
     fi
-    exit 1
 EOF
-  then
-    die "a benchmark run is still going on $REMOTE; --pull-benchmarks now would bring
-     home a partial tree. Poll with --benchmark-status."
-  fi
+  )
+  case "$pull_state" in
+    running)
+      die "a benchmark run is still going on $REMOTE; --pull-benchmarks now would bring
+     home a partial tree. Poll with --benchmark-status." ;;
+    died)
+      echo "!!! the last benchmark run on $REMOTE left no exit code — it died partway." >&2
+      echo "    Pulling anyway: what it wrote before that is intact, but the tree is a" >&2
+      echo "    partial run's output, not a completed measurement." >&2 ;;
+  esac
   mkdir -p testdata/benchmark-results
   # No --delete, unlike every push: a filtered run rewrites only the cases it ran,
   # and mirroring would wipe every record of the others. Nothing prunes the host
