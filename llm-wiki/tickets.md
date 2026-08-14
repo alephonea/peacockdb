@@ -503,6 +503,13 @@ the output term to one range; the inputs stay resident either way, so the win is
 ~2× on the sort's local peak. Do it only if sort peaks bind after the mode ships; it also
 unlocks multi-batch output from merge nodes.
 
+Landing this re-introduces a third `SortOrder` state. `SortOrder` is two-valued today
+because every node that orders a whole stream emits exactly one batch, so "stream sorted"
+is `BatchSorted` meeting `SingleBatch` and is derived rather than declared. Ranged
+emission produces the one shape that breaks it — a stream ordered across several batches —
+so it must add `PartitionSorted` back, and teach the limit-after-sort validation to accept
+it alongside the derived form.
+
 <a id="t139"></a>
 ### #139 — batch-partitioned GpuCoalesceBatches(target): compact post-filter fragments
 Dropped from v1. After a selective filter, batches shrink to a few rows and every

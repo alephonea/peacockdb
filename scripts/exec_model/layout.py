@@ -56,9 +56,18 @@ class KeyDistribution:
 
 
 class SortKind(Enum):
+    """Two-valued on purpose.
+
+    A third `PartitionSorted` — whole stream ordered, not merely each batch — would be
+    a synonym: the only nodes that order a whole stream (`GpuAccumulateBatchesAndSort`,
+    `GpuMergeSortedPartitions`) emit exactly one batch, so the property holds precisely
+    when `BatchSorted` meets `SingleBatch` and `PartitionLayout.is_stream_sorted` derives
+    it. It becomes a real third state only under #138's ranged merge emission, which
+    orders a stream across several batches.
+    """
+
     NOT_SPECIFIED = "NotSpecified"
     BATCH_SORTED = "BatchSorted"
-    PARTITION_SORTED = "PartitionSorted"
 
 
 @dataclass(frozen=True)
@@ -74,18 +83,9 @@ class SortOrder:
     def batch_sorted(cls, columns) -> "SortOrder":
         return cls(SortKind.BATCH_SORTED, tuple(columns))
 
-    @classmethod
-    def partition_sorted(cls, columns) -> "SortOrder":
-        return cls(SortKind.PARTITION_SORTED, tuple(columns))
-
     @property
     def is_batch_sorted(self) -> bool:
-        """PartitionSorted implies BatchSorted; validation accepts the weaker property."""
-        return self.kind in (SortKind.BATCH_SORTED, SortKind.PARTITION_SORTED)
-
-    @property
-    def is_partition_sorted(self) -> bool:
-        return self.kind is SortKind.PARTITION_SORTED
+        return self.kind is SortKind.BATCH_SORTED
 
 
 @dataclass(frozen=True)
@@ -95,13 +95,11 @@ class PartitionLayout:
     sort_order: SortOrder = field(default_factory=SortOrder.not_specified)
     batch_layout: BatchLayout = BatchLayout.MULTIPLE_BATCHES
 
-    def __post_init__(self):
-        # Under SingleBatch the two sort properties coincide — canonicalize to the
-        # stronger one so equality comparisons do not distinguish equivalent layouts.
-        if (
-            self.batch_layout is BatchLayout.SINGLE_BATCH
-            and self.sort_order.kind is SortKind.BATCH_SORTED
-        ):
-            object.__setattr__(
-                self, "sort_order", SortOrder.partition_sorted(self.sort_order.columns)
-            )
+    @property
+    def is_stream_sorted(self) -> bool:
+        """Whole stream ordered, not merely each batch — what a top-N after a sort needs.
+
+        Derived rather than declared, so there is no second way to say it and no pair of
+        fields that can disagree.
+        """
+        return self.sort_order.is_batch_sorted and self.batch_layout is BatchLayout.SINGLE_BATCH

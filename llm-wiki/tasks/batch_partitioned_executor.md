@@ -180,8 +180,8 @@ the kernel-knob analysis in the same ticket.
 | `GpuLoadParquet` | Source | reads survivor row groups per the partitioner's mapping; pruning as legacy; pull-based `next_batch()`; honors pushed-down limits |
 | `GpuFilter`, `GpuProject` | Exec | 1:1 per batch |
 | `GpuSort` | Exec | sorts each input batch independently; optional per-batch `fetch` (top-N); output `BatchSorted` |
-| `GpuAccumulateBatchesAndSort` | BatchAccumulator | accumulates sorted batches, one `cudf::merge` at done; output one batch, `PartitionSorted`. No streaming emission — cuDF has no primitive; ranged emission is [#138](../tickets.md#t138) |
-| `GpuMergeSortedPartitions` | PartitionAccumulator | input: N partitions, `MultipleBatches` allowed, `BatchSorted` required; all k·m sorted batches into one `cudf::merge`, `fetch` applied; output: 1 partition, one batch, `PartitionSorted` |
+| `GpuAccumulateBatchesAndSort` | BatchAccumulator | accumulates sorted batches, one `cudf::merge` at done; output one batch, `SingleBatch` + `BatchSorted` (so stream-sorted). No streaming emission — cuDF has no primitive; ranged emission is [#138](../tickets.md#t138) |
+| `GpuMergeSortedPartitions` | PartitionAccumulator | input: N partitions, `MultipleBatches` allowed, `BatchSorted` required; all k·m sorted batches into one `cudf::merge`, `fetch` applied; output: 1 partition, one batch, `SingleBatch` + `BatchSorted` (so stream-sorted) |
 | `GpuCoalesceAllBatches` | BatchAccumulator | concatenates a partition's batches into one at done |
 | `GpuMergePartitions` | BatchForwarder | N partition streams → 1, forwarding each batch as visited, round-robin (see [Determinism](#determinism-rules)); accumulates nothing, no backend calls |
 | `GpuEmitPartitions` | PartitionEmitter | 1 → N per batch by hash scatter; streaming, one call per input batch |
@@ -226,17 +226,21 @@ stream-vs-refuse and correctness against the single-batch oracle.
 ## Traits
 
 ```rust
-enum NodeKind { Source, Intermediate, Sink }
+// A sink structurally has no layout and no schema; everything else always has both.
+enum NodeKind {
+    Source { layout: PartitionLayout, schema: Schema },
+    Intermediate { layout: PartitionLayout, schema: Schema },
+    Sink,
+}
 
 enum KeyDistribution { NotSpecified, ByHash { hash_keys: Vec<u32> } }   // spark murmur3, seed 42
 
 enum SortOrder {
     NotSpecified,
     BatchSorted { columns: Vec<ColumnOrder> },      // each batch sorted; batches unordered
-    PartitionSorted { columns: Vec<ColumnOrder> },  // whole stream sorted; implies BatchSorted
 }
-// Under SingleBatch layout the two coincide: canonicalize to PartitionSorted.
-// Validation accepts BatchSorted wherever the weaker property suffices.
+// Two-valued on purpose. A whole-stream order is BatchSorted meeting SingleBatch, derived
+// as PartitionLayout::is_stream_sorted() — see below.
 
 enum BatchLayout { SingleBatch, MultipleBatches }
 
@@ -246,11 +250,16 @@ struct PartitionLayout {
     sort_order: SortOrder,
     batch_layout: BatchLayout,
 }
+impl PartitionLayout {
+    // Whole stream ordered, not merely each batch. Derived, so nothing can disagree.
+    fn is_stream_sorted(&self) -> bool {
+        matches!(self.sort_order, SortOrder::BatchSorted { .. })
+            && matches!(self.batch_layout, BatchLayout::SingleBatch)
+    }
+}
 
 trait GpuNode {
-    fn kind(&self) -> NodeKind;
-    fn output_partitions(&self) -> Option<PartitionLayout>;  // present for non-sink nodes
-    fn output_schema(&self) -> Option<Schema>;               // present for non-sink nodes
+    fn kind(&self) -> &NodeKind;   // layout and schema live inside it
     fn children(&self) -> Vec<&dyn GpuNode>;
     // Checks children's schemas, partition topology, key distribution, sortedness and
     // batch layout against this node's requirements; validates captured column indices
@@ -258,6 +267,10 @@ trait GpuNode {
     fn validate_schemas_and_partitions(&self) -> Result<(), PlanError>;
 }
 ```
+
+Carrying layout and schema in `NodeKind` rather than as two `Option`s that must be `None`
+together removes the one thing a caller could get wrong: the prototype needed a run-time
+error for a non-sink that declared no layout.
 
 `Schema` carries column types plus semantics annotations (sort column, group key,
 aggregator, two-phase state) — anything a consumer can check.
@@ -292,35 +305,107 @@ trait Executor {
     fn scratch_bytes(&self, n_rows: u64, n_bytes: usize) -> usize;
 }
 
-trait ExecExecutor: Executor {
-    fn exec(&mut self, batch: Batch) -> (Batch, CallStats);
+// One impl per backend, naming a concrete type for the batch and for every executor
+// category. The driver is generic over it, so the GPU path monomorphizes: no vtable and
+// no allocation for a batch, no selector object at run time.
+trait Backend: Sized {
+    type Context;          // GPU: the open NodeSession; CPU: ()
+    type Batch: Batch;
+    type Source: SourceExecutor<Self>;
+    type Exec: ExecExecutor<Self>;
+    type BatchAcc: BatchAccumulatorExecutor<Self>;
+    type PartAcc: PartitionAccumulatorExecutor<Self>;
+    type Emitter: PartitionEmitterExecutor<Self>;
+    type Join: JoinExecutor<Self>;
+    type Unload: UnloadExecutor<Self>;
 }
-trait BatchAccumulatorExecutor: Executor {
-    fn accumulate_and_fetch(&mut self, batch: Batch) -> (Vec<Batch>, CallStats);
-    fn mark_done_and_fetch(&mut self) -> (Vec<Batch>, CallStats);
+
+trait ExecExecutor<B: Backend>: Executor {
+    fn exec(&mut self, batch: B::Batch) -> (B::Batch, CallStats);
 }
-enum LaneEvent { Batch(Batch), Done }
-trait PartitionAccumulatorExecutor: Executor {
+trait BatchAccumulatorExecutor<B: Backend>: Executor {
+    fn accumulate_and_fetch(&mut self, batch: B::Batch) -> (Vec<B::Batch>, CallStats);
+    fn mark_done_and_fetch(self) -> (Vec<B::Batch>, CallStats);   // no accumulate after
+}
+enum LaneEvent<B: Backend> { Batch(B::Batch), Done }
+trait PartitionAccumulatorExecutor<B: Backend>: Executor {
     // one call per lane event — the shape round-robin driving actually produces;
     // the call delivering the last lane's Done is the emitting call
-    fn accumulate_and_fetch(&mut self, partition: usize, event: LaneEvent)
-        -> (Vec<Batch>, CallStats);
+    fn accumulate_and_fetch(&mut self, partition: usize, event: LaneEvent<B>)
+        -> (Vec<B::Batch>, CallStats);
 }
-trait PartitionEmitterExecutor: Executor {
-    fn emit(&mut self, batch: Batch) -> (Vec<Batch>, CallStats);   // exactly N outputs, some empty
+trait PartitionEmitterExecutor<B: Backend>: Executor {
+    fn emit(&mut self, batch: B::Batch) -> (Vec<B::Batch>, CallStats);   // exactly N, some empty
 }
-trait JoinExecutor: Executor {
-    fn set_build(&mut self, batch: Batch) -> CallStats;
-    fn probe_and_fetch(&mut self, batch: Batch) -> (Vec<Batch>, CallStats);
-    fn finish_and_fetch(&mut self) -> (Vec<Batch>, CallStats);
+
+// Join, as a typestate: build -> probe -> done, each transition consuming the last state.
+trait JoinExecutor<B: Backend>: Executor {
+    type Probing: ProbingJoin<B>;
+    fn set_build(self, batch: B::Batch) -> (Self::Probing, CallStats);
 }
-trait SourceExecutor: Executor { fn next_batch(&mut self) -> Option<(Batch, CallStats)>; }
+trait ProbingJoin<B: Backend>: Executor {
+    fn probe_and_fetch(&mut self, batch: B::Batch) -> (Vec<B::Batch>, CallStats);
+    fn finish_and_fetch(self) -> (Vec<B::Batch>, CallStats);
+}
+
+// Exhaustion consumes the source, so the driver's slot IS its liveness.
+enum SourceStep<B: Backend> {
+    Batch { batch: B::Batch, stats: CallStats, source: B::Source },
+    Exhausted,
+}
+trait SourceExecutor<B: Backend>: Executor {
+    fn next_batch(self) -> SourceStep<B>;
+}
 ```
 
-There is no sink trait: `GpuUnload` is an ordinary `ExecExecutor` whose output happens to
-be a `CpuBatch` (the `Batch` trait is backend-independent, so `GpuBatch` in →
-`CpuBatch` out is just a signature), and the driver collects the root node's output
-batches. `NodeKind::Sink` remains a plan-level fact.
+**Illegal calls are unrepresentable rather than checked.** Every method that ends a
+protocol takes `self: Box<Self>`, so four run-time guards the prototype needed become
+compile errors: probing before `set_build`, calling `set_build` twice, probing after
+`finish_and_fetch`, and accumulating after `mark_done_and_fetch`. The source's
+consuming step removes a fifth thing — the driver's own `finished` flag, which today
+duplicates the executor's exhaustion and can disagree with it.
+
+**Static all the way down on the production path.** `B::Batch` is a concrete type, so a
+`GpuBatch` is its `u64` handle with no box and no vtable, and `Drop` is a direct call.
+Backend choice is a turbofish at the entry point — `batch_partitioned_driver::<GpuBackend>(…)`
+— not a `BackendSelector` consulted per node. The whole driver is instantiated twice, once
+per backend, and the mock backend the driver tests use is a third instantiation.
+
+Going static also *simplifies* the typestate: consuming methods take a plain `self`, and
+`JoinExecutor` can carry an associated `type Probing`. Both had to be spelled around when
+these traits were stored as `Box<dyn …>` — `self: Box<Self>` because a bare receiver is not
+`dyn`-compatible, and a returned `Box<dyn ProbingJoin>` because an associated type forces
+every `dyn JoinExecutor` to name it (`E0038` and `E0191` respectively; both were compiled to
+confirm). Neither constraint survives the switch, so the declarations above are the simpler
+form and they compile as written.
+
+The cost is one type per category per backend: `B::Exec` has to cover filter, project,
+sort, partial aggregate, limit and unload, so each backend defines an enum over its
+operators and dispatches with a match. That is the same shape the C++ side already has in
+`run_op`'s switch, and a match on a closed enum is still static dispatch.
+
+Trait objects remain where they cost nothing: the plan tree is `dyn GpuNode`, since
+planning is not hot and the tree is heterogeneous.
+
+Two illegal states stay run-time checked on purpose: `emit` returning other than N outputs
+(N is a plan value, so const generics do not apply — the count is checked once inside the
+returned type rather than at each call site), and a second `Done` for one lane, which would
+need per-lane state in the type for no useful gain.
+
+`GpuUnload` needs its own category, `type Unload: UnloadExecutor<Self>`, because it is the
+one operator whose output type is not `B::Batch`:
+
+```rust
+trait UnloadExecutor<B: Backend>: Executor {
+    fn unload(&mut self, batch: B::Batch) -> (CpuBatch, CallStats);   // the boundary crossing
+}
+```
+
+Under a backend-agnostic `Batch` this could be an ordinary `ExecExecutor` with a `GpuBatch`
+in and a `CpuBatch` out; once `exec` is `B::Batch -> B::Batch` it cannot. That is an
+improvement rather than a tax: unload is the only place data leaves the device, and it now
+says so in the type. The driver still collects the root node's output batches, and
+`NodeKind::Sink` remains a plan-level fact.
 
 **Instantiation model.** Lane-scoped categories — Source, Exec, BatchAccumulator, Join —
 get one executor instance per (node, lane), created when the driver first enters that
@@ -332,22 +417,26 @@ A `PartitionAccumulator` may buffer arbitrarily many input batches internally
 (`GpuMergeSortedPartitions` does) and must account them in `resident_bytes()` — buffering
 is executor state, not a taxonomy change.
 
-**From node to executor.** The driver needs to know, per node, which trait to drive and
-which backends exist. Each `GpuNode` exposes its category with the backend pair inside:
+**From node to executor.** The driver needs to know, per node, which trait to drive. The
+set is an enum of concrete types — no boxes, so the match compiles to a jump and the
+executor is stored inline:
 
 ```rust
-enum NodeExecutors {
-    Source(ExecutorBackends<dyn SourceExecutor>),
-    Exec(ExecutorBackends<dyn ExecExecutor>),
-    BatchAccumulator(ExecutorBackends<dyn BatchAccumulatorExecutor>),
-    PartitionAccumulator(ExecutorBackends<dyn PartitionAccumulatorExecutor>),
-    PartitionEmitter(ExecutorBackends<dyn PartitionEmitterExecutor>),
-    Join(ExecutorBackends<dyn JoinExecutor>),
-    // GpuMergePartitions, GpuUnion, GpuInterleave — routing only, no backends
-    BatchForwarder(Box<dyn BatchForwarder>),
+enum NodeExecutors<B: Backend> {
+    Source(B::Source),
+    Exec(B::Exec),
+    BatchAccumulator(B::BatchAcc),
+    PartitionAccumulator(B::PartAcc),
+    PartitionEmitter(B::Emitter),
+    Join(B::Join),          // ProbingJoin comes from set_build, not from the backend
+    Unload(B::Unload),
+    // GpuMergePartitions, GpuUnion, GpuInterleave — routing only, no backend
+    BatchForwarder(Forwarder),
 }
-// GpuNode::make_executors(&self) -> NodeExecutors — a fresh instance set per call,
-// so the driver can instantiate per lane.
+// Backend::executors_for(ctx: &Self::Context, node: &dyn GpuNode, lane: usize)
+//   -> NodeExecutors<B>. A fresh instance set per call, so the driver instantiates per
+//   lane; `lane` is needed because a loader's lane picks its own row groups out of the
+//   partitioner's mapping.
 
 // Routes whole batches into a new lane numbering; never touches rows, never buffers.
 // No CPU/GPU backends and no CallStats — routing is driver work, and a batch's bytes
@@ -367,11 +456,18 @@ listed order, forwarding one batch per visit, skipping `Pending` sources, retiri
 are the same rule applied to different mappings, stated once here instead of once per
 node.
 
-`ExecutorBackends<T>` holds constructors for the CPU and GPU implementation; a
-`BackendSelector` trait picks one (`CpuBackendSelector`, `GpuBackendSelector`, and mock
-selectors in driver unit tests — one `select` method per category). The rust-only tier
-boundary holds structurally: rust-only targets never pull the GPU backend — GPU executor
-types and the selector's GPU arm are gated the same way the legacy GPU executors are.
+**Construction moves off the node and onto the backend**, as
+`Backend::executors_for(&dyn GpuNode)`. It cannot stay on `GpuNode` as
+`make_executors<B>()`: a generic method is not `dyn`-compatible, and the plan tree is
+`dyn GpuNode` (verified — `E0038`). That is the better placement anyway. A node describes
+what it computes and stops knowing that backends exist; each backend owns one match from
+node kind to its own operator types, which is where "does this backend implement this
+node" belongs.
+
+The rust-only tier boundary holds structurally and more cleanly than with a selector: a
+rust-only target instantiates the driver only at `CpuBackend`, so the GPU backend's types
+are never named and never monomorphized. `GpuBackend` itself stays gated as the legacy GPU
+executors are.
 
 ## Drivers
 
@@ -397,8 +493,7 @@ types and the selector's GPU arm are gated the same way the legacy GPU executors
 > makes the bound unconditional, since a join cannot drain its probe side until the
 > build is set.
 
-Two drivers, both single-threaded, pull-based, deterministic, generic over
-`BackendSelector`:
+Two drivers, both single-threaded, pull-based, deterministic, generic over `Backend`:
 
 - **`batch_single_partition_driver`** drives a chain of non-partition-breaking operators
   within one lane, including batch accumulators. Chains are exactly linear by
@@ -456,7 +551,7 @@ through `BatchForwarder::sources_of` (see [Traits](#traits)) — one
 driver arm cycles a lane's declared sources in order, whatever the node.
 
 **Flow and backpressure are a first-class test surface for both drivers**, exercised
-with mock operators behind the mock `BackendSelector` (scripted batch counts, sizes,
+with mock operators behind a mock `Backend` impl (scripted batch counts, sizes,
 skew patterns, accumulator behavior — no real executors). The cases that must hold, each
 asserting pull counts, queue bounds, `Pending` behavior and batch/handle release:
 skewed emit (starved lane, hot lane); accumulator-ended lane progress; merge-sorted over
@@ -676,8 +771,14 @@ fixed-output determinism case. No planner integration yet.
 **T3 — node and trait skeleton.** `GpuNode`, `PartitionLayout` (with the three-valued
 `SortOrder`), `Schema` with semantics annotations, `Batch`/`CpuBatch`/`GpuBatch` shells
 with the move/`!Clone`/`Drop` rules, executor trait definitions with `CallStats`,
-`BackendSelector`. Traits in their own files per coding-style. Compiles under rust-only
+`Backend`. Traits in their own files per coding-style. Compiles under rust-only
 with the GPU side gated. Unit tests: `SortOrder` canonicalization, layout equality.
+**First, before anything else in this task**, compile a skeleton: the `Backend` trait with
+all seven associated types, two impls whose `Batch` types differ, `NodeExecutors<B>`, and a
+generic function driving one build→probe→finish transition and one source step. It
+compiles with no `dyn` anywhere (verified), and it is what pins the static-dispatch
+property the GPU path depends on — the mock backend the driver tests need is then a third
+impl, not a special case.
 
 **T4 — translation layer, single-partition shapes.** DataFusion physical plan (tp1) →
 `GpuNode` tree for chains: load, filter, project, sort (+fetch), limit, coalesce-all,
@@ -698,13 +799,13 @@ partitioner, integration as `plan_batch_partitioned()`. Canonize all four
 `<mode>.plans.txt` + `<mode>.plan.mem.txt` for TPC-H and TPC-DS (minus #23's four and
 window queries, which appear as refusals).
 
-**T7 — schema registry.** `output_schema()` on all nodes with column semantics
-annotations. Unit tests: hand-crafted plans produce expected types and annotations;
-decimal precision/scale fidelity through project/aggregate/union-cast paths.
+**T7 — schema registry.** The `Schema` carried in `NodeKind` populated on all nodes, with
+column semantics annotations. Unit tests: hand-crafted plans produce expected types and
+annotations; decimal precision/scale fidelity through project/aggregate/union-cast paths.
 
 **T8 — validation.** `validate_schemas_and_partitions()` on every node type: partition
-topology, key-distribution subset rule, `BatchSorted`/`PartitionSorted` requirements
-(merge requires ≥ BatchSorted; limit-after-sort requires PartitionSorted), `SingleBatch`
+topology, key-distribution subset rule, sortedness requirements (merge requires
+`BatchSorted`; limit-after-sort requires `is_stream_sorted()`), `SingleBatch`
 expectations (join build, cross/nlj inputs), captured-index checks. Unit tests: manually
 constructed wrong combinations error, right ones pass; then run validation over every
 canonized corpus plan from T6.

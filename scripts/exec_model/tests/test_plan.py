@@ -149,15 +149,15 @@ def test_routing_category_rejects_backends():
         )
 
 
-def test_single_batch_canonicalizes_batch_sorted_to_partition_sorted():
-    from ..layout import ColumnOrder, SortKind, SortOrder
+def test_stream_sortedness_is_derived_from_the_batch_layout():
+    # There is no PartitionSorted variant: a whole-stream order is BatchSorted meeting
+    # SingleBatch, so the two cannot disagree.
+    from ..layout import ColumnOrder, SortOrder
 
-    layout = PartitionLayout(
-        n=1,
-        sort_order=SortOrder.batch_sorted([ColumnOrder(0)]),
-        batch_layout=BatchLayout.SINGLE_BATCH,
-    )
-    assert layout.sort_order.kind is SortKind.PARTITION_SORTED
+    sorted_by = SortOrder.batch_sorted([ColumnOrder(0)])
+    assert PartitionLayout(n=1, sort_order=sorted_by, batch_layout=BatchLayout.SINGLE_BATCH).is_stream_sorted
+    assert not PartitionLayout(n=1, sort_order=sorted_by).is_stream_sorted  # MultipleBatches
+    assert not PartitionLayout(n=1, batch_layout=BatchLayout.SINGLE_BATCH).is_stream_sorted
 
 
 if __name__ == "__main__":
