@@ -492,6 +492,31 @@ jobs:
       - name: DuckDB extraction unit tests (Python)
         run: python3 testdata/test_duckdb_cost.py
 
+      # The batch-partitioned execution-model prototype. No project code, so it belongs
+      # in this cheap tier next to the extractor tests. The scheduler tests are stdlib
+      # only; the operator tests need pandas, and they FAIL rather than skip when it is
+      # absent — a skipped operator suite reads exactly like a passing one. Same
+      # self-heal shape the cpp-cpu and s3-datasets jobs use for numpy/pyarrow.
+      #
+      # Enumerated by glob rather than by name, unlike the rust targets above: there is
+      # no meta guard over python files, so a hand-written list would rot the way
+      # test_ci_coverage exists to prevent.
+      - name: Exec-model prototype tests (Python)
+        run: |
+          set -euo pipefail
+          python3 -c "import pandas" 2>/dev/null || pip install --quiet pandas
+          shopt -s nullglob
+          files=(scripts/exec_model/tests/test_*.py)
+          # A vanished glob makes the loop body disappear and the step pass green.
+          [ ${#files[@]} -gt 0 ] || { echo "no exec-model test files matched"; exit 1; }
+          status=0
+          for f in "${files[@]}"; do
+            echo "== $f"
+            # Run every file before reporting, so one failure does not hide the rest.
+            python3 "$f" || status=1
+          done
+          exit "$status"
+
       - name: cost-report unit tests (Rust)
         run: cargo test -p cost-report
 

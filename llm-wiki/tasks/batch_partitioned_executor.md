@@ -183,13 +183,13 @@ the kernel-knob analysis in the same ticket.
 | `GpuAccumulateBatchesAndSort` | BatchAccumulator | accumulates sorted batches, one `cudf::merge` at done; output one batch, `PartitionSorted`. No streaming emission — cuDF has no primitive; ranged emission is [#138](../tickets.md#t138) |
 | `GpuMergeSortedPartitions` | PartitionAccumulator | input: N partitions, `MultipleBatches` allowed, `BatchSorted` required; all k·m sorted batches into one `cudf::merge`, `fetch` applied; output: 1 partition, one batch, `PartitionSorted` |
 | `GpuCoalesceAllBatches` | BatchAccumulator | concatenates a partition's batches into one at done |
-| `GpuMergePartitions` | RepartitioningBatchPassthrough | N partition streams → 1, forwarding each batch as visited, round-robin (see [Determinism](#determinism-rules)); accumulates nothing, no backend calls |
+| `GpuMergePartitions` | BatchForwarder | N partition streams → 1, forwarding each batch as visited, round-robin (see [Determinism](#determinism-rules)); accumulates nothing, no backend calls |
 | `GpuEmitPartitions` | PartitionEmitter | 1 → N per batch by hash scatter; streaming, one call per input batch |
 | `GpuAggregate` | Exec | partial (or single-shortcut final) aggregation of one batch |
 | `GpuAggregateBatches` | BatchAccumulator | merges pre-aggregated batches; emits at done |
 | `GpuJoin` | Join | capability matrix below |
 | `GpuCrossJoin`, `GpuNestedLoopJoin` | Join | two inputs, so `JoinExecutor`, not Exec: `set_build(left)`, probe right. Cross and inner NLJ stream the right side (same mechanics as inner hash-join probes); non-inner NLJ keeps a single-batch probe — the #136 finish trick needs keys to accumulate and a predicate join has none. Both inputs 1 partition; broadcast variants are [#140](../tickets.md#t140) |
-| `GpuUnion`, `GpuInterleave` | RepartitioningBatchPassthrough | lane relabeling; branch decimal/type normalization becomes explicit per-branch `GpuProject` casts inserted by the planner — which is what makes union pure routing. Union sums its inputs' lane counts and clears `KeyDistribution`; interleave is chosen (as in DataFusion's `can_interleave`) only when every input carries the same hash distribution — output lane p is lane p of each input, so `KeyDistribution` is preserved |
+| `GpuUnion`, `GpuInterleave` | BatchForwarder | lane relabeling; branch decimal/type normalization becomes explicit per-branch `GpuProject` casts inserted by the planner — which is what makes union pure routing. Union sums its inputs' lane counts and clears `KeyDistribution`; interleave is chosen (as in DataFusion's `can_interleave`) only when every input carries the same hash distribution — output lane p is lane p of each input, so `KeyDistribution` is preserved |
 | `GpuLimit` | driver + two lowerings | start..limit over a 1-partition stream. The fb node's skip/fetch are frozen per seq, so per-batch GPU calls would truncate every batch — see the lowering rule below the recipe table |
 | `GpuUnload` | Exec | `GpuBatch` in, `CpuBatch` out (Arrow IPC export per handle); 1:1 per batch, `NodeKind::Sink` at plan level |
 
@@ -344,7 +344,7 @@ enum NodeExecutors {
     PartitionEmitter(ExecutorBackends<dyn PartitionEmitterExecutor>),
     Join(ExecutorBackends<dyn JoinExecutor>),
     // GpuMergePartitions, GpuUnion, GpuInterleave — routing only, no backends
-    RepartitioningBatchPassthrough(Box<dyn RepartitioningBatchPassthrough>),
+    BatchForwarder(Box<dyn BatchForwarder>),
 }
 // GpuNode::make_executors(&self) -> NodeExecutors — a fresh instance set per call,
 // so the driver can instantiate per lane.
@@ -352,7 +352,7 @@ enum NodeExecutors {
 // Routes whole batches into a new lane numbering; never touches rows, never buffers.
 // No CPU/GPU backends and no CallStats — routing is driver work, and a batch's bytes
 // are already accounted as driver-held in-flight.
-trait RepartitioningBatchPassthrough {
+trait BatchForwarder {
     // the (child index, child lane) pairs feeding output lane p, in service order
     fn sources_of(&self, out_lane: usize) -> Vec<(usize, usize)>;
 }
@@ -384,6 +384,18 @@ types and the selector's GPU arm are gated the same way the legacy GPU executors
 > model: the two-driver split and chunk boundaries, determinism requirements, bounded
 > queues at the shuffle, accumulator state as the home of mandatory residency, and the
 > flow-and-backpressure test surface.
+>
+> The prototype's scheduler and its findings so far are in
+> [`scripts/exec_model/README.md`](../../scripts/exec_model/README.md): a node is
+> runnable when any of its partitions can make progress, the runnable node with the
+> smallest height (distance to the root) runs, ties break leftmost, and every partition
+> of that node runs — plus one backpressure rule, that a join in its build phase holds
+> back its whole probe subtree. Three of the findings bear directly on this section:
+> queues are self-bounding at one batch per lane, so the cap-Q mechanism is unnecessary;
+> `Pending` does not exist in a model where runnability is a predicate evaluated before
+> the call, so the three-valued visit contract goes with it; and the join hold is what
+> makes the bound unconditional, since a join cannot drain its probe side until the
+> build is set.
 
 Two drivers, both single-threaded, pull-based, deterministic, generic over
 `BackendSelector`:
@@ -440,7 +452,7 @@ upstream batch), raw queued data is bounded by N×Q batches per emit, the queues
 driver-held in-flight batches the enforcer already counts, and everything is
 single-threaded deterministic. `Pending` propagates through merge visits, which skip
 that input lane for the cycle. `GpuInterleave` and `GpuUnion` follow the identical rule
-through `RepartitioningBatchPassthrough::sources_of` (see [Traits](#traits)) — one
+through `BatchForwarder::sources_of` (see [Traits](#traits)) — one
 driver arm cycles a lane's declared sources in order, whatever the node.
 
 **Flow and backpressure are a first-class test surface for both drivers**, exercised
@@ -528,7 +540,7 @@ structure. The mapping:
 | `GpuJoin` | `GpuHashJoin`, plus finish-pass seqs (key project, concat, anti/semi join, pad project) per #136 | map arm per (partition, probe batch) |
 | `GpuCrossJoin` / `GpuNestedLoopJoin` | same-kind node | one map-arm call |
 | `GpuLimit` | none, or `GpuCoalescePartitions` + `GpuLimit` | see the lowering rule below |
-| `GpuMergePartitions` / `GpuUnion` / `GpuInterleave` | none (union casts are `GpuProject` seqs) | `RepartitioningBatchPassthrough` routing in the driver, zero FFI calls |
+| `GpuMergePartitions` / `GpuUnion` / `GpuInterleave` | none (union casts are `GpuProject` seqs) | `BatchForwarder` routing in the driver, zero FFI calls |
 | `GpuUnload` | none | `peacock_result_from_handle` per handle |
 
 This mapping is a first-class deliverable: documented here, unit-tested (each `GpuNode`
@@ -560,7 +572,7 @@ Batch boundaries are a pure function of the plan: the loader's come from the
 partitioner's committed mapping, Exec ops are 1:1, accumulators emit at defined points.
 Given that, the remaining scheduling freedoms are pinned:
 
-- **Every `RepartitioningBatchPassthrough` lane cycles its `sources_of` list in order**
+- **Every `BatchForwarder` lane cycles its `sources_of` list in order**
   — for `GpuMergePartitions` that is round-robin over partitions by index; a source
   yields one batch, `Pending` (skipped this cycle — see the visit contract), or
   `Exhausted` (retired from the rotation). Emission order is arrival order under this
@@ -631,9 +643,18 @@ are in scope; schema checks are not. The hand-built corpus: 3–4 TPC-H plans (a
 filter aggregate, a two-sided shuffle join, a top-N sort, a keyless aggregate) and ~10
 interesting TPC-DS plans — unions and interleaves, rollup aggregates, semi/anti joins,
 cross joins beside aggregates, multi-shuffle trees. Deliverables: the prototype under
-`prototype/batch_partitioned/` with pytest tests (not wired to CI), and a rewrite of the
+`scripts/exec_model/` with tests wired into the cost-report job, and a rewrite of the
 drivers section from its findings — the pull-based formulation there is provisional
 until this lands.
+
+Landed so far: the trait set, both drivers, the enforcer, driver tests over mock trait
+implementations, and the pandas-backed operators — filter, project, sort, the aggregate
+sequence with its partial/final decomposition, the accumulators, the hash scatter, the
+join capability matrix, and the T2 row-group partitioning policy. Every query is checked
+against a single-shot oracle at five partitioning configs, which is the prototype's
+version of two-engine correctness (`scripts/exec_model/`, findings in its README). Still
+open under T0: the `GpuLimit` early-exit path, the estimator, and the hand-built TPC-H /
+TPC-DS plan corpus.
 
 **T1 — flatbuffer operation-name refactor.** Nine of the fifteen legacy node-kind names
 (`GpuFilter`, `GpuProject`, `GpuSort`, `GpuAggregate`, `GpuCrossJoin`,
