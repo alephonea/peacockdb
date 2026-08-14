@@ -12,7 +12,7 @@ import pandas as pd
 from ..batch import CallStats
 from ..executors import BatchAccumulatorExecutor, LaneEvent, PartitionAccumulatorExecutor
 from . import aggregates
-from .frame import PandasBatch, concatenate, measured
+from .frame import PandasBatch, concatenate, no_scratch, scratch_of
 
 
 class _Held:
@@ -68,7 +68,7 @@ class CoalesceAllBatches(BatchAccumulatorExecutor):
                 f"{self.name}: no batches and no declared schema, so the empty batch the "
                 "join's build lane requires cannot be built"
             )
-        return [PandasBatch(out, f"[{'+'.join(tags)}]>{self.name}")], measured(out)
+        return [PandasBatch(out, f"[{'+'.join(tags)}]>{self.name}")], no_scratch()
 
 
 class AggregateBatches(BatchAccumulatorExecutor):
@@ -112,7 +112,7 @@ class AggregateBatches(BatchAccumulatorExecutor):
                 {c: [] for c in self.keys + [c for a in self.aggs for c in a.state_columns]}
             )
         out = aggregates.final(state, self.keys, self.aggs) if self.final else state
-        return [PandasBatch(out, f"[{'+'.join(tags)}]>{self.name}")], measured(out)
+        return [PandasBatch(out, f"[{'+'.join(tags)}]>{self.name}")], no_scratch()
 
     def _restated(self):
         """Merging state columns is a sum/min/max over the state, not over raw inputs."""
@@ -166,9 +166,11 @@ class AccumulateBatchesAndSort(BatchAccumulatorExecutor):
             na_position="first" if self.nulls_first else "last",
             kind="stable",
         )
+        merged = out
         if self.fetch is not None:
             out = out.iloc[: self.fetch]
-        return [PandasBatch(out, f"[{'+'.join(tags)}]>{self.name}")], measured(out)
+        return ([PandasBatch(out, f"[{'+'.join(tags)}]>{self.name}")],
+                scratch_of(merged.iloc[len(out):]))
 
 
 class MergeSortedPartitions(PartitionAccumulatorExecutor):
@@ -218,6 +220,8 @@ class MergeSortedPartitions(PartitionAccumulatorExecutor):
             na_position="first" if self.nulls_first else "last",
             kind="stable",
         )
+        merged = out
         if self.fetch is not None:
             out = out.iloc[: self.fetch]
-        return [PandasBatch(out, f"[{'+'.join(self.tags)}]>{self.name}")], measured(out)
+        return ([PandasBatch(out, f"[{'+'.join(self.tags)}]>{self.name}")],
+                scratch_of(merged.iloc[len(out):]))

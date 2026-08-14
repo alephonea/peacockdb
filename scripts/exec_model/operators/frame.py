@@ -84,6 +84,24 @@ def empty_like(frame: pd.DataFrame) -> pd.DataFrame:
     return frame.iloc[0:0].copy()
 
 
-def measured(frame: pd.DataFrame) -> CallStats:
-    """Scratch is measurable on this backend, so it is reported (`None` on the GPU)."""
-    return CallStats(scratch_bytes=int(frame.memory_usage(index=False, deep=True).sum()))
+def _bytes(frame) -> int:
+    return int(frame.memory_usage(index=False, deep=True).sum())
+
+
+def scratch_of(*intermediates) -> CallStats:
+    """Measured scratch: what the call materialized beyond its input and its outputs.
+
+    Not the output size. Scratch is the transient an operator builds and drops — a
+    filter's mask, a join's merged frame before the marker columns come off — and it is
+    what `Executor::scratch_bytes` models. Reporting the output here instead would make
+    the model-versus-measured check compare two unrelated numbers.
+
+    Measured here directly; the GPU backend measures the same quantity through RMM
+    allocator hooks. `CallStats.scratch_bytes` is `None` only for an un-instrumented run.
+    """
+    return CallStats(scratch_bytes=sum(_bytes(i) for i in intermediates))
+
+
+def no_scratch() -> CallStats:
+    """The call allocated nothing it did not return."""
+    return CallStats(scratch_bytes=0)

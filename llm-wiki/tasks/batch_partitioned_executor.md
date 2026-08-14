@@ -187,7 +187,7 @@ the kernel-knob analysis in the same ticket.
 | `GpuEmitPartitions` | PartitionEmitter | 1 → N per batch by hash scatter; streaming, one call per input batch |
 | `GpuAggregate` | Exec | partial (or single-shortcut final) aggregation of one batch |
 | `GpuAggregateBatches` | BatchAccumulator | merges pre-aggregated batches; emits at done |
-| `GpuJoin` | Join | capability matrix below |
+| `GpuJoin` | Join | capability matrix below. Carries the optimizer's **cardinality estimate** (output rows / probe rows, as `CardinalityEstimator` in `gpu_rule.rs` returns) as a node property. The executor is constructed from the node, so the estimate reaches `scratch_bytes` through `&self` and the merged frame — sized by output cardinality, which the signature cannot derive — is modelled without changing the trait. Constant 1.0 until #19 |
 | `GpuCrossJoin`, `GpuNestedLoopJoin` | Join | two inputs, so `JoinExecutor`, not Exec: `set_build(left)`, probe right. Cross and inner NLJ stream the right side (same mechanics as inner hash-join probes); non-inner NLJ keeps a single-batch probe — the #136 finish trick needs keys to accumulate and a predicate join has none. Both inputs 1 partition; broadcast variants are [#140](../tickets.md#t140) |
 | `GpuUnion`, `GpuInterleave` | BatchForwarder | lane relabeling; branch decimal/type normalization becomes explicit per-branch `GpuProject` casts inserted by the planner — which is what makes union pure routing. Union sums its inputs' lane counts and clears `KeyDistribution`; interleave is chosen (as in DataFusion's `can_interleave`) only when every input carries the same hash distribution — output lane p is lane p of each input, so `KeyDistribution` is preserved |
 | `GpuLimit` | driver + two lowerings | start..limit over a 1-partition stream. The fb node's skip/fetch are frozen per seq, so per-batch GPU calls would truncate every batch — see the lowering rule below the recipe table |
@@ -296,7 +296,7 @@ there is no wrong interleaving to construct and output timing is a pure function
 call sequence:
 
 ```rust
-struct CallStats { scratch_bytes: Option<usize> }   // measured; Some on CPU, None on GPU
+struct CallStats { scratch_bytes: Option<usize> }   // measured; None when not instrumented
 
 trait Executor {
     fn resident_bytes(&self) -> usize;                       // state held between calls
@@ -593,10 +593,13 @@ resident = Σ byte_size of driver-held in-flight batches
 Per call: pre-check `resident + scratch_bytes(n_rows, n_bytes)` against the budget (the
 model may consult `&self`, so accumulators can include their state); execute; then remove
 consumed inputs, add outputs at actual `byte_size()`, refresh the one executor's
-`resident_bytes()` delta, and post-check. The measured `CallStats.scratch_bytes` is
-CPU-only (`Some` on CPU, `None` on GPU — GPU internals are invisible without RMM hooks)
-and exists to keep the model honest: every executor's unit tests assert model ≥ measured
-wherever measurement exists. The enforcer's contract is "fail cleanly when the accounted
+`resident_bytes()` delta, and post-check. The measured `CallStats.scratch_bytes` exists so model
+quality is observable: under-estimates are recorded with their magnitude. Both backends
+measure — the CPU directly, the GPU through RMM allocator hooks — so `None` means this run
+was not instrumented, not that the backend cannot report. **It is not an invariant that the model is never under.** `scratch_bytes` is an
+estimate — a join's rests on the optimizer's cardinality figure, a filter's on assumed
+selectivity — so it will sometimes come in low, and asserting otherwise would make the
+suite red for something that is not a defect. The enforcer's contract is "fail cleanly when the accounted
 peak exceeds budget", not "the budget is never exceeded" — same class of guarantee as the
 legacy `ResidentEnforcer`.
 

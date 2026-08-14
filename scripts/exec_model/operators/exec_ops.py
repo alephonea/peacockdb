@@ -6,7 +6,7 @@ from ..batch import CallStats
 from ..executors import ExecExecutor
 from . import aggregates
 from .expressions import Expr, project as project_exprs
-from .frame import PandasBatch, measured
+from .frame import PandasBatch, no_scratch, scratch_of
 
 
 class _Exec(ExecExecutor):
@@ -30,8 +30,9 @@ class FilterExec(_Exec):
         frame = batch.consume()
         mask = self.predicate.evaluate(frame)
         # fillna(False): a null predicate is not true, which is SQL's rule and cuDF's.
-        out = frame[mask.fillna(False).astype(bool)]
-        return PandasBatch(out, f"{batch.tag}>{self.name}"), measured(out)
+        applied = mask.fillna(False).astype(bool)
+        out = frame[applied]
+        return PandasBatch(out, f"{batch.tag}>{self.name}"), scratch_of(applied.to_frame())
 
 
 class ProjectExec(_Exec):
@@ -43,8 +44,8 @@ class ProjectExec(_Exec):
 
     def exec(self, batch: PandasBatch):
         frame = batch.consume()
-        out = project_exprs(frame, self.exprs)
-        return PandasBatch(out, f"{batch.tag}>{self.name}"), measured(out)
+        out = project_exprs(frame, self.exprs)   # the columns built ARE the output
+        return PandasBatch(out, f"{batch.tag}>{self.name}"), no_scratch()
 
 
 class SortExec(_Exec):
@@ -70,9 +71,11 @@ class SortExec(_Exec):
             na_position="first" if self.nulls_first else "last",
             kind="stable",
         )
+        sorted_full = out
         if self.fetch is not None:
             out = out.iloc[: self.fetch]
-        return PandasBatch(out, f"{batch.tag}>{self.name}"), measured(out)
+        # A top-N sorts everything and keeps a prefix; the discarded tail is the scratch.
+        return PandasBatch(out, f"{batch.tag}>{self.name}"), scratch_of(sorted_full.iloc[len(out):])
 
 
 class PartialAggregateExec(_Exec):
@@ -86,7 +89,7 @@ class PartialAggregateExec(_Exec):
     def exec(self, batch: PandasBatch):
         frame = batch.consume()
         out = aggregates.partial(frame, self.keys, self.aggs)
-        return PandasBatch(out, f"{batch.tag}>{self.name}"), measured(out)
+        return PandasBatch(out, f"{batch.tag}>{self.name}"), no_scratch()
 
 
 class LimitExec(_Exec):
@@ -105,8 +108,8 @@ class LimitExec(_Exec):
     def exec(self, batch: PandasBatch):
         frame = batch.consume()
         stop = None if self.fetch is None else self.skip + self.fetch
-        out = frame.iloc[self.skip : stop]
-        return PandasBatch(out, f"{batch.tag}>{self.name}"), measured(out)
+        out = frame.iloc[self.skip : stop]      # a zero-copy slice
+        return PandasBatch(out, f"{batch.tag}>{self.name}"), no_scratch()
 
 
 class UnloadExec(_Exec):

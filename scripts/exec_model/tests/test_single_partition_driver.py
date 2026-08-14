@@ -71,6 +71,14 @@ def make_driver(category, executor, name="node"):
 
 
 def inputs_over(producers, accountant):
+    # A batch sitting in a producer's queue is driver-held, so the accountant must know
+    # about it before anything takes it. The real driver holds at enqueue; these tests
+    # seed queues directly, so they hold here — otherwise `release` underflows, which is
+    # a panic in Rust and which the accountant now refuses.
+    for producer in producers:
+        for queue in producer.out_queues:
+            for batch in queue:
+                accountant.hold(batch)
     return LaneInputs([(p, 0) for p in producers], accountant)
 
 

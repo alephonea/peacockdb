@@ -34,7 +34,7 @@ import pandas as pd
 
 from ..batch import CallStats
 from ..executors import JoinExecutor
-from .frame import PandasBatch, concatenate, measured, normalize
+from .frame import PandasBatch, concatenate, no_scratch, scratch_of, normalize
 
 
 class JoinType(Enum):
@@ -52,6 +52,12 @@ _NEEDS_FINISH = {JoinType.LEFT_OUTER, JoinType.FULL_OUTER, JoinType.LEFT_SEMI, J
 #: Types that may not stream their probe side (matrix row: "no — single-batch probe").
 _SINGLE_BATCH_PROBE: set[JoinType] = set()
 
+#: output rows / probe rows — the ratio `CardinalityEstimator` returns in gpu_rule.rs.
+#: 1.0 is what the constant estimator gives today (#19).
+TRIVIAL_FANOUT = 1.0
+#: the two row-id marker columns the merged frame carries, int64 each
+_MARKER_BYTES_PER_ROW = 16
+
 _BUILD_KEY = "__build_row__"
 _PROBE_KEY = "__probe_row__"
 
@@ -64,6 +70,7 @@ class HashJoin(JoinExecutor):
         probe_keys: list[str],
         null_equals_null: bool = False,
         name: str = "join",
+        fanout: float = TRIVIAL_FANOUT,
     ):
         if join_type is not JoinType.CROSS and len(build_keys) != len(probe_keys):
             raise ValueError("join key lists must have equal length")
@@ -72,6 +79,10 @@ class HashJoin(JoinExecutor):
         self.probe_keys = probe_keys
         self.null_equals_null = null_equals_null
         self.name = name
+        # A node property, supplied by the optimizer at plan time and carried into the
+        # executor at construction — which is how the estimate reaches scratch_bytes
+        # without changing its signature.
+        self.fanout = fanout
         self.build: pd.DataFrame | None = None
         self.matched: np.ndarray | None = None
         self.probe_calls = 0
@@ -84,9 +95,27 @@ class HashJoin(JoinExecutor):
         return int(self.build.memory_usage(index=False, deep=True).sum())
 
     def scratch_bytes(self, n_rows: int, n_bytes: int) -> int:
-        # The build side is rebuilt on every probe call in v1 (#136), so it is scratch
-        # as well as residency.
-        return self.resident_bytes() + n_bytes
+        """Build side (rebuilt per probe call, #136) plus the merged frame.
+
+        The merged frame is sized by the *output* cardinality, which the signature cannot
+        derive — but it does not have to. `fanout` is a node property the optimizer
+        supplies at plan time and the executor is constructed with, so the estimate is
+        already in `&self` by the time this is called. That is what keeps the trait
+        unchanged while the model stays correct.
+
+        `fanout` is output rows / probe rows, the same ratio `CardinalityEstimator` returns
+        in `gpu_rule.rs` — greater than one for a fan-out join, less for a filtering one.
+        It defaults to `TRIVIAL_FANOUT`, matching today's constant estimator (#19).
+        """
+        merged_rows = n_rows * self.fanout
+        if n_rows == 0:
+            return self.resident_bytes()
+        probe_row_bytes = n_bytes / n_rows
+        build_rows = max(1, len(self.build)) if self.build is not None else 1
+        build_row_bytes = self.resident_bytes() / build_rows
+        # Each merged row carries both sides' columns plus the two marker columns.
+        per_row = probe_row_bytes + build_row_bytes + _MARKER_BYTES_PER_ROW
+        return int(self.resident_bytes() + merged_rows * per_row)
 
     # -- JoinExecutor -----------------------------------------------------------
 
@@ -97,7 +126,7 @@ class HashJoin(JoinExecutor):
         self.build = frame.copy()
         self.build[_BUILD_KEY] = np.arange(len(frame))
         self.matched = np.zeros(len(frame), dtype=bool)
-        return measured(frame)
+        return no_scratch()   # the build frame becomes residency, not scratch
 
     def probe_and_fetch(self, batch: PandasBatch):
         if self.build is None:
@@ -107,7 +136,7 @@ class HashJoin(JoinExecutor):
         out = self._probe(probe)
         return (
             [PandasBatch(out, f"({self.name}#{self.probe_calls}⋈{batch.tag})")],
-            measured(probe),
+            scratch_of(*self._transients),
         )
 
     def finish_and_fetch(self):
@@ -122,7 +151,7 @@ class HashJoin(JoinExecutor):
             out = build[~self.matched]
             for column in self._probe_only_columns():
                 out = out.assign(**{column: np.nan})
-        return [PandasBatch(out, f"({self.name}⋈finish)")], measured(out)
+        return [PandasBatch(out, f"({self.name}⋈finish)")], no_scratch()
 
     # -- internals --------------------------------------------------------------
 
@@ -136,6 +165,7 @@ class HashJoin(JoinExecutor):
         build_columns = self._build_columns()
         self._probe_columns = [c for c in probe.columns if c not in build_columns.columns]
 
+        self._transients = []
         if self.join_type is JoinType.CROSS:
             if len(probe):
                 self.matched[:] = True
@@ -163,6 +193,9 @@ class HashJoin(JoinExecutor):
         if len(merged):
             self.matched[merged[_BUILD_KEY].to_numpy()] = True
 
+        # `merged` carries both marker columns and every matched pair; it is dropped for
+        # the returned frame, so it is exactly what scratch means here.
+        self._transients = [merged]
         matches = merged.drop(columns=[_BUILD_KEY, _PROBE_KEY])
 
         if self.join_type in (JoinType.INNER, JoinType.LEFT_OUTER):

@@ -193,7 +193,6 @@ class BatchPartitionedDriver:
                 self._enqueue(state, lane, batch)
             if result.finished:
                 state.out_done[lane] = True
-            self.accountant.settle(driver.label)
             self._record(state, lane, result.call, len(result.outputs))
 
     def _run_emitter(self, state: NodeState) -> None:
@@ -206,8 +205,9 @@ class BatchPartitionedDriver:
             self._record(state, 0, "emit/done", 0)
             return
         batch = inputs.take(0)
-        self.accountant.check_call(str(state.info), executor, batch.num_rows(), batch.byte_size())
-        outputs, _stats = executor.emit(batch)
+        label = str(state.info)
+        modelled = self.accountant.begin_call(label, executor, batch.num_rows(), batch.byte_size())
+        outputs, stats = executor.emit(batch)
         if len(outputs) != state.info.n_lanes:
             raise DriverError(
                 f"{state.info}: emit returned {len(outputs)} lanes, expected {state.info.n_lanes}"
@@ -220,7 +220,7 @@ class BatchPartitionedDriver:
                 continue
             self._enqueue(state, lane, out)
             emitted += 1
-        self.accountant.settle(str(state.info))
+        self.accountant.end_call(label, executor, stats, modelled)
         self._record(state, 0, "emit", emitted)
 
     def _run_partition_accumulator(self, state: NodeState) -> None:
@@ -228,22 +228,23 @@ class BatchPartitionedDriver:
         child = self.states[state.info.children[0]]
         for lane in range(len(state.lane_done_sent)):
             inputs = LaneInputs([(child, lane)], self.accountant)
+            label = str(state.info)
             if inputs.has(0):
                 batch = inputs.take(0)
-                self.accountant.check_call(
-                    str(state.info), executor, batch.num_rows(), batch.byte_size()
+                modelled = self.accountant.begin_call(
+                    label, executor, batch.num_rows(), batch.byte_size()
                 )
                 event, call = LaneEvent.of(batch), "accumulate_and_fetch"
             elif inputs.done(0) and not state.lane_done_sent[lane]:
                 state.lane_done_sent[lane] = True
-                self.accountant.check_call(str(state.info), executor, 0, 0)
+                modelled = self.accountant.begin_call(label, executor, 0, 0)
                 event, call = LaneEvent.done(), "accumulate_and_fetch/done"
             else:
                 continue
-            outputs, _stats = executor.accumulate_and_fetch(lane, event)
+            outputs, stats = executor.accumulate_and_fetch(lane, event)
             for out in outputs:
                 self._enqueue(state, 0, out)
-            self.accountant.settle(str(state.info))
+            self.accountant.end_call(label, executor, stats, modelled)
             self._record(state, lane, call, len(outputs))
         if all(state.lane_done_sent):
             state.out_done[0] = True
@@ -306,7 +307,6 @@ class BatchPartitionedDriver:
             state.cross_executor = self.selector.select(
                 state.info.category, state.info.executors.backends, None
             )
-            self.accountant.register(str(state.info), state.cross_executor)
         return state.cross_executor
 
     def _lane_inputs(self, state: NodeState, lane: int) -> LaneInputs:
@@ -336,14 +336,14 @@ class BatchPartitionedDriver:
 
     def _enqueue(self, state: NodeState, lane: int, batch: Batch) -> None:
         state.out_queues[lane].append(batch)
-        self.accountant.add_in_flight(batch.byte_size())
+        self.accountant.hold(batch)
 
     def _drain_root(self) -> None:
         root = self.states[self.plan.root]
         for queue in root.out_queues:
             while queue:
                 batch = queue.popleft()
-                self.accountant.remove_in_flight(batch.byte_size())
+                self.accountant.release(batch)
                 self.results.append(batch)
 
     def _record(self, state: NodeState, lane: int, call: str, n_out: int) -> None:

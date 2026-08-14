@@ -11,7 +11,7 @@ from __future__ import annotations
 import pandas as pd
 
 from ..executors import SourceExecutor
-from .frame import PandasBatch, measured
+from .frame import PandasBatch, no_scratch
 
 
 def split_row_groups(total_rows: int, rows_per_group: int) -> list[tuple[int, int]]:
@@ -125,4 +125,4 @@ class TableSource(SourceExecutor):
         piece = self.frame.iloc[start:stop]
         tag = f"{self.name}.p{self.lane}.b{self.emitted}"
         self.emitted += 1
-        return PandasBatch(piece, tag), measured(piece)
+        return PandasBatch(piece, tag), no_scratch()   # the slice is the output

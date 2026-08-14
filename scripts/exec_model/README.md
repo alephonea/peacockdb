@@ -6,9 +6,18 @@ built to settle the scheduling rule and the trait set before any Rust exists (ta
 Not production code. The tests run in CI, in the `cost-report` job's cheap python tier.
 
 **Two halves.** The scheduler — plan, drivers, traits — is stdlib only and uses mock
-executors. The operators under `operators/` are pandas-backed, so `test_operators.py` and
-`test_end_to_end.py` need pandas and **fail rather than skip** without it: a skipped
-operator suite reads exactly like a passing one.
+executors. The operators under `operators/` are pandas-backed, so `test_operators.py`,
+`test_end_to_end.py`, `test_accounting.py` and `test_tpch.py` need pandas (and pyarrow for
+the last) and **fail rather than skip** without them: a skipped operator suite reads
+exactly like a passing one.
+
+`test_tpch.py` runs simple hand-built plans over real TPC-H tables. It runs in CI's
+**cpp-cpu** job, after that job generates sf1; every other file runs in cost-report, which
+has no dataset. Locally it falls back to the committed `testdata/tpch.minimal` when sf1 was
+never generated — for the four tables it uses the two are the same data, same schema and
+same row counts, so the assertions hold either way. Every plan there and in
+`test_end_to_end.py` runs under a real resident budget, so the enforcer is engaged rather
+than dormant.
 
 Every test file runs on its own with the stock python, no pytest:
 
@@ -39,7 +48,7 @@ package when it is run as a script, so the relative imports resolve either way.
 | `forwarder.py` | `BatchForwarder` and the merge / union / interleave mappings |
 | `node.py` | `GpuNode`, `NodeExecutors`, `ExecutorBackends`, `BackendSelector` |
 | `plan.py` | heights, left-to-right order, structural validation |
-| `accounting.py` | the resident formula and the enforcer |
+| `accounting.py` | the resident formula, the cached-delta executor total, and the enforcer |
 | `runtime.py` | per-node queue state and one lane's view of its inputs |
 | `batch_single_partition_driver.py` | one lane of one lane-scoped node |
 | `batch_partitioned_driver.py` | the scheduler and everything cross-partition |
@@ -170,6 +179,24 @@ F8. **Partition and lane validation is naturally central, not per node.** Arity,
    agreement, the emitter's single-lane input and the build side's `SingleBatch` are all
    whole-tree facts, so they live in `plan.py` — one owner.
    `validate_schemas_and_partitions()` is left to schema checks, which are out of T0 scope.
+
+F9. **A cardinality estimate belongs on the join node, not in the model's signature.** A
+   join's transient is sized by the *output* cardinality — matched rows × the combined
+   width, build side replicated per match — which `scratch_bytes(n_rows, n_bytes)` cannot
+   derive. It does not have to: the executor is constructed from the node, so an estimate
+   the optimizer attaches at plan time reaches the model through `&self`, and the trait is
+   unchanged. `GpuJoin` therefore carries a fan-out figure (output rows / probe rows, the
+   ratio `CardinalityEstimator` already returns), constant 1.0 until
+   [#19](../../llm-wiki/tickets.md). Corollary: **model ≥ measured is not an invariant.**
+   The estimate can be wrong, so the model can come in under, and the enforcer is built for
+   that — its contract is "fail cleanly when the accounted peak exceeds the budget". The
+   comparison is recorded with its magnitude and never asserted away.
+
+F10. **The executor total must be cached, not summed.** The spec says "Σ cached
+   `resident_bytes()`" and the caching is not an optimization: summing live is what forces
+   the accountant to hold a reference to every executor, which the Rust port cannot do
+   while the driver holds them mutably. Refreshing one instance's delta per call removes
+   the aliasing along with the cost.
 
 ## Not in this cut
 

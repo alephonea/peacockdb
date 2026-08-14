@@ -19,7 +19,7 @@ import zlib
 import pandas as pd
 
 from ..executors import PartitionEmitterExecutor
-from .frame import PandasBatch, measured
+from .frame import PandasBatch, no_scratch
 
 SEED = 42
 
@@ -71,4 +71,4 @@ class EmitPartitions(PartitionEmitterExecutor):
             mask = [pid == lane for pid in ids]
             piece = frame[pd.Series(mask, index=frame.index)] if len(frame) else frame
             outputs.append(PandasBatch(piece, f"{batch.tag}>{self.name}.p{lane}"))
-        return outputs, measured(frame)
+        return outputs, no_scratch()

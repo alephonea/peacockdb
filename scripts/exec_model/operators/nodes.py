@@ -284,8 +284,11 @@ def interleave(name, children) -> PandasNode:
 
 
 def hash_join(
-    name, build, probe, join_type, build_keys, probe_keys, null_equals_null=False
+    name, build, probe, join_type, build_keys, probe_keys, null_equals_null=False,
+    fanout=joins.TRIVIAL_FANOUT,
 ) -> PandasNode:
+    """`fanout` is the optimizer's cardinality estimate for this join, carried as a node
+    property so the executor built from it can model its own scratch."""
     return PandasNode(
         name,
         NodeKind.INTERMEDIATE,
@@ -293,7 +296,7 @@ def hash_join(
         ExecutorCategory.JOIN,
         [build, probe],
         factory=lambda lane: joins.HashJoin(
-            join_type, build_keys, probe_keys, null_equals_null, f"{name}.p{lane}"
+            join_type, build_keys, probe_keys, null_equals_null, f"{name}.p{lane}", fanout
         ),
     )
 

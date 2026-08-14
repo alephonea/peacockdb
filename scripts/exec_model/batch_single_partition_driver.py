@@ -70,7 +70,6 @@ class BatchSinglePartitionDriver:
     def executor(self) -> Executor:
         if self._executor is None:
             self._executor = self._make_executor()
-            self._accountant.register(self.label, self._executor)
         return self._executor
 
     def can_step(self, inputs: LaneInputs) -> bool:
@@ -101,12 +100,14 @@ class BatchSinglePartitionDriver:
     # -- per category ------------------------------------------------------------
 
     def _step_source(self) -> StepResult:
-        self._check(0, 0)
+        modelled = self._accountant.begin_call(self.label, self.executor, 0, 0)
         produced = self.executor.next_batch()
         if produced is None:
+            self._accountant.end_call(self.label, self.executor)
             self.finished = True
             return StepResult([], True, "next_batch/exhausted")
-        batch, _stats = produced
+        batch, stats = produced
+        self._accountant.end_call(self.label, self.executor, stats, modelled)
         return StepResult([batch], False, "next_batch")
 
     def _step_exec(self, inputs: LaneInputs) -> StepResult:
@@ -114,20 +115,22 @@ class BatchSinglePartitionDriver:
             self.finished = True
             return StepResult([], True, "done")
         batch = inputs.take(0)
-        self._check(batch.num_rows(), batch.byte_size())
-        out, _stats = self.executor.exec(batch)
-        return StepResult([out], False, "exec")
+        outputs, _ = self._call(batch, self._exec_one)
+        return StepResult(outputs, False, "exec")
+
+    def _exec_one(self, batch):
+        """`exec` is the one method returning a single batch rather than a list."""
+        out, stats = self.executor.exec(batch)
+        return [out], stats
 
     def _step_batch_accumulator(self, inputs: LaneInputs) -> StepResult:
         if not inputs.has(0):
-            self._check(0, 0)
-            outputs, _stats = self.executor.mark_done_and_fetch()
+            outputs, _ = self._call(None, lambda _b: self.executor.mark_done_and_fetch())
             self.finished = True
-            return StepResult(list(outputs), True, "mark_done_and_fetch")
+            return StepResult(outputs, True, "mark_done_and_fetch")
         batch = inputs.take(0)
-        self._check(batch.num_rows(), batch.byte_size())
-        outputs, _stats = self.executor.accumulate_and_fetch(batch)
-        return StepResult(list(outputs), False, "accumulate_and_fetch")
+        outputs, _ = self._call(batch, lambda b: self.executor.accumulate_and_fetch(b))
+        return StepResult(outputs, False, "accumulate_and_fetch")
 
     def _step_join(self, inputs: LaneInputs) -> StepResult:
         if self.join_phase is JoinPhase.BUILD:
@@ -137,25 +140,32 @@ class BatchSinglePartitionDriver:
             if not inputs.has(BUILD_SLOT):
                 raise DriverError(f"{self.label}: build side finished without a batch")
             batch = inputs.take(BUILD_SLOT)
-            self._check(batch.num_rows(), batch.byte_size())
-            self.executor.set_build(batch)
+            self._call(batch, lambda b: ([], self.executor.set_build(b)))
             self.join_phase = JoinPhase.PROBE
             return StepResult([], False, "set_build")
 
         if inputs.has(BUILD_SLOT):
             raise DriverError(f"{self.label}: build side produced a second batch")
         if not inputs.has(PROBE_SLOT):
-            self._check(0, 0)
-            outputs, _stats = self.executor.finish_and_fetch()
+            outputs, _ = self._call(None, lambda _b: self.executor.finish_and_fetch())
             self.finished = True
-            return StepResult(list(outputs), True, "finish_and_fetch")
+            return StepResult(outputs, True, "finish_and_fetch")
         batch = inputs.take(PROBE_SLOT)
-        self._check(batch.num_rows(), batch.byte_size())
-        outputs, _stats = self.executor.probe_and_fetch(batch)
-        return StepResult(list(outputs), False, "probe_and_fetch")
+        outputs, _ = self._call(batch, lambda b: self.executor.probe_and_fetch(b))
+        return StepResult(outputs, False, "probe_and_fetch")
 
-    def _check(self, n_rows: int, n_bytes: int) -> None:
-        self._accountant.check_call(self.label, self.executor, n_rows, n_bytes)
+    def _call(self, batch, invoke):
+        """Pre-check, call, then refresh this executor's residency and post-check.
+
+        `batch` is None for the calls the spec models with 0 rows and 0 bytes —
+        `mark_done_and_fetch` and `finish_and_fetch`, which take no input.
+        """
+        n_rows = batch.num_rows() if batch is not None else 0
+        n_bytes = batch.byte_size() if batch is not None else 0
+        modelled = self._accountant.begin_call(self.label, self.executor, n_rows, n_bytes)
+        outputs, stats = invoke(batch)
+        self._accountant.end_call(self.label, self.executor, stats, modelled)
+        return list(outputs), stats
 
 
 def batch_single_partition_driver(

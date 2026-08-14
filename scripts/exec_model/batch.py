@@ -26,6 +26,9 @@ class Batch(ABC):
 
 @dataclass
 class CallStats:
-    """`scratch_bytes` is measured, so it is present on CPU and absent on GPU."""
+    """`scratch_bytes` is the measured transient; `None` means the run was not instrumented.
+
+    Both backends can report it — the CPU directly, the GPU through RMM allocator hooks.
+    """
 
     scratch_bytes: int | None = None

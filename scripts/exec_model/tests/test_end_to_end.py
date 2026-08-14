@@ -22,8 +22,9 @@ if __package__ in (None, ""):  # allow `python scripts/exec_model/tests/<file>.p
 import numpy as np
 import pandas as pd
 
-from .harness import main
+from .harness import main, raises
 from ..batch_partitioned_driver import batch_partitioned_driver
+from ..errors import ResidentBudgetExceeded
 from ..node import CpuBackendSelector
 from ..operators import aggregates as A
 from ..operators import nodes as N
@@ -51,8 +52,14 @@ def dim_fixture():
     return pd.DataFrame({"k": [0, 1, 2, 3, 9], "label": list("ABCDE")})
 
 
-def execute(root):
-    driver = batch_partitioned_driver(Plan.build(root), CpuBackendSelector())
+#: Every plan here runs under a real budget rather than `None`, so the accounting path is
+#: live on each call and a regression that blew the resident set fails rather than passing
+#: quietly. Generous against these fixtures (peaks are kilobytes) and far from unbounded.
+BUDGET = 8 * 1024 * 1024
+
+
+def execute(root, budget: int | None = BUDGET):
+    driver = batch_partitioned_driver(Plan.build(root), CpuBackendSelector(), budget)
     driver.run()
     frames = [b.frame for b in driver.results if len(b.frame)]
     if not frames:
@@ -249,6 +256,21 @@ def test_projection_arithmetic_matches_the_oracle():
         ]
         got, _ = execute(N.unload("unload", N.project("p", N.scan("s", df, parts, group, target), exprs)))
         same(got, want, f"projection {(parts, group, target)}")
+
+
+def test_the_enforcer_is_actually_engaged_in_these_runs():
+    # A budget of None would make every plan above pass whatever the accounting did. This
+    # asserts the budget is live: the same plan trips when the budget is small enough.
+    df = fixture()
+    aggs = [A.Agg(A.SUM, "v", "sum_v")]
+    driver = None
+    for config in CONFIGS:
+        _, driver = execute(shuffled_aggregate(df, config, aggs))
+        assert driver.accountant.peak > 0
+        assert driver.accountant.peak <= BUDGET
+
+    with raises(ResidentBudgetExceeded):
+        execute(shuffled_aggregate(df, CONFIGS[0], aggs), budget=1)
 
 
 def test_every_config_agrees_with_every_other():

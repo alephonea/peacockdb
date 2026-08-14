@@ -80,6 +80,17 @@ jobs:
       # sort-order / clustering checks always run. numpy+pyarrow ship in the rapids base
       # image (cudf depends on pyarrow), but self-heal if a future image drops them
       # rather than letting the validator fail to import.
+      # The exec-model prototype's TPC-H plans, which need the sf1 tables generated
+      # above — the rest of that suite runs in the cost-report tier, which has no
+      # dataset. One matrix leg only: the two legs differ in cuDF, which this pure-python
+      # test cannot see, and a second run would only report the same failure twice.
+      - name: Exec-model TPC-H plans (Python)
+        if: matrix.cudf == '25.02'
+        run: |
+          set -euo pipefail
+          python3 -c "import pandas, pyarrow" 2>/dev/null || pip install --quiet pandas pyarrow
+          python3 scripts/exec_model/tests/test_tpch.py
+
       - name: Validate sf1 datasets
         run: |
           python3 -c "import numpy, pyarrow" 2>/dev/null \
@@ -506,7 +517,15 @@ jobs:
           set -euo pipefail
           python3 -c "import pandas" 2>/dev/null || pip install --quiet pandas
           shopt -s nullglob
-          files=(scripts/exec_model/tests/test_*.py)
+          # test_tpch.py needs the generated sf1 tables, which only the cpp-cpu job
+          # produces; it runs there instead. Named rather than pattern-matched, and its
+          # absence is an error, so renaming it cannot silently drop it from both jobs.
+          elsewhere=scripts/exec_model/tests/test_tpch.py
+          [ -f "$elsewhere" ] || { echo "$elsewhere is missing; is it still run in cpp-cpu?"; exit 1; }
+          files=()
+          for f in scripts/exec_model/tests/test_*.py; do
+            [ "$f" = "$elsewhere" ] || files+=("$f")
+          done
           # A vanished glob makes the loop body disappear and the step pass green.
           [ ${#files[@]} -gt 0 ] || { echo "no exec-model test files matched"; exit 1; }
           status=0

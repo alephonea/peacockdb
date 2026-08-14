@@ -76,5 +76,5 @@ class LaneInputs:
     def take(self, slot: int) -> Batch:
         state, lane = self._sources[slot]
         batch = state.out_queues[lane].popleft()
-        self._accountant.remove_in_flight(batch.byte_size())
+        self._accountant.release(batch)
         return batch
