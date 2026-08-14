@@ -278,11 +278,15 @@ join executors; the finish pass (#136) is unaffected either way, since it addres
 build seq once at done.
 
 Whether the copy is tolerable in v1 is a quantitative question, and the numbers already
-exist: the committed `.cpu.txt` goldens carry each join's build-side and probe-side
-`output_rows`, so B copies of the build cost `B × build_bytes` against a probe stream of
-`probe_bytes` — tpch q3 at tp8 is 30142 build rows against 727305 probe rows, the shape
-that makes copying cheap, and a join whose sides are comparable is the shape that does not.
-Answer it from the goldens before commissioning a measurement.
+exist: each join's two `GpuCoalescePartitionsExec` lines in the committed `.cpu.txt`
+goldens carry both sides' `output_bytes`, and B copies of the build cost `B × build_bytes`
+against one probe stream of `probe_bytes`. Take the ratio on **bytes, not rows** — a copy
+costs bytes, and the two ratios disagree by a factor of three on the first join anyone will
+look at. tpch q3 at `partitioned-tp8-standard`: build 30142 rows / 244904 bytes, probe
+727305 rows / 17818976 bytes, so 24:1 by rows and 73:1 by bytes. Rows understate the margin
+here only because this build side is the narrow one, which is a property of this join and
+not of joins; invert the widths and rows would flatter the copy instead. Answer it from the
+goldens before commissioning a measurement.
 
 <a id="t151"></a>
 ### #151 — the per-node benchmarks measure the engine with no RMM pool
