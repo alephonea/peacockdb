@@ -1,11 +1,80 @@
 name: CI Pipeline
 
+# Documentation-only changes skip the whole pipeline. Nothing under llm-wiki/ or any
+# .md file is read by a build, a test or a golden — verified by grep, and the rule is
+# only safe while that stays true, so a doc file that ever becomes an input (a fixture,
+# a generated table someone asserts on) has to come off this list.
+#
+# paths-ignore skips only when EVERY changed file matches, so a commit touching the spec
+# and the code it describes still runs in full. No status check is required on master
+# (no ruleset enforcement, no required_status_checks), so a skipped run leaves a PR
+# mergeable rather than stuck waiting on a check that will never report.
 on:
   push:
     branches: [master]
+    paths-ignore:
+      - '**.md'
+      - 'llm-wiki/**'
   pull_request:
+    paths-ignore:
+      - '**.md'
+      - 'llm-wiki/**'
 
 jobs:
+  # paths-ignore above is not enough on its own. For a pull_request event GitHub
+  # evaluates it against the WHOLE PR diff, not the commits just pushed, so a PR that
+  # touches any code runs the full pipeline on every later docs-only push — measured,
+  # not assumed: a docs-only push to #118 started run 31644108948 with the filter live.
+  # This job closes that case by classifying the push range itself.
+  #
+  # Fail-open by construction. It answers `code=true` — run everything — for any event
+  # that is not a synchronize, a force push or rebase, an unreadable compare, a range at
+  # the API's page limit, and any file it cannot place. Only a clean append of
+  # documentation skips. A wrong skip is also not a hole into master: the merge lands as
+  # a push whose own diff carries the code, and that run re-evaluates from scratch.
+  changes:
+    name: Changed paths
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.classify.outputs.code }}
+    steps:
+      - name: Is this push documentation-only?
+        id: classify
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          ACTION: ${{ github.event.action }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.event.after }}
+        run: |
+          set -euo pipefail
+          # Every exit but the last one is "run the pipeline", and each says why, so a
+          # skip is never silent and neither is a fallback.
+          everything() { echo "code=true" >> "$GITHUB_OUTPUT"; echo "running in full: $1"; exit 0; }
+
+          [ "$EVENT" = pull_request ] && [ "$ACTION" = synchronize ] \
+            || everything "${EVENT}/${ACTION:-none} is not a pull-request push"
+          [ -n "$BEFORE" ] && [ -n "$AFTER" ] || everything "the payload carries no before/after"
+
+          # The compare API rather than a checkout: no fetch-depth guessing about whether
+          # $BEFORE is still reachable, and a force push is reported rather than inferred.
+          cmp=$(gh api "repos/$GITHUB_REPOSITORY/compare/$BEFORE...$AFTER") \
+            || everything "could not compare $BEFORE...$AFTER"
+          status=$(jq -r '.status' <<<"$cmp")
+          [ "$status" = ahead ] \
+            || everything "the new head is '$status' of the old one, not a clean append"
+          count=$(jq -r '(.files // []) | length' <<<"$cmp")
+          [ "$count" -lt 300 ] || everything "$count files — at the compare endpoint's page limit"
+
+          files=$(jq -r '(.files // [])[].filename' <<<"$cmp")
+          echo "changed in this push:"; echo "${files:-(nothing)}" | sed 's/^/  /'
+          # Same two patterns as paths-ignore above; they must stay in step.
+          if grep -qvE '(\.md$|^llm-wiki/)' <<<"$files"; then
+            everything "the push changes more than documentation"
+          fi
+          echo "code=false" >> "$GITHUB_OUTPUT"
+          echo "documentation only — skipping the pipeline for this push"
+
   cpp-cpu:
     strategy:
       fail-fast: false
@@ -16,9 +85,19 @@ jobs:
           - cudf: "25.02"
             image: rapidsai/base:25.02-cuda12.0-py3.12
     name: CI Pipeline (cudf ${{ matrix.cudf }})
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     container:
       image: ${{ matrix.image }}
+    # Inside a container the runner does NOT default `run:` to bash — it resolved to
+    # `sh -e {0}` in these rapids images, so a step opening with `set -euo pipefail`
+    # died on "Illegal option -o pipefail" before running anything. Declared at the job
+    # so the next step added here cannot rediscover it; the composite action already
+    # says `shell: bash` on every step, which is how bash is known to be present.
+    defaults:
+      run:
+        shell: bash
 
     steps:
       - name: Install git
@@ -66,7 +145,12 @@ jobs:
           # repackaged against icu 78, which conflicts with the base env's mamba pinned
           # to icu 75 -> LibMambaUnsatisfiableError; and a different build risks
           # different parquet bytes vs the goldens.)
-          curl -fsSL https://github.com/duckdb/duckdb/releases/download/v1.5.4/duckdb_cli-linux-amd64.zip -o /tmp/duckdb.zip
+          # Retried for the same reason the cmake/ninja fetch is: the releases CDN
+          # answers 503 often enough to be the single most common cause of a red run.
+          # No --retry-delay — curl's default doubling rides out a longer outage than any
+          # fixed delay, and --retry-max-time bounds the total.
+          curl -fsSL --retry 8 --retry-all-errors --retry-max-time 300 \
+            https://github.com/duckdb/duckdb/releases/download/v1.5.4/duckdb_cli-linux-amd64.zip -o /tmp/duckdb.zip
           python3 -c "import zipfile; zipfile.ZipFile('/tmp/duckdb.zip').extractall('/tmp/duckdb-bin')"
           chmod +x /tmp/duckdb-bin/duckdb
           export DUCKDB=/tmp/duckdb-bin/duckdb
@@ -80,6 +164,17 @@ jobs:
       # sort-order / clustering checks always run. numpy+pyarrow ship in the rapids base
       # image (cudf depends on pyarrow), but self-heal if a future image drops them
       # rather than letting the validator fail to import.
+      # The exec-model prototype's TPC-H plans, which need the sf1 tables generated
+      # above — the rest of that suite runs in the cost-report tier, which has no
+      # dataset. One matrix leg only: the two legs differ in cuDF, which this pure-python
+      # test cannot see, and a second run would only report the same failure twice.
+      - name: Exec-model TPC-H plans (Python)
+        if: matrix.cudf == '25.02'
+        run: |
+          set -euo pipefail
+          python3 -c "import pandas, pyarrow" 2>/dev/null || pip install --quiet pandas pyarrow
+          python3 scripts/exec_model/tests/test_tpch.py
+
       - name: Validate sf1 datasets
         run: |
           python3 -c "import numpy, pyarrow" 2>/dev/null \
@@ -174,9 +269,15 @@ jobs:
   # CPU tests + Rust tests to finish.
   cpp-build-2502:
     name: CI Pipeline (build 25.02 for GPU)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     container:
       image: rapidsai/base:25.02-cuda12.0-py3.12
+    # Same container sh-not-bash default as cpp-cpu above.
+    defaults:
+      run:
+        shell: bash
 
     steps:
       - name: Install git
@@ -461,6 +562,8 @@ jobs:
   # PR it upserts a single comment; on master it publishes to GitHub Pages.
   cost-report:
     name: Cost report (coverage + ratio)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -491,6 +594,39 @@ jobs:
       # broken classifier/normalizer fails CI fast. python3 is preinstalled.
       - name: DuckDB extraction unit tests (Python)
         run: python3 testdata/test_duckdb_cost.py
+
+      # The batch-partitioned execution-model prototype. No project code, so it belongs
+      # in this cheap tier next to the extractor tests. The scheduler tests are stdlib
+      # only; the operator tests need pandas, and they FAIL rather than skip when it is
+      # absent — a skipped operator suite reads exactly like a passing one. Same
+      # self-heal shape the cpp-cpu and s3-datasets jobs use for numpy/pyarrow.
+      #
+      # Enumerated by glob rather than by name, unlike the rust targets above: there is
+      # no meta guard over python files, so a hand-written list would rot the way
+      # test_ci_coverage exists to prevent.
+      - name: Exec-model prototype tests (Python)
+        run: |
+          set -euo pipefail
+          python3 -c "import pandas" 2>/dev/null || pip install --quiet pandas
+          shopt -s nullglob
+          # test_tpch.py needs the generated sf1 tables, which only the cpp-cpu job
+          # produces; it runs there instead. Named rather than pattern-matched, and its
+          # absence is an error, so renaming it cannot silently drop it from both jobs.
+          elsewhere=scripts/exec_model/tests/test_tpch.py
+          [ -f "$elsewhere" ] || { echo "$elsewhere is missing; is it still run in cpp-cpu?"; exit 1; }
+          files=()
+          for f in scripts/exec_model/tests/test_*.py; do
+            [ "$f" = "$elsewhere" ] || files+=("$f")
+          done
+          # A vanished glob makes the loop body disappear and the step pass green.
+          [ ${#files[@]} -gt 0 ] || { echo "no exec-model test files matched"; exit 1; }
+          status=0
+          for f in "${files[@]}"; do
+            echo "== $f"
+            # Run every file before reporting, so one failure does not hide the rest.
+            python3 "$f" || status=1
+          done
+          exit "$status"
 
       - name: cost-report unit tests (Rust)
         run: cargo test -p cost-report
@@ -664,11 +800,13 @@ jobs:
   #   * objects present but missing/zero/size-mismatched -> the script FAILS.
   s3-datasets:
     name: S3 datasets metadata check
+    needs: changes
     runs-on: ubuntu-latest
     # No secrets on fork PRs -> skip rather than fail. Mirrors the GPU job's fork guard.
     if: >-
-      github.event_name == 'push' ||
-      github.event.pull_request.head.repo.full_name == github.repository
+      needs.changes.outputs.code == 'true' &&
+      (github.event_name == 'push' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
     env:
       AWS_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}

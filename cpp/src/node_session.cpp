@@ -222,6 +222,12 @@ void NodeSession::execute_node(uint64_t seq, const uint64_t* input_handles,
   // counts match the CPU twin by construction; the live conformance gate proves
   // the kernel is bit-equal to comet. Post-lowering the child is a
   // GpuCoalescePartitions (single handle), but concat defensively anyway.
+  //
+  // That concat has no caller and is scheduled to go. The legacy budget rule always
+  // lowers a shuffle to CoalescePartitions + Repartition, and the batch-partitioned
+  // mode also hands this arm exactly one handle per call — its planner puts a
+  // GpuCoalesceAllBatches above the merge feeding an emit. Retire the branch when the
+  // legacy modes retire, rather than growing a second caller for it.
   if (node->node_type() == fb::PlanNodeKind_GpuRepartition &&
       node->node_as_GpuRepartition()->kind() == fb::PartitioningKind_Hash) {
     const fb::GpuRepartition* rp = node->node_as_GpuRepartition();

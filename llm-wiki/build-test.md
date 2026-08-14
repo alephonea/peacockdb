@@ -4,7 +4,7 @@ Code and tests are authoritative; this page maps them.
 
 ## Test categories
 
-**Grand total: 684 test cases — Rust 606, C++ 37, Python 41.**
+**Grand total: 891 test cases — Rust 606, C++ 37, Python 248.**
 
 **Runs** — `cpp-cpu` = pipeline.yml's cpp-cpu job, both cuDF legs · `cost-report` = the
 cost-report job · `shad-gpu` = CI GPU job on the remote host, `--test-threads=1` ·
@@ -38,6 +38,8 @@ and `2gpu` rows also runs locally; large CPU batches go to verda.
 | FFI smoke (Rust) | the crate links; executor lifecycle | [test_executor_lifecycle](../peacockdb-ffi/tests/test_ffi.rs#L17) | cpp-cpu | 2 |
 | Cost-report renderer (Rust) | glyphs, links, ratio bucket, regression gate, history | [bucket_threshold_is_1_4](../cost-report/src/main.rs#L1552), [regression_count_drives_exit_decision](../cost-report/src/main.rs#L1623) | cost-report | 23 |
 | DuckDB cost extraction (Python) | classifier / pruning / dynamic-filter logic — fails CI before generation | [scan_count_mismatch_fails_loud](../testdata/test_duckdb_cost.py#L280), [compute_pruning_from_rowgroups](../testdata/test_duckdb_cost.py#L226) | cost-report | 41 |
+| Exec-model prototype (Python) | the batch-partitioned scheduler over mock traits, plus pandas-backed operators checked against a single-shot oracle at five partitioning configs, and both limit lowerings — no project code | [test_a_join_in_its_build_phase_holds_back_its_probe_subtree](../scripts/exec_model/tests/test_scheduling.py), [test_a_root_adjacent_limit_stops_the_run_early](../scripts/exec_model/tests/test_limit.py) | cost-report | 188 |
+| Exec-model prototype, TPC-H (Python) | the same drivers over real sf1 tables under a live resident budget, each plan re-run at every layout `LayoutInjector` can produce; needs the generated dataset, so it rides cpp-cpu rather than cost-report | [test_the_accumulator_is_what_makes_the_budget_bind](../scripts/exec_model/tests/test_tpch.py), [test_every_layout_gives_the_same_shuffled_join](../scripts/exec_model/tests/test_tpch.py) | cpp-cpu (25.02 leg) | 19 |
 | C++ CPU/FFI unit | decimal binop typing, AST routability, lifecycle; no GPU needed | [DecimalScale.BinopOutputType](../cpp/tests/cpu/test_executor.cpp#L26), [AstRouting.IsAstAble](../cpp/tests/cpu/test_executor.cpp#L81) | cpp-cpu (`ctest -L cpu`) + shad-gpu | 5 |
 | cuDF GPU smoke (C++) | the GPU is alive; the Spark-murmur3 kernel matches comet in C++ | [CudfGpu.SparkPartitionIdsMatchComet2ColWithNulls](../cpp/tests/gpu/test_cudf.cpp#L84) | shad-gpu | 3 |
 | Plan-executor (C++) | hand-built plan IR through the C++ executor, node by node | [PlanExecutor.HashJoinNationRegion](../cpp/tests/gpu/test_plan_executor.cpp#L255) | shad-gpu | 12 |
@@ -49,7 +51,7 @@ and `2gpu` rows also runs locally; large CPU batches go to verda.
 | Dataset validators (Python) | row counts / clustering / embedding stats over whatever dataset they are pointed at; each check tags itself `EXHAUSTIVE` or `SAMPLED` | [validate_tpch.py](../scripts/validate_tpch.py), [check_s3_datasets.py](../scripts/check_s3_datasets.py) | cpp-cpu (sf1) · validate-large (sf40/sf200) | n/a¹ |
 
 ¹ Data-driven — the check count depends on the dataset and SF, so these are excluded from
-the 684. Everything else in the repo that can be enumerated as a test case is counted.
+the 891. Everything else in the repo that can be enumerated as a test case is counted.
 
 Notes
 
@@ -182,13 +184,23 @@ Consequences worth knowing before you regenerate:
 
 ## CI structure (`.github/workflows/pipeline.yml`)
 
-`pipeline.yml` runs on pushes to master and on every PR. Four independent job chains:
+`pipeline.yml` runs on pushes to master and on every PR, but not on documentation —
+`**.md` and `llm-wiki/**`, which nothing builds, tests or reads. It takes two layers:
+`paths-ignore` skips a wholly-documentation diff, and the **changes** job skips a
+documentation-only push to a PR that carries code, which `paths-ignore` cannot see because
+it judges the whole PR diff. Both fail open, and a doc file that ever becomes an input to
+something has to come off both lists.
+
+Five independent job chains:
 
 ```
+changes ──► everything below
 cpp-cpu (2 legs)          cpp-build-2502 ──► gpu-tests
 cost-report ──► deploy-pages (master push only)          s3-datasets
 ```
 
+- **changes** — the documentation gate above; every other job carries `needs: changes`
+  and runs only on its `code == 'true'`.
 - **cpp-cpu** — two matrix legs, each in a RAPIDS container: `cudf: 25.02`
   (`rapidsai/base:25.02-cuda12.0-py3.12`) and `cudf: 26.02`
   (`rapidsai/base:25.10a-cuda12-py3.12` — the leg's label is ahead of its image, #129).
@@ -216,7 +228,8 @@ cost-report ──► deploy-pages (master push only)          s3-datasets
   process-wide pool). No `set -e` — statuses are OR'd so one failure cannot skip the rest —
   and `REMOTE_DIR` is removed on `always()`.
 - **cost-report** — the golden/meta tier lives here, not in cpp-cpu: python
-  `testdata/test_duckdb_cost.py`, `cargo test -p cost-report`, and rust-only
+  `testdata/test_duckdb_cost.py`, the `scripts/exec_model/tests/test_*.py` prototype set,
+  `cargo test -p cost-report`, and rust-only
   `test_cost_model` + `test_ci_coverage`. Then report generation, a PR-comment upsert, and
   the cost-regression gate against the base SHA, which fails the job on a regression. On a
   master push it uploads the Pages artifact.
@@ -229,8 +242,18 @@ cost-report ──► deploy-pages (master push only)          s3-datasets
   metadata check. The `datasets` input defaults to `tpch.sf40 tpcds.sf200`; `tpch.sf200` is
   allow-listed but deliberately not defaulted, because it does not exist yet.
 
+Two traps before adding a step: a container job defaults `run:` to `sh`, not bash, so the
+two of them declare `defaults.run.shell: bash` to get `-o pipefail` at all; and the python
+steps install the current pandas — 3 on the runner's 3.12, 2.3 on a dev box's 3.10 — so the
+prototype has to hold across that boundary, unpinned on purpose.
+
 Which Rust targets run where is not folklore — `test_ci_coverage` fails when a target
 exists that no workflow step names. Doctests are the one class outside that guard (#128).
+The two python steps need no such guard because neither names files: the extractor test is
+one file, and the prototype step globs `test_*.py` and errors when the glob matches
+nothing. Inside a prototype file the equivalent hole — a test defined below the
+`__main__` footer, which pytest collects and direct execution would not — is closed by
+`tests/harness.py`, which reads the source back and fails naming what it missed.
 
 ## What `rust-only` means
 

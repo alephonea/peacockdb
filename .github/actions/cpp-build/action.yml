@@ -46,20 +46,66 @@ runs:
         restore-keys: |
           ccache-${{ inputs.cudf }}-
 
-    - name: Install cmake and ninja
+    # The pinned versions, declared once: the cache key and the download URLs must agree
+    # or a bump would restore the old toolchain under the new key's name.
+    - name: Toolchain versions
+      id: versions
       shell: bash
       run: |
-        CMAKE_VERSION=4.2.3
+        echo "cmake=4.2.3" >> "$GITHUB_OUTPUT"
+        echo "ninja=1.12.1" >> "$GITHUB_OUTPUT"
+
+    # Cached so a run does not depend on github.com being up at all: the releases CDN
+    # answering 503 is the most common cause of a red run, and it took out three
+    # independent downloads at once on 2026-08-12.
+    - name: Restore/save cmake and ninja
+      id: toolchain
+      uses: actions/cache@v4
+      with:
+        path: ~/.local
+        key: toolchain-cmake-${{ steps.versions.outputs.cmake }}-ninja-${{ steps.versions.outputs.ninja }}
+
+    - name: Install cmake and ninja
+      if: steps.toolchain.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        CMAKE_VERSION: ${{ steps.versions.outputs.cmake }}
+        NINJA_VERSION: ${{ steps.versions.outputs.ninja }}
+      run: |
+        # No --retry-delay: a fixed delay is *worse* than curl's default here, which
+        # doubles 1, 2, 4, 8, 16 and so rides out a longer outage. --retry-all-errors is
+        # what adds the mid-transfer drop (curl 56), which curl does not count as
+        # transient. --retry-max-time bounds the whole thing.
+        fetch() { curl -fsSL --retry 8 --retry-all-errors --retry-max-time 300 -o "$1" "$2"; }
+
         mkdir -p "$HOME/.local/bin"
-        curl -fsSL "https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-x86_64.tar.gz" \
-          | tar -xz -C "$HOME/.local" --strip-components=1
-        NINJA_VERSION=1.12.1
-        curl -fsSL "https://github.com/ninja-build/ninja/releases/download/v${NINJA_VERSION}/ninja-linux.zip" \
-          -o /tmp/ninja-linux.zip
+        # To a file, not piped into tar: a retry restarts the body at byte zero, so a
+        # stream already half-fed to tar would be spliced rather than replaced. The pipe
+        # is also why the failures surfaced as tar's "unexpected end of file" rather than
+        # as curl's status.
+        fetch /tmp/cmake.tar.gz \
+          "https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-x86_64.tar.gz"
+        tar -xzf /tmp/cmake.tar.gz -C "$HOME/.local" --strip-components=1
+        rm /tmp/cmake.tar.gz
+        fetch /tmp/ninja-linux.zip \
+          "https://github.com/ninja-build/ninja/releases/download/v${NINJA_VERSION}/ninja-linux.zip"
         python3 -c "import zipfile; zipfile.ZipFile('/tmp/ninja-linux.zip').extractall('$HOME/.local/bin')"
         chmod +x "$HOME/.local/bin/ninja"
         rm /tmp/ninja-linux.zip
+
+    # Outside the install step, so a cache hit still gets the PATH — and the assertion
+    # catches a cache restored under a key that no longer matches what it holds.
+    - name: Put the toolchain on PATH
+      shell: bash
+      env:
+        CMAKE_VERSION: ${{ steps.versions.outputs.cmake }}
+        NINJA_VERSION: ${{ steps.versions.outputs.ninja }}
+      run: |
         echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+        "$HOME/.local/bin/cmake" --version | grep -q "$CMAKE_VERSION" \
+          || { echo "cached cmake is not $CMAKE_VERSION"; exit 1; }
+        "$HOME/.local/bin/ninja" --version | grep -q "$NINJA_VERSION" \
+          || { echo "cached ninja is not $NINJA_VERSION"; exit 1; }
 
     - name: Configure (CPP)
       shell: bash

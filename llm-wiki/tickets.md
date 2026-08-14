@@ -16,7 +16,7 @@ reference still resolves there.
 |---|--:|---|
 | [Critical correctness](#critical-correctness) | 14 | #103 #80 #59 #46 #47 #60 #121 #122 #123 #118 #119 #120 #117 #41 |
 | [Blockers for disabled coverage](#blockers-for-disabled-coverage) | 15 | #97 #23 #32 #65 #62 #91 #95 #57 #45 #63 #56 #55 #115 #96 #143 |
-| [Performance / architecture](#performance--architecture) | 18 | #150 #149 #148 #19 #16 #20 #71 #101 #73 #110 #75 #136 #137 #138 #139 #140 #141 #142 |
+| [Performance / architecture](#performance--architecture) | 22 | #150 #149 #148 #147 #146 #145 #19 #16 #20 #71 #101 #73 #110 #75 #136 #137 #138 #139 #140 #141 #144 #142 |
 | [Infrastructure / process](#infrastructure--process) | 16 | #113 #114 #116 #126 #132 #131 #130 #129 #128 #127 #124 #125 #13 #94 #69 #49 |
 
 ## Critical correctness
@@ -503,6 +503,13 @@ the output term to one range; the inputs stay resident either way, so the win is
 ~2× on the sort's local peak. Do it only if sort peaks bind after the mode ships; it also
 unlocks multi-batch output from merge nodes.
 
+Landing this re-introduces a third `SortOrder` state. `SortOrder` is two-valued today
+because every node that orders a whole stream emits exactly one batch, so "stream sorted"
+is `BatchSorted` meeting `SingleBatch` and is derived rather than declared. Ranged
+emission produces the one shape that breaks it — a stream ordered across several batches —
+so it must add `PartitionSorted` back, and teach the limit-after-sort validation to accept
+it alongside the derived form.
+
 <a id="t139"></a>
 ### #139 — batch-partitioned GpuCoalesceBatches(target): compact post-filter fragments
 Dropped from v1. After a selective filter, batches shrink to a few rows and every
@@ -510,7 +517,10 @@ downstream kernel pays per-launch overhead on each fragment. A `BatchAccumulator
 concatenates to a minimum target size (DataFusion semantics: merge only, never split),
 streaming out one batch whenever the threshold is crossed. `cudf::concatenate` via the
 existing collapse arm — no C++ change; target size from the same budget rule that sizes
-loader batches.
+loader batches. The T0 prototype has the node
+(`scripts/exec_model/operators/accumulators.py`, `ReBatchToTarget`) so the drivers are
+shown to tolerate one at any tree position; it also splits, which the ticket's node does
+not need, because the prototype uses it to make a stream's batches any shape.
 
 <a id="t140"></a>
 ### #140 — batch-partitioned broadcast joins (1:N partition broadcast)
@@ -529,6 +539,155 @@ input is already one partition or the aggregate is keyless. Skipping when the ke
 merely small (collapse to one partition, run `GpuAggregateBatches[final]` once, avoid the
 shuffle) needs a cardinality estimate that does not exist — the estimators are constants
 (#19). When stats land, add the rule and regenerate the affected plan goldens.
+
+<a id="t147"></a>
+### #147 — PlanEstimates: a tree the planner emits and the runtime refines
+The batch-partitioned planner derives `target_batch_bytes` by walking amplification up from
+each source to the nearest accumulator
+(`llm-wiki/tasks/batch_partitioned_executor.md`, ParquetBatchPartitioner). That walk already
+computes a per-node maximum resident size and then throws all but one number away. Keep it:
+`ParquetBatchPartitioner` emits `PlanEstimates` beside the row-group mapping, a tree shaped
+like the plan carrying the estimate per node.
+
+Nothing in the plan's executability depends on it: whatever the partitioner emits, the plan
+runs, so this is additive. It does not follow that a wrong estimate is free. Too low and
+the query dies — at the enforcer's `scratch_bytes` pre-check if the model catches it, and
+as a cuda out-of-memory below that if the model was under too. Neither is a wrong answer,
+and both are meant to be handled gracefully rather than fatally in later work (#142's
+adaptive replanning is the same need seen from the batch-size end). What a better estimate
+buys is fewer queries reaching either.
+
+Two consumers, neither of which exists yet.
+
+**Placement.** A separate planning component reads the tree and moves subtrees onto the CPU
+where the estimate says the GPU cannot hold them. The `Backend` trait already makes this
+expressible — executors are chosen per node, so a mixed plan is a matter of choosing
+differently, not of new machinery.
+
+**Refinement in flight.** The estimates rest on the optimizer's selectivity and cardinality,
+which are constants on most TPC-DS joins (#19). One batch actually read from a source is
+enough to do better by extrapolation: real rows, real bytes per column, a real filter
+selectivity at that node. Feeding measurements back rewrites the subtree's estimates for the
+batches still to come. This is where the estimate stops being a plan-time guess, and it is
+the reason to make it a first-class tree rather than a field on a node.
+
+What a refined estimate may change grows in two steps. The first version changes only what
+needs no re-planning — the remaining batch sizes of a loader still reading. Later revisions
+lift that entirely: a refined estimate may replace the plan, killing in-progress gpu
+execution and moving large subtrees to the cpu, which means dropping the driver and
+building a new one rather than editing the running tree. That is the reason the driver
+owns no state a caller needs to survive it, and the reason this is a tree the planner emits
+rather than a field the driver mutates.
+
+<a id="t146"></a>
+### #146 — aggregate shaping beyond the fixed sequence
+**Priority: low** — each part is an optimization over an already-correct plan, and each
+needs the same estimate, which does not exist yet.
+
+The batch-partitioned aggregate sequence
+(`llm-wiki/tasks/batch_partitioned_executor.md`) applies one shape uniformly: a per-batch
+init, a merge per lane, a shuffle, a finalizing merge. That is correct everywhere and close
+to optimal where the group cardinality is far below the row count — the case it was designed
+for. Three shapes it cannot currently express or choose.
+
+**(a) A merge that accepts raw rows.** `GpuAggregateBatches` requires pre-aggregated state,
+so the per-batch `GpuAggregate` is structurally mandatory: "accumulate raw batches, group
+once" is not expressible at all. Two situations want it. A lane with a handful of batches
+and no shuffle beneath it pays B groupbys plus a merge where one groupby over the
+concatenation would do. And an aggregate that does not reduce — groups nearly as numerous as
+rows — pays an init that shrinks nothing and then ships the same bytes into the shuffle
+anyway; there the right plan is to skip partial aggregation, shuffle the raw rows and
+aggregate once after. The trade is plain: a raw-accepting merge holds rows where a state
+merge holds groups, so it is right only when the aggregate does not reduce, or when there is
+too little to hold for it to matter.
+
+**(b) A loader told to emit one batch per partition.** Where a loader's stream feeds
+something that will materialize the whole partition regardless — a `GpuCoalesceAllBatches`
+under a join build, or an aggregate whose state is as big as its input — batching buys no
+residency and costs a call per batch plus a concat. The planner could size that loader's
+batches to the partition instead. Note this is exactly backwards for the mode's motivating
+pipeline (load → filter at 1% → aggregate), where per-batch loading *is* the point, so it
+has to be decided from the subtree beneath the loader rather than defaulted.
+
+**(c) The cardinality estimate all three want.** Each choice above is the same question —
+does this aggregate reduce? — and the planner cannot answer it: the estimators are constants
+([#19](#t19)). That is also why [#141](#t141)'s small-key-set shuffle skip is deferred, and
+why the mode's compaction threshold has to *discover* its regime by doubling instead of
+being told. An output-cardinality estimate for an aggregate, groups per input row, is the one
+number that unlocks all four. Land it after #19 and revisit these together rather than
+one at a time, since they trade against each other.
+
+<a id="t145"></a>
+### #145 — Refcounted handles: stop copying every partition out of a scatter
+
+`spark_hash_partition` returns what `cudf::partition` returns — **one** table whose N
+partitions are already contiguous — plus the offsets. `node_session.cpp` (~L265-272) then
+walks those offsets and deep-copies each range into its own owning table
+(`std::make_unique<cudf::table>(slice)`), because a handle owns its memory. So every
+shuffle allocates and copies its whole input a second time, and peaks at twice the data
+before the parent is dropped. That is the concrete form of what [#91](#t91) calls the
+repartition "spiking peak memory and defeating the point of partitioning", and it is on the
+batch-partitioned mode's hot path — one scatter per aggregate and one per join side.
+
+**The change.** `TableResult` (`cpp/src/plan_executor.h:13`) becomes an owner plus a view:
+
+```cpp
+struct TableResult {
+  std::shared_ptr<cudf::table> owner;   // shared between sibling slices
+  cudf::table_view view;                // this handle's rows
+  std::vector<std::string> column_names;
+};
+```
+
+The scatter then registers N handles that share one owner and differ only in `view`, and
+the copies disappear.
+
+**Scope.** Mechanical but wide: 35 sites across 11 files touch `.table` / `->table`
+(`node_session.cpp`, `gpu_executor.cpp`, `dispatch.cpp`, and the eight operator files).
+Every `return {std::make_unique<cudf::table>(…), names}` becomes a shared owner and every
+`result.table->view()` becomes `result.view`. **No ABI change**: a handle stays a `u64`,
+consume-on-use is unchanged, and no new symbol is needed — so this does not touch the
+three-symbol budget in `llm-wiki/tasks/batch_partitioned_executor.md`.
+
+**The cost to weigh.** A slice pins its whole parent, so nothing is freed until the last
+sibling handle dies. Min-height scheduling advances all N lanes together, so they usually
+die together — but a skewed hash leaves one hot lane holding the entire pre-scatter table
+while the empty lanes finished long ago. Net: the peak at the scatter halves, the tail
+lengthens. If the tail bites, the fix is a threshold — materialize a slice that is a small
+fraction of its parent — which is a local change once the representation is in place.
+
+**Also unlocks [#140](#t140)**, whose broadcast joins need exactly "a C++-side
+non-consuming/refcounted handle" as one of their two options; a build side could then feed
+N probe lanes without a device copy.
+
+**Tests.** Existing GPU tiers must stay byte-identical, since results do not change. Add a
+gtest that scatters, asserts each handle's row count against the offsets, releases N−1
+handles and checks the survivor still reads correctly (the parent outlived its siblings),
+then releases the last and checks the pool returns to its prior size.
+
+<a id="t144"></a>
+### #144 — multiple DISTINCT arguments need a gid-multiplying expand
+**Priority: low** — no query in either benchmark has this shape.
+
+`count(DISTINCT a), count(DISTINCT b)` over *different* expressions is the one distinct shape
+the batch-partitioned lowering cannot express. Single-distinct lowers to grouping on the
+distinct argument (see the DISTINCT subsection of
+`llm-wiki/tasks/batch_partitioned_executor.md`), and non-distinct companions ride along
+because grouping by the distinct argument partitions the rows without losing their
+multiplicity — Σ over the inner groups recovers each companion's total. Two distinct
+arguments break that: one inner grouping can dedup `a` or `b`, not both, and grouping by
+`(a, b)` dedups neither.
+
+The standard fix is Spark's `RewriteDistinctAggregates`: an expand step multiplies each input
+row into one row per distinct argument, tagged with a group id, the inner aggregate groups by
+`(group keys, gid, the arguments)`, and the outer aggregate computes each distinct count from
+the rows carrying its own gid. That needs a new node — the row-multiplying expand — which is
+why it is a ticket rather than a planner tweak.
+
+Not to be confused with [#65](#t65), whose gid is the ROLLUP/CUBE `__grouping_id` and a
+different mechanism entirely; the two would coexist, and a query with both would carry two
+independent gid columns. Until this lands the planner refuses the shape at plan time, which
+is the scope section's rule for unsupported shapes inside supported features.
 
 <a id="t142"></a>
 ### #142 — batch-partitioned: no recourse for oversized batches
