@@ -204,66 +204,98 @@ class ReBatchToTarget(BatchAccumulatorExecutor):
         return PandasBatch(frame, f"{self.name}#{self.emitted}")
 
 
+#: Held bytes at which an aggregate compacts. A stand-in: the real one comes from the
+#: same budget rule that sizes loader batches, which the prototype does not model.
+DEFAULT_COMPACT_BYTES = 1 << 20
+
+
 class AggregateBatches(BatchAccumulatorExecutor):
     """`GpuAggregateBatches` — merges pre-aggregated batches, emits at done.
 
     `final=False` re-partials (compacting a partition's batches without finishing them);
-    `final=True` produces the declared outputs. Compaction is what keeps the held bytes
-    bounded by the group cardinality rather than by the input size.
+    `final=True` produces the declared outputs.
+
+    **Compaction runs on a byte threshold that doubles when it fails to pay.** The two
+    obvious policies are each wrong in one regime. Compacting on every arrival keeps the
+    held state at group cardinality, but it re-scans that state once per batch: when the
+    groups are disjoint and nothing merges, the state grows every time and the total work
+    is quadratic in the batch count. Never compacting holds every partial to the end,
+    which is the whole input when the group cardinality is high.
+
+    So: hold arrivals until they cross `threshold` bytes, compact once, then raise the
+    threshold to twice what the compaction left behind. A low-cardinality aggregate leaves
+    a small state, so the threshold never moves and residency stays near group
+    cardinality on a fraction of the calls per-arrival would make. A high-cardinality one
+    leaves a state as big as its input, so the threshold doubles away and the compactions
+    land at geometrically growing sizes — total re-scan work linear in the rows that pass
+    through, instead of quadratic — and it stops paying for a merge that merges nothing.
+    Residency then grows, which is the honest answer for that shape; the enforcer is the
+    backstop (#142).
     """
 
-    def __init__(self, keys, aggs, final: bool, name: str = "agg_batches", schema: dict | None = None):
+    def __init__(self, keys, aggs, final_exprs=None, name: str = "agg_batches",
+                 schema: dict | None = None, compact_bytes: int = DEFAULT_COMPACT_BYTES):
         self.keys = keys
         self.aggs = aggs
-        self.final = final
+        #: the node's `final` list, or None to emit state. Its presence is the only thing
+        #: distinguishing a merging node from a finalizing one — there is no phase flag.
+        self.final_exprs = final_exprs
         self.name = name
         #: `{column: dtype}` of THIS phase's output (state columns for final=False, keys +
         #: declared outputs for final=True); consulted only for the zero-input empty case
         self.schema = schema
+        self.threshold = compact_bytes
         self._state: pd.DataFrame | None = None
+        #: arrivals not yet folded into `_state`
+        self._pending: list[pd.DataFrame] = []
+        self._pending_bytes = 0
         self.tags: list[str] = []
+        #: how many times the threshold was reached — what the tests assert on
+        self.compactions = 0
 
-    def resident_bytes(self) -> int:
+    def _state_bytes(self) -> int:
         if self._state is None:
             return 0
         return int(self._state.memory_usage(index=False, deep=True).sum())
+
+    def resident_bytes(self) -> int:
+        return self._state_bytes() + self._pending_bytes
 
     def scratch_bytes(self, n_rows: int, n_bytes: int) -> int:
         return self.resident_bytes() + n_bytes
 
     def accumulate_and_fetch(self, batch: PandasBatch):
         self.tags.append(batch.tag)
-        frame = batch.consume()
-        merged = frame if self._state is None else concatenate([self._state, frame])
-        # Re-partial on every arrival so the held state stays at group cardinality.
-        self._state = aggregates.partial(merged, self.keys, self._restated())
-        return [], scratch_of(merged)
+        self._pending_bytes += batch.byte_size()
+        self._pending.append(batch.consume())
+        scratch = self._compact() if self.resident_bytes() >= self.threshold else 0
+        return [], CallStats(scratch_bytes=scratch)
+
+    def _compact(self) -> int:
+        """Fold every pending arrival into the state. Returns the transient's size."""
+        frames = ([] if self._state is None else [self._state]) + self._pending
+        merged = frames[0] if len(frames) == 1 else concatenate(frames)
+        self._state = aggregates.merge(merged, self.keys, self.aggs)
+        self._pending, self._pending_bytes = [], 0
+        self.compactions += 1
+        # A compaction that did not shrink will not shrink next time either — the keys are
+        # simply distinct — so raise the bar rather than re-scanning the same state again.
+        self.threshold = max(self.threshold, 2 * self._state_bytes())
+        return int(merged.memory_usage(index=False, deep=True).sum())
 
     def mark_done_and_fetch(self):
-        state = self._state
-        tags = self.tags
+        if self._pending:
+            self._compact()
+        state, tags = self._state, self.tags
         self._state, self.tags = None, []
         if state is None:
             # Zero-input lane: the schema IS the output — no phase left to run over it.
             out = _empty_single_batch(self.name, self.schema)
+        elif self.final_exprs is not None:
+            out = aggregates.finalize(state, self.keys, self.aggs)
         else:
-            out = aggregates.final(state, self.keys, self.aggs) if self.final else state
+            out = state
         return [PandasBatch(out, f"[{'+'.join(tags)}]>{self.name}")], no_scratch()
-
-    def _restated(self):
-        """Merging state columns is a sum/min/max over the state, not over raw inputs."""
-        restated = []
-        for agg in self.aggs:
-            if agg.func == aggregates.MEAN:
-                restated.append(aggregates.Agg(aggregates.SUM, f"{agg.output}$sum", f"{agg.output}$sum"))
-                restated.append(
-                    aggregates.Agg(aggregates.SUM, f"{agg.output}$count", f"{agg.output}$count")
-                )
-            elif agg.func in (aggregates.SUM, aggregates.COUNT):
-                restated.append(aggregates.Agg(aggregates.SUM, agg.output, agg.output))
-            else:
-                restated.append(aggregates.Agg(agg.func, agg.output, agg.output))
-        return restated
 
 
 class AccumulateBatchesAndSort(BatchAccumulatorExecutor):

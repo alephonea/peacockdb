@@ -47,7 +47,8 @@ package when it is run as a script, so the relative imports resolve either way.
 | `executors.py` | `Executor` plus the seven executor traits and `LaneEvent` |
 | `forwarder.py` | `BatchForwarder` and the merge / union / interleave mappings |
 | `node.py` | `GpuNode`, `NodeExecutors`, `ExecutorBackends`, `BackendSelector` |
-| `plan.py` | heights, left-to-right order, structural validation, which limit lowering applies |
+| `plan.py` | heights, left-to-right order, whole-tree structural validation, which limit lowering applies |
+| `schema.py` | what a node declares about its columns — annotations, not types |
 | `accounting.py` | the resident formula, the cached-delta executor total, and the enforcer |
 | `limit.py` | `RowInterval`, `RowRange`, and the per-batch decision behind the two lowerings |
 | `runtime.py` | per-node queue state and one lane's view of its inputs |
@@ -55,13 +56,14 @@ package when it is run as a script, so the relative imports resolve either way.
 | `batch_partitioned_driver.py` | the scheduler and everything cross-partition |
 | `operators/frame.py` | the pandas batch, and the rules that keep pandas inside cuDF's vocabulary |
 | `operators/expressions.py` | the expression IR — what `cudf::ast` accepts, nothing more |
-| `operators/aggregates.py` | aggregate specs and the partial/final decomposition |
+| `operators/aggregates.py` | aggregate specs and the init / merge / finalize decomposition, and the registry that emits each one's finalize expressions |
 | `operators/source.py` | the loader and the row-group → (partition, batch) policy (T2) |
 | `operators/exec_ops.py` | filter, project, sort, partial aggregate, limit, unload |
 | `operators/accumulators.py` | coalesce-all, aggregate-batches, accumulate-and-sort, merge-sorted |
 | `operators/partition_ops.py` | the hash scatter |
 | `operators/joins.py` | the join capability matrix |
 | `operators/nodes.py` | `GpuNode` implementations wiring the operators into plans |
+| `operators/validation.py` | `validate_schemas_and_partitions()` — layout expectations and the aggregate state chain |
 | `operators/injection.py` | `LayoutInjector` — rewrite a plan's partitioning, batching and hash placement |
 
 Traits are declarations only. The driver tests drive mocks (`tests/mocks.py`) because the
@@ -226,10 +228,17 @@ F7. **A join's build lane must deliver exactly one batch — including an empty 
    `GpuCoalesceAllBatches` therefore emits one batch even when it accumulated nothing;
    zero and two are both plan errors, and the driver says which.
 
-F8. **Partition and lane validation is naturally central, not per node.** Arity, lane-count
-   agreement, the emitter's single-lane input and the build side's `SingleBatch` are all
-   whole-tree facts, so they live in `plan.py` — one owner.
-   `validate_schemas_and_partitions()` is left to schema checks, which are out of T0 scope.
+F8. **Validation splits by what the rule is about, not by convenience.** Whole-tree facts —
+   arity, lane-count agreement, the emitter's single-lane input, the build side's
+   `SingleBatch` — live in `plan.py`, one owner. What a node needs *of its children* lives
+   in `validate_schemas_and_partitions()` (`operators/validation.py`), because only there
+   can the message name the fix: "the planner inserts GpuMergePartitions below it" rather
+   than "this category is 1:1 per lane". That half covers hash distribution, sortedness,
+   batch layout, and the aggregate state chain — a merge checks that the state it reads is
+   the state its own partial declared, same aggregate and same positions, which is
+   [#135](../../llm-wiki/tickets.md#t135)'s class of defect made checkable.
+   Full column types stay out of the prototype (`schema.py` carries annotations only);
+   they are the real implementation's T7.
 
 F9. **A cardinality estimate belongs on the join node, not in the model's signature.** A
    join's transient is sized by the *output* cardinality — matched rows × the combined

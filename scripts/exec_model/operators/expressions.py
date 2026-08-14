@@ -115,6 +115,50 @@ class IsNotNull(Expr):
 
 
 @dataclass(frozen=True)
+class Sqrt(Expr):
+    """`cudf::unary_operator::SQRT`, which the IR gains for the stddev finalize."""
+
+    inner: Expr
+    alias: str | None = None
+
+    def evaluate(self, frame: pd.DataFrame) -> pd.Series:
+        import numpy as np
+
+        return pd.Series(np.sqrt(self.inner.evaluate(frame).to_numpy(dtype="float64")))
+
+    def name(self) -> str:
+        return self.alias or f"sqrt({self.inner.name()})"
+
+
+@dataclass(frozen=True)
+class Case(Expr):
+    """Search-form `CASE WHEN c THEN t … ELSE e END`.
+
+    Folded from the last branch backwards, each step selecting `then` where the condition
+    holds and the accumulated result otherwise — the same shape as `build_column_case`'s
+    `copy_if_else` fold in `cpp/src/expr.cpp`. Value-form CASE is deliberately absent: it
+    is what #57 withheld on the GPU.
+    """
+
+    whens: tuple           # ((condition, then), …)
+    otherwise: Expr
+    alias: str | None = None
+
+    def evaluate(self, frame: pd.DataFrame) -> pd.Series:
+        result = self.otherwise.evaluate(frame)
+        for condition, then in reversed(self.whens):
+            mask = condition.evaluate(frame).fillna(False).astype(bool)
+            result = then.evaluate(frame).where(mask, result)
+        return result
+
+    def name(self) -> str:
+        if self.alias:
+            return self.alias
+        arms = " ".join(f"WHEN {c.name()} THEN {t.name()}" for c, t in self.whens)
+        return f"CASE {arms} ELSE {self.otherwise.name()} END"
+
+
+@dataclass(frozen=True)
 class Alias(Expr):
     """A projection's `expr AS name`."""
 

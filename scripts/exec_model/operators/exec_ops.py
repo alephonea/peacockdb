@@ -79,16 +79,27 @@ class SortExec(_Exec):
 
 
 class PartialAggregateExec(_Exec):
-    """One batch in, its partial state out — `GpuAggregate[final=false]`."""
+    """One batch in, its init state out — the `GpuAggregate` that starts the sequence.
 
-    def __init__(self, keys: list[str], aggs: list[aggregates.Agg], name: str = "agg_partial"):
+    `grouping_sets` present means this node expands: one groupby per set over the same
+    batch, each tagged with its id, concatenated into a single output batch. It is a
+    construction-time property of the node rather than a per-call decision, and the two
+    paths are separate functions in `aggregates.py`.
+    """
+
+    def __init__(self, keys: list[str], aggs: list[aggregates.Agg], name: str = "agg_partial",
+                 grouping_sets=None):
         self.keys = keys
         self.aggs = aggs
         self.name = name
+        self.grouping_sets = grouping_sets
 
     def exec(self, batch: PandasBatch):
         frame = batch.consume()
-        out = aggregates.partial(frame, self.keys, self.aggs)
+        if self.grouping_sets is None:
+            out = aggregates.partial(frame, self.keys, self.aggs)
+        else:
+            out = aggregates.partial_over_sets(frame, self.keys, self.aggs, self.grouping_sets)
         return PandasBatch(out, f"{batch.tag}>{self.name}"), no_scratch()
 
 

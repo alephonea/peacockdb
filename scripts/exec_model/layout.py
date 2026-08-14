@@ -88,12 +88,38 @@ class SortOrder:
         return self.kind is SortKind.BATCH_SORTED
 
 
+class UniqueScope(Enum):
+    """How far a uniqueness guarantee reaches."""
+
+    PER_BATCH = "PerBatch"          # no two rows of one batch share the key
+    PER_PARTITION = "PerPartition"  # …of one lane, across its batches
+    GLOBAL = "Global"               # …of the whole output
+
+
+@dataclass(frozen=True)
+class UniqueKeys:
+    """A key set this output is unique on, and how widely.
+
+    Declared and *not* checked. An aggregate knows the scope for free — its init is unique
+    per batch, its per-lane merge per partition, and a final under a shuffle on those keys
+    globally — and later work can read it rather than re-deriving it: a distinct over an
+    already-globally-unique key is a no-op, a join on a globally unique build key cannot
+    fan out, and a merge whose input is unique per partition needs no re-aggregation.
+    Recording it now costs nothing and means the fact is not lost by the node that knew it.
+    """
+
+    columns: tuple[int, ...]
+    scope: UniqueScope
+
+
 @dataclass(frozen=True)
 class PartitionLayout:
     n: int
     key_distribution: KeyDistribution = field(default_factory=KeyDistribution.not_specified)
     sort_order: SortOrder = field(default_factory=SortOrder.not_specified)
     batch_layout: BatchLayout = BatchLayout.MULTIPLE_BATCHES
+    #: key sets this output is unique on; declared for later use, never checked here
+    unique_keys: tuple[UniqueKeys, ...] = ()
 
     @property
     def is_stream_sorted(self) -> bool:

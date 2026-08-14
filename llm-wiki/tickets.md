@@ -16,7 +16,7 @@ reference still resolves there.
 |---|--:|---|
 | [Critical correctness](#critical-correctness) | 14 | #103 #80 #59 #46 #47 #60 #121 #122 #123 #118 #119 #120 #117 #41 |
 | [Blockers for disabled coverage](#blockers-for-disabled-coverage) | 15 | #97 #23 #32 #65 #62 #91 #95 #57 #45 #63 #56 #55 #115 #96 #143 |
-| [Performance / architecture](#performance--architecture) | 19 | #150 #149 #148 #19 #16 #20 #71 #101 #73 #110 #75 #136 #137 #138 #139 #140 #141 #144 #142 |
+| [Performance / architecture](#performance--architecture) | 21 | #150 #149 #148 #146 #145 #19 #16 #20 #71 #101 #73 #110 #75 #136 #137 #138 #139 #140 #141 #144 #142 |
 | [Infrastructure / process](#infrastructure--process) | 16 | #113 #114 #116 #126 #132 #131 #130 #129 #128 #127 #124 #125 #13 #94 #69 #49 |
 
 ## Critical correctness
@@ -539,6 +539,92 @@ input is already one partition or the aggregate is keyless. Skipping when the ke
 merely small (collapse to one partition, run `GpuAggregateBatches[final]` once, avoid the
 shuffle) needs a cardinality estimate that does not exist — the estimators are constants
 (#19). When stats land, add the rule and regenerate the affected plan goldens.
+
+<a id="t146"></a>
+### #146 — aggregate shaping beyond the fixed sequence
+**Priority: low** — each part is an optimization over an already-correct plan, and each
+needs the same estimate, which does not exist yet.
+
+The batch-partitioned aggregate sequence
+(`llm-wiki/tasks/batch_partitioned_executor.md`) applies one shape uniformly: a per-batch
+init, a merge per lane, a shuffle, a finalizing merge. That is correct everywhere and close
+to optimal where the group cardinality is far below the row count — the case it was designed
+for. Three shapes it cannot currently express or choose.
+
+**(a) A merge that accepts raw rows.** `GpuAggregateBatches` requires pre-aggregated state,
+so the per-batch `GpuAggregate` is structurally mandatory: "accumulate raw batches, group
+once" is not expressible at all. Two situations want it. A lane with a handful of batches
+and no shuffle beneath it pays B groupbys plus a merge where one groupby over the
+concatenation would do. And an aggregate that does not reduce — groups nearly as numerous as
+rows — pays an init that shrinks nothing and then ships the same bytes into the shuffle
+anyway; there the right plan is to skip partial aggregation, shuffle the raw rows and
+aggregate once after. The trade is plain: a raw-accepting merge holds rows where a state
+merge holds groups, so it is right only when the aggregate does not reduce, or when there is
+too little to hold for it to matter.
+
+**(b) A loader told to emit one batch per partition.** Where a loader's stream feeds
+something that will materialize the whole partition regardless — a `GpuCoalesceAllBatches`
+under a join build, or an aggregate whose state is as big as its input — batching buys no
+residency and costs a call per batch plus a concat. The planner could size that loader's
+batches to the partition instead. Note this is exactly backwards for the mode's motivating
+pipeline (load → filter at 1% → aggregate), where per-batch loading *is* the point, so it
+has to be decided from the subtree beneath the loader rather than defaulted.
+
+**(c) The cardinality estimate all three want.** Each choice above is the same question —
+does this aggregate reduce? — and the planner cannot answer it: the estimators are constants
+([#19](#t19)). That is also why [#141](#t141)'s small-key-set shuffle skip is deferred, and
+why the mode's compaction threshold has to *discover* its regime by doubling instead of
+being told. An output-cardinality estimate for an aggregate, groups per input row, is the one
+number that unlocks all four. Land it after #19 and revisit these together rather than
+one at a time, since they trade against each other.
+
+<a id="t145"></a>
+### #145 — Refcounted handles: stop copying every partition out of a scatter
+
+`spark_hash_partition` returns what `cudf::partition` returns — **one** table whose N
+partitions are already contiguous — plus the offsets. `node_session.cpp` (~L265-272) then
+walks those offsets and deep-copies each range into its own owning table
+(`std::make_unique<cudf::table>(slice)`), because a handle owns its memory. So every
+shuffle allocates and copies its whole input a second time, and peaks at twice the data
+before the parent is dropped. That is the concrete form of what [#91](#t91) calls the
+repartition "spiking peak memory and defeating the point of partitioning", and it is on the
+batch-partitioned mode's hot path — one scatter per aggregate and one per join side.
+
+**The change.** `TableResult` (`cpp/src/plan_executor.h:13`) becomes an owner plus a view:
+
+```cpp
+struct TableResult {
+  std::shared_ptr<cudf::table> owner;   // shared between sibling slices
+  cudf::table_view view;                // this handle's rows
+  std::vector<std::string> column_names;
+};
+```
+
+The scatter then registers N handles that share one owner and differ only in `view`, and
+the copies disappear.
+
+**Scope.** Mechanical but wide: 35 sites across 11 files touch `.table` / `->table`
+(`node_session.cpp`, `gpu_executor.cpp`, `dispatch.cpp`, and the eight operator files).
+Every `return {std::make_unique<cudf::table>(…), names}` becomes a shared owner and every
+`result.table->view()` becomes `result.view`. **No ABI change**: a handle stays a `u64`,
+consume-on-use is unchanged, and no new symbol is needed — so this does not touch the
+three-symbol budget in `llm-wiki/tasks/batch_partitioned_executor.md`.
+
+**The cost to weigh.** A slice pins its whole parent, so nothing is freed until the last
+sibling handle dies. Min-height scheduling advances all N lanes together, so they usually
+die together — but a skewed hash leaves one hot lane holding the entire pre-scatter table
+while the empty lanes finished long ago. Net: the peak at the scatter halves, the tail
+lengthens. If the tail bites, the fix is a threshold — materialize a slice that is a small
+fraction of its parent — which is a local change once the representation is in place.
+
+**Also unlocks [#140](#t140)**, whose broadcast joins need exactly "a C++-side
+non-consuming/refcounted handle" as one of their two options; a build side could then feed
+N probe lanes without a device copy.
+
+**Tests.** Existing GPU tiers must stay byte-identical, since results do not change. Add a
+gtest that scatters, asserts each handle's row count against the offsets, releases N−1
+handles and checks the survivor still reads correctly (the parent outlived its siblings),
+then releases the last and checks the pool returns to its prior size.
 
 <a id="t144"></a>
 ### #144 — multiple DISTINCT arguments need a gid-multiplying expand

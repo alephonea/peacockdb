@@ -111,7 +111,11 @@ def same(got: pd.DataFrame, want: pd.DataFrame, label: str) -> None:
                 f"{label}: column {column}"
             )
         else:
-            assert list(left) == list(right), f"{label}: column {column}"
+            # NaN != NaN: normalize nulls before comparing a non-numeric column.
+            def nulls_alike(values):
+                return [None if pd.isna(v) else v for v in values]
+
+            assert nulls_alike(left) == nulls_alike(right), f"{label}: column {column}"
 
 
 # -- the dataset ------------------------------------------------------------------
@@ -146,14 +150,14 @@ def test_filter_into_a_shuffled_grouped_aggregate():
     filtered = N.filter_("positive", scan, Binary(">", Col("c_acctbal"), Lit(0.0)))
     partial = N.partial_aggregate("agg_partial", filtered, ["c_mktsegment"], aggs)
     compacted = N.aggregate_batches(
-        "agg_batches", partial, ["c_mktsegment"], aggs, False, schema=state_schema
+        "agg_batches", partial, ["c_mktsegment"], aggs, schema=state_schema
     )
-    emitted = N.emit_partitions(
-        "emit", N.merge_partitions("merge", compacted), ["c_mktsegment"], lanes
-    )
+    shuffle_in = N.coalesce_all("shuffle_in", N.merge_partitions("merge", compacted))
+    emitted = N.emit_partitions("emit", shuffle_in, ["c_mktsegment"], lanes)
     root = N.unload(
         "unload",
-        N.aggregate_batches("agg_final", emitted, ["c_mktsegment"], aggs, True, schema=final_schema),
+        N.aggregate_batches("agg_final", emitted, ["c_mktsegment"], aggs,
+                            A.finalize_exprs(aggs), schema=final_schema),
     )
     got, driver = execute(root)
 
@@ -243,9 +247,9 @@ def test_a_keyless_aggregate_over_supplier():
     ]
     scan = N.scan("supplier", supplier, 2, 2500, 5000)
     partial = N.partial_aggregate("agg_partial", scan, [], aggs)
-    compacted = N.aggregate_batches("agg_batches", partial, [], aggs, False)
+    compacted = N.aggregate_batches("agg_batches", partial, [], aggs)
     collapsed = N.merge_partitions("merge", compacted)   # keyless needs no shuffle
-    got, _ = execute(N.unload("unload", N.aggregate_batches("agg_final", collapsed, [], aggs, True)))
+    got, _ = execute(N.unload("unload", N.aggregate_batches("agg_final", collapsed, [], aggs, A.finalize_exprs(aggs))))
 
     want = pd.DataFrame(
         [{
@@ -397,10 +401,13 @@ def aggregate_plan(customer, keys):
     scan = N.scan("customer", customer, 4, 500, 1000)
     filtered = N.filter_("positive", scan, Binary(">", Col("c_acctbal"), Lit(0.0)))
     partial = N.partial_aggregate("agg_partial", filtered, keys, aggs)
-    compacted = N.aggregate_batches("agg_batches", partial, keys, aggs, False, schema=state_schema)
-    emitted = N.emit_partitions("emit", N.merge_partitions("merge", compacted), keys, 4)
+    compacted = N.aggregate_batches("agg_batches", partial, keys, aggs, schema=state_schema)
+    shuffle_in = N.coalesce_all("shuffle_in", N.merge_partitions("merge", compacted))
+    emitted = N.emit_partitions("emit", shuffle_in, keys, 4)
     return N.unload(
-        "unload", N.aggregate_batches("agg_final", emitted, keys, aggs, True, schema=final_schema)
+        "unload",
+        N.aggregate_batches("agg_final", emitted, keys, aggs,
+                            A.finalize_exprs(aggs), schema=final_schema),
     )
 
 

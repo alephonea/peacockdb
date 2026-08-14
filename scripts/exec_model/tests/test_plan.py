@@ -8,9 +8,15 @@ if __package__ in (None, ""):  # allow `python scripts/exec_model/tests/<file>.p
     _sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parents[3]))
     __package__ = "scripts.exec_model.tests"
 
+import pandas as pd
+
 from .harness import main, raises
 from ..errors import PlanError
-from ..layout import BatchLayout, NodeKind, PartitionLayout
+from ..layout import BatchLayout, NodeKind, PartitionLayout, UniqueScope
+from ..operators import aggregates as A
+from ..operators import nodes as N
+from ..operators.expressions import Alias, Col
+from ..operators.joins import JoinType
 from ..node import ExecutorBackends, ExecutorCategory, NodeExecutors
 from ..plan import Plan
 from .mocks import (
@@ -146,6 +152,106 @@ def test_partition_accumulator_outputs_one_lane():
     node = merge_sorted_partitions("merge_sorted", source("load", [[1], [1]]))
     plan = Plan.build(sink("unload", node))
     assert plan[plan.root].n_lanes == 1
+
+
+# -- validate_schemas_and_partitions ------------------------------------------------
+#
+# What a node needs of its children, as opposed to plan.py's whole-tree rules. Each of
+# these is a plan that runs and returns a wrong answer if the check is absent, which is
+# why they are checks rather than comments. Built with the real (pandas) nodes, since the
+# mocks declare no schema and no distribution.
+
+
+def frame():
+    return pd.DataFrame({"g": ["x", "y", "x"], "v": [1.0, 2.0, 3.0]})
+
+
+def sum_aggs():
+    return [A.Agg(A.SUM, "v", "s"), A.Agg(A.MEAN, "v", "m")]
+
+
+def init_over(df, keys, aggs, lanes=1):
+    return N.partial_aggregate("init", N.scan("scan", df, lanes, 2), keys, aggs)
+
+
+def test_a_merge_must_group_on_what_its_partial_grouped_on():
+    df, aggs = frame(), sum_aggs()
+    with raises(PlanError, match="not grouping on what the partial grouped on|is not in its input"):
+        Plan.build(N.unload("u", N.aggregate_batches("merge", init_over(df, ["g"], aggs),
+                                                     ["v"], aggs)))
+
+
+def test_a_merge_must_find_state_for_every_aggregate_it_declares():
+    df = frame()
+    partial = init_over(df, ["g"], [A.Agg(A.SUM, "v", "s")])
+    with raises(PlanError, match="no state for 'm'"):
+        Plan.build(N.unload("u", N.aggregate_batches("merge", partial, ["g"], sum_aggs())))
+
+
+def test_a_merge_must_agree_with_its_partial_about_the_function():
+    # The silent one: `s` exists and is a real column, but a sum read where a mean's
+    # sum-half sits computes a wrong number from a right column.
+    df = frame()
+    partial = init_over(df, ["g"], [A.Agg(A.SUM, "v", "s")])
+    with raises(PlanError, match="is a mean.* but its input declares sum"):
+        Plan.build(N.unload("u", N.aggregate_batches("merge", partial, ["g"],
+                                                     [A.Agg(A.MEAN, "v", "s")])))
+
+
+def test_a_multi_lane_join_must_have_both_sides_hashed():
+    # Two scans at four lanes each: the plan validates structurally — lane counts agree —
+    # and would join lane p against lane p, losing every pair whose sides landed in
+    # different lanes.
+    df = frame()
+    build = N.coalesce_all("build", N.scan("b", df, 4, 1), schema=dict(df.dtypes))
+    probe = N.scan("p", df, 4, 1)
+    with raises(PlanError, match="is not hash-distributed"):
+        Plan.build(N.unload("u", N.hash_join("join", build, probe, JoinType.INNER,
+                                             ["g"], ["g"])))
+
+
+def test_a_single_lane_join_needs_no_distribution():
+    # At one lane every row meets every other, so the rule does not apply.
+    df = frame()
+    build = N.coalesce_all("build", N.scan("b", df, 1, 4), schema=dict(df.dtypes))
+    plan = Plan.build(N.unload("u", N.hash_join("join", build, N.scan("p", df, 1, 4),
+                                                JoinType.INNER, ["g"], ["g"])))
+    assert plan[plan.root].n_lanes == 1
+
+
+def test_merging_sorted_partitions_requires_sorted_input():
+    with raises(PlanError, match="requires BatchSorted input"):
+        Plan.build(N.unload("u", N.merge_sorted_partitions(
+            "merge_sorted", N.scan("scan", frame(), 2, 2), ["v"])))
+
+
+def test_a_limit_after_a_per_batch_sort_is_rejected():
+    # Sorted per batch and not across them, so a prefix is the head of whichever batches
+    # arrived first rather than the top-N.
+    keep = [Alias(Col("g"), "g"), Alias(Col("v"), "v")]
+    sorted_batches = N.sort("sort", N.scan("scan", frame(), 1, 1), ["v"])
+    # A project above it, since a limit feeding only the sink is the other lowering.
+    with raises(PlanError, match="not a top-N"):
+        Plan.build(N.unload("u", N.project("after", N.limit("limit", sorted_batches, fetch=2), keep)))
+
+    # Stream-sorted, so the same limit is fine.
+    stream = N.accumulate_and_sort("accum", sorted_batches, ["v"], schema=dict(frame().dtypes))
+    Plan.build(N.unload("u", N.project("after", N.limit("limit", stream, fetch=2), keep)))
+
+
+def test_an_aggregate_declares_the_uniqueness_of_its_own_output():
+    # Not checked anywhere — declared so later work does not have to re-derive it.
+    df, aggs = frame(), sum_aggs()
+    init = init_over(df, ["g"], aggs, lanes=2)
+    assert init.output_partitions().unique_keys[0].scope is UniqueScope.PER_BATCH
+
+    per_lane = N.aggregate_batches("merge", init, ["g"], aggs)
+    assert per_lane.output_partitions().unique_keys[0].scope is UniqueScope.PER_PARTITION
+
+    shuffled = N.emit_partitions("emit", N.coalesce_all(
+        "c", N.merge_partitions("m", per_lane)), ["g"], 2)
+    final = N.aggregate_batches("final", shuffled, ["g"], aggs, A.finalize_exprs(aggs))
+    assert final.output_partitions().unique_keys[0].scope is UniqueScope.GLOBAL
 
 
 def test_routing_category_rejects_backends():

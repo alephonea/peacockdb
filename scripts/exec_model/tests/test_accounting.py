@@ -155,10 +155,11 @@ def shuffle_plan(rows=40, lanes=4):
     scan = N.scan("scan", df, lanes, 5, 10)
     filtered = N.filter_("filter", scan, Binary(">", Col("v"), Lit(3)))
     partial = N.partial_aggregate("agg_partial", filtered, ["g"], aggs)
-    compacted = N.aggregate_batches("agg_batches", partial, ["g"], aggs, final=False, schema=state_schema)
+    compacted = N.aggregate_batches("agg_batches", partial, ["g"], aggs, schema=state_schema)
     emitted = N.emit_partitions("emit", N.merge_partitions("merge", compacted), ["g"], lanes)
     return N.unload(
-        "unload", N.aggregate_batches("agg_final", emitted, ["g"], aggs, True, schema=final_schema)
+        "unload", N.aggregate_batches("agg_final", emitted, ["g"], aggs,
+                            A.finalize_exprs(aggs), schema=final_schema)
     )
 
 
