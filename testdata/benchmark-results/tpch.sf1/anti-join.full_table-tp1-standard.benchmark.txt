@@ -1,0 +1,15 @@
+GpuCoalesceBatchesExec, time_us=2
+  GpuHashJoinExec: join_type=RightAnti, on=[(c_custkey@0, o_custkey@1)], time_us=4077
+    GpuCoalesceBatchesExec, time_us=1
+      GpuFilterExec: predicate=c_mktsegment@1 = BUILDING, projection=[0], time_us=601
+        GpuScanExec: table=customer, projections=[c_custkey, c_mktsegment], time_us=34564
+    GpuScanExec: table=orders, projections=[o_orderkey, o_custkey, o_orderstatus, o_totalprice, o_orderdate, o_orderpriority, o_clerk, o_shippriority, o_comment], time_us=141296
+
+# sync_floor_us = cost of the measurement itself (empty timed region: clock + cudaStreamSynchronize on an idle stream). Each node time INCLUDES one PER OUTPUT PARTITION, since a node line is the Σ over its partitions; a node at or below its own floor (sync_floor_us x partitions) is unresolved, not cheap. Do not subtract it.
+# nodes_total_us = Σ of the per-node times above; total_us = the whole query, end to end (parse + plan + serialize + node walk + materialize)
+# build_profile = how the harness itself was compiled. total_us MINUS nodes_total_us is that Rust; records from different profiles are not comparable on it. Node times are device work and barely move.
+build_profile=benchmarks opt-level=3
+sync_floor_us=1
+nodes_at_or_below_floor=1/6
+nodes_total_us=180541
+total_us=634849

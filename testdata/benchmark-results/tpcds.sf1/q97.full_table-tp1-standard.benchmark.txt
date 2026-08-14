@@ -1,0 +1,31 @@
+GpuProjectExec: expr=[sum(CASE WHEN ssci.customer_sk IS NOT NULL AND csci.customer_sk IS NULL THEN Int64(1) ELSE Int64(0) END)@0 as store_only, sum(CASE WHEN ssci.customer_sk IS NULL AND csci.customer_sk IS NOT NULL THEN Int64(1) ELSE Int64(0) END)@1 as catalog_only, sum(CASE WHEN ssci.customer_sk IS NOT NULL AND csci.customer_sk IS NOT NULL THEN Int64(1) ELSE Int64(0) END)@2 as store_and_catalog], time_us=35
+  GpuGlobalLimitExec: skip=0, fetch=100, time_us=2
+    GpuAggregateExec: group_by=[], aggr=[sum(CASE WHEN ssci.customer_sk IS NOT NULL AND csci.customer_sk IS NULL THEN Int64(1) ELSE Int64(0) END), sum(CASE WHEN ssci.customer_sk IS NULL AND csci.customer_sk IS NOT NULL THEN Int64(1) ELSE Int64(0) END), sum(CASE WHEN ssci.customer_sk IS NOT NULL AND csci.customer_sk IS NOT NULL THEN Int64(1) ELSE Int64(0) END)], time_us=1789
+      GpuProjectExec: expr=[customer_sk@1 IS NOT NULL as __common_expr_1, customer_sk@1 as customer_sk, customer_sk@0 as customer_sk], time_us=288
+        GpuCoalesceBatchesExec, time_us=1
+          GpuHashJoinExec: join_type=Full, on=[(customer_sk@0, customer_sk@0), (item_sk@1, item_sk@1)], projection=[0, 2], time_us=1799
+            GpuProjectExec: expr=[cs_bill_customer_sk@0 as customer_sk, cs_item_sk@1 as item_sk], time_us=180
+              GpuAggregateExec: group_by=[cs_bill_customer_sk, cs_item_sk], aggr=[], time_us=764
+                GpuCoalesceBatchesExec, time_us=1
+                  GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, cs_sold_date_sk@0)], projection=[2, 3], time_us=1539
+                    GpuCoalesceBatchesExec, time_us=1
+                      GpuFilterExec: predicate=d_month_seq@1 >= 1200 AND d_month_seq@1 <= 1211, projection=[0], time_us=359
+                        GpuScanExec: table=date_dim, projections=[d_date_sk, d_month_seq], time_us=18582
+                    GpuScanExec: table=catalog_sales, projections=[cs_sold_date_sk, cs_bill_customer_sk, cs_item_sk], time_us=10314
+            GpuProjectExec: expr=[ss_customer_sk@0 as customer_sk, ss_item_sk@1 as item_sk], time_us=169
+              GpuAggregateExec: group_by=[ss_customer_sk, ss_item_sk], aggr=[], time_us=911
+                GpuCoalesceBatchesExec, time_us=1
+                  GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ss_sold_date_sk@0)], projection=[2, 3], time_us=1768
+                    GpuCoalesceBatchesExec, time_us=1
+                      GpuFilterExec: predicate=d_month_seq@1 >= 1200 AND d_month_seq@1 <= 1211, projection=[0], time_us=342
+                        GpuScanExec: table=date_dim, projections=[d_date_sk, d_month_seq], time_us=18179
+                    GpuScanExec: table=store_sales, projections=[ss_sold_date_sk, ss_item_sk, ss_customer_sk], time_us=21049
+
+# sync_floor_us = cost of the measurement itself (empty timed region: clock + cudaStreamSynchronize on an idle stream). Each node time INCLUDES one PER OUTPUT PARTITION, since a node line is the Σ over its partitions; a node at or below its own floor (sync_floor_us x partitions) is unresolved, not cheap. Do not subtract it.
+# nodes_total_us = Σ of the per-node times above; total_us = the whole query, end to end (parse + plan + serialize + node walk + materialize)
+# build_profile = how the harness itself was compiled. total_us MINUS nodes_total_us is that Rust; records from different profiles are not comparable on it. Node times are device work and barely move.
+build_profile=benchmarks opt-level=3
+sync_floor_us=1
+nodes_at_or_below_floor=5/22
+nodes_total_us=78074
+total_us=83274

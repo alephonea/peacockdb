@@ -4,7 +4,7 @@ Code and tests are authoritative; this page maps them.
 
 ## Test categories
 
-**Grand total: 891 test cases — Rust 606, C++ 37, Python 248.**
+**Grand total: 1018 test cases — Rust 733, C++ 37, Python 248.**
 
 **Runs** — `cpp-cpu` = pipeline.yml's cpp-cpu job, both cuDF legs · `cost-report` = the
 cost-report job · `shad-gpu` = CI GPU job on the remote host, `--test-threads=1` ·
@@ -25,12 +25,13 @@ and `2gpu` rows also runs locally; large CPU batches go to verda.
 | CPU exec, resident OOM micro (Rust) | the enforcer trips at a tight budget, and the boundary is real | [q78 oom](../peacockdb-core/tests/test_cpu_oom.rs#L24), [q7 fits](../peacockdb-core/tests/test_cpu_oom.rs#L27) | cpp-cpu | 3 |
 | CPU exec bespoke (Rust) | wrapper stripping, routing predicate, instrumented stats | [test_execution_strips_gpu_nodes](../peacockdb-core/tests/test_cpu_executor_misc.rs#L102) | cpp-cpu | 5 |
 | CPU node-by-node parity (Rust) | the unified walk must equal the recursive path, byte for byte | [cpu_node_executor_matches_recursive](../peacockdb-core/tests/test_node_executor.rs#L16) | cpp-cpu | 1 |
-| GPU exec, full_table tp1-standard (Rust) | one run asserts per-node rows+cost vs `.cpu.txt` AND the final result | [scan_limit](../peacockdb-core/tests/test_gpu_full_table.rs#L24) | shad-gpu | 110 |
-| GPU exec, partitioned tp8-standard (Rust) | same on the real 8-way path, with per-partition asserts | [q6](../peacockdb-core/tests/test_gpu_partitioned.rs#L29) | shad-gpu | 17 |
+| GPU exec, full_table tp1-standard (Rust) | one run asserts per-node rows+cost vs `.cpu.txt` AND the final result | [scan_limit](../peacockdb-core/tests/common/gpu_cases.inc#L29) | shad-gpu | 110 |
+| GPU exec, partitioned tp8-standard (Rust) | same on the real 8-way path, with per-partition asserts | [q6](../peacockdb-core/tests/common/gpu_cases.inc#L154) | shad-gpu | 17 |
 | GPU↔comet murmur3 (Rust) | the linchpin gate: both sides place every row in the same partition, bit-exact | [gpu_spark_partition_ids_match_comet_live](../peacockdb-core/tests/test_inc2_conformance.rs#L131) | shad-gpu | 10 |
 | GPU all-at-once smoke (Rust) | whole-plan `peacock_execute` FFI; retires with [#110](tickets.md) | [scan_nation](../peacockdb-core/tests/test_gpu_executor_misc.rs#L18) | manual | 6 |
+| GPU per-node timing (Rust) | measures, asserts nothing: one `.benchmark.txt` per case, same list as the two GPU tiers ([`gpu_cases.inc`](../peacockdb-core/tests/common/gpu_cases.inc)) | [run_gpu_benchmark](../peacockdb-core/tests/peacock_gpu_benchmarks.rs) | manual | 127 |
 | Cost-model goldens (Rust) | `.cost.txt` derivation from `.cpu.txt` × `cost_model.conf` | [cost_goldens_match_and_total_is_byte_identical](../peacockdb-core/tests/test_cost_model.rs#L36) | cost-report | 2 |
-| Registry ↔ CSV (Rust) | each `cost-registry.csv` mode column matches the tests that exist, both directions | [full_table_columns](../peacockdb-core/tests/test_cpu_full_table.rs#L313), [partitioned_gpu_column](../peacockdb-core/tests/test_gpu_partitioned.rs#L88) | cpp-cpu ×4, shad-gpu ×2 | 6 |
+| Registry ↔ CSV (Rust) | each `cost-registry.csv` mode column matches the tests that exist, both directions | [full_table_columns](../peacockdb-core/tests/test_cpu_full_table.rs#L313), [partitioned_gpu_column](../peacockdb-core/tests/test_gpu_partitioned.rs#L46) | cpp-cpu ×4, shad-gpu ×2 | 6 |
 | CI wiring guard (Rust) | every Rust target must be named by a CI step — CI does not glob | [every_rust_test_target_is_named_by_ci](../peacockdb-core/tests/test_ci_coverage.rs#L284) | cost-report | 2 |
 | tp8 flip diagnostic (Rust) | prints would-be flips; a printer, no assertions | [diag_flip_audit](../peacockdb-core/tests/diag_flip_audit.rs#L135) | manual | 1 |
 | Lib unit (Rust) | config tiers, batch-size rule, resident model | [tiers_are_strictly_increasing](../peacockdb-core/src/config.rs#L119), [nested_join_build_sides_stack](../peacockdb-core/src/resident.rs#L165) | cpp-cpu | 9 |
@@ -66,13 +67,16 @@ Notes
 - One test is quarantined, not deleted: the tp8-standard `shuffle_stddev` GPU case
   (#103), commented out in `test_gpu_partitioned.rs` with its goldens kept. It is not in
   the counts above.
-- Why the two `manual` Rust targets run nowhere. `test_gpu_executor_misc` needs the linked
+- Why the three `manual` Rust targets run nowhere. `test_gpu_executor_misc` needs the linked
   C++/CUDA executor, so the CPU tiers cannot build it — and it is not staged for the GPU
   job either, which is the part nobody chose deliberately: it drives the all-at-once
   executor that #110 retires, so its 6 smoke tests are already scheduled to be migrated or
   dropped. `diag_flip_audit` is a diagnostic printer with no assertions, run by hand while
   #97/#95 gate the tp8 rollout; wiring it to CI would add a step that cannot fail.
-- The doctest is different in kind from those two: they are exempted with a stated reason,
+  `peacock_gpu_benchmarks` measures rather than asserts, so there is nothing for a gate to
+  go red on; correctness for the same case list belongs to the two GPU tiers, which share
+  `gpu_cases.inc` with it.
+- The doctest is different in kind from those three: they are exempted with a stated reason,
   it is merely unlisted. No CI step passes `--doc` and the meta guard enumerates only
   `--test` targets plus `--lib`, so nothing would go red if it broke (#128).
 
@@ -287,6 +291,26 @@ stack on every switch):
 | C++ only, cudf 25.02 | `scripts/build.sh --cudf_ROOT <rapids-cuda-12.2> --gcc-version 12 ...` | `cpp/build` | — |
 | C++ + staged Rust bins, cudf 26.02 | `scripts/build-test.sh --build` (drives cmake directly) | `cpp/build26` | `target-cudf-<basename cudf_ROOT>` |
 | Rust + cudf (FFI) | via build-test scripts, or manually with `scripts/cargo-cudf.sh` | cargo OUT_DIR | `target-cudf-<basename cudf_ROOT>` |
+| GPU benchmarks (`peacock_gpu_benchmarks`) | `scripts/build-test-shadgpu.sh --build-benchmarks` | cargo OUT_DIR | `target-cudf-<basename cudf_ROOT>/benchmarks/` |
+| Any of the above, containerized | `scripts/docker-build.sh [--no-image] -- <command>` | `<cache-dir>/cpp-build` | `<cache-dir>/cargo-target` |
+
+The benchmark row shares the target *root* with the correctness builds on purpose:
+`[profile.benchmarks]` (`inherits = "release"`) already separates the artifacts into
+`benchmarks/`, and a second root would fork the `.peacock-ffi-cudf-root` stamp — a
+spurious `cargo clean -p peacockdb-ffi` on first use — without saving a rebuild. Why the
+profile exists at all is argued once, in `Cargo.toml`; the consequence here is that a
+record's `total_us − nodes_total_us` is only a measurement when it was built under it,
+which is why `build_profile` is in the record.
+Two costs, one-time per profile: the first `--build-benchmarks` cold-compiles the whole
+DataFusion stack **and** builds `libpeacock_gpu.so` a third time (peacockdb-ffi's cmake
+runs in `OUT_DIR`, which lives inside the profile dir). It leaves the correctness caches
+untouched, which is the trade. Every record carries `build_profile=` so numbers from
+different profiles are never silently compared.
+
+The container and the native path deliberately do **not** share a cargo cache
+(`/cache/cargo-target` + `RUSTFLAGS=-C debuginfo=0` vs `$PWD/target-cudf-*`), so
+alternating between them costs a cold rebuild each way. That is the price of having
+both entry points, not thrash to be diagnosed.
 
 ccache is auto-enabled for both C++ workflows when the binary is present (host
 compilers only — ccache + nvcc is unreliable). Rust caching is the per-workflow target
@@ -344,7 +368,7 @@ Rules that keep this healthy:
 
 | Host | Use | Managed by |
 |---|---|---|
-| **shad-gpu** (most used) | GPU test suite (cudf 25.02, H200-class; old glibc → patch step) | `scripts/build-test-shadgpu.sh` (`--build --push-binaries --patch --run` / `--all`); resilient rsync + retries — the link is flaky |
+| **shad-gpu** (most used) | GPU test suite (cudf 25.02, H200-class; old glibc → patch step) | `scripts/build-test-shadgpu.sh` (`--build --push-binaries --patch --run[-detached]` / `--all`, `--run-status`); same script measures, under separate flags (`--build-benchmarks`, `--run-benchmarks[-detached]`, `--benchmark-status`, `--pull-benchmarks`) that `--all` deliberately does not imply — one exit code cannot mean both "correctness passed" and "measurement completed". Resilient rsync + retries — the link is flaky |
 | **verda** (when available) | large CPU runs, golden regen | `scripts/build-test.sh --host verda --all` (add `--rust-only` to skip the C++/FFI half) |
 | **verda-gpu** (least used) | same root volume as verda, with a GPU attached | `scripts/build-test.sh --host verda-gpu --gpu --all` |
 | **nebius** | large CPU-only VM for benchmarking | manual |
@@ -387,7 +411,67 @@ Rules that keep this healthy:
 - **Large CPU + GPU batches run in parallel** — kick off the shad-gpu run and the
   verda/local CPU run concurrently; neither waits for the other.
 
-## Benchmarks (currently unscripted)
+## Benchmarks
+
+### Per-node GPU timing — `peacock_gpu_benchmarks` (scripted)
+
+Same case list as the GPU correctness gate (all three targets `include!`
+`peacockdb-core/tests/common/gpu_cases.inc`, so the measured set cannot drift from
+the verified one), different question: how long did each plan node take. It asserts
+nothing, so it can never gate a merge — `test_ci_coverage.rs` exempts it explicitly.
+
+```
+scripts/docker-build.sh --no-image -- ./scripts/build-test-shadgpu.sh --build-benchmarks
+./scripts/build-test-shadgpu.sh --push-binaries --patch --run-benchmarks --pull-benchmarks
+# or, for a run that outlives your ssh session (the suite takes tens of minutes):
+./scripts/build-test-shadgpu.sh --push-binaries --patch --run-benchmarks-detached
+./scripts/build-test-shadgpu.sh --benchmark-status     # going? finished? log tail
+./scripts/build-test-shadgpu.sh --pull-benchmarks      # once it reports finished
+```
+
+The correctness gate has the same pair — `--run-detached` and `--run-status` — through the
+one launcher both phases go through; `--all` stays the attached form. Either status flag
+exits 0 **only** when the latest run of that phase finished with 0: still going, died
+without writing its code, and a completion belonging to an earlier run are all non-zero,
+because the alternative is a status command that reports someone else's success as yours.
+Run state lives in `$REMOTE_REPO/.run-state/<phase>.{sh,log,rc,id}`, deliberately outside
+`cpp/install/` — that tree is mirrored with `--delete`, so a marker kept there is erased by
+the next push.
+
+One record per case, at
+`testdata/benchmark-results/<dataset>.sf<sf>/<query>.<label>.benchmark.txt` —
+`<label>` being the `<mode>-<tp>-<tier>` component the `.cpu.txt` goldens carry,
+because 17 of the cases are measured at both `full_table-tp1-standard` and
+`partitioned-tp8-standard`: same query, different plan, different time. The tree is
+the plan with `time_us` per node (and `p<k>:` sub-lines where N>1), then a trailer:
+
+| Field | Reading |
+|---|---|
+| `build_profile` | how the harness was compiled. `total_us − nodes_total_us` is that Rust; records from different profiles are not comparable on it |
+| `shared_work_charged_to` | which `p<k>` sub-line carries work a node does once for all its partitions — the hash scatter concatenates and scatters in one operation and bills p0, so a p0 far above its siblings is the accounting, not skew. Written whether or not the plan has a repartition, so absence means only "written before the field" |
+| `sync_floor_us` | what the timed region costs around no work. **Every node time includes one; do not subtract it** — a node at or below it is unresolved, not cheap |
+| `nodes_at_or_below_floor` | how much of the tree this file cannot resolve. 2/40 is a profile; 35/40 measured mostly its own instrument |
+| `nodes_total_us` | Σ of the node times |
+| `total_us` | the whole query end to end — parse, plan, serialize, node walk, materialize |
+
+Reported run is the **2nd-smallest by `total_us`** of ten measured runs, after one
+discarded warm-up: the fastest run is the one most likely to have caught a
+favourable scheduling accident, and the whole run is reported rather than a per-node
+minimum, which would produce a tree belonging to no single execution. Not `--delete`d
+by any push (see `benchmark_result()` in `tests/common/mod.rs` for why the tree is not
+called `benchmark-goldens`); `--pull-benchmarks` is additive.
+
+The run counts are compile-time constants in
+[`tests/common/mod.rs`](../peacockdb-core/tests/common/mod.rs#L1290) — warm-up 1,
+measured 10, floor samples 200. No environment variable moves them, unlike
+`PCK_TEST_FILTER` or the C++ suites' `PEACOCK_BENCHMARK_RUNS`: changing one is an edit
+and a rebuild, so every record in the tree was taken at the same counts.
+
+`PEACOCK_GPU_DEBUG` is deliberately **not** forwarded to this run — it adds a
+`cudaStreamSynchronize` after every operator, which changes exactly the thing being
+measured.
+
+### Wall-time C++ suites (currently unscripted)
 
 Wall-time runs are manual; the protocol: `PEACOCK_BENCHMARK=1`
 (`PEACOCK_BENCHMARK_RUNS=5`), execute-only timing, all-device-synced, report the

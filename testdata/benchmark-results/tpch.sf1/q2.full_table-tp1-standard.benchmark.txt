@@ -1,0 +1,48 @@
+GpuSortExec: expr=[s_acctbal@0 DESC, n_name@2 ASC NULLS LAST, s_name@1 ASC NULLS LAST, p_partkey@3 ASC NULLS LAST], fetch=100, time_us=1955
+  GpuProjectExec: expr=[s_acctbal@5 as s_acctbal, s_name@2 as s_name, n_name@7 as n_name, p_partkey@0 as p_partkey, p_mfgr@1 as p_mfgr, s_address@3 as s_address, s_phone@4 as s_phone, s_comment@6 as s_comment], time_us=517
+    GpuCoalesceBatchesExec, time_us=1
+      GpuHashJoinExec: join_type=Inner, on=[(p_partkey@0, ps_partkey@1), (ps_supplycost@7, min(partsupp.ps_supplycost)@0)], projection=[0, 1, 2, 3, 4, 5, 6, 8], time_us=1922
+        GpuCoalesceBatchesExec, time_us=1
+          GpuHashJoinExec: join_type=Inner, on=[(r_regionkey@0, n_regionkey@9)], projection=[1, 2, 3, 4, 5, 6, 7, 8, 9], time_us=1909
+            GpuCoalesceBatchesExec, time_us=1
+              GpuFilterExec: predicate=r_name@1 = EUROPE, projection=[0], time_us=480
+                GpuScanExec: table=region, projections=[r_regionkey, r_name], time_us=1261
+            GpuProjectExec: expr=[p_partkey@2 as p_partkey, p_mfgr@3 as p_mfgr, s_name@4 as s_name, s_address@5 as s_address, s_phone@6 as s_phone, s_acctbal@7 as s_acctbal, s_comment@8 as s_comment, ps_supplycost@9 as ps_supplycost, n_name@0 as n_name, n_regionkey@1 as n_regionkey], time_us=502
+              GpuCoalesceBatchesExec, time_us=1
+                GpuHashJoinExec: join_type=Inner, on=[(n_nationkey@0, s_nationkey@4)], projection=[1, 2, 3, 4, 5, 6, 8, 9, 10, 11], time_us=1941
+                  GpuScanExec: table=nation, projections=[n_nationkey, n_name, n_regionkey], time_us=1236
+                  GpuProjectExec: expr=[p_partkey@6 as p_partkey, p_mfgr@7 as p_mfgr, s_name@0 as s_name, s_address@1 as s_address, s_nationkey@2 as s_nationkey, s_phone@3 as s_phone, s_acctbal@4 as s_acctbal, s_comment@5 as s_comment, ps_supplycost@8 as ps_supplycost], time_us=436
+                    GpuCoalesceBatchesExec, time_us=1
+                      GpuHashJoinExec: join_type=Inner, on=[(s_suppkey@0, ps_suppkey@2)], projection=[1, 2, 3, 4, 5, 6, 7, 8, 10], time_us=1858
+                        GpuScanExec: table=supplier, projections=[s_suppkey, s_name, s_address, s_nationkey, s_phone, s_acctbal, s_comment], time_us=12445
+                        GpuCoalesceBatchesExec, time_us=1
+                          GpuHashJoinExec: join_type=Inner, on=[(p_partkey@0, ps_partkey@0)], projection=[0, 1, 3, 4], time_us=1026
+                            GpuCoalesceBatchesExec, time_us=1
+                              GpuFilterExec: predicate=p_size@3 = 15 AND p_type@2 LIKE %BRASS, projection=[0, 1], time_us=1182
+                                GpuScanExec: table=part, projections=[p_partkey, p_mfgr, p_type, p_size], time_us=33448
+                            GpuScanExec: table=partsupp, projections=[ps_partkey, ps_suppkey, ps_supplycost], time_us=28331
+        GpuProjectExec: expr=[min(partsupp.ps_supplycost)@1 as min(partsupp.ps_supplycost), ps_partkey@0 as ps_partkey], time_us=90
+          GpuAggregateExec: group_by=[ps_partkey], aggr=[min(partsupp.ps_supplycost)], time_us=762
+            GpuCoalesceBatchesExec, time_us=1
+              GpuHashJoinExec: join_type=Inner, on=[(r_regionkey@0, n_regionkey@2)], projection=[1, 2], time_us=1034
+                GpuCoalesceBatchesExec, time_us=1
+                  GpuFilterExec: predicate=r_name@1 = EUROPE, projection=[0], time_us=480
+                    GpuScanExec: table=region, projections=[r_regionkey, r_name], time_us=1128
+                GpuProjectExec: expr=[ps_partkey@1 as ps_partkey, ps_supplycost@2 as ps_supplycost, n_regionkey@0 as n_regionkey], time_us=256
+                  GpuCoalesceBatchesExec, time_us=1
+                    GpuHashJoinExec: join_type=Inner, on=[(n_nationkey@0, s_nationkey@2)], projection=[1, 2, 3], time_us=1635
+                      GpuScanExec: table=nation, projections=[n_nationkey, n_regionkey], time_us=1050
+                      GpuProjectExec: expr=[ps_partkey@1 as ps_partkey, ps_supplycost@2 as ps_supplycost, s_nationkey@0 as s_nationkey], time_us=281
+                        GpuCoalesceBatchesExec, time_us=1
+                          GpuHashJoinExec: join_type=Inner, on=[(s_suppkey@0, ps_suppkey@1)], projection=[1, 2, 4], time_us=1738
+                            GpuScanExec: table=supplier, projections=[s_suppkey, s_nationkey], time_us=3306
+                            GpuScanExec: table=partsupp, projections=[ps_partkey, ps_suppkey, ps_supplycost], time_us=28245
+
+# sync_floor_us = cost of the measurement itself (empty timed region: clock + cudaStreamSynchronize on an idle stream). Each node time INCLUDES one PER OUTPUT PARTITION, since a node line is the Σ over its partitions; a node at or below its own floor (sync_floor_us x partitions) is unresolved, not cheap. Do not subtract it.
+# nodes_total_us = Σ of the per-node times above; total_us = the whole query, end to end (parse + plan + serialize + node walk + materialize)
+# build_profile = how the harness itself was compiled. total_us MINUS nodes_total_us is that Rust; records from different profiles are not comparable on it. Node times are device work and barely move.
+build_profile=benchmarks opt-level=3
+sync_floor_us=1
+nodes_at_or_below_floor=11/39
+nodes_total_us=130465
+total_us=138840

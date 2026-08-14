@@ -1,0 +1,70 @@
+GpuSortExec: expr=[customer_id@0 ASC], fetch=100, time_us=995
+  GpuCoalesceBatchesExec, time_us=1
+    GpuHashJoinExec: join_type=Inner, on=[(customer_id@0, customer_id@0)], filter=CASE WHEN year_total@2 > Some(0),17,2 THEN year_total@3 / year_total@2 END > CASE WHEN year_total@0 > Some(0),17,2 THEN year_total@1 / year_total@0 END, projection=[2, 3, 4], time_us=3532
+      GpuCoalesceBatchesExec, time_us=1
+        GpuHashJoinExec: join_type=Inner, on=[(customer_id@0, customer_id@0)], projection=[0, 1, 2, 3, 4, 5, 7], time_us=1632
+          GpuCoalesceBatchesExec, time_us=1
+            GpuHashJoinExec: join_type=Inner, on=[(customer_id@0, customer_id@0)], time_us=1177
+              GpuProjectExec: expr=[c_customer_id@0 as customer_id, sum(store_sales.ss_net_paid)@1 as year_total], time_us=100
+                GpuCoalesceBatchesExec, time_us=1
+                  GpuFilterExec: predicate=sum(store_sales.ss_net_paid)@1 > Some(0),17,2, time_us=279
+                    GpuProjectExec: expr=[c_customer_id@0 as c_customer_id, sum(store_sales.ss_net_paid)@4 as sum(store_sales.ss_net_paid)], time_us=173
+                      GpuAggregateExec: group_by=[c_customer_id, c_first_name, c_last_name, d_year], aggr=[sum(store_sales.ss_net_paid)], time_us=5954
+                        GpuProjectExec: expr=[c_customer_id@1 as c_customer_id, c_first_name@2 as c_first_name, c_last_name@3 as c_last_name, ss_net_paid@4 as ss_net_paid, d_year@0 as d_year], time_us=872
+                          GpuCoalesceBatchesExec, time_us=1
+                            GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ss_sold_date_sk@3)], projection=[1, 2, 3, 4, 6], time_us=3715
+                              GpuCoalesceBatchesExec, time_us=1
+                                GpuFilterExec: predicate=d_year@1 = 2001, time_us=218
+                                  GpuScanExec: table=date_dim, projections=[d_date_sk, d_year], time_us=18494
+                              GpuCoalesceBatchesExec, time_us=1
+                                GpuHashJoinExec: join_type=Inner, on=[(c_customer_sk@0, ss_customer_sk@1)], projection=[1, 2, 3, 4, 6], time_us=5111
+                                  GpuScanExec: table=customer, projections=[c_customer_sk, c_customer_id, c_first_name, c_last_name], time_us=47689
+                                  GpuScanExec: table=store_sales, projections=[ss_sold_date_sk, ss_customer_sk, ss_net_paid], time_us=21634
+              GpuProjectExec: expr=[c_customer_id@0 as customer_id, c_first_name@1 as customer_first_name, c_last_name@2 as customer_last_name, sum(store_sales.ss_net_paid)@4 as year_total], time_us=255
+                GpuAggregateExec: group_by=[c_customer_id, c_first_name, c_last_name, d_year], aggr=[sum(store_sales.ss_net_paid)], time_us=5908
+                  GpuProjectExec: expr=[c_customer_id@1 as c_customer_id, c_first_name@2 as c_first_name, c_last_name@3 as c_last_name, ss_net_paid@4 as ss_net_paid, d_year@0 as d_year], time_us=862
+                    GpuCoalesceBatchesExec, time_us=1
+                      GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ss_sold_date_sk@3)], projection=[1, 2, 3, 4, 6], time_us=3722
+                        GpuCoalesceBatchesExec, time_us=1
+                          GpuFilterExec: predicate=d_year@1 = 2002, time_us=215
+                            GpuScanExec: table=date_dim, projections=[d_date_sk, d_year], time_us=17408
+                        GpuCoalesceBatchesExec, time_us=1
+                          GpuHashJoinExec: join_type=Inner, on=[(c_customer_sk@0, ss_customer_sk@1)], projection=[1, 2, 3, 4, 6], time_us=5096
+                            GpuScanExec: table=customer, projections=[c_customer_sk, c_customer_id, c_first_name, c_last_name], time_us=49174
+                            GpuScanExec: table=store_sales, projections=[ss_sold_date_sk, ss_customer_sk, ss_net_paid], time_us=21511
+          GpuProjectExec: expr=[c_customer_id@0 as customer_id, sum(web_sales.ws_net_paid)@1 as year_total], time_us=122
+            GpuCoalesceBatchesExec, time_us=1
+              GpuFilterExec: predicate=sum(web_sales.ws_net_paid)@1 > Some(0),17,2, time_us=258
+                GpuProjectExec: expr=[c_customer_id@0 as c_customer_id, sum(web_sales.ws_net_paid)@4 as sum(web_sales.ws_net_paid)], time_us=156
+                  GpuAggregateExec: group_by=[c_customer_id, c_first_name, c_last_name, d_year], aggr=[sum(web_sales.ws_net_paid)], time_us=5205
+                    GpuProjectExec: expr=[c_customer_id@1 as c_customer_id, c_first_name@2 as c_first_name, c_last_name@3 as c_last_name, ws_net_paid@4 as ws_net_paid, d_year@0 as d_year], time_us=442
+                      GpuCoalesceBatchesExec, time_us=1
+                        GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ws_sold_date_sk@3)], projection=[1, 2, 3, 4, 6], time_us=2378
+                          GpuCoalesceBatchesExec, time_us=1
+                            GpuFilterExec: predicate=d_year@1 = 2001, time_us=226
+                              GpuScanExec: table=date_dim, projections=[d_date_sk, d_year], time_us=17331
+                          GpuCoalesceBatchesExec, time_us=1
+                            GpuHashJoinExec: join_type=Inner, on=[(c_customer_sk@0, ws_bill_customer_sk@1)], projection=[1, 2, 3, 4, 6], time_us=3552
+                              GpuScanExec: table=customer, projections=[c_customer_sk, c_customer_id, c_first_name, c_last_name], time_us=52117
+                              GpuScanExec: table=web_sales, projections=[ws_sold_date_sk, ws_bill_customer_sk, ws_net_paid], time_us=9965
+      GpuProjectExec: expr=[c_customer_id@0 as customer_id, sum(web_sales.ws_net_paid)@4 as year_total], time_us=186
+        GpuAggregateExec: group_by=[c_customer_id, c_first_name, c_last_name, d_year], aggr=[sum(web_sales.ws_net_paid)], time_us=5176
+          GpuProjectExec: expr=[c_customer_id@1 as c_customer_id, c_first_name@2 as c_first_name, c_last_name@3 as c_last_name, ws_net_paid@4 as ws_net_paid, d_year@0 as d_year], time_us=432
+            GpuCoalesceBatchesExec, time_us=1
+              GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ws_sold_date_sk@3)], projection=[1, 2, 3, 4, 6], time_us=2427
+                GpuCoalesceBatchesExec, time_us=1
+                  GpuFilterExec: predicate=d_year@1 = 2002, time_us=266
+                    GpuScanExec: table=date_dim, projections=[d_date_sk, d_year], time_us=18121
+                GpuCoalesceBatchesExec, time_us=1
+                  GpuHashJoinExec: join_type=Inner, on=[(c_customer_sk@0, ws_bill_customer_sk@1)], projection=[1, 2, 3, 4, 6], time_us=3534
+                    GpuScanExec: table=customer, projections=[c_customer_sk, c_customer_id, c_first_name, c_last_name], time_us=49919
+                    GpuScanExec: table=web_sales, projections=[ws_sold_date_sk, ws_bill_customer_sk, ws_net_paid], time_us=10082
+
+# sync_floor_us = cost of the measurement itself (empty timed region: clock + cudaStreamSynchronize on an idle stream). Each node time INCLUDES one PER OUTPUT PARTITION, since a node line is the Σ over its partitions; a node at or below its own floor (sync_floor_us x partitions) is unresolved, not cheap. Do not subtract it.
+# nodes_total_us = Σ of the per-node times above; total_us = the whole query, end to end (parse + plan + serialize + node walk + materialize)
+# build_profile = how the harness itself was compiled. total_us MINUS nodes_total_us is that Rust; records from different profiles are not comparable on it. Node times are device work and barely move.
+build_profile=benchmarks opt-level=3
+sync_floor_us=1
+nodes_at_or_below_floor=17/61
+nodes_total_us=397638
+total_us=419755

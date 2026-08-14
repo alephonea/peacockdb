@@ -1,0 +1,94 @@
+GpuAggregateExec: group_by=[], aggr=[count(*), sum(l.l_quantity), sum(o.o_totalprice)], time_us=589
+  GpuCoalescePartitionsExec, time_us=130
+    GpuAggregateExec: group_by=[], aggr=[count(*), sum(l.l_quantity), sum(o.o_totalprice)], time_us=14376
+      p0: time_us=1847
+      p1: time_us=1790
+      p2: time_us=1816
+      p3: time_us=1798
+      p4: time_us=1802
+      p5: time_us=1758
+      p6: time_us=1785
+      p7: time_us=1780
+      GpuCoalesceBatchesExec, time_us=8
+        p0: time_us=1
+        p1: time_us=1
+        p2: time_us=1
+        p3: time_us=1
+        p4: time_us=1
+        p5: time_us=1
+        p6: time_us=1
+        p7: time_us=1
+        GpuHashJoinExec: join_type=Left, on=[(o_orderkey@0, l_orderkey@0)], projection=[1, 3], time_us=12103
+          p0: time_us=2019
+          p1: time_us=1525
+          p2: time_us=1465
+          p3: time_us=1418
+          p4: time_us=1451
+          p5: time_us=1395
+          p6: time_us=1410
+          p7: time_us=1420
+          GpuCoalesceBatchesExec, time_us=9
+            p0: time_us=2
+            p1: time_us=1
+            p2: time_us=1
+            p3: time_us=1
+            p4: time_us=1
+            p5: time_us=1
+            p6: time_us=1
+            p7: time_us=1
+            GpuRepartitionExec: partitioning=Hash([o_orderkey@0], 8), input_partitions=1, time_us=1444
+              p0: time_us=837
+              p1: time_us=86
+              p2: time_us=86
+              p3: time_us=87
+              p4: time_us=87
+              p5: time_us=86
+              p6: time_us=87
+              p7: time_us=88
+              GpuCoalescePartitionsExec, time_us=226
+                GpuScanExec: table=orders, projections=[o_orderkey, o_totalprice], time_us=218489
+                  p0: time_us=30514
+                  p1: time_us=30250
+                  p2: time_us=30200
+                  p3: time_us=30226
+                  p4: time_us=30352
+                  p5: time_us=29849
+                  p6: time_us=30003
+                  p7: time_us=7095
+          GpuCoalesceBatchesExec, time_us=9
+            p0: time_us=2
+            p1: time_us=1
+            p2: time_us=1
+            p3: time_us=1
+            p4: time_us=1
+            p5: time_us=1
+            p6: time_us=1
+            p7: time_us=1
+            GpuRepartitionExec: partitioning=Hash([l_orderkey@0], 8), input_partitions=1, time_us=2621
+              p0: time_us=1944
+              p1: time_us=99
+              p2: time_us=96
+              p3: time_us=99
+              p4: time_us=96
+              p5: time_us=95
+              p6: time_us=94
+              p7: time_us=98
+              GpuCoalescePartitionsExec, time_us=290
+                GpuScanExec: table=lineitem, projections=[l_orderkey, l_quantity], time_us=239385
+                  p0: time_us=32075
+                  p1: time_us=29592
+                  p2: time_us=29544
+                  p3: time_us=29531
+                  p4: time_us=29586
+                  p5: time_us=29800
+                  p6: time_us=29669
+                  p7: time_us=29588
+
+# sync_floor_us = cost of the measurement itself (empty timed region: clock + cudaStreamSynchronize on an idle stream). Each node time INCLUDES one PER OUTPUT PARTITION, since a node line is the Σ over its partitions; a node at or below its own floor (sync_floor_us x partitions) is unresolved, not cheap. Do not subtract it.
+# nodes_total_us = Σ of the per-node times above; total_us = the whole query, end to end (parse + plan + serialize + node walk + materialize)
+# build_profile = how the harness itself was compiled. total_us MINUS nodes_total_us is that Rust; records from different profiles are not comparable on it. Node times are device work and barely move.
+build_profile=benchmarks opt-level=3
+sync_floor_us=1
+nodes_at_or_below_floor=1/13
+nodes_total_us=489679
+total_us=493907

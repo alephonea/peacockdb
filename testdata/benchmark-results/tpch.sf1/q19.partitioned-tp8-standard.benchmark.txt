@@ -1,0 +1,113 @@
+GpuProjectExec: expr=[sum(lineitem.l_extendedprice * Int64(1) - lineitem.l_discount)@0 as revenue], time_us=15
+  GpuAggregateExec: group_by=[], aggr=[sum(lineitem.l_extendedprice * Int64(1) - lineitem.l_discount)], time_us=248
+    GpuCoalescePartitionsExec, time_us=47
+      GpuAggregateExec: group_by=[], aggr=[sum(lineitem.l_extendedprice * Int64(1) - lineitem.l_discount)], time_us=2930
+        p0: time_us=423
+        p1: time_us=353
+        p2: time_us=344
+        p3: time_us=403
+        p4: time_us=358
+        p5: time_us=362
+        p6: time_us=345
+        p7: time_us=342
+        GpuCoalesceBatchesExec, time_us=8
+          p0: time_us=1
+          p1: time_us=1
+          p2: time_us=1
+          p3: time_us=1
+          p4: time_us=1
+          p5: time_us=1
+          p6: time_us=1
+          p7: time_us=1
+          GpuHashJoinExec: join_type=Inner, on=[(p_partkey@0, l_partkey@0)], filter=p_brand@1 = Brand#12 AND (p_container@3 = SM CASE OR p_container@3 = SM BOX OR p_container@3 = SM PACK OR p_container@3 = SM PKG) AND l_quantity@0 >= Some(100),15,2 AND l_quantity@0 <= Some(1100),15,2 AND p_size@2 <= 5 OR p_brand@1 = Brand#23 AND (p_container@3 = MED BAG OR p_container@3 = MED BOX OR p_container@3 = MED PKG OR p_container@3 = MED PACK) AND l_quantity@0 >= Some(1000),15,2 AND l_quantity@0 <= Some(2000),15,2 AND p_size@2 <= 10 OR p_brand@1 = Brand#34 AND (p_container@3 = LG CASE OR p_container@3 = LG BOX OR p_container@3 = LG PACK OR p_container@3 = LG PKG) AND l_quantity@0 >= Some(2000),15,2 AND l_quantity@0 <= Some(3000),15,2 AND p_size@2 <= 15, projection=[6, 7], time_us=37943
+            p0: time_us=4843
+            p1: time_us=4713
+            p2: time_us=4817
+            p3: time_us=4687
+            p4: time_us=4696
+            p5: time_us=4701
+            p6: time_us=4741
+            p7: time_us=4745
+            GpuCoalesceBatchesExec, time_us=8
+              p0: time_us=1
+              p1: time_us=1
+              p2: time_us=1
+              p3: time_us=1
+              p4: time_us=1
+              p5: time_us=1
+              p6: time_us=1
+              p7: time_us=1
+              GpuRepartitionExec: partitioning=Hash([p_partkey@0], 8), input_partitions=1, time_us=1237
+                p0: time_us=516
+                p1: time_us=106
+                p2: time_us=103
+                p3: time_us=102
+                p4: time_us=105
+                p5: time_us=104
+                p6: time_us=101
+                p7: time_us=100
+                GpuCoalescePartitionsExec, time_us=218
+                  GpuCoalesceBatchesExec, time_us=2
+                    p0: time_us=1
+                    p1: time_us=1
+                    GpuFilterExec: predicate=(p_brand@1 = Brand#12 AND (p_container@3 = SM CASE OR p_container@3 = SM BOX OR p_container@3 = SM PACK OR p_container@3 = SM PKG) AND p_size@2 <= 5 OR p_brand@1 = Brand#23 AND (p_container@3 = MED BAG OR p_container@3 = MED BOX OR p_container@3 = MED PKG OR p_container@3 = MED PACK) AND p_size@2 <= 10 OR p_brand@1 = Brand#34 AND (p_container@3 = LG CASE OR p_container@3 = LG BOX OR p_container@3 = LG PACK OR p_container@3 = LG PKG) AND p_size@2 <= 15) AND p_size@2 >= 1, time_us=9616
+                      p0: time_us=4770
+                      p1: time_us=4846
+                      GpuScanExec: table=part, projections=[p_partkey, p_brand, p_size, p_container], time_us=52592
+                        p0: time_us=32048
+                        p1: time_us=20544
+            GpuCoalesceBatchesExec, time_us=9
+              p0: time_us=2
+              p1: time_us=1
+              p2: time_us=1
+              p3: time_us=1
+              p4: time_us=1
+              p5: time_us=1
+              p6: time_us=1
+              p7: time_us=1
+              GpuRepartitionExec: partitioning=Hash([l_partkey@0], 8), input_partitions=1, time_us=646
+                p0: time_us=340
+                p1: time_us=30
+                p2: time_us=65
+                p3: time_us=30
+                p4: time_us=61
+                p5: time_us=28
+                p6: time_us=62
+                p7: time_us=30
+                GpuCoalescePartitionsExec, time_us=367
+                  GpuCoalesceBatchesExec, time_us=9
+                    p0: time_us=2
+                    p1: time_us=1
+                    p2: time_us=1
+                    p3: time_us=1
+                    p4: time_us=1
+                    p5: time_us=1
+                    p6: time_us=1
+                    p7: time_us=1
+                    GpuFilterExec: predicate=(l_quantity@1 >= Some(100),15,2 AND l_quantity@1 <= Some(1100),15,2 OR l_quantity@1 >= Some(1000),15,2 AND l_quantity@1 <= Some(2000),15,2 OR l_quantity@1 >= Some(2000),15,2 AND l_quantity@1 <= Some(3000),15,2) AND (l_shipmode@5 = AIR OR l_shipmode@5 = AIR REG) AND l_shipinstruct@4 = DELIVER IN PERSON, projection=[0, 1, 2, 3], time_us=29120
+                      p0: time_us=3689
+                      p1: time_us=3505
+                      p2: time_us=3493
+                      p3: time_us=3672
+                      p4: time_us=3680
+                      p5: time_us=3675
+                      p6: time_us=3650
+                      p7: time_us=3756
+                      GpuScanExec: table=lineitem, projections=[l_partkey, l_quantity, l_extendedprice, l_discount, l_shipinstruct, l_shipmode], time_us=266398
+                        p0: time_us=32818
+                        p1: time_us=33228
+                        p2: time_us=33191
+                        p3: time_us=33442
+                        p4: time_us=33318
+                        p5: time_us=33421
+                        p6: time_us=33452
+                        p7: time_us=33528
+
+# sync_floor_us = cost of the measurement itself (empty timed region: clock + cudaStreamSynchronize on an idle stream). Each node time INCLUDES one PER OUTPUT PARTITION, since a node line is the Σ over its partitions; a node at or below its own floor (sync_floor_us x partitions) is unresolved, not cheap. Do not subtract it.
+# nodes_total_us = Σ of the per-node times above; total_us = the whole query, end to end (parse + plan + serialize + node walk + materialize)
+# build_profile = how the harness itself was compiled. total_us MINUS nodes_total_us is that Rust; records from different profiles are not comparable on it. Node times are device work and barely move.
+build_profile=benchmarks opt-level=3
+sync_floor_us=1
+nodes_at_or_below_floor=3/18
+nodes_total_us=401413
+total_us=411794

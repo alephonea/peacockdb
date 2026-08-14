@@ -92,6 +92,23 @@ FetchContent_Declare(
 set(FLATBUFFERS_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(FLATBUFFERS_BUILD_FLATC ON CACHE BOOL "" FORCE)
 set(FLATBUFFERS_BUILD_FLATHASH OFF CACHE BOOL "" FORCE)
+# FlatBuffers is a BUILD-time dependency — a header-only runtime we link in and a
+# flatc we run for codegen. Nothing downstream consumes it as an installed package,
+# so its install rules are pure liability: with them on, `--target install` copies
+# flatbuffers' headers and cmake config into CMAKE_INSTALL_PREFIX, which for the
+# main build is cpp/install — the tree the deploy phase rsyncs to the GPU host. It
+# is bytes over a slow link for something nothing there reads.
+#
+# Not to be confused with the "Permission denied installing to /usr/local" failure
+# that shows up on a cold peacockdb-ffi reconfigure. That one is NOT about which
+# install rules exist: peacockdb-ffi's build.rs runs its own cmake tree in cargo's
+# OUT_DIR and the cmake crate does pass -DCMAKE_INSTALL_PREFIX=<OUT_DIR>, but if
+# that tree's cache was written with different compilers, cmake prints "you have
+# changed variables that require your cache to be deleted", wipes it, reconfigures,
+# and the prefix falls back to the default /usr/local. Turning install rules off
+# only moves which target trips over it first. The fix is to let the reconfigure
+# settle (re-run the build) or delete that OUT_DIR — not to prune install rules.
+set(FLATBUFFERS_INSTALL OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(flatbuffers)
 
 # ---------------------------------------------------------------------------

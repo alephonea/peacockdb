@@ -1,0 +1,12 @@
+GpuNestedLoopJoinExec: join_type=Inner, filter=n_regionkey@1 > r_regionkey@0, time_us=1075
+  GpuScanExec: table=region, projections=[r_regionkey, r_name, r_comment], time_us=1286
+  GpuScanExec: table=nation, projections=[n_nationkey, n_name, n_regionkey, n_comment], time_us=1292
+
+# sync_floor_us = cost of the measurement itself (empty timed region: clock + cudaStreamSynchronize on an idle stream). Each node time INCLUDES one PER OUTPUT PARTITION, since a node line is the Σ over its partitions; a node at or below its own floor (sync_floor_us x partitions) is unresolved, not cheap. Do not subtract it.
+# nodes_total_us = Σ of the per-node times above; total_us = the whole query, end to end (parse + plan + serialize + node walk + materialize)
+# build_profile = how the harness itself was compiled. total_us MINUS nodes_total_us is that Rust; records from different profiles are not comparable on it. Node times are device work and barely move.
+build_profile=benchmarks opt-level=3
+sync_floor_us=1
+nodes_at_or_below_floor=0/3
+nodes_total_us=3653
+total_us=4820

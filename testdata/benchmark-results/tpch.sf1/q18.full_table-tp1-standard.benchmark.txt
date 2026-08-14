@@ -1,0 +1,24 @@
+GpuSortExec: expr=[o_totalprice@4 DESC, o_orderdate@3 ASC NULLS LAST], fetch=100, time_us=783
+  GpuAggregateExec: group_by=[c_name, c_custkey, o_orderkey, o_orderdate, o_totalprice], aggr=[sum(lineitem.l_quantity)], time_us=1762
+    GpuCoalesceBatchesExec, time_us=1
+      GpuHashJoinExec: join_type=RightSemi, on=[(l_orderkey@0, o_orderkey@2)], time_us=2842
+        GpuCoalesceBatchesExec, time_us=1
+          GpuFilterExec: predicate=sum(lineitem.l_quantity)@1 > Some(30000),25,2, projection=[0], time_us=896
+            GpuAggregateExec: group_by=[l_orderkey], aggr=[sum(lineitem.l_quantity)], time_us=2560
+              GpuScanExec: table=lineitem, projections=[l_orderkey, l_quantity], time_us=38354
+        GpuCoalesceBatchesExec, time_us=1
+          GpuHashJoinExec: join_type=Inner, on=[(o_orderkey@2, l_orderkey@0)], projection=[0, 1, 2, 3, 4, 6], time_us=6368
+            GpuCoalesceBatchesExec, time_us=1
+              GpuHashJoinExec: join_type=Inner, on=[(c_custkey@0, o_custkey@1)], projection=[0, 1, 2, 4, 5], time_us=3135
+                GpuScanExec: table=customer, projections=[c_custkey, c_name], time_us=49743
+                GpuScanExec: table=orders, projections=[o_orderkey, o_custkey, o_totalprice, o_orderdate], time_us=33968
+            GpuScanExec: table=lineitem, projections=[l_orderkey, l_quantity], time_us=38020
+
+# sync_floor_us = cost of the measurement itself (empty timed region: clock + cudaStreamSynchronize on an idle stream). Each node time INCLUDES one PER OUTPUT PARTITION, since a node line is the Σ over its partitions; a node at or below its own floor (sync_floor_us x partitions) is unresolved, not cheap. Do not subtract it.
+# nodes_total_us = Σ of the per-node times above; total_us = the whole query, end to end (parse + plan + serialize + node walk + materialize)
+# build_profile = how the harness itself was compiled. total_us MINUS nodes_total_us is that Rust; records from different profiles are not comparable on it. Node times are device work and barely move.
+build_profile=benchmarks opt-level=3
+sync_floor_us=1
+nodes_at_or_below_floor=4/15
+nodes_total_us=178435
+total_us=182243

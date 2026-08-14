@@ -1,0 +1,12 @@
+GpuProjectExec: expr=[l_returnflag@0 as l_returnflag, l_linestatus@1 as l_linestatus, count(*)@2 as cnt, avg(lineitem.l_quantity)@3 as avg_qty, sum(lineitem.l_quantity)@4 as sum_qty], time_us=191
+  GpuAggregateExec: group_by=[l_returnflag, l_linestatus], aggr=[count(*), avg(lineitem.l_quantity), sum(lineitem.l_quantity)], time_us=7385
+    GpuScanExec: table=lineitem, projections=[l_quantity, l_returnflag, l_linestatus], time_us=8669
+
+# sync_floor_us = cost of the measurement itself (empty timed region: clock + cudaStreamSynchronize on an idle stream). Each node time INCLUDES one PER OUTPUT PARTITION, since a node line is the Σ over its partitions; a node at or below its own floor (sync_floor_us x partitions) is unresolved, not cheap. Do not subtract it.
+# nodes_total_us = Σ of the per-node times above; total_us = the whole query, end to end (parse + plan + serialize + node walk + materialize)
+# build_profile = how the harness itself was compiled. total_us MINUS nodes_total_us is that Rust; records from different profiles are not comparable on it. Node times are device work and barely move.
+build_profile=benchmarks opt-level=3
+sync_floor_us=1
+nodes_at_or_below_floor=0/3
+nodes_total_us=16245
+total_us=17749

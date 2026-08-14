@@ -13,6 +13,7 @@
 
 #include <cuda_runtime.h>
 
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -86,6 +87,28 @@ const char* peacock_gpu_version() {
   // Trivial cudf call to ensure libcudf.so appears as a dynamic dependency.
   (void)cudf::num_bitmask_words(0);
   return "0.1.0";
+}
+
+// ---------------------------------------------------------------------------
+// Benchmark instrumentation
+// ---------------------------------------------------------------------------
+
+void peacock_set_node_timing(int enable) { peacock::set_node_timing(enable != 0); }
+
+uint64_t peacock_measure_timing_floor_us(unsigned samples) {
+  // No executor handle here, so no `last_error` to park a message in — print and
+  // return 0. A 0 floor is self-announcing in the output file (a floor of zero
+  // claims the instrumentation is free, which nothing believes), so it degrades
+  // to "unknown" rather than to a plausible lie.
+  try {
+    return peacock::measure_timing_floor_us(samples);
+  } catch (const std::exception& e) {
+    std::fprintf(stderr, "[peacock_measure_timing_floor_us] error: %s\n", e.what());
+    return 0;
+  } catch (...) {
+    std::fprintf(stderr, "[peacock_measure_timing_floor_us] unknown exception\n");
+    return 0;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -176,9 +199,16 @@ int peacock_executor_execute_node(peacock_executor_t* executor, uint64_t seq,
     return 1;
   }
   try {
-    // out_stats is a caller array of out_cap, filled PER PARTITION (parallel to
-    // out_handles); PeacockNodeStats and peacock::NodeStats are layout-identical
-    // ({uint64 rows; uint64 varlen_content_bytes}).
+    // out_stats is a caller array of out_cap, filled per partition (parallel to
+    // out_handles). The cast is sound only while the two structs are laid out
+    // identically, so the compiler checks it: adding a member to one and not the
+    // other, or reordering either, fails here rather than silently handing Rust
+    // fields from the wrong offsets.
+    static_assert(sizeof(PeacockNodeStats) == sizeof(peacock::NodeStats));
+    static_assert(offsetof(PeacockNodeStats, rows) == offsetof(peacock::NodeStats, rows));
+    static_assert(offsetof(PeacockNodeStats, varlen_content_bytes) ==
+                  offsetof(peacock::NodeStats, varlen_content_bytes));
+    static_assert(offsetof(PeacockNodeStats, time_us) == offsetof(peacock::NodeStats, time_us));
     size_t n_out = 0;
     executor->session->execute_node(
         seq, input_handles, input_child_counts, static_cast<size_t>(n_children),

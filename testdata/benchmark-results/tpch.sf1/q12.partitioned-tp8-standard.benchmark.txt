@@ -1,0 +1,166 @@
+GpuSortPreservingMergeExec: [l_shipmode@0 ASC NULLS LAST], time_us=237
+  GpuSortExec: expr=[l_shipmode@0 ASC NULLS LAST], time_us=380
+    p0: time_us=184
+    p1: time_us=4
+    p2: time_us=3
+    p3: time_us=177
+    p4: time_us=3
+    p5: time_us=3
+    p6: time_us=3
+    p7: time_us=3
+    GpuProjectExec: expr=[l_shipmode@0 as l_shipmode, sum(CASE WHEN orders.o_orderpriority = Utf8("1-URGENT") OR orders.o_orderpriority = Utf8("2-HIGH") THEN Int64(1) ELSE Int64(0) END)@1 as high_line_count, sum(CASE WHEN orders.o_orderpriority != Utf8("1-URGENT") AND orders.o_orderpriority != Utf8("2-HIGH") THEN Int64(1) ELSE Int64(0) END)@2 as low_line_count], time_us=128
+      p0: time_us=57
+      p1: time_us=3
+      p2: time_us=3
+      p3: time_us=53
+      p4: time_us=3
+      p5: time_us=3
+      p6: time_us=3
+      p7: time_us=3
+      GpuAggregateExec: group_by=[l_shipmode], aggr=[sum(CASE WHEN orders.o_orderpriority = Utf8("1-URGENT") OR orders.o_orderpriority = Utf8("2-HIGH") THEN Int64(1) ELSE Int64(0) END), sum(CASE WHEN orders.o_orderpriority != Utf8("1-URGENT") AND orders.o_orderpriority != Utf8("2-HIGH") THEN Int64(1) ELSE Int64(0) END)], time_us=737
+        p0: time_us=366
+        p1: time_us=7
+        p2: time_us=5
+        p3: time_us=341
+        p4: time_us=5
+        p5: time_us=5
+        p6: time_us=4
+        p7: time_us=4
+        GpuCoalesceBatchesExec, time_us=8
+          p0: time_us=1
+          p1: time_us=1
+          p2: time_us=1
+          p3: time_us=1
+          p4: time_us=1
+          p5: time_us=1
+          p6: time_us=1
+          p7: time_us=1
+          GpuRepartitionExec: partitioning=Hash([l_shipmode@0], 8), input_partitions=1, time_us=432
+            p0: time_us=348
+            p1: time_us=4
+            p2: time_us=3
+            p3: time_us=64
+            p4: time_us=4
+            p5: time_us=3
+            p6: time_us=3
+            p7: time_us=3
+            GpuCoalescePartitionsExec, time_us=194
+              GpuAggregateExec: group_by=[l_shipmode], aggr=[sum(CASE WHEN orders.o_orderpriority = Utf8("1-URGENT") OR orders.o_orderpriority = Utf8("2-HIGH") THEN Int64(1) ELSE Int64(0) END), sum(CASE WHEN orders.o_orderpriority != Utf8("1-URGENT") AND orders.o_orderpriority != Utf8("2-HIGH") THEN Int64(1) ELSE Int64(0) END)], time_us=10582
+                p0: time_us=1395
+                p1: time_us=1340
+                p2: time_us=1296
+                p3: time_us=1302
+                p4: time_us=1322
+                p5: time_us=1313
+                p6: time_us=1297
+                p7: time_us=1317
+                GpuProjectExec: expr=[o_orderpriority@1 as o_orderpriority, l_shipmode@0 as l_shipmode], time_us=558
+                  p0: time_us=73
+                  p1: time_us=69
+                  p2: time_us=70
+                  p3: time_us=68
+                  p4: time_us=68
+                  p5: time_us=68
+                  p6: time_us=73
+                  p7: time_us=69
+                  GpuCoalesceBatchesExec, time_us=8
+                    p0: time_us=1
+                    p1: time_us=1
+                    p2: time_us=1
+                    p3: time_us=1
+                    p4: time_us=1
+                    p5: time_us=1
+                    p6: time_us=1
+                    p7: time_us=1
+                    GpuHashJoinExec: join_type=Inner, on=[(l_orderkey@0, o_orderkey@0)], projection=[1, 3], time_us=4851
+                      p0: time_us=646
+                      p1: time_us=581
+                      p2: time_us=594
+                      p3: time_us=579
+                      p4: time_us=594
+                      p5: time_us=606
+                      p6: time_us=641
+                      p7: time_us=610
+                      GpuCoalesceBatchesExec, time_us=8
+                        p0: time_us=1
+                        p1: time_us=1
+                        p2: time_us=1
+                        p3: time_us=1
+                        p4: time_us=1
+                        p5: time_us=1
+                        p6: time_us=1
+                        p7: time_us=1
+                        GpuRepartitionExec: partitioning=Hash([l_orderkey@0], 8), input_partitions=1, time_us=791
+                          p0: time_us=414
+                          p1: time_us=57
+                          p2: time_us=54
+                          p3: time_us=54
+                          p4: time_us=53
+                          p5: time_us=53
+                          p6: time_us=53
+                          p7: time_us=53
+                          GpuCoalescePartitionsExec, time_us=145
+                            GpuCoalesceBatchesExec, time_us=8
+                              p0: time_us=1
+                              p1: time_us=1
+                              p2: time_us=1
+                              p3: time_us=1
+                              p4: time_us=1
+                              p5: time_us=1
+                              p6: time_us=1
+                              p7: time_us=1
+                              GpuFilterExec: predicate=(l_shipmode@4 = MAIL OR l_shipmode@4 = SHIP) AND l_receiptdate@3 > l_commitdate@2 AND l_shipdate@1 < l_commitdate@2 AND l_receiptdate@3 >= 1994-01-01 AND l_receiptdate@3 < 1995-01-01, projection=[0, 4], time_us=10432
+                                p0: time_us=1521
+                                p1: time_us=1314
+                                p2: time_us=1273
+                                p3: time_us=1268
+                                p4: time_us=1234
+                                p5: time_us=1270
+                                p6: time_us=1295
+                                p7: time_us=1257
+                                GpuScanExec: table=lineitem, projections=[l_orderkey, l_shipdate, l_commitdate, l_receiptdate, l_shipmode], time_us=241885
+                                  p0: time_us=31215
+                                  p1: time_us=30765
+                                  p2: time_us=29962
+                                  p3: time_us=30013
+                                  p4: time_us=30058
+                                  p5: time_us=30001
+                                  p6: time_us=29931
+                                  p7: time_us=29940
+                      GpuCoalesceBatchesExec, time_us=9
+                        p0: time_us=2
+                        p1: time_us=1
+                        p2: time_us=1
+                        p3: time_us=1
+                        p4: time_us=1
+                        p5: time_us=1
+                        p6: time_us=1
+                        p7: time_us=1
+                        GpuRepartitionExec: partitioning=Hash([o_orderkey@0], 8), input_partitions=1, time_us=2324
+                          p0: time_us=1284
+                          p1: time_us=162
+                          p2: time_us=133
+                          p3: time_us=160
+                          p4: time_us=131
+                          p5: time_us=164
+                          p6: time_us=131
+                          p7: time_us=159
+                          GpuCoalescePartitionsExec, time_us=599
+                            GpuScanExec: table=orders, projections=[o_orderkey, o_orderpriority], time_us=208288
+                              p0: time_us=29871
+                              p1: time_us=28926
+                              p2: time_us=28511
+                              p3: time_us=28483
+                              p4: time_us=28498
+                              p5: time_us=28407
+                              p6: time_us=28294
+                              p7: time_us=7298
+
+# sync_floor_us = cost of the measurement itself (empty timed region: clock + cudaStreamSynchronize on an idle stream). Each node time INCLUDES one PER OUTPUT PARTITION, since a node line is the Σ over its partitions; a node at or below its own floor (sync_floor_us x partitions) is unresolved, not cheap. Do not subtract it.
+# nodes_total_us = Σ of the per-node times above; total_us = the whole query, end to end (parse + plan + serialize + node walk + materialize)
+# build_profile = how the harness itself was compiled. total_us MINUS nodes_total_us is that Rust; records from different profiles are not comparable on it. Node times are device work and barely move.
+build_profile=benchmarks opt-level=3
+sync_floor_us=1
+nodes_at_or_below_floor=4/21
+nodes_total_us=482604
+total_us=490387

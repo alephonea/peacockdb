@@ -1,4 +1,5 @@
 #include <peacock_gpu.h>
+#include "plan_executor.h"
 #include "plan_executor_internal.h"
 
 #include <flatbuffers/flatbuffers.h>
@@ -124,6 +125,22 @@ TEST(PeacockGpu, ExecutorCreateDestroy) {
 
 TEST(PeacockGpu, ExecutorNullOut) {
   EXPECT_NE(peacock_executor_create(0, nullptr), 0);
+}
+
+// The timing switch, on the tier that has no GPU because it needs none: it is a
+// process-global bool, and the whole safety argument for the benchmark work is that
+// the correctness suite never turns it on. A switch stuck on would put a
+// cudaStreamSynchronize after every node of every GPU test and nothing would fail —
+// the runs would just serialize, which reads as a slow host.
+TEST(NodeTiming, DefaultsOff) {
+  EXPECT_FALSE(peacock::node_timing_enabled());
+}
+
+TEST(NodeTiming, SwitchRoundTrips) {
+  peacock::set_node_timing(true);
+  EXPECT_TRUE(peacock::node_timing_enabled());
+  peacock::set_node_timing(false);
+  EXPECT_FALSE(peacock::node_timing_enabled());
 }
 
 int main(int argc, char** argv) {

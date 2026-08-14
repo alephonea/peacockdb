@@ -1,0 +1,36 @@
+GpuSortExec: expr=[numwait@1 DESC, s_name@0 ASC NULLS LAST], fetch=100, time_us=984
+  GpuProjectExec: expr=[s_name@0 as s_name, count(*)@1 as numwait], time_us=85
+    GpuAggregateExec: group_by=[s_name], aggr=[count(*)], time_us=601
+      GpuCoalesceBatchesExec, time_us=1
+        GpuHashJoinExec: join_type=LeftAnti, on=[(l_orderkey@1, l_orderkey@0)], filter=l_suppkey@1 != l_suppkey@0, projection=[0], time_us=2216
+          GpuCoalesceBatchesExec, time_us=1
+            GpuHashJoinExec: join_type=LeftSemi, on=[(l_orderkey@1, l_orderkey@0)], filter=l_suppkey@1 != l_suppkey@0, time_us=3457
+              GpuCoalesceBatchesExec, time_us=1
+                GpuHashJoinExec: join_type=Inner, on=[(n_nationkey@0, s_nationkey@1)], projection=[1, 3, 4], time_us=1348
+                  GpuCoalesceBatchesExec, time_us=2
+                    GpuFilterExec: predicate=n_name@1 = SAUDI ARABIA, projection=[0], time_us=503
+                      GpuScanExec: table=nation, projections=[n_nationkey, n_name], time_us=1274
+                  GpuCoalesceBatchesExec, time_us=1
+                    GpuHashJoinExec: join_type=Inner, on=[(o_orderkey@0, l_orderkey@2)], projection=[1, 2, 3, 4], time_us=3645
+                      GpuCoalesceBatchesExec, time_us=1
+                        GpuFilterExec: predicate=o_orderstatus@1 = F, projection=[0], time_us=941
+                          GpuScanExec: table=orders, projections=[o_orderkey, o_orderstatus], time_us=30805
+                      GpuCoalesceBatchesExec, time_us=1
+                        GpuHashJoinExec: join_type=Inner, on=[(s_suppkey@0, l_suppkey@1)], projection=[1, 2, 3, 4], time_us=3768
+                          GpuScanExec: table=supplier, projections=[s_suppkey, s_name, s_nationkey], time_us=5215
+                          GpuCoalesceBatchesExec, time_us=1
+                            GpuFilterExec: predicate=l_receiptdate@3 > l_commitdate@2, projection=[0, 1], time_us=1270
+                              GpuScanExec: table=lineitem, projections=[l_orderkey, l_suppkey, l_commitdate, l_receiptdate], time_us=44298
+              GpuScanExec: table=lineitem, projections=[l_orderkey, l_suppkey], time_us=41075
+          GpuCoalesceBatchesExec, time_us=1
+            GpuFilterExec: predicate=l_receiptdate@3 > l_commitdate@2, projection=[0, 1], time_us=1346
+              GpuScanExec: table=lineitem, projections=[l_orderkey, l_suppkey, l_commitdate, l_receiptdate], time_us=43968
+
+# sync_floor_us = cost of the measurement itself (empty timed region: clock + cudaStreamSynchronize on an idle stream). Each node time INCLUDES one PER OUTPUT PARTITION, since a node line is the Σ over its partitions; a node at or below its own floor (sync_floor_us x partitions) is unresolved, not cheap. Do not subtract it.
+# nodes_total_us = Σ of the per-node times above; total_us = the whole query, end to end (parse + plan + serialize + node walk + materialize)
+# build_profile = how the harness itself was compiled. total_us MINUS nodes_total_us is that Rust; records from different profiles are not comparable on it. Node times are device work and barely move.
+build_profile=benchmarks opt-level=3
+sync_floor_us=1
+nodes_at_or_below_floor=8/27
+nodes_total_us=186809
+total_us=194212

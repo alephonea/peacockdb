@@ -332,7 +332,8 @@ patch_rust_dir() {
 # interpreter; name the ones that don't and fail here, where the cause is obvious.
 verify_patched() {
   local unpatched=() f interp
-  for f in "${CPP_INSTALL_DIR}"/bin/* "${CPP_INSTALL_DIR}"/rust-tests/*; do
+  for f in "${CPP_INSTALL_DIR}"/bin/* "${CPP_INSTALL_DIR}"/rust-tests/* \
+           "${CPP_INSTALL_DIR}"/rust-benchmarks/*; do
     [ -f "$f" ] && [ -x "$f" ] || continue
     interp="$(patchelf --print-interpreter "$f" 2>/dev/null || true)"
     [ -n "$interp" ] || continue          # not an ELF executable
@@ -354,6 +355,12 @@ verify_patched() {
 patch_dir "$CPP_BUILD_DIR" "build"
 patch_dir "$CPP_INSTALL_DIR" "install"
 patch_rust_dir "${CPP_INSTALL_DIR}/rust-tests"
+# Benchmarks are staged in their OWN directory so build-test-shadgpu.sh's --run
+# glob over rust-tests/ does not sweep a tens-of-minutes measurement run into the
+# correctness gate (that script's --run enforces it). They are the same kind of
+# binary and need the same patching; patch_rust_dir no-ops when the directory is
+# absent, so this is free for anyone who never builds them.
+patch_rust_dir "${CPP_INSTALL_DIR}/rust-benchmarks"
 verify_patched
 
 echo ""

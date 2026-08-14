@@ -50,6 +50,12 @@ pub struct PartitionStat {
     pub out_bytes: usize,
     /// Scan only: the row groups this partition reads (empty for non-scan nodes).
     pub row_groups: Vec<u32>,
+    /// Wall-clock microseconds this partition's work took. Populated ONLY by the
+    /// GPU backend with timing enabled (see
+    /// [`crate::gpu_executor::set_node_timing`]); 0 everywhere else, including
+    /// every CPU backend. Never rendered into a `.cpu.txt` golden — those stay
+    /// deterministic; timings live in `testdata/benchmark-results/`.
+    pub time_us: u64,
 }
 
 /// Per-node memory stats collected via the `on_node` callback.
@@ -68,4 +74,9 @@ pub struct NodeMemoryStats {
     pub max_batch_rows: usize,
     /// Per-output-partition breakdown (empty ⇒ N=1, no sub-lines). See [`PartitionStat`].
     pub part_stats: Vec<PartitionStat>,
+    /// Wall-clock microseconds this node took, Σ over its output partitions.
+    /// Carried here as well as in `part_stats` because `part_stats` is emptied at
+    /// N==1 (the golden convention), and a node with one partition still has a time.
+    /// 0 unless GPU node timing is on — see [`PartitionStat::time_us`].
+    pub time_us: u64,
 }

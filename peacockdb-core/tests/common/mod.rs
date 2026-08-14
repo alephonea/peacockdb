@@ -7,6 +7,7 @@
 //! suite uses a subset, so dead code is fine.
 #![allow(dead_code)]
 
+pub mod benchmark;
 pub mod cost_model;
 pub mod exec_mode;
 pub mod registry;

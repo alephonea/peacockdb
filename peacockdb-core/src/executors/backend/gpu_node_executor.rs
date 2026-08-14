@@ -26,10 +26,44 @@ use datafusion::error::DataFusionError;
 use peacockdb_ffi::raw::{
     peacock_executor_begin_plan, peacock_executor_end_plan, peacock_executor_execute_node,
     peacock_handle_release, peacock_last_error, peacock_result_free, peacock_result_from_handle,
-    PeacockExecutor, PeacockNodeStats,
+    peacock_measure_timing_floor_us, peacock_set_node_timing, PeacockExecutor, PeacockNodeStats,
 };
 
 use crate::cpu_executor::logical_size_from_schema;
+
+/// Turn per-node GPU timing on or off (process-global, OFF by default).
+///
+/// With it on, every unit of work inside the C++ `NodeSession` is bracketed by a
+/// `cudaStreamSynchronize`, and [`NodeMemoryStats::time_us`] /
+/// [`PartitionStat::time_us`] carry real microseconds instead of zeros. Why the sync
+/// is both what makes the number real and what makes it costly — hence opt-in — is
+/// argued once, on `set_node_timing` in `cpp/src/plan_executor.h`.
+///
+/// Process-global, and the GPU suite already runs `--test-threads=1` (cuDF/RMM share
+/// one process-wide pool), so there is no cross-test interleaving to guard against.
+pub fn set_node_timing(enabled: bool) {
+    unsafe { peacock_set_node_timing(if enabled { 1 } else { 0 }) };
+}
+
+/// Microseconds the MEASUREMENT costs: [`set_node_timing`]'s timed region wrapped
+/// around no work at all.
+///
+/// This is the resolution floor of every `time_us` in this module. A node's number
+/// is its real work PLUS one of these, so a node reporting at or below the floor is
+/// not cheap — it is unresolvable, and the two look identical unless the floor is
+/// printed next to them. That is the whole reason this exists; `bench_stats_str`
+/// writes it into each record as `sync_floor_us`.
+///
+/// Do NOT subtract it from node times. Individual node measurements vary by more
+/// than the floor itself, so subtracting manufactures zeros and negative-clamped
+/// noise — it would hide precisely what reporting the floor is meant to expose.
+///
+/// Requires a live CUDA context (construct a `GpuExecutor` first) and an idle
+/// default stream; returns 0 if CUDA errored, which is a self-announcing value
+/// since the instrumentation is never actually free.
+pub fn measure_timing_floor_us(samples: u32) -> u64 {
+    unsafe { peacock_measure_timing_floor_us(samples) }
+}
 
 /// GPU backend: intermediates stay GPU-resident behind handles in the C++
 /// `NodeSession`; the executor pointer is BORROWED (owned by `GpuExecutor`).
@@ -120,6 +154,10 @@ impl NodeExecutor for GpuNodeExecutor {
         let mut rows = 0usize;
         let mut output_bytes = 0usize;
         let mut max_batch_rows = 0usize;
+        // Σ over partitions, matching how C++ charges shared work (the hash-scatter
+        // prologue lands on partition 0) — so this is the node's total either way.
+        // Zero unless node timing is on; see `peacock_set_node_timing`.
+        let mut time_us = 0u64;
         let mut part_stats: Vec<PartitionStat> = Vec::with_capacity(n);
         for (k, st) in out_stats[..n].iter().enumerate() {
             let rp = st.rows as usize;
@@ -127,10 +165,12 @@ impl NodeExecutor for GpuNodeExecutor {
             rows += rp;
             output_bytes += bp;
             max_batch_rows = max_batch_rows.max(rp);
+            time_us += st.time_us;
             part_stats.push(PartitionStat {
                 out_rows: rp,
                 out_bytes: bp,
                 row_groups: scan_map.get(k).map(|e| e.row_groups.clone()).unwrap_or_default(),
+                time_us: st.time_us,
             });
         }
         let stat = NodeMemoryStats {
@@ -141,6 +181,7 @@ impl NodeExecutor for GpuNodeExecutor {
             max_batch_rows,
             // Only N>1 carries sub-lines (matches the CPU golden's N==1 ⇒ none).
             part_stats: if n > 1 { part_stats } else { Vec::new() },
+            time_us,
         };
         Ok((out_handles, stat))
     }
