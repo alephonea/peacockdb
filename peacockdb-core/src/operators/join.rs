@@ -86,7 +86,7 @@ use datafusion::physical_plan::joins::CrossJoinExec;
 use crate::plan_serializer::{serialize_expr, serialize_plan_node};
 use crate::PartitionMode;
 
-pub(crate) fn serialize_gpu_hash_join<'a>(
+pub(crate) fn serialize_cudf_hash_join<'a>(
     b: &mut FlatBufferBuilder<'a>,
     plan: &Arc<dyn ExecutionPlan>,
     pm: PartitionMode,
@@ -159,9 +159,9 @@ pub(crate) fn serialize_gpu_hash_join<'a>(
         b.create_vector(&indices)
     });
 
-    let node = fb::GpuHashJoin::create(
+    let node = fb::CudfHashJoin::create(
         b,
-        &fb::GpuHashJoinArgs {
+        &fb::CudfHashJoinArgs {
             join_type,
             keys: Some(keys_vec),
             filter,
@@ -172,9 +172,9 @@ pub(crate) fn serialize_gpu_hash_join<'a>(
             null_equals_null: join.null_equals_null(),
         },
     );
-    Ok((fb::PlanNodeKind::GpuHashJoin, node.as_union_value()))
+    Ok((fb::PlanNodeKind::CudfHashJoin, node.as_union_value()))
 }
-pub(crate) fn serialize_gpu_cross_join<'a>(
+pub(crate) fn serialize_cudf_cross_join<'a>(
     b: &mut FlatBufferBuilder<'a>,
     plan: &Arc<dyn ExecutionPlan>,
     pm: PartitionMode,
@@ -189,16 +189,16 @@ pub(crate) fn serialize_gpu_cross_join<'a>(
     let left = serialize_plan_node(b, cross.left(), pm)?;
     let right = serialize_plan_node(b, cross.right(), pm)?;
 
-    let node = fb::GpuCrossJoin::create(
+    let node = fb::CudfCrossJoin::create(
         b,
-        &fb::GpuCrossJoinArgs {
+        &fb::CudfCrossJoinArgs {
             left: Some(left),
             right: Some(right),
         },
     );
-    Ok((fb::PlanNodeKind::GpuCrossJoin, node.as_union_value()))
+    Ok((fb::PlanNodeKind::CudfCrossJoin, node.as_union_value()))
 }
-pub(crate) fn serialize_gpu_nested_loop_join<'a>(
+pub(crate) fn serialize_cudf_nested_loop_join<'a>(
     b: &mut FlatBufferBuilder<'a>,
     plan: &Arc<dyn ExecutionPlan>,
     pm: PartitionMode,
@@ -223,7 +223,7 @@ pub(crate) fn serialize_gpu_nested_loop_join<'a>(
         }
     };
 
-    // Same convention as GpuHashJoin: serialize the predicate verbatim with its
+    // Same convention as CudfHashJoin: serialize the predicate verbatim with its
     // column-origin map; the C++ executor remaps the ColumnRefs.
     let (filter, filter_columns) = if let Some(jf) = nlj.filter() {
         let expr = serialize_expr(b, jf.expression(), jf.schema())?;
@@ -256,9 +256,9 @@ pub(crate) fn serialize_gpu_nested_loop_join<'a>(
         b.create_vector(&indices)
     });
 
-    let node = fb::GpuNestedLoopJoin::create(
+    let node = fb::CudfNestedLoopJoin::create(
         b,
-        &fb::GpuNestedLoopJoinArgs {
+        &fb::CudfNestedLoopJoinArgs {
             join_type,
             filter,
             filter_columns,
@@ -267,7 +267,7 @@ pub(crate) fn serialize_gpu_nested_loop_join<'a>(
             projection,
         },
     );
-    Ok((fb::PlanNodeKind::GpuNestedLoopJoin, node.as_union_value()))
+    Ok((fb::PlanNodeKind::CudfNestedLoopJoin, node.as_union_value()))
 }
 
 // ---------------------------------------------------------------------------
@@ -276,12 +276,12 @@ pub(crate) fn serialize_gpu_nested_loop_join<'a>(
 // easy to break by editing one side alone. Keep them together.
 // ---------------------------------------------------------------------------
 
-pub(crate) fn deserialize_gpu_hash_join(
-    join: &fb::GpuHashJoin,
+pub(crate) fn deserialize_cudf_hash_join(
+    join: &fb::CudfHashJoin,
     _node: &fb::PlanNode,
 ) -> Result<Arc<dyn ExecutionPlan>, String> {
-    let left = deserialize_plan_node(&join.left().ok_or("GpuHashJoin missing left")?)?;
-    let right = deserialize_plan_node(&join.right().ok_or("GpuHashJoin missing right")?)?;
+    let left = deserialize_plan_node(&join.left().ok_or("CudfHashJoin missing left")?)?;
+    let right = deserialize_plan_node(&join.right().ok_or("CudfHashJoin missing right")?)?;
 
     let join_type = match join.join_type() {
         fb::JoinType::Inner => DfJoinType::Inner,
@@ -356,19 +356,19 @@ pub(crate) fn deserialize_gpu_hash_join(
     Ok(Arc::new(GpuHashJoinExec::new(Arc::new(join_exec))))
 }
 
-pub(crate) fn deserialize_gpu_cross_join(join: &fb::GpuCrossJoin) -> Result<Arc<dyn ExecutionPlan>, String> {
-    let left = deserialize_plan_node(&join.left().ok_or("GpuCrossJoin missing left")?)?;
-    let right = deserialize_plan_node(&join.right().ok_or("GpuCrossJoin missing right")?)?;
+pub(crate) fn deserialize_cudf_cross_join(join: &fb::CudfCrossJoin) -> Result<Arc<dyn ExecutionPlan>, String> {
+    let left = deserialize_plan_node(&join.left().ok_or("CudfCrossJoin missing left")?)?;
+    let right = deserialize_plan_node(&join.right().ok_or("CudfCrossJoin missing right")?)?;
     let join_exec = CrossJoinExec::new(left, right);
     Ok(Arc::new(GpuCrossJoinExec::new(Arc::new(join_exec))))
 }
 
-pub(crate) fn deserialize_gpu_nested_loop_join(
-    join: &fb::GpuNestedLoopJoin,
+pub(crate) fn deserialize_cudf_nested_loop_join(
+    join: &fb::CudfNestedLoopJoin,
     _node: &fb::PlanNode,
 ) -> Result<Arc<dyn ExecutionPlan>, String> {
-    let left = deserialize_plan_node(&join.left().ok_or("GpuNestedLoopJoin missing left")?)?;
-    let right = deserialize_plan_node(&join.right().ok_or("GpuNestedLoopJoin missing right")?)?;
+    let left = deserialize_plan_node(&join.left().ok_or("CudfNestedLoopJoin missing left")?)?;
+    let right = deserialize_plan_node(&join.right().ok_or("CudfNestedLoopJoin missing right")?)?;
 
     let join_type = match join.join_type() {
         fb::JoinType::Inner => DfJoinType::Inner,

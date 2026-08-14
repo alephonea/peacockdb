@@ -1,4 +1,4 @@
-// GpuFilter -- apply a boolean predicate.
+// CudfFilter -- apply a boolean predicate.
 
 #include "peacock/operators.h"
 #include "peacock/expr.h"
@@ -13,7 +13,7 @@
 
 namespace peacock {
 
-TableResult execute_filter(const fb::GpuFilter* filter, NodeInputs* in) {
+TableResult execute_filter(const fb::CudfFilter* filter, NodeInputs* in) {
   auto input = execute_node(filter->input(), in);
 
   // AST fast path when the predicate has no LIKE / CASE / ScalarFunction nodes;

@@ -1,4 +1,4 @@
-// GpuAggregate -- group-by and scalar (whole-table) aggregation.
+// CudfAggregate -- group-by and scalar (whole-table) aggregation.
 
 #include "peacock/operators.h"
 #include "peacock/expr.h"
@@ -84,7 +84,7 @@ static std::unique_ptr<cudf::groupby_aggregation> make_agg(
     return cudf::make_max_aggregation<cudf::groupby_aggregation>();
   if (func_name == "avg" || func_name == "AVG" ||
       func_name == "mean" || func_name == "MEAN") {
-    // Valid ONLY while Partial output is one row per key (GpuRepartition as
+    // Valid ONLY while Partial output is one row per key (CudfRepartition as
     // passthrough): the Final regroup is then a MEAN-of-singleton identity.
     // Multi-partition repartition breaks it (mean-of-means) — execute_aggregate
     // guards at runtime; decomposing AVG into SUM+COUNT lifts the restriction,
@@ -125,7 +125,7 @@ static std::unique_ptr<cudf::reduce_aggregation> make_reduce_agg(
   throw std::runtime_error("unsupported aggregate function: " + func_name);
 }
 
-TableResult execute_aggregate(const fb::GpuAggregate* agg, NodeInputs* in) {
+TableResult execute_aggregate(const fb::CudfAggregate* agg, NodeInputs* in) {
   auto input = execute_node(agg->input(), in);
   auto tv = input.table->view();
 
@@ -154,7 +154,7 @@ TableResult execute_aggregate(const fb::GpuAggregate* agg, NodeInputs* in) {
     for (flatbuffers::uoffset_t i = 0; i < agg->group_exprs()->size(); ++i) {
       auto* expr = agg->group_exprs()->Get(i);
       if (expr->node_type() != fb::ExprNode_ColumnRef)
-        throw std::runtime_error("GpuAggregate: only ColumnRef group exprs supported");
+        throw std::runtime_error("CudfAggregate: only ColumnRef group exprs supported");
       auto* col = expr->node_as_ColumnRef();
       key_indices.push_back(static_cast<cudf::size_type>(col->index()));
       if (agg->group_names() && i < agg->group_names()->size())

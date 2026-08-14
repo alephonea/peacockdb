@@ -133,7 +133,7 @@ pub fn parquet_table_name(parquet: &ParquetExec) -> Option<String> {
 // Scan annotation flows through GpuExtraDisplay so the `.txt` plan goldens and the
 // `.cpu.txt` cost tree label the scan identically (one shared source). We surface
 // table + projections (both round-trip through serialization); the pushed-down
-// parquet predicate is deliberately NOT shown here because GpuScan serialization
+// parquet predicate is deliberately NOT shown here because CudfScan serialization
 // doesn't carry it, so it would break the flatbuffer roundtrip's plan_str equality
 // after deserialize.
 //
@@ -240,7 +240,7 @@ use datafusion::datasource::listing::PartitionedFile;
 use crate::plan_serializer::deserialize_schema;
 use crate::plan_serializer::serialize_schema;
 
-pub(crate) fn serialize_gpu_scan<'a>(
+pub(crate) fn serialize_cudf_scan<'a>(
     b: &mut FlatBufferBuilder<'a>,
     scan: &GpuScanExec,
 ) -> Result<(fb::PlanNodeKind, WIPOffset<flatbuffers::UnionWIPOffset>), String> {
@@ -330,9 +330,9 @@ pub(crate) fn serialize_gpu_scan<'a>(
         Some(b.create_vector(&offsets))
     };
 
-    let gpu_scan = fb::GpuScan::create(
+    let cudf_scan = fb::CudfScan::create(
         b,
-        &fb::GpuScanArgs {
+        &fb::CudfScanArgs {
             file_paths: Some(file_paths),
             file_schema: Some(file_schema),
             projection,
@@ -343,7 +343,7 @@ pub(crate) fn serialize_gpu_scan<'a>(
         },
     );
 
-    Ok((fb::PlanNodeKind::GpuScan, gpu_scan.as_union_value()))
+    Ok((fb::PlanNodeKind::CudfScan, cudf_scan.as_union_value()))
 }
 
 // ---------------------------------------------------------------------------
@@ -352,8 +352,8 @@ pub(crate) fn serialize_gpu_scan<'a>(
 // easy to break by editing one side alone. Keep them together.
 // ---------------------------------------------------------------------------
 
-pub(crate) fn deserialize_gpu_scan(
-    scan: &fb::GpuScan,
+pub(crate) fn deserialize_cudf_scan(
+    scan: &fb::CudfScan,
     node: &fb::PlanNode,
 ) -> Result<Arc<dyn ExecutionPlan>, String> {
     let file_schema = node

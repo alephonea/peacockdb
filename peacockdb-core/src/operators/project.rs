@@ -50,7 +50,7 @@ use crate::plan_serializer::{deserialize_expr, deserialize_plan_node};
 use crate::plan_serializer::{serialize_expr, serialize_plan_node};
 use crate::PartitionMode;
 
-pub(crate) fn serialize_gpu_project<'a>(
+pub(crate) fn serialize_cudf_project<'a>(
     b: &mut FlatBufferBuilder<'a>,
     plan: &Arc<dyn ExecutionPlan>,
     pm: PartitionMode,
@@ -76,15 +76,15 @@ pub(crate) fn serialize_gpu_project<'a>(
 
     let input = serialize_plan_node(b, proj.input(), pm)?;
 
-    let node = fb::GpuProject::create(
+    let node = fb::CudfProject::create(
         b,
-        &fb::GpuProjectArgs {
+        &fb::CudfProjectArgs {
             exprs: Some(exprs_vec),
             aliases: Some(aliases_vec),
             input: Some(input),
         },
     );
-    Ok((fb::PlanNodeKind::GpuProject, node.as_union_value()))
+    Ok((fb::PlanNodeKind::CudfProject, node.as_union_value()))
 }
 
 // ---------------------------------------------------------------------------
@@ -93,13 +93,13 @@ pub(crate) fn serialize_gpu_project<'a>(
 // easy to break by editing one side alone. Keep them together.
 // ---------------------------------------------------------------------------
 
-pub(crate) fn deserialize_gpu_project(
-    proj: &fb::GpuProject,
+pub(crate) fn deserialize_cudf_project(
+    proj: &fb::CudfProject,
     _node: &fb::PlanNode,
 ) -> Result<Arc<dyn ExecutionPlan>, String> {
-    let input = deserialize_plan_node(&proj.input().ok_or("GpuProject missing input")?)?;
-    let exprs_fb = proj.exprs().ok_or("GpuProject missing exprs")?;
-    let aliases_fb = proj.aliases().ok_or("GpuProject missing aliases")?;
+    let input = deserialize_plan_node(&proj.input().ok_or("CudfProject missing input")?)?;
+    let exprs_fb = proj.exprs().ok_or("CudfProject missing exprs")?;
+    let aliases_fb = proj.aliases().ok_or("CudfProject missing aliases")?;
 
     let expr_pairs: Vec<(Arc<dyn PhysicalExpr>, String)> = (0..exprs_fb.len())
         .map(|i| {

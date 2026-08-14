@@ -15,21 +15,21 @@ namespace peacock {
 
 static const char* plan_node_kind_name(fb::PlanNodeKind k) {
   switch (k) {
-    case fb::PlanNodeKind_GpuScan:                return "GpuScan";
-    case fb::PlanNodeKind_GpuFilter:              return "GpuFilter";
-    case fb::PlanNodeKind_GpuProject:             return "GpuProject";
-    case fb::PlanNodeKind_GpuAggregate:           return "GpuAggregate";
-    case fb::PlanNodeKind_GpuHashJoin:            return "GpuHashJoin";
-    case fb::PlanNodeKind_GpuCrossJoin:           return "GpuCrossJoin";
-    case fb::PlanNodeKind_GpuNestedLoopJoin:      return "GpuNestedLoopJoin";
-    case fb::PlanNodeKind_GpuSort:                return "GpuSort";
-    case fb::PlanNodeKind_GpuCoalesceBatches:     return "GpuCoalesceBatches";
-    case fb::PlanNodeKind_GpuCoalescePartitions:  return "GpuCoalescePartitions";
-    case fb::PlanNodeKind_GpuRepartition:         return "GpuRepartition";
-    case fb::PlanNodeKind_GpuSortPreservingMerge: return "GpuSortPreservingMerge";
-    case fb::PlanNodeKind_GpuUnion:               return "GpuUnion";
-    case fb::PlanNodeKind_GpuLimit:               return "GpuLimit";
-    case fb::PlanNodeKind_GpuWindow:              return "GpuWindow";
+    case fb::PlanNodeKind_CudfScan:                return "CudfScan";
+    case fb::PlanNodeKind_CudfFilter:              return "CudfFilter";
+    case fb::PlanNodeKind_CudfProject:             return "CudfProject";
+    case fb::PlanNodeKind_CudfAggregate:           return "CudfAggregate";
+    case fb::PlanNodeKind_CudfHashJoin:            return "CudfHashJoin";
+    case fb::PlanNodeKind_CudfCrossJoin:           return "CudfCrossJoin";
+    case fb::PlanNodeKind_CudfNestedLoopJoin:      return "CudfNestedLoopJoin";
+    case fb::PlanNodeKind_CudfSort:                return "CudfSort";
+    case fb::PlanNodeKind_CudfCoalesceBatches:     return "CudfCoalesceBatches";
+    case fb::PlanNodeKind_CudfCoalescePartitions:  return "CudfCoalescePartitions";
+    case fb::PlanNodeKind_CudfRepartition:         return "CudfRepartition";
+    case fb::PlanNodeKind_CudfSortPreservingMerge: return "CudfSortPreservingMerge";
+    case fb::PlanNodeKind_CudfUnion:               return "CudfUnion";
+    case fb::PlanNodeKind_CudfLimit:               return "CudfLimit";
+    case fb::PlanNodeKind_CudfWindow:              return "CudfWindow";
     default:                                       return "Unknown";
   }
 }
@@ -46,36 +46,36 @@ static TableResult run_op(const fb::PlanNode* node, NodeInputs* in) {
   TableResult result;
   try {
     switch (node->node_type()) {
-      case fb::PlanNodeKind_GpuScan:
-        result = execute_scan(node->node_as_GpuScan()); break;
-      case fb::PlanNodeKind_GpuFilter:
-        result = execute_filter(node->node_as_GpuFilter(), in); break;
-      case fb::PlanNodeKind_GpuProject:
-        result = execute_project(node->node_as_GpuProject(), in); break;
-      case fb::PlanNodeKind_GpuAggregate:
-        result = execute_aggregate(node->node_as_GpuAggregate(), in); break;
-      case fb::PlanNodeKind_GpuHashJoin:
-        result = execute_hash_join(node->node_as_GpuHashJoin(), in); break;
-      case fb::PlanNodeKind_GpuCrossJoin:
-        result = execute_cross_join(node->node_as_GpuCrossJoin(), in); break;
-      case fb::PlanNodeKind_GpuNestedLoopJoin:
-        result = execute_nested_loop_join(node->node_as_GpuNestedLoopJoin(), in); break;
-      case fb::PlanNodeKind_GpuSort:
-        result = execute_sort(node->node_as_GpuSort(), in); break;
-      case fb::PlanNodeKind_GpuCoalesceBatches:
-        result = execute_passthrough(node->node_as_GpuCoalesceBatches()->input(), in); break;
-      case fb::PlanNodeKind_GpuCoalescePartitions:
-        result = execute_passthrough(node->node_as_GpuCoalescePartitions()->input(), in); break;
-      case fb::PlanNodeKind_GpuRepartition:
-        result = execute_passthrough(node->node_as_GpuRepartition()->input(), in); break;
-      case fb::PlanNodeKind_GpuSortPreservingMerge:
-        result = execute_passthrough(node->node_as_GpuSortPreservingMerge()->input(), in); break;
-      case fb::PlanNodeKind_GpuUnion:
-        result = execute_union(node->node_as_GpuUnion(), in); break;
-      case fb::PlanNodeKind_GpuLimit:
-        result = execute_limit(node->node_as_GpuLimit(), in); break;
-      case fb::PlanNodeKind_GpuWindow:
-        result = execute_window(node->node_as_GpuWindow(), in); break;
+      case fb::PlanNodeKind_CudfScan:
+        result = execute_scan(node->node_as_CudfScan()); break;
+      case fb::PlanNodeKind_CudfFilter:
+        result = execute_filter(node->node_as_CudfFilter(), in); break;
+      case fb::PlanNodeKind_CudfProject:
+        result = execute_project(node->node_as_CudfProject(), in); break;
+      case fb::PlanNodeKind_CudfAggregate:
+        result = execute_aggregate(node->node_as_CudfAggregate(), in); break;
+      case fb::PlanNodeKind_CudfHashJoin:
+        result = execute_hash_join(node->node_as_CudfHashJoin(), in); break;
+      case fb::PlanNodeKind_CudfCrossJoin:
+        result = execute_cross_join(node->node_as_CudfCrossJoin(), in); break;
+      case fb::PlanNodeKind_CudfNestedLoopJoin:
+        result = execute_nested_loop_join(node->node_as_CudfNestedLoopJoin(), in); break;
+      case fb::PlanNodeKind_CudfSort:
+        result = execute_sort(node->node_as_CudfSort(), in); break;
+      case fb::PlanNodeKind_CudfCoalesceBatches:
+        result = execute_passthrough(node->node_as_CudfCoalesceBatches()->input(), in); break;
+      case fb::PlanNodeKind_CudfCoalescePartitions:
+        result = execute_passthrough(node->node_as_CudfCoalescePartitions()->input(), in); break;
+      case fb::PlanNodeKind_CudfRepartition:
+        result = execute_passthrough(node->node_as_CudfRepartition()->input(), in); break;
+      case fb::PlanNodeKind_CudfSortPreservingMerge:
+        result = execute_passthrough(node->node_as_CudfSortPreservingMerge()->input(), in); break;
+      case fb::PlanNodeKind_CudfUnion:
+        result = execute_union(node->node_as_CudfUnion(), in); break;
+      case fb::PlanNodeKind_CudfLimit:
+        result = execute_limit(node->node_as_CudfLimit(), in); break;
+      case fb::PlanNodeKind_CudfWindow:
+        result = execute_window(node->node_as_CudfWindow(), in); break;
       default:
         throw std::runtime_error(
             "unsupported PlanNodeKind: " + std::to_string(node->node_type()));

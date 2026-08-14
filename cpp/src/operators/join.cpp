@@ -1,4 +1,4 @@
-// GpuHashJoin / GpuCrossJoin / GpuNestedLoopJoin.
+// CudfHashJoin / CudfCrossJoin / CudfNestedLoopJoin.
 
 #include "peacock/operators.h"
 #include "peacock/expr.h"
@@ -36,10 +36,10 @@
 namespace peacock {
 
 // ============================================================================
-// GpuHashJoin — equi-join
+// CudfHashJoin — equi-join
 // ============================================================================
 
-TableResult execute_hash_join(const fb::GpuHashJoin* join, NodeInputs* in) {
+TableResult execute_hash_join(const fb::CudfHashJoin* join, NodeInputs* in) {
   auto left = execute_node(join->left(), in);
   auto right = execute_node(join->right(), in);
 
@@ -55,7 +55,7 @@ TableResult execute_hash_join(const fb::GpuHashJoin* join, NodeInputs* in) {
       auto* rk = key->right();
       if (!lk || !rk || lk->node_type() != fb::ExprNode_ColumnRef ||
           rk->node_type() != fb::ExprNode_ColumnRef)
-        throw std::runtime_error("GpuHashJoin: only ColumnRef keys supported");
+        throw std::runtime_error("CudfHashJoin: only ColumnRef keys supported");
       left_key_cols.push_back(
           ltv.column(static_cast<cudf::size_type>(lk->node_as_ColumnRef()->index())));
       right_key_cols.push_back(
@@ -384,10 +384,10 @@ TableResult execute_hash_join(const fb::GpuHashJoin* join, NodeInputs* in) {
 }
 
 // ============================================================================
-// GpuCrossJoin — cartesian product
+// CudfCrossJoin — cartesian product
 // ============================================================================
 
-TableResult execute_cross_join(const fb::GpuCrossJoin* join, NodeInputs* in) {
+TableResult execute_cross_join(const fb::CudfCrossJoin* join, NodeInputs* in) {
   auto left = execute_node(join->left(), in);
   auto right = execute_node(join->right(), in);
 
@@ -398,14 +398,14 @@ TableResult execute_cross_join(const fb::GpuCrossJoin* join, NodeInputs* in) {
 }
 
 // ============================================================================
-// GpuNestedLoopJoin — cross product filtered by a non-equi predicate
+// CudfNestedLoopJoin — cross product filtered by a non-equi predicate
 // ============================================================================
 
-TableResult execute_nested_loop_join(const fb::GpuNestedLoopJoin* join, NodeInputs* in) {
+TableResult execute_nested_loop_join(const fb::CudfNestedLoopJoin* join, NodeInputs* in) {
   auto jt = join->join_type();
   if (jt != fb::JoinType_Inner && jt != fb::JoinType_Left)
     throw std::runtime_error(
-        "GpuNestedLoopJoin: only Inner/Left join types supported (got " +
+        "CudfNestedLoopJoin: only Inner/Left join types supported (got " +
         std::to_string(jt) + ")");
 
   auto left = execute_node(join->left(), in);
@@ -459,7 +459,7 @@ TableResult execute_nested_loop_join(const fb::GpuNestedLoopJoin* join, NodeInpu
           "non-AST-able NestedLoopJoin filter is only supported for Inner joins");
     if (!join->filter_columns())
       throw std::runtime_error(
-          "GpuNestedLoopJoin has a filter but no filter_columns map");
+          "CudfNestedLoopJoin has a filter but no filter_columns map");
     auto crossed = cudf::cross_join(ltv, rtv);
     auto cv = crossed->view();
     // build_column resolves ColumnRef(i) directly against column i of the table
@@ -482,7 +482,7 @@ TableResult execute_nested_loop_join(const fb::GpuNestedLoopJoin* join, NodeInpu
     // a conditional join, which evaluates the predicate per (left,right) pair.
     if (!join->filter_columns())
       throw std::runtime_error(
-          "GpuNestedLoopJoin has a filter but no filter_columns map");
+          "CudfNestedLoopJoin has a filter but no filter_columns map");
     ExprContext ctx;
     const auto& pred = build_expr(join->filter(), ctx, join->filter_columns());
 

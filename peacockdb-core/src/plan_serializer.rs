@@ -34,7 +34,7 @@ pub fn serialize_plan(plan: &Arc<dyn ExecutionPlan>) -> Result<Vec<u8>, String> 
 }
 
 /// Like [`serialize_plan`] but at an explicit [`PartitionMode`]. The mode is
-/// threaded to every `GpuAggregate` node so its `mergeable_agg_state` flag is set
+/// threaded to every `CudfAggregate` node so its `mergeable_agg_state` flag is set
 /// iff [`PartitionMode::RealMultiPartition`] — driving the STDDEV/VAR partial-state
 /// shape (see the flatbuffer field doc / #25). `serialize_plan` defaults to
 /// `SinglePartition`, so existing callers and the flatbuffer roundtrips stay
@@ -63,37 +63,37 @@ pub(crate) fn serialize_plan_node<'a>(
 
     let (node_type, node_offset) = if let Some(scan) = plan.as_any().downcast_ref::<GpuScanExec>()
     {
-        crate::operators::scan::serialize_gpu_scan(b, scan)?
+        crate::operators::scan::serialize_cudf_scan(b, scan)?
     } else if plan.as_any().is::<GpuFilterExec>() {
-        crate::operators::filter::serialize_gpu_filter(b, plan, pm)?
+        crate::operators::filter::serialize_cudf_filter(b, plan, pm)?
     } else if plan.as_any().is::<GpuProjectExec>() {
-        crate::operators::project::serialize_gpu_project(b, plan, pm)?
+        crate::operators::project::serialize_cudf_project(b, plan, pm)?
     } else if plan.as_any().is::<GpuAggregateExec>() {
-        crate::operators::aggregate::serialize_gpu_aggregate(b, plan, pm)?
+        crate::operators::aggregate::serialize_cudf_aggregate(b, plan, pm)?
     } else if plan.as_any().is::<GpuHashJoinExec>() {
-        crate::operators::join::serialize_gpu_hash_join(b, plan, pm)?
+        crate::operators::join::serialize_cudf_hash_join(b, plan, pm)?
     } else if plan.as_any().is::<GpuCrossJoinExec>() {
-        crate::operators::join::serialize_gpu_cross_join(b, plan, pm)?
+        crate::operators::join::serialize_cudf_cross_join(b, plan, pm)?
     } else if plan.as_any().is::<GpuNestedLoopJoinExec>() {
-        crate::operators::join::serialize_gpu_nested_loop_join(b, plan, pm)?
+        crate::operators::join::serialize_cudf_nested_loop_join(b, plan, pm)?
     } else if plan.as_any().is::<GpuSortExec>() {
-        crate::operators::sort::serialize_gpu_sort(b, plan, pm)?
+        crate::operators::sort::serialize_cudf_sort(b, plan, pm)?
     } else if plan.as_any().is::<GpuCoalesceBatchesExec>() {
-        crate::operators::coalesce::serialize_gpu_coalesce_batches(b, plan, pm)?
+        crate::operators::coalesce::serialize_cudf_coalesce_batches(b, plan, pm)?
     } else if plan.as_any().is::<GpuCoalescePartitionsExec>() {
-        crate::operators::coalesce::serialize_gpu_coalesce_partitions(b, plan, pm)?
+        crate::operators::coalesce::serialize_cudf_coalesce_partitions(b, plan, pm)?
     } else if plan.as_any().is::<GpuRepartitionExec>() {
-        crate::operators::repartition::serialize_gpu_repartition(b, plan, pm)?
+        crate::operators::repartition::serialize_cudf_repartition(b, plan, pm)?
     } else if plan.as_any().is::<GpuSortPreservingMergeExec>() {
-        crate::operators::sort::serialize_gpu_sort_preserving_merge(b, plan, pm)?
+        crate::operators::sort::serialize_cudf_sort_preserving_merge(b, plan, pm)?
     } else if plan.as_any().is::<GpuUnionExec>() {
-        crate::operators::union::serialize_gpu_union(b, plan, false, pm)?
+        crate::operators::union::serialize_cudf_union(b, plan, false, pm)?
     } else if plan.as_any().is::<GpuInterleaveExec>() {
-        crate::operators::union::serialize_gpu_union(b, plan, true, pm)?
+        crate::operators::union::serialize_cudf_union(b, plan, true, pm)?
     } else if plan.as_any().is::<GpuGlobalLimitExec>() {
-        crate::operators::limit::serialize_gpu_limit(b, plan, pm)?
+        crate::operators::limit::serialize_cudf_limit(b, plan, pm)?
     } else if plan.as_any().is::<GpuWindowExec>() {
-        crate::operators::window::serialize_gpu_window(b, plan, pm)?
+        crate::operators::window::serialize_cudf_window(b, plan, pm)?
     } else {
         return Err(format!("unsupported plan node: {}", plan.name()));
     };
@@ -544,67 +544,67 @@ pub fn deserialize_plan(bytes: &[u8]) -> Result<Arc<dyn ExecutionPlan>, String> 
 
 pub(crate) fn deserialize_plan_node(node: &fb::PlanNode) -> Result<Arc<dyn ExecutionPlan>, String> {
     match node.node_type() {
-        fb::PlanNodeKind::GpuScan => {
-            let scan = node.node_as_gpu_scan().ok_or("expected GpuScan")?;
-            crate::operators::scan::deserialize_gpu_scan(&scan, node)
+        fb::PlanNodeKind::CudfScan => {
+            let scan = node.node_as_cudf_scan().ok_or("expected CudfScan")?;
+            crate::operators::scan::deserialize_cudf_scan(&scan, node)
         }
-        fb::PlanNodeKind::GpuFilter => {
-            let filter = node.node_as_gpu_filter().ok_or("expected GpuFilter")?;
-            crate::operators::filter::deserialize_gpu_filter(&filter, node)
+        fb::PlanNodeKind::CudfFilter => {
+            let filter = node.node_as_cudf_filter().ok_or("expected CudfFilter")?;
+            crate::operators::filter::deserialize_cudf_filter(&filter, node)
         }
-        fb::PlanNodeKind::GpuProject => {
-            let proj = node.node_as_gpu_project().ok_or("expected GpuProject")?;
-            crate::operators::project::deserialize_gpu_project(&proj, node)
+        fb::PlanNodeKind::CudfProject => {
+            let proj = node.node_as_cudf_project().ok_or("expected CudfProject")?;
+            crate::operators::project::deserialize_cudf_project(&proj, node)
         }
-        fb::PlanNodeKind::GpuAggregate => {
-            let agg = node.node_as_gpu_aggregate().ok_or("expected GpuAggregate")?;
-            crate::operators::aggregate::deserialize_gpu_aggregate(&agg, node)
+        fb::PlanNodeKind::CudfAggregate => {
+            let agg = node.node_as_cudf_aggregate().ok_or("expected CudfAggregate")?;
+            crate::operators::aggregate::deserialize_cudf_aggregate(&agg, node)
         }
-        fb::PlanNodeKind::GpuHashJoin => {
-            let join = node.node_as_gpu_hash_join().ok_or("expected GpuHashJoin")?;
-            crate::operators::join::deserialize_gpu_hash_join(&join, node)
+        fb::PlanNodeKind::CudfHashJoin => {
+            let join = node.node_as_cudf_hash_join().ok_or("expected CudfHashJoin")?;
+            crate::operators::join::deserialize_cudf_hash_join(&join, node)
         }
-        fb::PlanNodeKind::GpuCrossJoin => {
-            let join = node.node_as_gpu_cross_join().ok_or("expected GpuCrossJoin")?;
-            crate::operators::join::deserialize_gpu_cross_join(&join)
+        fb::PlanNodeKind::CudfCrossJoin => {
+            let join = node.node_as_cudf_cross_join().ok_or("expected CudfCrossJoin")?;
+            crate::operators::join::deserialize_cudf_cross_join(&join)
         }
-        fb::PlanNodeKind::GpuNestedLoopJoin => {
+        fb::PlanNodeKind::CudfNestedLoopJoin => {
             let join = node
-                .node_as_gpu_nested_loop_join()
-                .ok_or("expected GpuNestedLoopJoin")?;
-            crate::operators::join::deserialize_gpu_nested_loop_join(&join, node)
+                .node_as_cudf_nested_loop_join()
+                .ok_or("expected CudfNestedLoopJoin")?;
+            crate::operators::join::deserialize_cudf_nested_loop_join(&join, node)
         }
-        fb::PlanNodeKind::GpuSort => {
-            let sort = node.node_as_gpu_sort().ok_or("expected GpuSort")?;
-            crate::operators::sort::deserialize_gpu_sort(&sort, node)
+        fb::PlanNodeKind::CudfSort => {
+            let sort = node.node_as_cudf_sort().ok_or("expected CudfSort")?;
+            crate::operators::sort::deserialize_cudf_sort(&sort, node)
         }
-        fb::PlanNodeKind::GpuCoalesceBatches => {
-            let cb = node.node_as_gpu_coalesce_batches().ok_or("expected GpuCoalesceBatches")?;
-            crate::operators::coalesce::deserialize_gpu_coalesce_batches(&cb)
+        fb::PlanNodeKind::CudfCoalesceBatches => {
+            let cb = node.node_as_cudf_coalesce_batches().ok_or("expected CudfCoalesceBatches")?;
+            crate::operators::coalesce::deserialize_cudf_coalesce_batches(&cb)
         }
-        fb::PlanNodeKind::GpuCoalescePartitions => {
-            let cp = node.node_as_gpu_coalesce_partitions().ok_or("expected GpuCoalescePartitions")?;
-            crate::operators::coalesce::deserialize_gpu_coalesce_partitions(&cp)
+        fb::PlanNodeKind::CudfCoalescePartitions => {
+            let cp = node.node_as_cudf_coalesce_partitions().ok_or("expected CudfCoalescePartitions")?;
+            crate::operators::coalesce::deserialize_cudf_coalesce_partitions(&cp)
         }
-        fb::PlanNodeKind::GpuRepartition => {
-            let rp = node.node_as_gpu_repartition().ok_or("expected GpuRepartition")?;
-            crate::operators::repartition::deserialize_gpu_repartition(&rp)
+        fb::PlanNodeKind::CudfRepartition => {
+            let rp = node.node_as_cudf_repartition().ok_or("expected CudfRepartition")?;
+            crate::operators::repartition::deserialize_cudf_repartition(&rp)
         }
-        fb::PlanNodeKind::GpuSortPreservingMerge => {
-            let spm = node.node_as_gpu_sort_preserving_merge().ok_or("expected GpuSortPreservingMerge")?;
-            crate::operators::sort::deserialize_gpu_sort_preserving_merge(&spm)
+        fb::PlanNodeKind::CudfSortPreservingMerge => {
+            let spm = node.node_as_cudf_sort_preserving_merge().ok_or("expected CudfSortPreservingMerge")?;
+            crate::operators::sort::deserialize_cudf_sort_preserving_merge(&spm)
         }
-        fb::PlanNodeKind::GpuUnion => {
-            let u = node.node_as_gpu_union().ok_or("expected GpuUnion")?;
-            crate::operators::union::deserialize_gpu_union(&u)
+        fb::PlanNodeKind::CudfUnion => {
+            let u = node.node_as_cudf_union().ok_or("expected CudfUnion")?;
+            crate::operators::union::deserialize_cudf_union(&u)
         }
-        fb::PlanNodeKind::GpuLimit => {
-            let l = node.node_as_gpu_limit().ok_or("expected GpuLimit")?;
-            crate::operators::limit::deserialize_gpu_limit(&l)
+        fb::PlanNodeKind::CudfLimit => {
+            let l = node.node_as_cudf_limit().ok_or("expected CudfLimit")?;
+            crate::operators::limit::deserialize_cudf_limit(&l)
         }
-        fb::PlanNodeKind::GpuWindow => {
-            let w = node.node_as_gpu_window().ok_or("expected GpuWindow")?;
-            crate::operators::window::deserialize_gpu_window(&w)
+        fb::PlanNodeKind::CudfWindow => {
+            let w = node.node_as_cudf_window().ok_or("expected CudfWindow")?;
+            crate::operators::window::deserialize_cudf_window(&w)
         }
         other => Err(format!("unknown PlanNodeKind: {:?}", other)),
     }

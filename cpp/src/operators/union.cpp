@@ -13,9 +13,9 @@
 
 namespace peacock {
 
-TableResult execute_union(const fb::GpuUnion* u, NodeInputs* in) {
+TableResult execute_union(const fb::CudfUnion* u, NodeInputs* in) {
   if (!u->inputs() || u->inputs()->size() == 0)
-    throw std::runtime_error("GpuUnion has no inputs");
+    throw std::runtime_error("CudfUnion has no inputs");
 
   // Execute each input fully, then concatenate the materialized tables.
   std::vector<TableResult> inputs;

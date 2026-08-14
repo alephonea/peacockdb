@@ -1,4 +1,4 @@
-// GpuProject -- column selection / renaming / computed columns.
+// CudfProject -- column selection / renaming / computed columns.
 
 #include "peacock/operators.h"
 #include "peacock/expr.h"
@@ -14,7 +14,7 @@
 
 namespace peacock {
 
-TableResult execute_project(const fb::GpuProject* proj, NodeInputs* in) {
+TableResult execute_project(const fb::CudfProject* proj, NodeInputs* in) {
   auto input = execute_node(proj->input(), in);
 
   if (!proj->exprs() || proj->exprs()->size() == 0) {

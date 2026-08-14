@@ -58,7 +58,7 @@ use crate::plan_serializer::convert_data_type;
 use crate::plan_serializer::{serialize_expr, serialize_plan_node};
 use crate::PartitionMode;
 
-pub(crate) fn serialize_gpu_window<'a>(
+pub(crate) fn serialize_cudf_window<'a>(
     b: &mut FlatBufferBuilder<'a>,
     plan: &Arc<dyn ExecutionPlan>,
     pm: PartitionMode,
@@ -177,14 +177,14 @@ pub(crate) fn serialize_gpu_window<'a>(
     let exprs_vec = b.create_vector(&expr_offsets);
     let input = serialize_plan_node(b, input_plan, pm)?;
 
-    let node = fb::GpuWindow::create(
+    let node = fb::CudfWindow::create(
         b,
-        &fb::GpuWindowArgs {
+        &fb::CudfWindowArgs {
             window_exprs: Some(exprs_vec),
             input: Some(input),
         },
     );
-    Ok((fb::PlanNodeKind::GpuWindow, node.as_union_value()))
+    Ok((fb::PlanNodeKind::CudfWindow, node.as_union_value()))
 }
 
 // ---------------------------------------------------------------------------
@@ -193,7 +193,7 @@ pub(crate) fn serialize_gpu_window<'a>(
 // easy to break by editing one side alone. Keep them together.
 // ---------------------------------------------------------------------------
 
-pub(crate) fn deserialize_gpu_window(win: &fb::GpuWindow) -> Result<Arc<dyn ExecutionPlan>, String> {
+pub(crate) fn deserialize_cudf_window(win: &fb::CudfWindow) -> Result<Arc<dyn ExecutionPlan>, String> {
     use datafusion::logical_expr::{
         WindowFrame, WindowFrameBound as DfBound, WindowFrameUnits, WindowFunctionDefinition,
     };
@@ -203,7 +203,7 @@ pub(crate) fn deserialize_gpu_window(win: &fb::GpuWindow) -> Result<Arc<dyn Exec
     };
     use datafusion::physical_plan::InputOrderMode;
 
-    let input = deserialize_plan_node(&win.input().ok_or("GpuWindow missing input")?)?;
+    let input = deserialize_plan_node(&win.input().ok_or("CudfWindow missing input")?)?;
     let input_schema = input.schema();
 
     // DataFusion plans a running frame (… AND CURRENT ROW) as a streaming
@@ -219,7 +219,7 @@ pub(crate) fn deserialize_gpu_window(win: &fb::GpuWindow) -> Result<Arc<dyn Exec
             let we = exprs.get(i);
             let func_name = we.func_name().ok_or("WindowExpr missing func_name")?;
 
-            // Only aggregate windows are serialized (serialize_gpu_window rejects
+            // Only aggregate windows are serialized (serialize_cudf_window rejects
             // ranking functions), so look the function up among aggregate UDFs.
             let udf = datafusion::functions_aggregate::all_default_aggregate_functions()
                 .into_iter()

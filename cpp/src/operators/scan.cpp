@@ -1,4 +1,4 @@
-// GpuScan -- Parquet reads, row-group selection, projection pushdown.
+// CudfScan -- Parquet reads, row-group selection, projection pushdown.
 
 #include "peacock/operators.h"
 #include "peacock/expr.h"
@@ -16,12 +16,12 @@
 namespace peacock {
 
 TableResult execute_scan(
-    const fb::GpuScan* scan,
+    const fb::CudfScan* scan,
     const flatbuffers::Vector<uint32_t>* row_groups_override) {
   if (!scan->file_paths() || scan->file_paths()->size() == 0)
-    throw std::runtime_error("GpuScan: no file paths");
+    throw std::runtime_error("CudfScan: no file paths");
 
-  // Wire-format contract (see gpu_plan.fbs::GpuScan): every path must be
+  // Wire-format contract (see gpu_plan.fbs::CudfScan): every path must be
   // absolute. We reject anything else with a clear error rather than
   // resolving against an implicit root.
   std::vector<std::string> paths;
@@ -30,7 +30,7 @@ TableResult execute_scan(
     auto s = p->str();
     if (s.empty() || s.front() != '/') {
       throw std::runtime_error(
-          "GpuScan: file path must be absolute (got \"" + s + "\")");
+          "CudfScan: file path must be absolute (got \"" + s + "\")");
     }
     paths.push_back(std::move(s));
   }

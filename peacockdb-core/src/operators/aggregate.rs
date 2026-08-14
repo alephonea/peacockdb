@@ -55,7 +55,7 @@ use datafusion::physical_plan::aggregates::AggregateMode as DfAggMode;
 use crate::plan_serializer::{serialize_expr, serialize_plan_node, serialize_schema};
 use crate::PartitionMode;
 
-pub(crate) fn serialize_gpu_aggregate<'a>(
+pub(crate) fn serialize_cudf_aggregate<'a>(
     b: &mut FlatBufferBuilder<'a>,
     plan: &Arc<dyn ExecutionPlan>,
     pm: PartitionMode,
@@ -145,9 +145,9 @@ pub(crate) fn serialize_gpu_aggregate<'a>(
 
     let input = serialize_plan_node(b, agg.input(), pm)?;
 
-    let node = fb::GpuAggregate::create(
+    let node = fb::CudfAggregate::create(
         b,
-        &fb::GpuAggregateArgs {
+        &fb::CudfAggregateArgs {
             mode,
             group_exprs: Some(group_exprs_vec),
             group_names: Some(group_names_vec),
@@ -163,7 +163,7 @@ pub(crate) fn serialize_gpu_aggregate<'a>(
             mergeable_agg_state: pm == PartitionMode::RealMultiPartition,
         },
     );
-    Ok((fb::PlanNodeKind::GpuAggregate, node.as_union_value()))
+    Ok((fb::PlanNodeKind::CudfAggregate, node.as_union_value()))
 }
 
 // ---------------------------------------------------------------------------
@@ -172,11 +172,11 @@ pub(crate) fn serialize_gpu_aggregate<'a>(
 // easy to break by editing one side alone. Keep them together.
 // ---------------------------------------------------------------------------
 
-pub(crate) fn deserialize_gpu_aggregate(
-    agg: &fb::GpuAggregate,
+pub(crate) fn deserialize_cudf_aggregate(
+    agg: &fb::CudfAggregate,
     _node: &fb::PlanNode,
 ) -> Result<Arc<dyn ExecutionPlan>, String> {
-    let input = deserialize_plan_node(&agg.input().ok_or("GpuAggregate missing input")?)?;
+    let input = deserialize_plan_node(&agg.input().ok_or("CudfAggregate missing input")?)?;
 
     let mode = match agg.mode() {
         fb::AggregateMode::Partial => DfAggMode::Partial,
@@ -242,7 +242,7 @@ pub(crate) fn deserialize_gpu_aggregate(
     // Final/FinalPartitioned stages (whose input is the Partial output and lacks
     // the original columns the args reference).
     let input_schema = deserialize_schema(
-        &agg.aggr_input_schema().ok_or("GpuAggregate missing aggr_input_schema")?,
+        &agg.aggr_input_schema().ok_or("CudfAggregate missing aggr_input_schema")?,
     );
     let aggr_exprs: Vec<Arc<datafusion::physical_expr::aggregate::AggregateFunctionExpr>> = agg
         .aggr_funcs()

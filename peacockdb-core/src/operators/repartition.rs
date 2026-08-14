@@ -47,7 +47,7 @@ use crate::plan_serializer::{deserialize_expr, deserialize_plan_node};
 use crate::plan_serializer::{serialize_expr, serialize_plan_node};
 use crate::PartitionMode;
 
-pub(crate) fn serialize_gpu_repartition<'a>(
+pub(crate) fn serialize_cudf_repartition<'a>(
     b: &mut FlatBufferBuilder<'a>,
     plan: &Arc<dyn ExecutionPlan>,
     pm: PartitionMode,
@@ -77,16 +77,16 @@ pub(crate) fn serialize_gpu_repartition<'a>(
         Partitioning::UnknownPartitioning(n) => (fb::PartitioningKind::Unknown, *n, None),
     };
 
-    let node = fb::GpuRepartition::create(
+    let node = fb::CudfRepartition::create(
         b,
-        &fb::GpuRepartitionArgs {
+        &fb::CudfRepartitionArgs {
             kind,
             num_partitions: num_partitions as u32,
             hash_exprs,
             input: Some(input),
         },
     );
-    Ok((fb::PlanNodeKind::GpuRepartition, node.as_union_value()))
+    Ok((fb::PlanNodeKind::CudfRepartition, node.as_union_value()))
 }
 
 // ---------------------------------------------------------------------------
@@ -95,13 +95,13 @@ pub(crate) fn serialize_gpu_repartition<'a>(
 // easy to break by editing one side alone. Keep them together.
 // ---------------------------------------------------------------------------
 
-pub(crate) fn deserialize_gpu_repartition(
-    rp: &fb::GpuRepartition,
+pub(crate) fn deserialize_cudf_repartition(
+    rp: &fb::CudfRepartition,
 ) -> Result<Arc<dyn ExecutionPlan>, String> {
     use datafusion::physical_plan::repartition::RepartitionExec;
     use datafusion::physical_plan::Partitioning;
 
-    let input = deserialize_plan_node(&rp.input().ok_or("GpuRepartition missing input")?)?;
+    let input = deserialize_plan_node(&rp.input().ok_or("CudfRepartition missing input")?)?;
 
     let partitioning = match rp.kind() {
         fb::PartitioningKind::RoundRobinBatch => {

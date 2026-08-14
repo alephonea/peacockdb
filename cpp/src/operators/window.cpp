@@ -1,4 +1,4 @@
-// GpuWindow -- window functions (append one column per window expr).
+// CudfWindow -- window functions (append one column per window expr).
 
 #include "peacock/operators.h"
 #include "peacock/expr.h"
@@ -32,7 +32,7 @@ static std::unique_ptr<cudf::rolling_aggregation> make_rolling_agg(
   throw std::runtime_error("unsupported window function: " + func_name);
 }
 
-TableResult execute_window(const fb::GpuWindow* win, NodeInputs* in) {
+TableResult execute_window(const fb::CudfWindow* win, NodeInputs* in) {
   auto input = execute_node(win->input(), in);
   auto tv = input.table->view();
 

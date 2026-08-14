@@ -813,7 +813,7 @@ fn render_html(
          bytes_read from storage <em>plus</em> its post-filter output (mirroring PeacockDB's split scan + filter). \
          <strong>Remaining structural skew → red rows on selective queries:</strong> PeacockDB does NOT push \
          predicates into the scan — its GpuScanExec reads ALL projected rows and a separate GpuFilterExec applies \
-         the predicate (the predicate is dropped at GpuScan serialization, so the GPU path is zero row-group prune), \
+         the predicate (the predicate is dropped at CudfScan serialization, so the GPU path is zero row-group prune), \
          whereas DuckDB prunes + filters inline in TABLE_SCAN. So peacockdb scan output stays full-size while \
          DuckDB's is post-filter — a real, explainable efficiency gap (no scan-level pushdown), not noise. \
          (Also: group-by still counts buffered input on DuckDB vs output on PeacockDB.) The ratio is \
