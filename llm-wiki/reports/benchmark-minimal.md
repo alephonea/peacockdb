@@ -26,9 +26,13 @@ kernel first-touch.
 one does not belong here.** rmm's default is a `cudaMalloc`/`cudaFree` per allocation, so an
 unpooled run measures the driver's allocator as much as the operators — on the H200 that is
 2.3x on q6, and on a unified-memory host it can be the whole query. The single-GPU binaries
-install the pool themselves (`cpp/tests/gpu/rmm_pool.hpp`); the multi-GPU ones always did.
-`PEACOCK_RMM_POOL=0` disables it, and exists only to measure the allocator's own share.
-The engine has no pool yet — [#148](../tickets.md#t148).
+install the pool themselves (`cpp/include/peacock/rmm_pool.hpp`); the multi-GPU ones always
+did, and `peacock_gpu_benchmarks` now does too, off the same header — so the per-node
+records in `testdata/benchmark-results/` are taken under the same allocator as this page
+([#151](../tickets.md#t151)). They name it in an `allocator=` line; the numbers here do not,
+which is what this paragraph is for. `PEACOCK_RMM_POOL=0` disables it, and exists only to
+measure the allocator's own share. The engine still has no pool of its own —
+[#148](../tickets.md#t148).
 
 | | cuDF | DuckDB |
 |---|---|---|

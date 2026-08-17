@@ -289,37 +289,44 @@ not of joins; invert the widths and rows would flatter the copy instead. Answer 
 goldens before commissioning a measurement.
 
 <a id="t151"></a>
-### #151 — the per-node benchmarks measure the engine with no RMM pool
+### #151 — the per-node benchmarks measured the engine with no RMM pool
 
-`peacock_gpu_benchmarks` times the engine through the FFI, and the engine installs no
-device resource ([#148](#t148)) — so every intermediate it allocates is a
-`cudaMalloc`/`cudaFree` round trip, and a node's `time_us` includes that. The C++ gtest
-binaries stopped measuring it: `cpp/tests/gpu/rmm_pool.hpp` installs a pooled resource in
-`main()`, with `PEACOCK_RMM_POOL=0` to turn it back off and price the allocator itself. The
-two families of numbers in the tree are therefore taken under different allocators, and the
-per-node records charge a node for the default resource — worst exactly where its output is
-largest, which is where a reader is most likely to draw a conclusion.
+`peacock_gpu_benchmarks` times the engine through the FFI, and the engine installs no device
+resource ([#148](#t148)) — so every intermediate it allocated was a `cudaMalloc`/`cudaFree`
+round trip, and a node's `time_us` included that. The C++ gtest binaries had stopped
+measuring it, so the two families of numbers in the tree were taken under different
+allocators, and the per-node records charged a node for the default resource — worst exactly
+where its output is largest.
 
-The fix is to land #148: the engine installs the pool, the benchmark inherits it, and no
-test-only path exists that the shipping engine does not take. Failing that, an install hook
-for the benchmark binary with the same `PEACOCK_RMM_POOL=0` switch and the sizing rule
-shared with `rmm_pool.hpp` rather than copied — it is one rule either way.
+**Landed as the fallback, not the fix.** #148 stays open on its own terms: it also makes a
+shipping query faster, and it carries a second decision about `gpu_memory_limit`. Instead:
 
-Either way the record has to carry which allocator produced it, beside `build_profile` and
-`sync_floor_us`, for the same reason those are there: a number whose meaning depends on how
-it was produced must travel with that fact. Until then, node times are comparable with each
-other and not with the C++ numbers in `llm-wiki/reports/benchmark-minimal.md`.
+- The sizing rule moved to `cpp/include/peacock/rmm_pool.hpp`, shared rather than copied —
+  `multi_gpu.cpp` takes its 85/95 from the same constants. Header-only, because four gtest
+  targets link `cudf::cudf` and gtest but not `peacock_gpu`.
+- `peacock_install_rmm_pool` reports the OUTCOME, not success: installed, disabled by
+  request, or could not be built. The third is new — a failed reservation and a deliberate
+  `PEACOCK_RMM_POOL=0` were indistinguishable, and only one invalidates a comparison.
+- It lives in `libpeacock_gpu.so` though no shipping query calls it. A test-only shim DSO
+  would leave production untouched, but the build sets no `-fvisibility=hidden`, so rmm's
+  current-device-resource state could be duplicated across DSOs — a green run that fixes
+  nothing.
+- Idempotency is in C++ alone, not a Rust `OnceLock`: one guard, on the side that owns the
+  resource. Rebuilding would drop a resource live allocations still point into, and 127
+  `#[test]`s in one process is the shape that finds it.
+- Records carry `allocator=` beside `build_profile=` and `sync_floor_us=`. Recorded, not
+  asserted on — a run without a pool is a valid measurement and an invalid comparison.
 
-A sweep settles a second, smaller thing, and the two halves of it are worth separating. The
-records' SHAPE is current — verified across all 127 on 2026-08-14: all 88 hash-repartition
-nodes bill their shared concat+scatter to p0, every node with sub-lines sums exactly to its
-node line, and every at-floor count uses floor x partitions. Their VALUES are not. They were
-measured before the scatter stopped opening a timed region of its own, and that region ended
-in a stream sync sitting between the scatter and the slice copies, so it barriered execution
-as well as costing a floor — which is why the move is larger than a floor. Re-running the
-same cases after the change put 66 of 88 repartition nodes faster, median -2.5% against
--0.6% for whole records; shuffle-additive tp8 reads 931us committed against 865-890us since.
-Nothing asserts the records, so nothing is red.
+**Re-swept, all 127 records, every one faster**: median -9.6% on `total_us`. The move is not
+uniform, which is the whole point — `GpuScanExec` -5.3% (parquet read, few intermediates)
+against `GpuProjectExec` -53%, `GpuHashJoinExec` -51%, `GpuFilterExec` -46%,
+`GpuAggregateExec` -30%. The old records were wrong about the SHAPE of a plan's cost, not
+only its scale.
+
+They were also stale for the smaller second reason this ticket carried — measured before the
+scatter stopped opening a timed region of its own — so a part of that move is not the
+allocator. Measured then at -2.5% median on repartition nodes and -0.6% on whole records, it
+cannot account for -50% on joins. Both halves are now settled by one sweep.
 
 <a id="t150"></a>
 ### #150 — store the embedding columns uncompressed; Snappy costs a third of a vector query to save 3%
@@ -412,9 +419,10 @@ and on a unified-memory part a page-table walk and a zeroing pass as well.
 
 The same gap was already found and fixed once, on the other side of the tree:
 `cpp/tests/gpu/multi_gpu.cpp` builds a per-device `pool_memory_resource` inside the worker
-that owns each device, sized off that device's free memory. The single-GPU test binaries
-have now been given the same treatment (`cpp/tests/gpu/rmm_pool.hpp`). The engine has not,
-and it is the only one of the three that ships.
+that owns each device, sized off that device's free memory. The single-GPU test binaries and
+the benchmark harness have now been given the same treatment — all three size off
+`cpp/include/peacock/rmm_pool.hpp` ([#151](#t151)). The engine has not, and it is the only
+one of the four that ships.
 
 **Measured cost.** TPC-H q1 over sf40 whole-table on GB10: 76.5 s execute, 2nd-min of 5,
 every run inside [75.4, 78.8] — so this is steady state, not first-touch. The same query
