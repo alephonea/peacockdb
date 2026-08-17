@@ -1,46 +1,50 @@
-GpuProjectExec: expr=[brand_id@0 as brand_id, brand@1 as brand, t_hour@2 as t_hour, t_minute@3 as t_minute, ext_price@4 as ext_price], time_us=104
-  GpuSortExec: expr=[ext_price@4 DESC, i_brand_id@5 ASC, t_hour@2 ASC], time_us=558
-    GpuProjectExec: expr=[i_brand_id@1 as brand_id, i_brand@0 as brand, t_hour@2 as t_hour, t_minute@3 as t_minute, sum(tmp.ext_price)@4 as ext_price, i_brand_id@1 as i_brand_id], time_us=110
-      GpuAggregateExec: group_by=[i_brand, i_brand_id, t_hour, t_minute], aggr=[sum(tmp.ext_price)], time_us=1642
+GpuProjectExec: expr=[brand_id@0 as brand_id, brand@1 as brand, t_hour@2 as t_hour, t_minute@3 as t_minute, ext_price@4 as ext_price], time_us=50
+  GpuSortExec: expr=[ext_price@4 DESC, i_brand_id@5 ASC, t_hour@2 ASC], time_us=386
+    GpuProjectExec: expr=[i_brand_id@1 as brand_id, i_brand@0 as brand, t_hour@2 as t_hour, t_minute@3 as t_minute, sum(tmp.ext_price)@4 as ext_price, i_brand_id@1 as i_brand_id], time_us=56
+      GpuAggregateExec: group_by=[i_brand, i_brand_id, t_hour, t_minute], aggr=[sum(tmp.ext_price)], time_us=1399
         GpuCoalesceBatchesExec, time_us=1
-          GpuHashJoinExec: join_type=Inner, on=[(time_sk@3, t_time_sk@0)], projection=[0, 1, 2, 5, 6], time_us=748
-            GpuCoalescePartitionsExec, time_us=217
+          GpuHashJoinExec: join_type=Inner, on=[(time_sk@3, t_time_sk@0)], projection=[0, 1, 2, 5, 6], time_us=424
+            GpuCoalescePartitionsExec, time_us=129
               GpuCoalesceBatchesExec, time_us=1
-                GpuHashJoinExec: join_type=Inner, on=[(i_item_sk@0, sold_item_sk@1)], projection=[1, 2, 3, 5], time_us=888
+                GpuHashJoinExec: join_type=Inner, on=[(i_item_sk@0, sold_item_sk@1)], projection=[1, 2, 3, 5], time_us=463
                   GpuCoalesceBatchesExec, time_us=1
-                    GpuFilterExec: predicate=i_manager_id@3 = 1, projection=[0, 1, 2], time_us=480
-                      GpuScanExec: table=item, projections=[i_item_sk, i_brand_id, i_brand, i_manager_id], time_us=6623
-                  GpuUnionExec, time_us=347
-                    GpuProjectExec: expr=[ws_ext_sales_price@2 as ext_price, ws_item_sk@1 as sold_item_sk, ws_sold_time_sk@0 as time_sk], time_us=99
+                    GpuFilterExec: predicate=i_manager_id@3 = 1, projection=[0, 1, 2], time_us=297
+                      GpuScanExec: table=item, projections=[i_item_sk, i_brand_id, i_brand, i_manager_id], time_us=6135
+                  GpuUnionExec, time_us=99
+                    GpuProjectExec: expr=[ws_ext_sales_price@2 as ext_price, ws_item_sk@1 as sold_item_sk, ws_sold_time_sk@0 as time_sk], time_us=26
                       GpuCoalesceBatchesExec, time_us=1
-                        GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ws_sold_date_sk@0)], projection=[2, 3, 4], time_us=749
+                        GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ws_sold_date_sk@0)], projection=[2, 3, 4], time_us=377
                           GpuCoalesceBatchesExec, time_us=1
-                            GpuFilterExec: predicate=d_moy@2 = 11 AND d_year@1 = 1999, projection=[0], time_us=364
-                              GpuScanExec: table=date_dim, projections=[d_date_sk, d_year, d_moy], time_us=17549
-                          GpuScanExec: table=web_sales, projections=[ws_sold_date_sk, ws_sold_time_sk, ws_item_sk, ws_ext_sales_price], time_us=10967
-                    GpuProjectExec: expr=[cs_ext_sales_price@2 as ext_price, cs_item_sk@1 as sold_item_sk, cs_sold_time_sk@0 as time_sk], time_us=140
+                            GpuFilterExec: predicate=d_moy@2 = 11 AND d_year@1 = 1999, projection=[0], time_us=164
+                              GpuScanExec: table=date_dim, projections=[d_date_sk, d_year, d_moy], time_us=17019
+                          GpuScanExec: table=web_sales, projections=[ws_sold_date_sk, ws_sold_time_sk, ws_item_sk, ws_ext_sales_price], time_us=9741
+                    GpuProjectExec: expr=[cs_ext_sales_price@2 as ext_price, cs_item_sk@1 as sold_item_sk, cs_sold_time_sk@0 as time_sk], time_us=26
                       GpuCoalesceBatchesExec, time_us=1
-                        GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, cs_sold_date_sk@0)], projection=[2, 3, 4], time_us=1024
+                        GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, cs_sold_date_sk@0)], projection=[2, 3, 4], time_us=484
                           GpuCoalesceBatchesExec, time_us=1
-                            GpuFilterExec: predicate=d_moy@2 = 11 AND d_year@1 = 1999, projection=[0], time_us=346
-                              GpuScanExec: table=date_dim, projections=[d_date_sk, d_year, d_moy], time_us=17786
-                          GpuScanExec: table=catalog_sales, projections=[cs_sold_date_sk, cs_sold_time_sk, cs_item_sk, cs_ext_sales_price], time_us=13344
-                    GpuProjectExec: expr=[ss_ext_sales_price@2 as ext_price, ss_item_sk@1 as sold_item_sk, ss_sold_time_sk@0 as time_sk], time_us=104
+                            GpuFilterExec: predicate=d_moy@2 = 11 AND d_year@1 = 1999, projection=[0], time_us=159
+                              GpuScanExec: table=date_dim, projections=[d_date_sk, d_year, d_moy], time_us=17121
+                          GpuScanExec: table=catalog_sales, projections=[cs_sold_date_sk, cs_sold_time_sk, cs_item_sk, cs_ext_sales_price], time_us=11418
+                    GpuProjectExec: expr=[ss_ext_sales_price@2 as ext_price, ss_item_sk@1 as sold_item_sk, ss_sold_time_sk@0 as time_sk], time_us=29
                       GpuCoalesceBatchesExec, time_us=1
-                        GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ss_sold_date_sk@0)], projection=[2, 3, 4], time_us=1285
+                        GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ss_sold_date_sk@0)], projection=[2, 3, 4], time_us=642
                           GpuCoalesceBatchesExec, time_us=1
-                            GpuFilterExec: predicate=d_moy@2 = 11 AND d_year@1 = 1999, projection=[0], time_us=357
-                              GpuScanExec: table=date_dim, projections=[d_date_sk, d_year, d_moy], time_us=18046
-                          GpuScanExec: table=store_sales, projections=[ss_sold_date_sk, ss_sold_time_sk, ss_item_sk, ss_ext_sales_price], time_us=22852
+                            GpuFilterExec: predicate=d_moy@2 = 11 AND d_year@1 = 1999, projection=[0], time_us=165
+                              GpuScanExec: table=date_dim, projections=[d_date_sk, d_year, d_moy], time_us=17895
+                          GpuScanExec: table=store_sales, projections=[ss_sold_date_sk, ss_sold_time_sk, ss_item_sk, ss_ext_sales_price], time_us=20146
             GpuCoalesceBatchesExec, time_us=1
-              GpuFilterExec: predicate=t_meal_time@3 = breakfast OR t_meal_time@3 = dinner, projection=[0, 1, 2], time_us=1028
-                GpuScanExec: table=time_dim, projections=[t_time_sk, t_hour, t_minute, t_meal_time], time_us=28444
+              GpuFilterExec: predicate=t_meal_time@3 = breakfast OR t_meal_time@3 = dinner, projection=[0, 1, 2], time_us=551
+                GpuScanExec: table=time_dim, projections=[t_time_sk, t_hour, t_minute, t_meal_time], time_us=27817
 
 # sync_floor_us = cost of the measurement itself (empty timed region: clock + cudaStreamSynchronize on an idle stream). Each node time INCLUDES one PER OUTPUT PARTITION, since a node line is the Σ over its partitions; a node at or below its own floor (sync_floor_us x partitions) is unresolved, not cheap. Do not subtract it.
 # nodes_total_us = Σ of the per-node times above; total_us = the whole query, end to end (parse + plan + serialize + node walk + materialize)
 # build_profile = how the harness itself was compiled. total_us MINUS nodes_total_us is that Rust; records from different profiles are not comparable on it. Node times are device work and barely move.
+# allocator = the rmm device resource the node times were taken under. Without a pool every cuDF intermediate is a cudaMalloc/cudaFree round trip, charged to the node that allocated it — so it inflates the largest-output nodes hardest and moves the PROFILE, not only the scale. Records under different allocators are not comparable, node for node or in total.
+# shared_work_charged_to = which p<k> sub-line carries work a node does once for all of its output partitions. A hash repartition concatenates its input and scatters it in a single operation, and that time is billed to p0 — so p0 standing far above its siblings is the accounting, not skew. Sub-lines sum to their node line either way. Written whether or not this plan has a repartition.
 build_profile=benchmarks opt-level=3
+allocator=rmm-pool initial=113.4GiB max=126.7GiB of 133.4GiB free on a discrete device
+shared_work_charged_to=p0
 sync_floor_us=1
 nodes_at_or_below_floor=10/37
-nodes_total_us=146211
-total_us=154333
+nodes_total_us=133228
+total_us=141294

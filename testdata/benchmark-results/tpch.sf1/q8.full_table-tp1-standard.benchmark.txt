@@ -1,46 +1,50 @@
-GpuSortExec: expr=[o_year@0 ASC NULLS LAST], time_us=153
-  GpuProjectExec: expr=[o_year@0 as o_year, sum(CASE WHEN all_nations.nation = Utf8("BRAZIL") THEN all_nations.volume ELSE Int64(0) END)@1 / sum(all_nations.volume)@2 as mkt_share], time_us=130
-    GpuAggregateExec: group_by=[o_year], aggr=[sum(CASE WHEN all_nations.nation = Utf8("BRAZIL") THEN all_nations.volume ELSE Int64(0) END), sum(all_nations.volume)], time_us=900
-      GpuProjectExec: expr=[date_part(YEAR, o_orderdate@2) as o_year, l_extendedprice@0 * (Some(1),20,0 - l_discount@1) as volume, n_name@3 as nation], time_us=362
+GpuSortExec: expr=[o_year@0 ASC NULLS LAST], time_us=97
+  GpuProjectExec: expr=[o_year@0 as o_year, sum(CASE WHEN all_nations.nation = Utf8("BRAZIL") THEN all_nations.volume ELSE Int64(0) END)@1 / sum(all_nations.volume)@2 as mkt_share], time_us=73
+    GpuAggregateExec: group_by=[o_year], aggr=[sum(CASE WHEN all_nations.nation = Utf8("BRAZIL") THEN all_nations.volume ELSE Int64(0) END), sum(all_nations.volume)], time_us=561
+      GpuProjectExec: expr=[date_part(YEAR, o_orderdate@2) as o_year, l_extendedprice@0 * (Some(1),20,0 - l_discount@1) as volume, n_name@3 as nation], time_us=246
         GpuCoalesceBatchesExec, time_us=1
-          GpuHashJoinExec: join_type=Inner, on=[(r_regionkey@0, n_regionkey@3)], projection=[1, 2, 3, 5], time_us=734
+          GpuHashJoinExec: join_type=Inner, on=[(r_regionkey@0, n_regionkey@3)], projection=[1, 2, 3, 5], time_us=419
             GpuCoalesceBatchesExec, time_us=1
-              GpuFilterExec: predicate=r_name@1 = AMERICA, projection=[0], time_us=528
-                GpuScanExec: table=region, projections=[r_regionkey, r_name], time_us=1370
-            GpuProjectExec: expr=[l_extendedprice@1 as l_extendedprice, l_discount@2 as l_discount, o_orderdate@3 as o_orderdate, n_regionkey@4 as n_regionkey, n_name@0 as n_name], time_us=146
+              GpuFilterExec: predicate=r_name@1 = AMERICA, projection=[0], time_us=321
+                GpuScanExec: table=region, projections=[r_regionkey, r_name], time_us=820
+            GpuProjectExec: expr=[l_extendedprice@1 as l_extendedprice, l_discount@2 as l_discount, o_orderdate@3 as o_orderdate, n_regionkey@4 as n_regionkey, n_name@0 as n_name], time_us=81
               GpuCoalesceBatchesExec, time_us=1
-                GpuHashJoinExec: join_type=Inner, on=[(n_nationkey@0, s_nationkey@2)], projection=[1, 2, 3, 5, 6], time_us=810
-                  GpuScanExec: table=nation, projections=[n_nationkey, n_name], time_us=1113
-                  GpuProjectExec: expr=[l_extendedprice@1 as l_extendedprice, l_discount@2 as l_discount, s_nationkey@3 as s_nationkey, o_orderdate@4 as o_orderdate, n_regionkey@0 as n_regionkey], time_us=102
+                GpuHashJoinExec: join_type=Inner, on=[(n_nationkey@0, s_nationkey@2)], projection=[1, 2, 3, 5, 6], time_us=471
+                  GpuScanExec: table=nation, projections=[n_nationkey, n_name], time_us=759
+                  GpuProjectExec: expr=[l_extendedprice@1 as l_extendedprice, l_discount@2 as l_discount, s_nationkey@3 as s_nationkey, o_orderdate@4 as o_orderdate, n_regionkey@0 as n_regionkey], time_us=40
                     GpuCoalesceBatchesExec, time_us=1
-                      GpuHashJoinExec: join_type=Inner, on=[(n_nationkey@0, c_nationkey@4)], projection=[1, 2, 3, 4, 5], time_us=680
-                        GpuScanExec: table=nation, projections=[n_nationkey, n_regionkey], time_us=1035
-                        GpuProjectExec: expr=[l_extendedprice@1 as l_extendedprice, l_discount@2 as l_discount, s_nationkey@3 as s_nationkey, o_orderdate@4 as o_orderdate, c_nationkey@0 as c_nationkey], time_us=101
+                      GpuHashJoinExec: join_type=Inner, on=[(n_nationkey@0, c_nationkey@4)], projection=[1, 2, 3, 4, 5], time_us=320
+                        GpuScanExec: table=nation, projections=[n_nationkey, n_regionkey], time_us=652
+                        GpuProjectExec: expr=[l_extendedprice@1 as l_extendedprice, l_discount@2 as l_discount, s_nationkey@3 as s_nationkey, o_orderdate@4 as o_orderdate, c_nationkey@0 as c_nationkey], time_us=41
                           GpuCoalesceBatchesExec, time_us=1
-                            GpuHashJoinExec: join_type=Inner, on=[(c_custkey@0, o_custkey@3)], projection=[1, 2, 3, 4, 6], time_us=814
-                              GpuScanExec: table=customer, projections=[c_custkey, c_nationkey], time_us=29371
-                              GpuProjectExec: expr=[l_extendedprice@2 as l_extendedprice, l_discount@3 as l_discount, s_nationkey@4 as s_nationkey, o_custkey@0 as o_custkey, o_orderdate@1 as o_orderdate], time_us=106
+                            GpuHashJoinExec: join_type=Inner, on=[(c_custkey@0, o_custkey@3)], projection=[1, 2, 3, 4, 6], time_us=351
+                              GpuScanExec: table=customer, projections=[c_custkey, c_nationkey], time_us=28558
+                              GpuProjectExec: expr=[l_extendedprice@2 as l_extendedprice, l_discount@3 as l_discount, s_nationkey@4 as s_nationkey, o_custkey@0 as o_custkey, o_orderdate@1 as o_orderdate], time_us=40
                                 GpuCoalesceBatchesExec, time_us=1
-                                  GpuHashJoinExec: join_type=Inner, on=[(o_orderkey@0, l_orderkey@0)], projection=[1, 2, 4, 5, 6], time_us=855
+                                  GpuHashJoinExec: join_type=Inner, on=[(o_orderkey@0, l_orderkey@0)], projection=[1, 2, 4, 5, 6], time_us=404
                                     GpuCoalesceBatchesExec, time_us=1
-                                      GpuFilterExec: predicate=o_orderdate@2 >= 1995-01-01 AND o_orderdate@2 <= 1996-12-31, time_us=600
-                                        GpuScanExec: table=orders, projections=[o_orderkey, o_custkey, o_orderdate], time_us=26398
-                                    GpuProjectExec: expr=[l_orderkey@1 as l_orderkey, l_extendedprice@2 as l_extendedprice, l_discount@3 as l_discount, s_nationkey@0 as s_nationkey], time_us=146
+                                      GpuFilterExec: predicate=o_orderdate@2 >= 1995-01-01 AND o_orderdate@2 <= 1996-12-31, time_us=171
+                                        GpuScanExec: table=orders, projections=[o_orderkey, o_custkey, o_orderdate], time_us=27193
+                                    GpuProjectExec: expr=[l_orderkey@1 as l_orderkey, l_extendedprice@2 as l_extendedprice, l_discount@3 as l_discount, s_nationkey@0 as s_nationkey], time_us=35
                                       GpuCoalesceBatchesExec, time_us=1
-                                        GpuHashJoinExec: join_type=Inner, on=[(s_suppkey@0, l_suppkey@1)], projection=[1, 2, 4, 5], time_us=887
-                                          GpuScanExec: table=supplier, projections=[s_suppkey, s_nationkey], time_us=3523
+                                        GpuHashJoinExec: join_type=Inner, on=[(s_suppkey@0, l_suppkey@1)], projection=[1, 2, 4, 5], time_us=320
+                                          GpuScanExec: table=supplier, projections=[s_suppkey, s_nationkey], time_us=3127
                                           GpuCoalesceBatchesExec, time_us=1
-                                            GpuHashJoinExec: join_type=Inner, on=[(p_partkey@0, l_partkey@1)], projection=[1, 3, 4, 5], time_us=2023
+                                            GpuHashJoinExec: join_type=Inner, on=[(p_partkey@0, l_partkey@1)], projection=[1, 3, 4, 5], time_us=1239
                                               GpuCoalesceBatchesExec, time_us=1
-                                                GpuFilterExec: predicate=p_type@1 = ECONOMY ANODIZED STEEL, projection=[0], time_us=705
-                                                  GpuScanExec: table=part, projections=[p_partkey, p_type], time_us=33227
-                                              GpuScanExec: table=lineitem, projections=[l_orderkey, l_partkey, l_suppkey, l_extendedprice, l_discount], time_us=45983
+                                                GpuFilterExec: predicate=p_type@1 = ECONOMY ANODIZED STEEL, projection=[0], time_us=338
+                                                  GpuScanExec: table=part, projections=[p_partkey, p_type], time_us=31857
+                                              GpuScanExec: table=lineitem, projections=[l_orderkey, l_partkey, l_suppkey, l_extendedprice, l_discount], time_us=39466
 
 # sync_floor_us = cost of the measurement itself (empty timed region: clock + cudaStreamSynchronize on an idle stream). Each node time INCLUDES one PER OUTPUT PARTITION, since a node line is the Σ over its partitions; a node at or below its own floor (sync_floor_us x partitions) is unresolved, not cheap. Do not subtract it.
 # nodes_total_us = Σ of the per-node times above; total_us = the whole query, end to end (parse + plan + serialize + node walk + materialize)
 # build_profile = how the harness itself was compiled. total_us MINUS nodes_total_us is that Rust; records from different profiles are not comparable on it. Node times are device work and barely move.
+# allocator = the rmm device resource the node times were taken under. Without a pool every cuDF intermediate is a cudaMalloc/cudaFree round trip, charged to the node that allocated it — so it inflates the largest-output nodes hardest and moves the PROFILE, not only the scale. Records under different allocators are not comparable, node for node or in total.
+# shared_work_charged_to = which p<k> sub-line carries work a node does once for all of its output partitions. A hash repartition concatenates its input and scatters it in a single operation, and that time is billed to p0 — so p0 standing far above its siblings is the accounting, not skew. Sub-lines sum to their node line either way. Written whether or not this plan has a repartition.
 build_profile=benchmarks opt-level=3
+allocator=rmm-pool initial=113.4GiB max=126.7GiB of 133.4GiB free on a discrete device
+shared_work_charged_to=p0
 sync_floor_us=1
 nodes_at_or_below_floor=10/37
-nodes_total_us=152812
-total_us=160303
+nodes_total_us=138010
+total_us=144611

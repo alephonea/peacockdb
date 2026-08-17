@@ -1,25 +1,29 @@
-GpuSortExec: expr=[supplier_cnt@3 DESC, p_brand@0 ASC NULLS LAST, p_type@1 ASC NULLS LAST, p_size@2 ASC NULLS LAST], time_us=2658
-  GpuProjectExec: expr=[p_brand@0 as p_brand, p_type@1 as p_type, p_size@2 as p_size, count(alias1)@3 as supplier_cnt], time_us=189
-    GpuAggregateExec: group_by=[p_brand, p_type, p_size], aggr=[count(alias1)], time_us=903
-      GpuAggregateExec: group_by=[p_brand, p_type, p_size, alias1], aggr=[], time_us=1077
+GpuSortExec: expr=[supplier_cnt@3 DESC, p_brand@0 ASC NULLS LAST, p_type@1 ASC NULLS LAST, p_size@2 ASC NULLS LAST], time_us=2494
+  GpuProjectExec: expr=[p_brand@0 as p_brand, p_type@1 as p_type, p_size@2 as p_size, count(alias1)@3 as supplier_cnt], time_us=116
+    GpuAggregateExec: group_by=[p_brand, p_type, p_size], aggr=[count(alias1)], time_us=561
+      GpuAggregateExec: group_by=[p_brand, p_type, p_size, alias1], aggr=[], time_us=500
         GpuCoalesceBatchesExec, time_us=1
-          GpuHashJoinExec: join_type=RightAnti, on=[(s_suppkey@0, ps_suppkey@0)], time_us=867
+          GpuHashJoinExec: join_type=RightAnti, on=[(s_suppkey@0, ps_suppkey@0)], time_us=366
             GpuCoalesceBatchesExec, time_us=1
-              GpuFilterExec: predicate=s_comment@1 LIKE %Customer%Complaints%, projection=[0], time_us=504
-                GpuScanExec: table=supplier, projections=[s_suppkey, s_comment], time_us=12357
-            GpuProjectExec: expr=[ps_suppkey@3 as ps_suppkey, p_brand@0 as p_brand, p_type@1 as p_type, p_size@2 as p_size], time_us=277
+              GpuFilterExec: predicate=s_comment@1 LIKE %Customer%Complaints%, projection=[0], time_us=339
+                GpuScanExec: table=supplier, projections=[s_suppkey, s_comment], time_us=11690
+            GpuProjectExec: expr=[ps_suppkey@3 as ps_suppkey, p_brand@0 as p_brand, p_type@1 as p_type, p_size@2 as p_size], time_us=123
               GpuCoalesceBatchesExec, time_us=1
-                GpuHashJoinExec: join_type=Inner, on=[(p_partkey@0, ps_partkey@0)], projection=[1, 2, 3, 5], time_us=1721
+                GpuHashJoinExec: join_type=Inner, on=[(p_partkey@0, ps_partkey@0)], projection=[1, 2, 3, 5], time_us=764
                   GpuCoalesceBatchesExec, time_us=1
-                    GpuFilterExec: predicate=p_brand@1 != Brand#45 AND p_type@2 NOT LIKE MEDIUM POLISHED% AND (p_size@3 = 49 OR p_size@3 = 14 OR p_size@3 = 23 OR p_size@3 = 45 OR p_size@3 = 19 OR p_size@3 = 3 OR p_size@3 = 36 OR p_size@3 = 9), time_us=1356
-                      GpuScanExec: table=part, projections=[p_partkey, p_brand, p_type, p_size], time_us=33791
-                  GpuScanExec: table=partsupp, projections=[ps_partkey, ps_suppkey], time_us=24273
+                    GpuFilterExec: predicate=p_brand@1 != Brand#45 AND p_type@2 NOT LIKE MEDIUM POLISHED% AND (p_size@3 = 49 OR p_size@3 = 14 OR p_size@3 = 23 OR p_size@3 = 45 OR p_size@3 = 19 OR p_size@3 = 3 OR p_size@3 = 36 OR p_size@3 = 9), time_us=770
+                      GpuScanExec: table=part, projections=[p_partkey, p_brand, p_type, p_size], time_us=32019
+                  GpuScanExec: table=partsupp, projections=[ps_partkey, ps_suppkey], time_us=22803
 
 # sync_floor_us = cost of the measurement itself (empty timed region: clock + cudaStreamSynchronize on an idle stream). Each node time INCLUDES one PER OUTPUT PARTITION, since a node line is the Σ over its partitions; a node at or below its own floor (sync_floor_us x partitions) is unresolved, not cheap. Do not subtract it.
 # nodes_total_us = Σ of the per-node times above; total_us = the whole query, end to end (parse + plan + serialize + node walk + materialize)
 # build_profile = how the harness itself was compiled. total_us MINUS nodes_total_us is that Rust; records from different profiles are not comparable on it. Node times are device work and barely move.
+# allocator = the rmm device resource the node times were taken under. Without a pool every cuDF intermediate is a cudaMalloc/cudaFree round trip, charged to the node that allocated it — so it inflates the largest-output nodes hardest and moves the PROFILE, not only the scale. Records under different allocators are not comparable, node for node or in total.
+# shared_work_charged_to = which p<k> sub-line carries work a node does once for all of its output partitions. A hash repartition concatenates its input and scatters it in a single operation, and that time is billed to p0 — so p0 standing far above its siblings is the accounting, not skew. Sub-lines sum to their node line either way. Written whether or not this plan has a repartition.
 build_profile=benchmarks opt-level=3
+allocator=rmm-pool initial=113.4GiB max=126.7GiB of 133.4GiB free on a discrete device
+shared_work_charged_to=p0
 sync_floor_us=1
 nodes_at_or_below_floor=4/16
-nodes_total_us=79977
-total_us=84881
+nodes_total_us=72549
+total_us=77200
