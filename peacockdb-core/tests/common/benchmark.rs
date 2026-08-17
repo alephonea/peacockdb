@@ -63,12 +63,20 @@ pub fn benchmark_result(dataset: &str, sf: &str, query: &str, label: &str) -> Pa
 /// `build_profile` is written for the same class of reason: the gap between the two
 /// totals is Rust that the profile decides the speed of, so two records built under
 /// different profiles look directly comparable and are not. See [`BUILD_PROFILE`].
+///
+/// `allocator` is the third of that family, and the one with the largest effect. cuDF
+/// routes every intermediate through rmm's current device resource; with no pool that is
+/// a `cudaMalloc`/`cudaFree` round trip each, which lands on a node in proportion to how
+/// much it materializes. So it inflates the biggest nodes hardest — distorting the
+/// profile, not just the scale — and two records taken under different resources are not
+/// comparable even node for node. See `install_rmm_pool`.
 pub fn bench_stats_str(
     plan: &Arc<dyn ExecutionPlan>,
     stats: &[NodeMemoryStats],
     total_us: u64,
     sync_floor_us: u64,
     build_profile: &str,
+    allocator: &str,
 ) -> String {
     struct Node<'a> {
         stat: &'a NodeMemoryStats,
@@ -144,6 +152,14 @@ pub fn bench_stats_str(
          comparable on it. Node times are device work and barely move."
             .to_string(),
     );
+    lines.push(
+        "# allocator = the rmm device resource the node times were taken under. Without a \
+         pool every cuDF intermediate is a cudaMalloc/cudaFree round trip, charged to the \
+         node that allocated it — so it inflates the largest-output nodes hardest and moves \
+         the PROFILE, not only the scale. Records under different allocators are not \
+         comparable, node for node or in total."
+            .to_string(),
+    );
     // Written for every tree, including trees with no repartition in them. A line
     // emitted only where it applies cannot be read: absence would mean either "this
     // plan has no scatter" or "this record predates the line", which is the same
@@ -157,6 +173,7 @@ pub fn bench_stats_str(
             .to_string(),
     );
     lines.push(format!("build_profile={build_profile}"));
+    lines.push(format!("allocator={allocator}"));
     lines.push("shared_work_charged_to=p0".to_string());
     lines.push(format!("sync_floor_us={sync_floor_us}"));
     lines.push(format!("nodes_at_or_below_floor={at_floor}/{}", stats.len()));
@@ -178,9 +195,13 @@ pub const BUILD_PROFILE: &str =
 
 /// Runs before the measured runs and is thrown away. The first execution of a query
 /// pays for things that are not the query: the OS page cache for its parquet files,
-/// RMM's pool growing to the working set, CUDA module loading and JIT for the
-/// kernels this plan reaches. Reporting those would say more about the host's recent
-/// history than about the plan.
+/// CUDA module loading and JIT for the kernels this plan reaches, and any growth the
+/// device allocator still has to do. Reporting those would say more about the host's
+/// recent history than about the plan.
+///
+/// `install_rmm_pool` reserves most of free memory up front, so on a quiet host the
+/// third of those is nearly gone before this runs — which is a reason to keep the
+/// warm-up, not to drop it: what remains is the part that varies.
 #[cfg(not(feature = "rust-only"))]
 pub const BENCH_WARMUP_RUNS: usize = 1;
 
@@ -225,9 +246,25 @@ pub async fn run_gpu_benchmark(
     gpu_label: &str,
     mode: ExecMode,
 ) {
-    use peacockdb_core::gpu_executor::{measure_timing_floor_us, set_node_timing, GpuExecutor};
+    use peacockdb_core::gpu_executor::{
+        install_rmm_pool, measure_timing_floor_us, set_node_timing, GpuExecutor,
+    };
 
     const _: () = assert!(BENCH_MEASURED_RUNS >= 2, "a second minimum needs >= 2 runs");
+
+    // FIRST, before the executor and therefore before any cuDF allocation: rmm hands out
+    // memory through whatever resource is current at the moment of the call, so a pool
+    // installed after the fact would leave the early intermediates on the default one and
+    // make the record's own allocator= line a half-truth.
+    //
+    // Called per case rather than once behind a OnceLock because the C++ side is already
+    // idempotent — a second call returns the first one's outcome and builds nothing. One
+    // guard, on the side that owns the resource, rather than two that can disagree; and
+    // asking here means the label is read at the same place it is written.
+    //
+    // Not asserted on. A run without a pool is slower and still a valid measurement; it is
+    // only an invalid COMPARISON, which is what writing the outcome into the file prevents.
+    let allocator = install_rmm_pool();
 
     let data_dir = data_dir_for(dataset, sf);
     let sql_path = queries_dir_for(dataset).join(format!("{query}.sql"));
@@ -269,8 +306,8 @@ pub async fn run_gpu_benchmark(
 
     // AFTER the warm-up and BEFORE the measured runs, on purpose. The floor has to be
     // sampled under the same conditions the node times are: CUDA context up, modules
-    // loaded, RMM pool grown. Sampling it before the warm-up would measure a colder
-    // machine and understate the floor — the one direction that matters, since an
+    // loaded, the device allocator settled. Sampling it before the warm-up would measure a
+    // colder machine and understate the floor — the one direction that matters, since an
     // understated floor makes unresolvable nodes look resolved.
     let sync_floor_us = measure_timing_floor_us(BENCH_FLOOR_SAMPLES);
 
@@ -292,12 +329,22 @@ pub async fn run_gpu_benchmark(
     std::fs::create_dir_all(out.parent().unwrap()).unwrap();
     std::fs::write(
         &out,
-        format!("{}\n", bench_stats_str(plan, stats, *total_us, sync_floor_us, BUILD_PROFILE)),
+        format!(
+            "{}\n",
+            bench_stats_str(
+                plan,
+                stats,
+                *total_us,
+                sync_floor_us,
+                BUILD_PROFILE,
+                &allocator.to_string(),
+            )
+        ),
     )
     .unwrap();
     eprintln!(
         "bench {dataset}/{query} [{label}]: total_us={total_us} \
-         (min={} max={}) floor={sync_floor_us}us -> {}",
+         (min={} max={}) floor={sync_floor_us}us alloc=[{allocator}] -> {}",
         runs[0].0,
         runs[runs.len() - 1].0,
         out.display(),
