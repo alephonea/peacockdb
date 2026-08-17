@@ -268,7 +268,12 @@ set_tests_properties(peacock_tpchv_tests PROPERTIES LABELS "gpu")
 # pulls in during C++20 dep-scan). They are built by hand on a GPU host via explicit
 # `cmake --build . --target <name>`, which EXCLUDE_FROM_ALL still permits. Not installed either.
 add_library(multi_gpu_testlib STATIC EXCLUDE_FROM_ALL tests/gpu/multi_gpu.cpp)
-target_include_directories(multi_gpu_testlib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tests/gpu)
+# `include` is PUBLIC, not PRIVATE: multi_gpu.hpp reaches peacock/rmm_pool.hpp through
+# tpch_golden.hpp, so every consumer of this lib compiles that header too. Each multi-GPU
+# binary also names the directory itself, which is why the omission stayed invisible.
+target_include_directories(multi_gpu_testlib PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}/tests/gpu
+  ${CMAKE_CURRENT_SOURCE_DIR}/include)
 # GTest is PUBLIC: multi_gpu.hpp now hosts the shared MultiGpuEnvironment (a ::testing::Environment)
 # and benchmark_mgpu, used by both multi-GPU test binaries.
 target_link_libraries(multi_gpu_testlib PUBLIC cudf::cudf GTest::gtest)
