@@ -34,6 +34,7 @@ and `2gpu` rows also runs locally; large CPU batches go to verda.
 | Executors on a device (Rust) | each one handed its node's recipe — the exec nodes one batch at a time (filter, project, per-batch sort, aggregate with and without its finalize, the export with a row range, and an accumulator's recipe refused), the accumulators a stream of them (coalesce, the accumulating sort, the state merge, the Welford merge whose count exports Int64 against a UInt64 declaration ([#163](tickets.md#t163)), the mid-plan limit), and the joins what the matrix says a device runs: Inner at one probe batch, LeftAnti streamed through its finish pass, the scatter's N handles, and the refusals — Left and Full outright, a second probe batch, a zero-input collapse — each naming its ticket; plans hand-built over six rows the test writes itself, since the ABI loads a table only by reading one. `backend.rs` is the caller `executors_for` otherwise has none of: six of the seven categories built from a live session's recipes, and a node asked for at the wrong post-order refused, so the number is an address. The partition accumulator is the seventh and has no caller; its arm reads the child's lane count | [an_aggregate_that_finalizes_runs_both_of_its_calls](../peacockdb-core/tests/test_gpu_executors/exec.rs) | shad-gpu | 31 |
 | Batch-partitioned ABI (Rust) | the three per-call symbols on a live GPU — a scan's row groups, an export range, a slice — and the release skipped exactly where a call consumed the handle | [test_gpu_abi](../peacockdb-core/tests/test_gpu_abi.rs) | shad-gpu | 4 |
 | GpuBatch surface (Rust) | what the batch reports, and that `consume` hands the handle over without releasing it. Needs no device: the release is null-guarded on the executor, so a CPU tier is its home | [test_gpu_batch](../peacockdb-core/tests/test_gpu_batch.rs) | dataset-matrix | 3 |
+| GPU timing method (Rust) | the instrument, not the corpus: the events mode must not slow the query it measures, and its events must bracket device work rather than the host prologue | [events_are_free_and_land_where_they_claim](../peacockdb-core/tests/test_node_timing.rs#L83) | shad-gpu | 1 |
 | GPU all-at-once smoke (Rust) | whole-plan `peacock_execute` FFI; retires with [#110](tickets.md) | [scan_nation](../peacockdb-core/tests/test_gpu_executor_misc.rs#L18) | manual | 6 |
 | GPU per-node timing (Rust) | measures, asserts nothing: one `.benchmark.txt` per case, same list as the two GPU tiers ([`gpu_cases.inc`](../peacockdb-core/tests/common/gpu_cases.inc)), so a case returning to either tier arrives here too | [run_gpu_benchmark](../peacockdb-core/tests/peacock_gpu_benchmarks.rs) | manual | 128 |
 | Cost-model goldens (Rust) | `.cost.txt` derivation from `.cpu.txt` × `cost_model.conf` | [cost_goldens_match_and_total_is_byte_identical](../peacockdb-core/tests/test_cost_model.rs#L36) | dataset-matrix | 3 |
@@ -279,7 +280,7 @@ cost-report ──► deploy-pages (master push only)          s3-datasets
   their remaining env must stay byte-identical or the run step recompiles.
 - **cpp-build-2502** — builds the 25.02 C++ side, bundles the Arrow/Parquet runtime libs,
   and stages `test_gpu_full_table`, `test_gpu_partitioned`, `test_inc2_conformance`,
-  `test_gpu_abi`, `test_gpu_recipe_walk` and `test_gpu_executors` as the
+  `test_gpu_abi`, `test_gpu_recipe_walk`, `test_gpu_executors` and `test_node_timing` as the
   `cpp-install-25.02` artifact. Separate from dataset-matrix so the GPU job can start without
   waiting for the CPU tests.
 - **gpu-tests** (needs cpp-build-2502) — ssh to **shad-gpu** into a per-run `REMOTE_DIR`:
@@ -515,27 +516,39 @@ One record per case, at
 `<label>` being the `<mode>-<tp>-<tier>` component the `.cpu.txt` goldens carry,
 because 17 of the cases are measured at both `full_table-tp1-standard` and
 `partitioned-tp8-standard`: same query, different plan, different time. The tree is
-the plan with `time_us` per node (and `p<k>:` sub-lines where N>1), then a trailer:
+the plan with `setup_us`/`submit_us`/`device_us` per node (and `p<k>:` sub-lines where
+N>1), then a trailer:
+
+Three terms rather than one because the cost model is fitted across two datasets
+(#153), and peacockdb pays a per-node host prologue — flatbuffer decode, handle
+lookups, AST build — that bare cuDF has no analogue for. Folding it into the work makes
+every coefficient wrong by a plan-shape-dependent amount, so it is measured separately
+and fitted as its own constant. `test_node_timing` is what checks the split is real:
+that the CUDA events bracket device work rather than that prologue.
 
 | Field | Reading |
 |---|---|
 | `build_profile` | which release profile the harness was compiled under. `total_us − nodes_total_us` is that Rust. Always a release build — the run asserts it |
 | `allocator` | the rmm pool the node times were taken under, with the sizes it was built with. Always a pool — the run asserts it, because with rmm's default every cuDF intermediate is a `cudaMalloc`/`cudaFree` round trip billed to whichever node allocated it, which inflates the largest-output nodes hardest and so moves the **profile**, not just the scale. The sizes vary with free memory at install time |
 | `shared_work_charged_to` | which `p<k>` sub-line carries work a node does once for all its partitions — the hash scatter concatenates and scatters in one operation and bills p0, so a p0 far above its siblings is the accounting, not skew. Written whether or not the plan has a repartition, so absence means only "written before the field" |
-| `sync_floor_us` | what the timed region costs around no work. **Every node time includes one; do not subtract it** — a node at or below it is unresolved, not cheap |
+| `timing_mode` | which instrument produced the numbers — and it is not a label, it changes what they MEAN. `sync`: the region ends in a `cudaStreamSynchronize`, so `submit_us` contains the device execution and `device_us` is 0. `events`: no explicit drain, and CUDA events bracket the device work as `device_us`. Across the two modes only `total_us` is comparable. `submit_us` is **not** launch cost in either mode — cuDF and rmm synchronize internally, so the host waits for most of what it submits (tpch q3: Σ`submit_us` within 0.01% of Σ`device_us`) |
+| `setup_us` | host time before the node's first device touch — the peacockdb-only prologue, fitted as its own constant |
+| `submit_us` / `device_us` | see `timing_mode` |
+| `sync_floor_us` | what the SYNC method costs around no work, measured in **both** modes: under `sync` it is the resolution floor every node time includes (once per output partition — **do not subtract it**), under `events` it is the per-region stall no longer paid, i.e. what events bought |
 | `nodes_at_or_below_floor` | how much of the tree this file cannot resolve. 2/40 is a profile; 35/40 measured mostly its own instrument |
-| `nodes_total_us` | Σ of the node times |
+| `nodes_total_us` | Σ `setup_us` + Σ `submit_us` — the **host** side of the walk. `nodes_device_us` is deliberately not added: the host ran while the device did, so the two are concurrent spans of one clock |
+| `nodes_device_us` | Σ `device_us`. Regions are on cuDF's single default stream in program order, so they are disjoint and this is ≤ `total_us`; the gap is stream idle — the device waiting through host prologue |
 | `total_us` | the whole query end to end — parse, plan, serialize, node walk, materialize |
 
 Reported run is the **2nd-smallest by `total_us`** of ten measured runs, after one
 discarded warm-up: the fastest run is the one most likely to have caught a
 favourable scheduling accident, and the whole run is reported rather than a per-node
 minimum, which would produce a tree belonging to no single execution. Not `--delete`d
-by any push (see `benchmark_result()` in `tests/common/mod.rs` for why the tree is not
+by any push (see `benchmark_result()` in `tests/common/benchmark.rs` for why the tree is not
 called `benchmark-goldens`); `--pull-benchmarks` is additive.
 
 The run counts are compile-time constants in
-[`tests/common/mod.rs`](../peacockdb-core/tests/common/mod.rs#L1290) — warm-up 1,
+[`tests/common/benchmark.rs`](../peacockdb-core/tests/common/benchmark.rs#L263) — warm-up 1,
 measured 10, floor samples 200. No environment variable moves them, unlike
 `PCK_TEST_FILTER` or the C++ suites' `PEACOCK_BENCHMARK_RUNS`: changing one is an edit
 and a rebuild, so every record in the tree was taken at the same counts.
