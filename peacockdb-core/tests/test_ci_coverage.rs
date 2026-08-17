@@ -42,6 +42,7 @@ const INTENTIONALLY_NOT_IN_CI: &[(&str, Exemption)] = &[
     ("test_gpu_abi", Exemption::GpuJob),
     ("test_gpu_recipe_walk", Exemption::GpuJob),
     ("test_gpu_executors", Exemption::GpuJob),
+    ("test_node_timing", Exemption::GpuJob),
     ("test_gpu_executor_misc", Exemption::NotRun(
         "needs the linked C++/CUDA executor; not built in the CPU tiers and not staged \
          for the GPU job",
