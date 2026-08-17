@@ -112,6 +112,10 @@ TableResult execute_hash_join(const fb::CudfHashJoin* join, NodeInputs* in) {
   //    NOT EXISTS, with a DuckDB-oracle test, is ticket #80 (llm-wiki/tickets.md).
   //
   // Left{Semi,Anti} treat the right side as the membership set; Right{...} swap.
+  //
+  // Everything above — key decode, join-kind normalisation, the semi/anti AST — is
+  // host work. Every arm of the switch below calls cuDF, so one mark covers them all.
+  mark_device_start();
   switch (jt) {
     case fb::JoinType_LeftSemi: {
       if (semi_pred) {
@@ -391,6 +395,7 @@ TableResult execute_cross_join(const fb::CudfCrossJoin* join, NodeInputs* in) {
   auto left = execute_node(join->left(), in);
   auto right = execute_node(join->right(), in);
 
+  mark_device_start();
   auto out = cudf::cross_join(left.table->view(), right.table->view());
   std::vector<std::string> names = std::move(left.column_names);
   names.insert(names.end(), right.column_names.begin(), right.column_names.end());
@@ -429,6 +434,7 @@ TableResult execute_nested_loop_join(const fb::CudfNestedLoopJoin* join, NodeInp
           "unconditional LEFT NestedLoopJoin with an empty right side is "
           "unsupported (cross_join would drop all left rows); expected a "
           "single-row scalar aggregate on the right");
+    mark_device_start();
     full_table = cudf::cross_join(ltv, rtv);
   } else if (!is_ast_able(
                  join->filter(),
@@ -460,6 +466,7 @@ TableResult execute_nested_loop_join(const fb::CudfNestedLoopJoin* join, NodeInp
     if (!join->filter_columns())
       throw std::runtime_error(
           "CudfNestedLoopJoin has a filter but no filter_columns map");
+    mark_device_start();
     auto crossed = cudf::cross_join(ltv, rtv);
     auto cv = crossed->view();
     // build_column resolves ColumnRef(i) directly against column i of the table
@@ -486,6 +493,7 @@ TableResult execute_nested_loop_join(const fb::CudfNestedLoopJoin* join, NodeInp
     ExprContext ctx;
     const auto& pred = build_expr(join->filter(), ctx, join->filter_columns());
 
+    mark_device_start();  // build_expr above is host-side AST assembly
     auto [left_indices, right_indices] =
         jt == fb::JoinType_Left ? cudf::conditional_left_join(ltv, rtv, pred)
                                 : cudf::conditional_inner_join(ltv, rtv, pred);

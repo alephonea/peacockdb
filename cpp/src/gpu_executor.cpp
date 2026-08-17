@@ -15,6 +15,7 @@
 
 #include <cuda_runtime.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
@@ -43,7 +44,14 @@ static_assert(sizeof(PeacockNodeStats) == sizeof(peacock::NodeStats));
 static_assert(offsetof(PeacockNodeStats, rows) == offsetof(peacock::NodeStats, rows));
 static_assert(offsetof(PeacockNodeStats, varlen_content_bytes) ==
               offsetof(peacock::NodeStats, varlen_content_bytes));
-static_assert(offsetof(PeacockNodeStats, time_us) == offsetof(peacock::NodeStats, time_us));
+static_assert(offsetof(PeacockNodeStats, host_setup_us) ==
+              offsetof(peacock::NodeStats, host_setup_us));
+static_assert(offsetof(PeacockNodeStats, host_submit_us) ==
+              offsetof(peacock::NodeStats, host_submit_us));
+static_assert(offsetof(PeacockNodeStats, logical_bytes) ==
+              offsetof(peacock::NodeStats, logical_bytes));
+static_assert(offsetof(PeacockNodeStats, schema_faithful) ==
+              offsetof(peacock::NodeStats, schema_faithful));
 
 // Export a cuDF table to an Arrow IPC stream buffer (malloc'd; free with
 // peacock_result_free). Shared by peacock_execute (fast path) and
@@ -136,7 +144,22 @@ int peacock_install_rmm_pool(PeacockRmmPoolInfo* out_info) {
   return 0;
 }
 
-void peacock_set_node_timing(int enable) { peacock::set_node_timing(enable != 0); }
+void peacock_set_node_timing(int mode) {
+  // Anything the C enum does not name is OFF, not "some timing": a caller that
+  // passed a value this build does not know about gets no measurement rather than
+  // an arbitrary one.
+  switch (mode) {
+    case PEACOCK_NODE_TIMING_SYNC:
+      peacock::set_node_timing(peacock::NodeTiming::Sync);
+      break;
+    case PEACOCK_NODE_TIMING_EVENTS:
+      peacock::set_node_timing(peacock::NodeTiming::Events);
+      break;
+    default:
+      peacock::set_node_timing(peacock::NodeTiming::Off);
+      break;
+  }
+}
 
 uint64_t peacock_measure_timing_floor_us(unsigned samples) {
   // No executor handle here, so no `last_error` to park a message in — print and
@@ -310,6 +333,43 @@ int peacock_executor_slice_handle(peacock_executor_t* executor, uint64_t handle,
   } catch (...) {
     executor->last_error = "unknown exception";
     executor->session.reset();
+    return 1;
+  }
+}
+
+int peacock_executor_collect_node_times(peacock_executor_t* executor,
+                                        PeacockNodeDeviceTime* out, uint64_t cap,
+                                        uint64_t* out_count) {
+  if (!executor || !out_count) return 1;
+  if (!executor->session) {
+    executor->last_error = "no plan loaded";
+    return 1;
+  }
+  try {
+    // Same layout argument as PeacockNodeStats above: the copy below is a field-by
+    // -field one rather than a reinterpret_cast, but the assert keeps the two
+    // definitions from drifting into different meanings for the same names.
+    static_assert(sizeof(PeacockNodeDeviceTime) == sizeof(peacock::NodeDeviceTime));
+    auto times = executor->session->collect_node_times();
+    *out_count = static_cast<uint64_t>(times.size());
+    auto n = std::min<uint64_t>(times.size(), out ? cap : 0);
+    for (uint64_t i = 0; i < n; ++i) {
+      out[i].seq = times[i].seq;
+      out[i].partition = times[i].partition;
+      out[i].device_us = times[i].device_us;
+    }
+    if (times.size() > n) {
+      executor->last_error = "collect_node_times: buffer holds " +
+                             std::to_string(cap) + " of " +
+                             std::to_string(times.size()) + " recorded regions";
+      return 1;
+    }
+    return 0;
+  } catch (const std::exception& e) {
+    executor->last_error = e.what();
+    return 1;
+  } catch (...) {
+    executor->last_error = "unknown exception";
     return 1;
   }
 }

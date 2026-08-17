@@ -78,6 +78,10 @@ TableResult execute_scan(const fb::CudfScan* scan,
     opts.set_row_groups({rgs});
   }
 
+  // Everything above is flatbuffer decode and reader-option assembly. Note that the
+  // "device" interval for a scan also contains host file I/O and parquet decode —
+  // cuDF's reader does both behind one call, and nothing here can separate them.
+  mark_device_start();
   auto result = cudf::io::read_parquet(opts);
 
   // Optional diagnostic (PEACOCK_LOG_SCAN_ROWS=1): rows actually decoded and

@@ -270,7 +270,8 @@ impl InstrumentedStream {
                     // #11 single-node execution = one output partition (coalesced):
                     // empty ⇒ the golden renders partitions=1, no sub-lines.
                     part_stats: Vec::new(),
-                    time_us: 0, // CPU path: no device timing
+                    // CPU path: no device timing.
+                    ..Default::default()
                 },
             ));
         }

@@ -24,10 +24,12 @@ use arrow::ipc::reader::StreamReader;
 use datafusion::error::DataFusionError;
 
 use peacockdb_ffi::raw::{
-    peacock_executor_begin_plan, peacock_executor_end_plan, peacock_executor_execute_node,
-    peacock_handle_release, peacock_install_rmm_pool, peacock_last_error, peacock_result_free,
-    peacock_result_from_handle, peacock_measure_timing_floor_us, peacock_set_node_timing,
-    PeacockExecutor, PeacockNodeStats, PeacockRmmPoolInfo, PEACOCK_RMM_POOL_INSTALLED,
+    peacock_executor_begin_plan, peacock_executor_collect_node_times, peacock_executor_end_plan,
+    peacock_executor_execute_node, peacock_handle_release, peacock_install_rmm_pool,
+    peacock_last_error, peacock_result_free, peacock_result_from_handle,
+    peacock_measure_timing_floor_us, peacock_set_node_timing, PeacockExecutor,
+    PeacockNodeDeviceTime, PeacockNodeStats, PeacockRmmPoolInfo, PEACOCK_NODE_TIMING_EVENTS,
+    PEACOCK_NODE_TIMING_OFF, PEACOCK_NODE_TIMING_SYNC, PEACOCK_RMM_POOL_INSTALLED,
 };
 
 use crate::cpu_executor::logical_size_from_schema;
@@ -43,7 +45,7 @@ use crate::cpu_executor::logical_size_from_schema;
 /// refuses it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RmmPool {
-    /// A pooled resource is installed. Sizes are what it was actually built with.
+    /// Sizes are what the pool was actually built with, not what was requested.
     Pool { integrated: bool, free_bytes: u64, initial_bytes: u64, maximum_bytes: u64 },
     /// The pool could not be built — typically a neighbour holding the device when the
     /// reservation was computed — so rmm's default resource is in place and nobody
@@ -74,20 +76,17 @@ impl std::fmt::Display for RmmPool {
 
 /// Install the pooled device allocator and report what happened.
 ///
-/// Idempotent, and the idempotency lives in C++ (`peacock::install_rmm_pool`) rather
-/// than behind a `OnceLock` here, so the process has exactly one guard no matter which
-/// side calls first — the gtest binaries call it from `main()`, this path calls it per
-/// case. A second call rebuilding the pool would drop a resource that live allocations
-/// still point into; the benchmark target, 127 `#[test]` functions sharing one process,
-/// is precisely the shape that would find that.
+/// Idempotent, in C++ (`peacock::install_rmm_pool`) rather than behind a `OnceLock` here,
+/// so the process has one guard whichever side calls first — the gtest binaries from
+/// `main()`, this path per case. A second call rebuilding the pool would drop a resource
+/// live allocations still point into.
 ///
-/// Must run before any GPU work. Cheap to call again afterwards — it returns the first
-/// call's outcome — which is why the caller can just ask for the label at write time.
+/// Must run before any GPU work; cheap afterwards, since it returns the first call's
+/// outcome, so the caller can ask for the label at write time.
 ///
-/// The engine does not install this for itself: a shipping query still allocates the
-/// expensive way, and `gpu_memory_limit` is still accepted and ignored. Changing that is
-/// `llm-wiki/tickets.md` #148, and it is a decision about the product rather than about
-/// measurement, which is why this entry point exists in the meantime.
+/// The engine does not install this for itself — a shipping query still allocates the
+/// expensive way and `gpu_memory_limit` is accepted and ignored. That is #148, a product
+/// decision rather than a measurement one, which is why this entry point exists.
 pub fn install_rmm_pool() -> RmmPool {
     let mut info = PeacockRmmPoolInfo::default();
     // Non-zero only for a null pointer, which cannot happen here.
@@ -105,36 +104,51 @@ pub fn install_rmm_pool() -> RmmPool {
     }
 }
 
-/// Turn per-node GPU timing on or off (process-global, OFF by default).
-///
-/// With it on, every unit of work inside the C++ `NodeSession` is bracketed by a
-/// `cudaStreamSynchronize`, and [`NodeMemoryStats::time_us`] /
-/// [`PartitionStat::time_us`] carry real microseconds instead of zeros. Why the sync
-/// is both what makes the number real and what makes it costly — hence opt-in — is
-/// argued once, on `set_node_timing` in `cpp/src/plan_executor.h`.
-///
-/// Process-global, and the GPU suite already runs `--test-threads=1` (cuDF/RMM share
-/// one process-wide pool), so there is no cross-test interleaving to guard against.
-pub fn set_node_timing(enabled: bool) {
-    unsafe { peacock_set_node_timing(if enabled { 1 } else { 0 }) };
+/// How per-node GPU regions are measured. `Off` by default, because neither mode
+/// is free and one of them changes how the engine SCHEDULES.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum NodeTiming {
+    /// No measurement. Every timing field stays 0.
+    #[default]
+    Off,
+    /// Host clock per region, closed by a `cudaStreamSynchronize` into
+    /// [`PartitionStat::host_submit_us`]. The sync serializes what cuDF would pipeline,
+    /// so measuring changes what is measured. Kept as the baseline for `Events`.
+    Sync,
+    /// CUDA events around the device work, host clock around the host work, no sync
+    /// inside the region. Device numbers arrive via `collect_device_times` after the
+    /// root materialize, into [`PartitionStat::device_us`].
+    Events,
 }
 
-/// Microseconds the MEASUREMENT costs: [`set_node_timing`]'s timed region wrapped
-/// around no work at all.
+/// Select the per-node GPU timing mode (process-global, [`NodeTiming::Off`] by default).
 ///
-/// This is the resolution floor of every `time_us` in this module. A node's number
-/// is its real work PLUS one of these, so a node reporting at or below the floor is
-/// not cheap — it is unresolvable, and the two look identical unless the floor is
-/// printed next to them. That is the whole reason this exists; `bench_stats_str`
-/// writes it into each record as `sync_floor_us`.
+/// Why it is opt-in in either mode, and why the split into host setup / host submit /
+/// device exists, is argued once on `set_node_timing` and `mark_device_start` in
+/// `cpp/src/plan_executor.h`. The GPU suite runs `--test-threads=1` (cuDF/RMM share one
+/// process-wide pool), so the global needs no cross-test guard.
+pub fn set_node_timing(mode: NodeTiming) {
+    let raw = match mode {
+        NodeTiming::Off => PEACOCK_NODE_TIMING_OFF,
+        NodeTiming::Sync => PEACOCK_NODE_TIMING_SYNC,
+        NodeTiming::Events => PEACOCK_NODE_TIMING_EVENTS,
+    };
+    unsafe { peacock_set_node_timing(raw) };
+}
+
+/// Microseconds the measurement costs under [`NodeTiming::Sync`]: that mode's timed
+/// region around no work at all.
 ///
-/// Do NOT subtract it from node times. Individual node measurements vary by more
-/// than the floor itself, so subtracting manufactures zeros and negative-clamped
-/// noise — it would hide precisely what reporting the floor is meant to expose.
+/// The resolution floor of every sync-mode time here. A node's number is its real work
+/// plus one of these, so a node at or below the floor is not cheap but unresolvable, and
+/// the two are indistinguishable unless the floor is printed beside them —
+/// `bench_stats_str` writes it into each record as `sync_floor_us`.
 ///
-/// Requires a live CUDA context (construct a `GpuExecutor` first) and an idle
-/// default stream; returns 0 if CUDA errored, which is a self-announcing value
-/// since the instrumentation is never actually free.
+/// Do not subtract it: node measurements vary by more than the floor itself, so
+/// subtracting manufactures zeros and clamped noise, hiding what reporting it exposes.
+///
+/// Requires a live CUDA context (construct a `GpuExecutor` first) and an idle default
+/// stream. Returns 0 on CUDA error — self-announcing, since it is never actually free.
 pub fn measure_timing_floor_us(samples: u32) -> u64 {
     unsafe { peacock_measure_timing_floor_us(samples) }
 }
@@ -145,7 +159,14 @@ pub fn measure_timing_floor_us(samples: u32) -> u64 {
 /// resident handles — the VRAM-safety net for mid-walk errors.
 pub struct GpuNodeExecutor {
     executor: *mut PeacockExecutor,
+    /// Post-order node count from `begin_plan`, kept only to size the device-time
+    /// collection buffer.
+    node_count: usize,
 }
+
+/// Output partition count is bounded by `target_partitions`; a fixed caller buffer
+/// avoids an FFI allocation/free per node for the handle array.
+const OUT_CAP: usize = 64;
 
 impl GpuNodeExecutor {
     /// Load the serialized plan into the C++ session (indexes post-order).
@@ -162,7 +183,7 @@ impl GpuNodeExecutor {
         if rc != 0 {
             return Err(last_error(executor, "peacock_executor_begin_plan"));
         }
-        Ok(Self { executor })
+        Ok(Self { executor, node_count: node_count as usize })
     }
 }
 
@@ -185,9 +206,6 @@ impl NodeExecutor for GpuNodeExecutor {
         // Flatten the per-child partition handles + per-child counts.
         let counts: Vec<u64> = input_handles.iter().map(|c| c.len() as u64).collect();
         let flat: Vec<u64> = input_handles.iter().flatten().copied().collect();
-        // Output partition count is bounded by target_partitions; a fixed
-        // caller buffer avoids an FFI allocation/free for the handle array.
-        const OUT_CAP: usize = 64;
         let mut out_buf = [0u64; OUT_CAP];
         let mut out_count: u64 = 0;
         // Per-partition stats (parallel to out_handles); see the FFI contract.
@@ -229,22 +247,55 @@ impl NodeExecutor for GpuNodeExecutor {
         let mut output_bytes = 0usize;
         let mut max_batch_rows = 0usize;
         // Σ over partitions, matching how C++ charges shared work (the hash-scatter
-        // prologue lands on partition 0) — so this is the node's total either way.
-        // Zero unless node timing is on; see `peacock_set_node_timing`.
-        let mut time_us = 0u64;
+        // prologue lands on partition 0). Zero unless node timing is on. No `device_us`
+        // here: it is not known yet, and the driver merges it in after materialize.
+        let mut host_setup_us = 0u64;
+        let mut host_submit_us = 0u64;
         let mut part_stats: Vec<PartitionStat> = Vec::with_capacity(n);
         for (k, st) in out_stats[..n].iter().enumerate() {
             let rp = st.rows as usize;
             let bp = logical_size_from_schema(&schema, rp, st.varlen_content_bytes as usize);
+            // C++ reconstructs the same total from cuDF types (#153). Unused — `bp`
+            // is — but it must agree: the bare-cuDF sf40 tests never enter Rust and
+            // report THEIR number, so if the two ends count bytes differently, every
+            // coefficient fitted across both is wrong by an undetectable factor.
+            //
+            // Debug-only: `[profile.benchmarks]` inherits release, so the measured path
+            // pays nothing while every `cargo test` GPU run checks the whole corpus.
+            //
+            // Gated on the device having materialized the types the node DECLARES —
+            // two implementations of one byte rule can only be compared when both cost
+            // the same columns. Legitimate shape divergences: a grouping-set/ROLLUP
+            // Partial AVG emits one MEAN where DataFusion declares `[count]`+`[sum]`,
+            // `__grouping_id` is built INT32 against a declared UInt8 (#155), and a union
+            // branch holds a decimal literal as FLOAT64 until `execute_union` retypes it
+            // (#41). None can arise on the bare-cuDF sf40 path this protects, so skipping
+            // them costs the calibration nothing. Flag set by `types_match_declared`
+            // (execute_plan.cpp); the one such divergence that was a real bug is #154.
+            if st.schema_faithful != 0 {
+                debug_assert_eq!(
+                    st.logical_bytes as usize,
+                    bp,
+                    "{} partition {k}: C++ logical_bytes={} != Rust logical_size_from_schema={bp} \
+                     (rows={rp}, varlen={}); schema={:?}",
+                    node.name(),
+                    st.logical_bytes,
+                    st.varlen_content_bytes,
+                    schema,
+                );
+            }
             rows += rp;
             output_bytes += bp;
             max_batch_rows = max_batch_rows.max(rp);
-            time_us += st.time_us;
+            host_setup_us += st.host_setup_us;
+            host_submit_us += st.host_submit_us;
             part_stats.push(PartitionStat {
                 out_rows: rp,
                 out_bytes: bp,
                 row_groups: scan_map.get(k).map(|e| e.row_groups.clone()).unwrap_or_default(),
-                time_us: st.time_us,
+                host_setup_us: st.host_setup_us,
+                host_submit_us: st.host_submit_us,
+                device_us: 0,
             });
         }
         let stat = NodeMemoryStats {
@@ -255,7 +306,9 @@ impl NodeExecutor for GpuNodeExecutor {
             max_batch_rows,
             // Only N>1 carries sub-lines (matches the CPU golden's N==1 ⇒ none).
             part_stats: if n > 1 { part_stats } else { Vec::new() },
-            time_us,
+            host_setup_us,
+            host_submit_us,
+            device_us: 0,
         };
         Ok((out_handles, stat))
     }
@@ -296,6 +349,31 @@ impl NodeExecutor for GpuNodeExecutor {
         for &handle in handles {
             unsafe { peacock_handle_release(self.executor, handle) };
         }
+    }
+
+    async fn collect_device_times(&mut self) -> DfResult<Vec<(usize, usize, u64)>> {
+        // One entry per (node, output partition) that recorded both events, so
+        // nodes × OUT_CAP is the exact upper bound. C++ reports how many it HAD, not how
+        // many fit, and fails if that exceeds `cap` — an under-sized buffer surfaces as
+        // an error rather than as a device that quietly did less work.
+        let cap = self.node_count * OUT_CAP;
+        let mut buf = vec![PeacockNodeDeviceTime::default(); cap];
+        let mut count: u64 = 0;
+        let rc = unsafe {
+            peacock_executor_collect_node_times(
+                self.executor,
+                buf.as_mut_ptr(),
+                cap as u64,
+                &mut count,
+            )
+        };
+        if rc != 0 {
+            return Err(last_error(self.executor, "peacock_executor_collect_node_times"));
+        }
+        Ok(buf[..count as usize]
+            .iter()
+            .map(|t| (t.seq as usize, t.partition as usize, t.device_us))
+            .collect())
     }
 }
 impl Drop for GpuNodeExecutor {

@@ -45,6 +45,17 @@ pub trait NodeExecutor {
 
     /// Release resident partition handles (idempotent).
     fn release(&mut self, handles: &[u64]);
+
+    /// Drain the per-region DEVICE times recorded during this walk, as
+    /// `(seq, partition, device_us)`.
+    ///
+    /// Separate from [`Self::execute_node`] because under the events mode the answer
+    /// does not exist yet when a node returns — no sync has happened, and forcing one
+    /// would defeat the mode. Called once, after [`Self::materialize`]. Only the GPU
+    /// backend with events on has anything to report, hence the default.
+    async fn collect_device_times(&mut self) -> DfResult<Vec<(usize, usize, u64)>> {
+        Ok(Vec::new())
+    }
 }
 
 /// Flatten a plan into canonical post-order (children left-to-right, then node),
@@ -84,6 +95,19 @@ pub async fn execute_node_by_node<E: NodeExecutor>(
 
     let root_handles = handles.last().expect("plan has at least one node").clone();
     let batches = backend.materialize(&root_handles).await?;
+
+    // After materialize (the root's device work is part of the walk) and before release
+    // (which tears down the session owning the events).
+    for (seq, partition, device_us) in backend.collect_device_times().await? {
+        let Some(stat) = stats.get_mut(seq) else { continue };
+        stat.device_us += device_us;
+        // `part_stats` is emptied at N==1 by the golden convention, so a missing entry
+        // is normal — the node total above already has it.
+        if let Some(ps) = stat.part_stats.get_mut(partition) {
+            ps.device_us += device_us;
+        }
+    }
+
     backend.release(&root_handles);
     Ok((batches, stats))
 }

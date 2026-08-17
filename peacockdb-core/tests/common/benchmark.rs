@@ -31,15 +31,13 @@ use super::{data_dir_for, device_config, queries_dir_for, OneLine};
 
 /// Per-node timing snapshot written by the `peacock_gpu_benchmarks` target.
 ///
-/// Deliberately NOT under `goldens/`: every tree there is mirrored to the GPU host
-/// with `rsync --delete` by `--push-binaries`, which for a measurement history that
-/// is written ON the host and travels the other way would mean erasing it from any
-/// box that has not run the benchmarks itself.
+/// Not under `goldens/`: `--push-binaries` mirrors that tree to the GPU host with
+/// `rsync --delete`, which for records written ON the host and travelling the other way
+/// would erase them from any box that has not run the benchmarks itself.
 ///
-/// `label` is the same `<mode>-<tp>-<tier>` component the `.cpu.txt` goldens carry
-/// ([`exec_mode::golden_label`]) — the mode belongs in the name for the same reason
-/// it does there: the same query at the same device produces a different plan, and
-/// therefore different times, under full-table vs partitioned execution.
+/// `label` is the same `<mode>-<tp>-<tier>` the `.cpu.txt` goldens carry
+/// ([`exec_mode::golden_label`]); the mode belongs in the name because the same query at
+/// the same device gets a different plan, and different times, full-table vs partitioned.
 pub fn benchmark_result(dataset: &str, sf: &str, query: &str, label: &str) -> PathBuf {
     testdata_root()
         .join(format!("benchmark-results/{dataset}.sf{sf}"))
@@ -47,37 +45,37 @@ pub fn benchmark_result(dataset: &str, sf: &str, query: &str, label: &str) -> Pa
 }
 
 // --- benchmark tree ---------------------------------------------------------
-/// Format per-node EXECUTION TIMES as the same pre-order tree `cpu_stats_str`
-/// renders costs into, then the two totals.
+/// Format per-node execution times as the same pre-order tree `cpu_stats_str` renders
+/// costs into, then the totals and the `#` trailer that documents every field.
 ///
-/// Same shape, same node labels (each node's own `Display`), same "sub-lines only
-/// when N>1" rule — so a `.benchmark.txt` can be read side by side with its
-/// `.cpu.txt` sibling, line for line. Only the trailing field differs: `time_us`
-/// instead of `partitions=/output_rows=/output_bytes=`. Rows and bytes are
-/// deliberately NOT repeated here; they are deterministic and already asserted next
-/// door, and duplicating them would put non-reproducible and reproducible data in
-/// one file.
+/// Same shape, node labels and "sub-lines only when N>1" rule as the `.cpu.txt` sibling,
+/// so the two read side by side line for line; only the trailing fields differ. Rows and
+/// bytes are not repeated here — they are deterministic and asserted next door, and
+/// mixing them in would put reproducible and non-reproducible data in one file.
 ///
-/// `total_us` is the caller's END-TO-END wall clock for the query, which is strictly
-/// larger than the node sum: it also covers SQL parsing, physical planning, plan
-/// serialization, `begin_plan`, and the final `materialize` back across the FFI.
-/// Both are written because the gap between them IS the per-query overhead.
+/// Three timing terms rather than one `time_us`, because a single number cannot be
+/// fitted across the peacockdb and bare-cuDF datasets (#153): `setup_us` is a prologue
+/// only peacockdb pays, so folding it in attributes decode overhead to the device and
+/// makes every coefficient wrong by an amount that varies with plan shape.
 ///
 /// `sync_floor_us` is what the measurement costs when there is nothing to measure
 /// (see `measure_timing_floor_us`). It is written because every node time above
 /// silently includes one, so without it a reader cannot separate "this node is cheap"
 /// from "this node is under the method's resolution".
 ///
-/// `build_profile` and `allocator` are read here rather than passed in, because they
-/// are conditions of the run and not choices of the caller: every record is written
-/// from a release build measuring over a pooled rmm resource, and `run_gpu_benchmark`
-/// asserts both before it measures anything. The two lines say WHICH release profile
-/// and which pool sizes, not whether there was one.
+/// `timing_mode` is the caller's, and names the instrument the three terms came from:
+/// records taken under different ones are not comparable. `build_profile` and `allocator`
+/// are read here rather than passed in, because they are conditions of the run and not
+/// choices of the caller: every record is written from a release build measuring over a
+/// pooled rmm resource, and `run_gpu_benchmark` asserts both before it measures anything.
+/// Those two lines say WHICH release profile and which pool sizes, not whether there was
+/// one.
 #[cfg(not(feature = "rust-only"))]
 pub fn bench_stats_str(
     plan: &Arc<dyn ExecutionPlan>,
     stats: &[NodeMemoryStats],
     total_us: u64,
+    timing_mode: &str,
     sync_floor_us: u64,
 ) -> String {
     struct Node<'a> {
@@ -98,10 +96,12 @@ pub fn bench_stats_str(
     }
     fn walk(node: &Node, indent: usize, lines: &mut Vec<String>) {
         lines.push(format!(
-            "{}{}, time_us={}",
+            "{}{}, setup_us={} submit_us={} device_us={}",
             " ".repeat(indent),
             OneLine(node.plan.as_ref()),
-            node.stat.time_us,
+            node.stat.host_setup_us,
+            node.stat.host_submit_us,
+            node.stat.device_us,
         ));
         // Per-partition sub-lines only when N>1, matching the .cpu.txt convention.
         // For the Hash repartition the shared concat+scatter is charged to p0, so
@@ -109,7 +109,10 @@ pub fn bench_stats_str(
         if node.stat.part_stats.len() > 1 {
             let sub = " ".repeat(indent + 2);
             for (k, ps) in node.stat.part_stats.iter().enumerate() {
-                lines.push(format!("{sub}p{k}: time_us={}", ps.time_us));
+                lines.push(format!(
+                    "{sub}p{k}: setup_us={} submit_us={} device_us={}",
+                    ps.host_setup_us, ps.host_submit_us, ps.device_us,
+                ));
             }
         }
         for child in &node.children {
@@ -119,33 +122,59 @@ pub fn bench_stats_str(
     let root = collect(plan, stats, &mut 0);
     let mut lines = Vec::new();
     walk(&root, 0, &mut lines);
-    let nodes_total_us: u64 = stats.iter().map(|s| s.time_us).sum();
-    // How many node lines sit at or under the floor — i.e. how much of the tree above
-    // this file cannot actually resolve. One integer, because "sync_floor_us=6" alone
-    // still leaves the reader counting by hand, and the answer changes the reading of
-    // the whole record: 2/40 unresolved is a profile, 35/40 is a measurement that
-    // mostly measured its own instrument.
+    let nodes_setup_us: u64 = stats.iter().map(|s| s.host_setup_us).sum();
+    let nodes_submit_us: u64 = stats.iter().map(|s| s.host_submit_us).sum();
+    let nodes_device_us: u64 = stats.iter().map(|s| s.device_us).sum();
+    // Host side only: the host ran while the device did, so adding nodes_device_us would
+    // double-count two concurrent spans of the same clock.
+    let nodes_total_us: u64 = nodes_setup_us + nodes_submit_us;
+    // How much of the tree the record cannot resolve. 2/40 unresolved is a profile,
+    // 35/40 is a measurement that mostly measured its own instrument.
     //
-    // The floor scales with the partition count. sync_floor_us is ONE empty timed region,
-    // but NodeMemoryStats::time_us is Σ over the node's output partitions, so a tp8 node
-    // carries eight floors, not one. Comparing the sum against a single floor makes every
-    // partitioned node look resolved when it is not — the very failure this line exists to
-    // report, silently worst on exactly the widest plans.
+    // Scaled by partition count: sync_floor_us is ONE empty region, but a node line is Σ
+    // over the node's output partitions, so a tp8 node carries eight floors. Against a
+    // single floor every partitioned node would look resolved when it is not — worst on
+    // exactly the widest plans.
+    //
+    // Against all three terms so the number stays continuous across modes.
     let at_floor = stats
         .iter()
-        .filter(|s| s.time_us <= sync_floor_us * s.part_stats.len().max(1) as u64)
+        .filter(|s| {
+            s.host_setup_us + s.host_submit_us + s.device_us
+                <= sync_floor_us * s.part_stats.len().max(1) as u64
+        })
         .count();
     lines.push(String::new());
     lines.push(
-        "# sync_floor_us = cost of the measurement itself (empty timed region: clock + \
-         cudaStreamSynchronize on an idle stream). Each node time INCLUDES one PER OUTPUT \
-         PARTITION, since a node line is the Σ over its partitions; a node at or below its \
-         own floor (sync_floor_us x partitions) is unresolved, not cheap. Do not subtract it."
+        "# timing_mode = how the numbers were taken, and what they MEAN. sync: the region \
+         ends in a cudaStreamSynchronize, so submit_us contains the device execution and \
+         device_us is 0. events: no explicit drain, and CUDA events bracket the device \
+         work as device_us. submit_us is NOT launch cost in either mode — cuDF and rmm \
+         synchronize internally, so the host waits for most of what it submits and \
+         submit_us tracks device_us closely. Only total_us is comparable across the two."
             .to_string(),
     );
     lines.push(
-        "# nodes_total_us = Σ of the per-node times above; total_us = the whole query, \
-         end to end (parse + plan + serialize + node walk + materialize)"
+        "# setup_us = host time before the node's first device touch (flatbuffer decode, \
+         handle lookups, AST build) — the prologue bare cuDF has no analogue for, which is \
+         why it is fitted as its own constant. submit_us / device_us: see timing_mode."
+            .to_string(),
+    );
+    lines.push(
+        "# sync_floor_us = cost of the SYNC measurement itself (empty timed region: clock + \
+         cudaStreamSynchronize on an idle stream). Measured in both modes: under sync it is \
+         the resolution floor every node time INCLUDES, once PER OUTPUT PARTITION; under \
+         events it is the per-region stall that is no longer paid. Do not subtract it."
+            .to_string(),
+    );
+    lines.push(
+        "# nodes_total_us = Σ setup_us + Σ submit_us, the HOST side of the walk. \
+         nodes_device_us is deliberately NOT added to it — the host ran while the device \
+         did, so the two are concurrent spans of the same clock. Device regions are on \
+         one stream in program order, so nodes_device_us is disjoint and <= total_us; \
+         the gap is stream idle, i.e. the device waiting through host prologue. \
+         total_us = the whole query, end to end (parse + plan + serialize + node walk + \
+         materialize)."
             .to_string(),
     );
     lines.push(
@@ -161,10 +190,9 @@ pub fn bench_stats_str(
          the scale. The sizes vary with free memory when the pool was built."
             .to_string(),
     );
-    // Written for every tree, including trees with no repartition in them. A line
-    // emitted only where it applies cannot be read: absence would mean either "this
-    // plan has no scatter" or "this record predates the line", which is the same
-    // ambiguity the disclosure exists to remove.
+    // Written even for trees with no repartition: emitted only where it applies, its
+    // absence would mean either "no scatter here" or "this record predates the line" —
+    // the same ambiguity the disclosure exists to remove.
     lines.push(
         "# shared_work_charged_to = which p<k> sub-line carries work a node does once \
          for all of its output partitions. A hash repartition concatenates its input \
@@ -176,8 +204,12 @@ pub fn bench_stats_str(
     lines.push(format!("build_profile={BUILD_PROFILE}"));
     lines.push(format!("allocator={}", install_rmm_pool()));
     lines.push("shared_work_charged_to=p0".to_string());
+    lines.push(format!("timing_mode={timing_mode}"));
     lines.push(format!("sync_floor_us={sync_floor_us}"));
     lines.push(format!("nodes_at_or_below_floor={at_floor}/{}", stats.len()));
+    lines.push(format!("nodes_setup_us={nodes_setup_us}"));
+    lines.push(format!("nodes_submit_us={nodes_submit_us}"));
+    lines.push(format!("nodes_device_us={nodes_device_us}"));
     lines.push(format!("nodes_total_us={nodes_total_us}"));
     lines.push(format!("total_us={total_us}"));
     lines.join("\n")
@@ -195,51 +227,43 @@ pub fn bench_stats_str(
 pub const BUILD_PROFILE: &str =
     concat!(env!("PEACOCK_BUILD_PROFILE"), " opt-level=", env!("PEACOCK_BUILD_OPT_LEVEL"));
 
-/// Runs before the measured runs and is thrown away. The first execution of a query
-/// pays for things that are not the query: the OS page cache for its parquet files,
-/// CUDA module loading and JIT for the kernels this plan reaches, and any growth the
-/// device allocator still has to do. Reporting those would say more about the host's
-/// recent history than about the plan.
-///
-/// `install_rmm_pool` reserves most of free memory up front, so on a quiet host the
-/// third of those is nearly gone before this runs — which is a reason to keep the
-/// warm-up, not to drop it: what remains is the part that varies.
+/// Discarded runs. The first execution pays for the page cache, CUDA module load and JIT,
+/// and allocator growth — the host's recent history rather than the plan. The pool
+/// removes most of the third before this runs, which is a reason to keep the warm-up:
+/// what is left is the part that varies.
 #[cfg(not(feature = "rust-only"))]
 pub const BENCH_WARMUP_RUNS: usize = 1;
 
-/// Measured runs per query. The reported tree is the run with the SECOND-smallest
-/// end-to-end time — the fastest run is discarded as the one most likely to have
-/// caught a favourable scheduling accident, and every other run is dragged upward by
-/// whatever else the (shared) GPU host was doing. Must be >= 2.
+/// Measured runs per query. The reported tree is the second-smallest by end-to-end time:
+/// the minimum is the run most likely to have caught a favourable scheduling accident,
+/// the rest are dragged up by whatever else the shared host was doing. Must be >= 2.
 #[cfg(not(feature = "rust-only"))]
 pub const BENCH_MEASURED_RUNS: usize = 10;
 
-/// Empty timed regions sampled to establish the resolution floor. Each costs one
-/// `cudaStreamSynchronize` of an idle stream — microseconds — so a large sample is
-/// cheap next to a single query, and a stable floor is worth more than the ~1ms it
-/// costs: it is the number that decides whether a small node time means anything.
+/// Empty timed regions sampled for the resolution floor. Each is one
+/// `cudaStreamSynchronize` on an idle stream, so the whole sample costs ~1ms next to a
+/// query — cheap for the number that decides whether a small node time means anything.
 #[cfg(not(feature = "rust-only"))]
 pub const BENCH_FLOOR_SAMPLES: u32 = 200;
 
 /// Time one case from `common/gpu_cases.inc` and write `testdata/benchmark-results/…`.
 ///
-/// Deliberately asserts NOTHING about the result or the cost tree. `test_gpu_full_table`
-/// / `test_gpu_partitioned` already own correctness for exactly this case list (all
-/// three targets `include!` the same `common/gpu_cases.inc`), and re-checking inside
-/// the timing loop would put golden I/O and a full result comparison inside the region
-/// being measured.
+/// Asserts nothing: `test_gpu_full_table` / `test_gpu_partitioned` already own
+/// correctness for this exact case list (all three `include!` `common/gpu_cases.inc`),
+/// and re-checking would put golden I/O and a result comparison inside the timed region.
 ///
 /// Shape of a run:
-///   1. ONE `GpuExecutor` for all 11 executions. `new_mode` builds a DataFusion
-///      SessionContext *and* calls `peacock_executor_create`; re-doing that per
-///      iteration would benchmark executor construction.
+///   1. One `GpuExecutor` for all executions — `new_mode` builds a SessionContext *and*
+///      calls `peacock_executor_create`, so rebuilding it per iteration would benchmark
+///      executor construction.
 ///   2. `BENCH_WARMUP_RUNS` discarded, then `BENCH_MEASURED_RUNS` measured.
-///   3. Pick the second-smallest run BY TOTAL and report THAT run's node times.
-///      Taking a per-node minimum across runs instead would produce a tree whose
-///      nodes belong to no single execution and can sum to less than any of them.
+///   3. Second-smallest run by total, reporting that run's node times. A per-node minimum
+///      across runs would give a tree belonging to no single execution, which can sum to
+///      less than any of them.
 ///
-/// Per-node times come from the C++ session with [`set_node_timing`] on — see its
-/// doc for why they would otherwise measure kernel submission rather than execution.
+/// Times come from the C++ session under [`NodeTiming::Events`]. `Sync` drains the stream
+/// at every region boundary, measuring a schedule the shipping engine never runs; it is
+/// still sampled once as `sync_floor_us`, so a record says what events bought.
 #[cfg(not(feature = "rust-only"))]
 pub async fn run_gpu_benchmark(
     dataset: &str,
@@ -248,14 +272,15 @@ pub async fn run_gpu_benchmark(
     gpu_label: &str,
     mode: ExecMode,
 ) {
-    use peacockdb_core::gpu_executor::{measure_timing_floor_us, set_node_timing, GpuExecutor};
+    use peacockdb_core::gpu_executor::{
+        measure_timing_floor_us, set_node_timing, GpuExecutor, NodeTiming,
+    };
 
     const _: () = assert!(BENCH_MEASURED_RUNS >= 2, "a second minimum needs >= 2 runs");
 
-    // FIRST, before the executor and therefore before any cuDF allocation: rmm hands out
-    // memory through whatever resource is current at the moment of the call, so a pool
-    // installed after the fact would leave the early intermediates on the default one and
-    // make the record's own allocator= line a half-truth.
+    // Before the executor, so before any cuDF allocation: rmm uses whatever resource is
+    // current at the moment of the call, and a pool installed later would leave the early
+    // intermediates on the default one, making the record's own allocator= a half-truth.
     //
     // Called per case rather than once behind a OnceLock because the C++ side is already
     // idempotent — a second call returns the first one's outcome and builds nothing. One
@@ -285,29 +310,24 @@ pub async fn run_gpu_benchmark(
     let sql = std::fs::read_to_string(&sql_path)
         .unwrap_or_else(|_| panic!("query file not found: {}", sql_path.display()));
     // Same split-and-validate as `assert_gpu_query`: the mode comes from the macro arm,
-    // never from parsing the label, and a crossed pair panics here. A benchmark that
-    // silently timed the other mode would produce a record that looks comparable to the
-    // correctness run's plan and is not.
+    // never from the label, and a crossed pair panics here rather than producing a record
+    // that looks comparable to the correctness run's plan and is not.
     let device = gpu_label_device(mode, gpu_label);
     let (partitions, budget) = device_config(&device);
     let label = golden_label(mode, &device);
 
-    // Real per-node numbers require draining the stream at each measurement
-    // boundary; without it the host clock sees submission, not execution.
-    //
-    // The switch is process-global, so turning it on is a loan. A guard rather than a
-    // trailing call: everything below unwraps, and an unwind past a trailing call
-    // would leave every later user in the process paying a stream sync per node.
-    // Restored to off, the default, because the FFI exposes no way to read it back —
-    // `measure_timing_floor_us` saves and restores because it runs with the switch
-    // already in a known state on the C++ side.
+    // The switch is process-global. A guard rather than a trailing reset: everything
+    // below unwraps, and an unwind would leave every later user in the process still
+    // allocating an event pair per node. Restored to Off rather than to its previous
+    // value because the FFI exposes no way to read it back.
+    const TIMING_MODE: &str = "events";
     struct NodeTimingLoan;
     impl Drop for NodeTimingLoan {
         fn drop(&mut self) {
-            peacockdb_core::gpu_executor::set_node_timing(false);
+            peacockdb_core::gpu_executor::set_node_timing(NodeTiming::Off);
         }
     }
-    set_node_timing(true);
+    set_node_timing(NodeTiming::Events);
     let _timing = NodeTimingLoan;
 
     let gpu = GpuExecutor::new_mode(&data_dir, partitions, budget, mode.partition_mode())
@@ -318,11 +338,10 @@ pub async fn run_gpu_benchmark(
         gpu.execute_instrumented(&sql).await.unwrap();
     }
 
-    // AFTER the warm-up and BEFORE the measured runs, on purpose. The floor has to be
-    // sampled under the same conditions the node times are: CUDA context up, modules
-    // loaded, the device allocator settled. Sampling it before the warm-up would measure a
-    // colder machine and understate the floor — the one direction that matters, since an
-    // understated floor makes unresolvable nodes look resolved.
+    // After the warm-up, so the floor is sampled under the same conditions as the node
+    // times: context up, modules loaded, allocator settled. Sampling it cold would
+    // understate the floor — the direction that matters, since it makes unresolvable
+    // nodes look resolved.
     let sync_floor_us = measure_timing_floor_us(BENCH_FLOOR_SAMPLES);
 
     let mut runs: Vec<(u64, Arc<dyn ExecutionPlan>, Vec<NodeMemoryStats>)> =
@@ -330,8 +349,10 @@ pub async fn run_gpu_benchmark(
     for _ in 0..BENCH_MEASURED_RUNS {
         let t0 = std::time::Instant::now();
         let (_batches, plan, stats) = gpu.execute_instrumented(&sql).await.unwrap();
-        // The last node's time_us already includes its own stream drain, so the
-        // walk is complete before the clock is read; `materialize` is inside.
+        // `materialize` is inside, and it copies the root off the device — so the
+        // clock is read after the device has actually finished, in either mode. Under
+        // Events nothing else would guarantee that: the node walk returns while the
+        // stream may still be running.
         let total_us = t0.elapsed().as_micros() as u64;
         runs.push((total_us, plan, stats));
     }
@@ -343,7 +364,10 @@ pub async fn run_gpu_benchmark(
     std::fs::create_dir_all(out.parent().unwrap()).unwrap();
     std::fs::write(
         &out,
-        format!("{}\n", bench_stats_str(plan, stats, *total_us, sync_floor_us)),
+        format!(
+            "{}\n",
+            bench_stats_str(plan, stats, *total_us, TIMING_MODE, sync_floor_us)
+        ),
     )
     .unwrap();
     eprintln!(

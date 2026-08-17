@@ -50,12 +50,31 @@ pub struct PartitionStat {
     pub out_bytes: usize,
     /// Scan only: the row groups this partition reads (empty for non-scan nodes).
     pub row_groups: Vec<u32>,
-    /// Wall-clock microseconds this partition's work took. Populated ONLY by the
-    /// GPU backend with timing enabled (see
-    /// [`crate::gpu_executor::set_node_timing`]); 0 everywhere else, including
-    /// every CPU backend. Never rendered into a `.cpu.txt` golden — those stay
-    /// deterministic; timings live in `testdata/benchmark-results/`.
-    pub time_us: u64,
+    /// Host microseconds before this partition's first device touch: flatbuffer decode,
+    /// handle lookups, AST construction. The peacockdb-only prologue — bare cuDF has
+    /// nothing here — which is why the cost model fits it as its own constant.
+    ///
+    /// Populated only by the GPU backend with timing on (see
+    /// [`crate::gpu_executor::set_node_timing`]); 0 everywhere else. Never rendered into
+    /// a `.cpu.txt` golden — those stay deterministic, timings live in
+    /// `testdata/benchmark-results/`.
+    pub host_setup_us: u64,
+    /// Host microseconds from the first device touch to the end of the region.
+    ///
+    /// Under sync the region ends in a drain, so it contains the device execution by
+    /// construction; under events it does not. The two modes are not comparable here.
+    ///
+    /// Even under events this is not launch cost: cuDF returns owned columns and rmm
+    /// frees them, both synchronizing internally, so the host waits for most of what it
+    /// submitted — on tpch q3 Σ host_submit_us came within 0.01% of Σ [`Self::device_us`]
+    /// (`tests/test_node_timing.rs`). Which is also why both modes measure nearly the
+    /// same wall clock: sync serializes little that was not already serial.
+    pub host_submit_us: u64,
+    /// Microseconds the device spent on this partition, between the region's CUDA events.
+    /// Nonzero only under events, and only once the driver has collected them — they do
+    /// not exist when the node returns, which is the point of using events. Regions that
+    /// never touched the device stay 0.
+    pub device_us: u64,
 }
 
 /// Per-node memory stats collected via the `on_node` callback.
@@ -74,9 +93,18 @@ pub struct NodeMemoryStats {
     pub max_batch_rows: usize,
     /// Per-output-partition breakdown (empty ⇒ N=1, no sub-lines). See [`PartitionStat`].
     pub part_stats: Vec<PartitionStat>,
-    /// Wall-clock microseconds this node took, Σ over its output partitions.
-    /// Carried here as well as in `part_stats` because `part_stats` is emptied at
-    /// N==1 (the golden convention), and a node with one partition still has a time.
-    /// 0 unless GPU node timing is on — see [`PartitionStat::time_us`].
-    pub time_us: u64,
+    /// Σ over output partitions. Carried here as well as in `part_stats` because the
+    /// latter is emptied at N==1 (the golden convention) and a single-partition node
+    /// still has times. 0 unless GPU node timing is on — see
+    /// [`PartitionStat::host_setup_us`].
+    pub host_setup_us: u64,
+    /// See [`PartitionStat::host_submit_us`]. Σ over output partitions.
+    pub host_submit_us: u64,
+    /// See [`PartitionStat::device_us`]. Σ over output partitions.
+    ///
+    /// Regions record on cuDF's single default stream in host program order, so their
+    /// intervals are disjoint: Σ device_us over a plan is bounded by the plan's wall
+    /// clock, and the gap is stream idle time the host prologue spent. That bound is the
+    /// cheapest check that the events are placed where they claim.
+    pub device_us: u64,
 }

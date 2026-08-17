@@ -11,25 +11,28 @@
 //!
 //!   testdata/benchmark-results/<dataset>.sf<sf>/<query>.<label>.benchmark.txt
 //!
-//! as the plan tree with `time_us` per node, then `build_profile` (which release profile
-//! the harness was compiled under — see [`common::benchmark::BUILD_PROFILE`]),
-//! `allocator` (the rmm pool the times were taken under — see
-//! `executors::backend::gpu_node_executor::install_rmm_pool`), `sync_floor_us` (what the
-//! measurement costs when there is nothing to measure — every node time includes
-//! one), `nodes_at_or_below_floor`, `nodes_total_us` and `total_us`.
+//! as the plan tree with `setup_us`/`submit_us`/`device_us` per node, then the head
+//! fields — `build_profile`, `allocator`, `timing_mode`, `sync_floor_us` — the
+//! `nodes_at_or_below_floor` count, the three `nodes_*_us` sums and `total_us`. The
+//! record's own `#` trailer says what each one means.
 //!
-//! The first two are conditions of the run rather than variables of it: the records only
-//! compare with each other, and with the C++ gtest binaries' numbers, because every one of
-//! them is a release build measuring over a pool. `run_gpu_benchmark` asserts both before
-//! it measures anything, so the two lines say WHICH profile and which pool sizes, not
-//! whether there was one. See it too for why one whole run is picked rather than a per-node
-//! minimum, and `executors::backend::gpu_node_executor::set_node_timing` for why measuring
-//! at all requires synchronizing the CUDA stream.
+//! Three timing terms rather than one because the cost model is fitted across two
+//! datasets (#153): `setup_us` is a host prologue only peacockdb pays, and folding it
+//! into the device term makes every coefficient wrong by a plan-shape-dependent amount.
+//!
+//! The head fields all answer one question in different registers — under what conditions
+//! is this number true. `build_profile` and `allocator` are conditions of the run rather
+//! than variables of it: every record is a release build measuring over a pool, and
+//! `run_gpu_benchmark` asserts both before it measures anything, so the two lines say
+//! WHICH profile and which pool sizes, not whether there was one. See
+//! `common::benchmark::run_gpu_benchmark` for why one whole run is picked rather than a
+//! per-node minimum, and `gpu_node_executor::set_node_timing` for why the device needs an
+//! instrument of its own.
 //!
 //! `<label>` is the `<mode>-<tp>-<tier>` component the `.cpu.txt` goldens already
-//! carry, and it is in the file name because 16 of the cases (tpch q1/q3/q5/…, tpcds
-//! q17, the shuffle_* set) appear at BOTH `full_table-tp1-standard` and
-//! `partitioned-tp8-standard`: same query, different plan, different time.
+//! carry. It is in the file name because 16 cases appear at BOTH
+//! `full_table-tp1-standard` and `partitioned-tp8-standard`: same query, different
+//! plan, different time.
 //!
 //! NOT run by CI (see `INTENTIONALLY_NOT_IN_CI` in test_ci_coverage.rs): it needs a
 //! GPU, it takes tens of minutes, and its output is a measurement, not a gate.
@@ -52,10 +55,9 @@ use common::exec_mode::ExecMode;
 /// nothing.
 ///
 /// Unlike the two correctness targets, BOTH arms expand — this is the one place the
-/// whole list runs. Each arm names its own [`ExecMode`], for the same reason the
-/// correctness macros do: the mode is stated by the call site, never recovered by
-/// parsing the label. `$mode` (the result-comparison mode) is accepted and ignored —
-/// it says how the gate should CHECK the answer, which is not this target's business.
+/// whole list runs. Each arm names its own [`ExecMode`] rather than parsing it back out
+/// of the label. `$mode` says how the gate should CHECK the answer, so it is accepted
+/// and ignored here.
 macro_rules! gpu_case {
     ($dataset:ident, $sf:literal, $query:ident, full_table_tp1_standard, $mode:ident) => {
         bench_case!($dataset, $sf, $query, full_table_tp1_standard, ExecMode::FullTable);
