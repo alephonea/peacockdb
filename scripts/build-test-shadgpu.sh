@@ -2,31 +2,28 @@
 #
 # Build for the GPU host, ship, patch, and either gate on it or measure it.
 #
-# The correctness gate (--run) and the benchmark run (--run-benchmarks) share a
-# toolchain, a target dir, a push and a patch step, which is why they are one
-# script. They must never share an exit code: one number cannot mean both
-# "correctness passed" and "measurement completed", and OR-ing them makes a
-# benchmark-infrastructure failure read as a test regression. Hence the
-# contradictions rejected in the validation block, and hence two staging dirs:
+# The gate (--run) and the benchmark run (--run-benchmarks) are one script because they
+# share a toolchain, target dir, push and patch. They must never share an exit code: one
+# number cannot mean both "correctness passed" and "measurement completed", and OR-ing
+# them makes a benchmark-infrastructure failure read as a test regression. Hence the
+# validation block, and two staging dirs:
 #
 #   cpp/install/rust-tests/        swept by --run's glob      -> gate
 #   cpp/install/rust-benchmarks/   not swept                  -> measurement
 #
-# --run enforces that separation rather than documenting it: a benchmark binary
-# found under rust-tests/ turns the run red.
+# --run enforces that rather than documenting it: a benchmark binary under rust-tests/
+# turns the run red.
 #
-# --build / --build-benchmarks run wherever a cuDF toolchain lives, in practice
-# inside scripts/docker-build.sh. Every later phase needs this workstation's ssh
-# keys and is refused in the container, where the failure would otherwise be an
-# ssh error deep inside a phase and read as a broken host.
+# --build / --build-benchmarks need a cuDF toolchain, in practice scripts/docker-build.sh.
+# Every later phase needs this workstation's ssh keys and is refused in the container,
+# where the failure would surface as an ssh error deep inside a phase.
 #
 # USAGE
 #   ./scripts/build-test-shadgpu.sh --all                # gate: build+push+patch+run
 #   scripts/docker-build.sh --no-image -- ./scripts/build-test-shadgpu.sh --build-benchmarks
 #   ./scripts/build-test-shadgpu.sh --push-binaries --patch --run-benchmarks --pull-benchmarks
 #
-# Both runs take tens of minutes, so both have a detached form: the run belongs to
-# the GPU host and you come back for the result.
+# Both runs take tens of minutes, hence a detached form for each:
 #   ./scripts/build-test-shadgpu.sh --push-binaries --patch --run-benchmarks-detached
 #   ./scripts/build-test-shadgpu.sh --benchmark-status    # going? finished? log tail
 #   ./scripts/build-test-shadgpu.sh --pull-benchmarks     # once it reports finished
@@ -39,13 +36,12 @@
 # Written on the GPU host and copied back by --pull-benchmarks; llm-wiki/build-test.md
 # has the file format.
 
-# pipefail so a failing cargo in stage_cargo_test_binary's pipeline is reported as
-# a build failure rather than as a missing binary. The remote scripts deliberately
-# do not inherit this: see launch_remote.
+# pipefail so a failing cargo in stage_cargo_test_binary's pipeline reports as a build
+# failure, not a missing binary. The remote scripts do not inherit it: see launch_remote.
 set -euo pipefail
 
-# Toolchain pinning, CARGO_TARGET_DIR, REMOTE/REMOTE_REPO, resilient_rsync and
-# stage_cargo_test_binary. One copy, shared by every phase below.
+# Toolchain pinning, CARGO_TARGET_DIR, REMOTE/REMOTE_REPO, resilient_rsync,
+# stage_cargo_test_binary.
 . "$(dirname "${BASH_SOURCE[0]}")/lib/shadgpu-env.sh"
 
 # Rust integration tests that link libpeacock_gpu.so and must run on the GPU host.
@@ -55,13 +51,12 @@ RUST_TESTS_STAGING=cpp/install/rust-tests
 # The measurement target and its own staging dir. setup-glibc.sh patches both.
 BENCH_TARGET=peacock_gpu_benchmarks
 BENCH_STAGING=cpp/install/rust-benchmarks
-# opt-3, where the default test profile leaves workspace crates at opt-level 1 and
-# so measures a host overhead that is not the engine's. `[profile.benchmarks]` in
-# the workspace Cargo.toml carries the argument.
+# opt-3: the default test profile leaves workspace crates at opt-level 1 and so measures
+# a host overhead that is not the engine's. See `[profile.benchmarks]` in Cargo.toml.
 BENCH_PROFILE=benchmarks
 
-# Runner, log, exit code and run id of a detached run, per phase. Outside
-# cpp/install/, which --push-binaries mirrors with --delete.
+# Runner, log, exit code and run id of a detached run. Outside cpp/install/, which
+# --push-binaries mirrors with --delete.
 REMOTE_STATE=$REMOTE_REPO/.run-state
 
 BUILD=0
@@ -127,8 +122,8 @@ while [ $# -gt 0 ]; do
 done
 
 # --- validation: every contradiction named, none resolved by argument order ---
-# All of it before the first side effect: half a deploy followed by "you cannot do
-# that" is worse than either outcome on its own.
+# Before the first side effect: half a deploy followed by "you cannot do that" is worse
+# than either outcome alone.
 die() { echo "$*" >&2; exit 1; }
 
 if [ "$RUN" -eq 1 ] && [ "$RUN_BENCH" -eq 1 ]; then
@@ -154,11 +149,10 @@ if [ -f /.dockerenv ] \
 fi
 
 # --- build --------------------------------------------------------------------
-# The C++ half is not optional for either target, the benchmarks included: the
-# staged binary resolves libpeacock_gpu.so from cpp/install/lib, and the per-node
-# timing lives in that library (peacock_set_node_timing / node_session.cpp). A
-# fresh binary against a stale .so fails to link on the GPU host, or — if the
-# symbol happens to resolve — reports time_us=0 for every node.
+# The C++ half is not optional for either target: the staged binary resolves
+# libpeacock_gpu.so from cpp/install/lib, and the per-node timing lives in that library.
+# A fresh binary against a stale .so fails to link on the host, or — if the symbol
+# happens to resolve — reports zeros for every node.
 if [ "$BUILD" -eq 1 ] || [ "$BUILD_BENCH" -eq 1 ]; then
   ./scripts/build.sh --cudf_ROOT "$CUDF_ROOT" --gcc-version "$GCC_VERSION" --configure
   ./scripts/build.sh --cudf_ROOT "$CUDF_ROOT" --gcc-version "$GCC_VERSION" --build
@@ -200,9 +194,8 @@ fi
 
 if [ "$BUILD_BENCH" -eq 1 ]; then
   # The first build under $BENCH_PROFILE is a cold compile of the whole DataFusion
-  # stack plus a third libpeacock_gpu.so, since peacockdb-ffi's OUT_DIR lives inside
-  # the profile directory. One-time per profile, and it leaves the correctness
-  # caches untouched.
+  # stack plus a third libpeacock_gpu.so — peacockdb-ffi's OUT_DIR lives inside the
+  # profile directory. One-time per profile; the correctness caches are untouched.
   rm -rf "$BENCH_STAGING"
   stage_cargo_test_binary "$BENCH_TARGET" "$BENCH_STAGING" --profile "$BENCH_PROFILE"
 fi
@@ -217,20 +210,17 @@ if [ "$RSYNC" -eq 1 ]; then
   done
   [ -f "$BENCH_STAGING/$BENCH_TARGET" ] && strip --strip-debug "$BENCH_STAGING/$BENCH_TARGET"
 
-  # --delete on every push here, and the source is cpp/install/ rather than
-  # cpp/install/* : with a glob rsync gets several sources and --delete stops
-  # meaning what it looks like. It removes host orphans, which for a directory the
-  # remote runner globs is the difference between a stale binary sitting there and
-  # a stale binary executing. It cuts the other way too: the mirror covers
-  # rust-benchmarks/, so a push from a checkout that never ran --build-benchmarks
-  # removes the benchmark binary from the host — a gate push between your
-  # --build-benchmarks and your --run-benchmarks undoes the former.
+  # Source is cpp/install/ and NOT cpp/install/* : with a glob rsync gets several
+  # sources and --delete stops meaning what it looks like. It removes host orphans,
+  # which for a directory the remote runner globs is the difference between a stale
+  # binary sitting there and a stale binary executing. It cuts the other way too: the
+  # mirror covers rust-benchmarks/, so a gate push from a checkout that never ran
+  # --build-benchmarks deletes the benchmark binary off the host.
   #
-  # -a, not -r. cpp/install/lib is a vendored dependency tree full of soname chains
-  # (libglog.so.2 -> libglog.so.0.7.1, where the left name is the DT_SONAME the
-  # dynamic linker asks for), and `rsync -r` skips symlinks: the host would receive
-  # libglog.so.0.7.1 and nothing named libglog.so.2, and every binary would die at
-  # start with "error while loading shared libraries".
+  # -a, not -r. cpp/install/lib is a vendored tree full of soname chains
+  # (libglog.so.2 -> libglog.so.0.7.1, the left name being the DT_SONAME the linker
+  # asks for), and `rsync -r` skips symlinks — the host would get the target and not
+  # the name, and every binary would die at start on "loading shared libraries".
   resilient_rsync -a --delete cpp/install/ "$REMOTE:$REMOTE_REPO/cpp/install/"
   # The goldens the rust GPU tests assert against. Without this the host keeps
   # whatever a previous run left, so a locally-regenerated golden is compared
@@ -258,23 +248,17 @@ fi
 
 # --- the shared launcher ------------------------------------------------------
 # One launcher for both phases: the gate and the measurement differ in what the
-# remote script does, never in how it is started, and a second copy of the
-# setsid/rc logic is the shape coding-style.md names.
+# remote script does, never in how it is started.
 #
 # The script is installed on the host and executed from there, so attached and
-# detached run byte-identical remote code and the only difference is who holds the
-# process. Detached hands it to setsid — a session with no controlling terminal, so
-# the SIGHUP that follows a dropped ssh never reaches it — with stdin from
-# /dev/null, since the process would otherwise block or die on the closed channel.
-#
-# Neither remote script inherits this file's `set -e`: both run every binary they
-# are given and OR the exit codes, because a single crashing binary must not hide
-# every later one's result. That is a property of the runner, not of the launcher.
+# detached run byte-identical remote code; only the process owner differs. Detached
+# hands it to setsid — a session with no controlling terminal, so the SIGHUP after a
+# dropped ssh never reaches it — with stdin from /dev/null, which the process would
+# otherwise block or die on.
 #
 # Each launch writes a fresh run id and removes the previous exit code. The runner
-# writes "<id> <rc>" last, and a status call reports a result only when that id
-# matches the id of the latest launch — otherwise an older run's completion reads
-# as this one's.
+# writes "<id> <rc>" last, and a status call reports a result only when that id is
+# the latest launch's — otherwise an older run's completion reads as this one's.
 remote_state_paths() {
   phase_runner=$REMOTE_STATE/$1.sh
   phase_log=$REMOTE_STATE/$1.log
@@ -400,6 +384,9 @@ remote_gate_script() {
     # runner deliberately does not export its equivalent — see the reason there.
     export LD_LIBRARY_PATH=$REMOTE_REPO/cpp/install/lib:/usr/local/cuda-12.5/compat:/home/info/glibc-2.35/lib:\$HOME/miniforge3/envs/rapids-cuda-12.2/lib:\$LD_LIBRARY_PATH
 
+    # Deliberately no `set -e`, matching CI: run every binary even after one fails and
+    # OR the codes into rc. Under set -e a SIGSEGV in one GPU binary cost us every
+    # later result, which read as "not run" but looked like "fine".
     rc=0
 
     # The staging separation, as something that can go red: a measurement binary run

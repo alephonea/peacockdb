@@ -10,17 +10,15 @@
 //   - `tests/peacock_gpu_benchmarks.rs` — expands BOTH to a benchmark that times the
 //     query and asserts nothing.
 //
-// The label is matched as a LITERAL token, not captured as an `ident`. That is the
-// point of keeping one file rather than two: a row whose label is neither of the two
-// known ones matches no rule and fails to COMPILE, in all three targets at once.
-// Split across two files the same mistake compiles fine — the row just silently runs
-// in the wrong suite, or in none.
+// The label is matched as a LITERAL token, not captured as an `ident` — the point of
+// keeping one file rather than two. A row whose label is neither known one matches no
+// rule and fails to COMPILE in all three targets at once; split across two files the
+// same mistake compiles, and the row silently runs in the wrong suite or in none.
 //
-// Each target defines its own `gpu_case!` BEFORE including this file. A distinct name
-// (rather than redefining `gpu_full_table_test!` in one of them) is deliberate:
-// shadowing a `#[macro_export]`ed macro works, but "which definition is in scope here"
-// is then something a reader has to reason about, and getting it wrong silently runs
-// the wrong thing rather than failing to compile.
+// Each target defines its own `gpu_case!` before including this. The distinct name
+// (rather than shadowing `gpu_full_table_test!`) keeps "which definition is in scope"
+// from being something a reader has to work out, where being wrong runs the wrong
+// thing instead of failing to compile.
 //
 // One list, so a query added to the suite is benchmarked without a second edit, and a
 // benchmark record can never describe a query the gate does not run.
