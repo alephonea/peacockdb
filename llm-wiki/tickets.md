@@ -35,62 +35,17 @@ diagnosed "regression" + rollback: check this ticket before blaming your change.
 ### #153 — equi-join residual filter is applied after the outer gather
 **Priority: high**
 
-`cpp/src/operators/join.cpp` (~L353) evaluates a `CudfHashJoin.filter` over the gathered
-`[left…, right…]` table and applies it with `cudf::apply_boolean_mask` — *after* the join
-has already null-padded its unmatched rows. Correct for Inner, where every output row is a
-match. For Left, Right and Full it demotes the ON-condition to a WHERE, in two ways at
-once: a padded row's NULL columns make the predicate NULL and `apply_boolean_mask` drops
-it, and a left row whose only matches fail the predicate is dropped instead of being
-emitted null-padded. `SELECT … LEFT JOIN b ON a.k = b.k AND b.v > 50` therefore returns an
-inner join.
+`join.cpp` (~L353) masks a `CudfHashJoin.filter` over the gathered table *after* the join
+null-padded its unmatched rows, so Left, Right and Full demote the ON condition to a WHERE.
 
-**The same file already knows.** `execute_nested_loop_join` reaches the same
-cross-then-mask shape on its non-AST-able path and refuses it, one hundred lines below
-(~L453):
-
-```
-// Inner only — a LEFT join would also have to re-emit unmatched left rows with
-// null right columns, which a mask cannot express.
-```
-
-That is this ticket's argument, correctly reasoned, in the operator next door — so the fix
-direction is settled in this codebase rather than proposed. It also says where the gap came
-from: whoever wrote that guard had the argument in hand and did not carry it to the equi
-path. The nested-loop path is therefore **not** affected — AST-able filters go to
-`conditional_left_join`, non-AST-able ones throw.
-
-Latent, which is why it has not bitten: across the committed goldens a `filter=` on a hash
-join appears beside Inner (27 distinct queries, 115 golden lines), LeftSemi (3) and
-LeftAnti (1), and beside no other join type in either the `.plan.txt` or the `.cpu.txt`
-set.
-
-And that is not luck. DataFusion pushes an ON predicate that reads only the nullable side
-*below* the join, where it means the same thing — tpch q13 is the worked example, whose
-`left outer join … on c_custkey = o_custkey and o_comment not like '%special%requests%'`
-plans as a bare `join_type=Left` over a `GpuFilterExec: predicate=o_comment NOT LIKE …`
-(`goldens/tpch.sf1/q13.tp8-mini.plan.txt`). So the reachability condition is sharper than
-"an outer join with a filter": it needs an ON predicate referencing **both** sides, e.g.
-`LEFT JOIN b ON a.k = b.k AND b.v > a.v`, which cannot be pushed anywhere and stays on the
-join. No corpus query has one; one query would.
-
-Fix: evaluate the residual during the join for the outer types (the `mixed_*` family
-covers Left; Right is its swap; Full has no mixed variant and needs the inner-plus-re-add
-form), or run inner + filter and re-add the unmatched side afterwards. A `PlanExecutor`
-gtest with a Left join carrying a filter is what would have caught it — the existing ones
-are all Inner.
-
-**Two prototype changes belong to that same commit**, because nothing links them to the C++
-and they will not go red on their own: `scripts/exec_model/operators/recipe.py` reproduces
-this bug deliberately, and
-`tests/test_join_capability.py::test_an_outer_join_with_a_residual_filter_is_wrong_today_which_is_153`
-asserts the wrong behaviour so the pin has something to hold. Fixing the C++ without them
-leaves a model that quietly no longer models it — and leaves the refusal standing in
-`llm-wiki/tasks/batch_partitioned_executor.md`, which should come out at the same time.
-
-Found writing the T0 join-capability suite (`scripts/exec_model`), whose recipe backend
-reproduces `execute_hash_join` branch for branch and disagreed with the SQL oracle.
-Until it is fixed the batch-partitioned planner refuses the shape at plan time
-(`llm-wiki/tasks/batch_partitioned_executor.md`, the join lowering table).
+`… LEFT JOIN b ON a.k = b.k AND b.v > 50` returns an inner join: a padded row's NULLs make the
+predicate NULL, and a left row whose only matches fail is dropped rather than null-padded.
+`execute_nested_loop_join` (~L453) refuses this exact shape with the argument written out, so
+the fix direction is settled here rather than proposed; that path is unaffected. Latent because
+DataFusion pushes an ON predicate reading one side below the join (tpch q13) — it needs one
+referencing both sides, which no corpus query has. Fix: evaluate the residual during the join
+(`mixed_*` covers Left, Right is its swap, Full needs inner-plus-re-add), plus a `PlanExecutor`
+gtest with a filtered Left join. The same commit drops the prototype's deliberate reproduction.
 
 <a id="t80"></a>
 ### #80 — Anti-join NOT IN three-valued logic + independent DuckDB result oracle
@@ -183,24 +138,18 @@ a data dir panics instead of being skipped. Found during the comment audit.
 
 <a id="t41"></a>
 ### #41 — Standing test for GpuUnion branch-type normalization cast
-Nothing is unimplemented here, which is why the title says *test*. The cast exists and works:
-`execute_union` retypes every branch column to the union's declared output type before
-`cudf::concatenate`, because branches are planned independently and one column can land a
-different cuDF type per branch (`cpp/src/operators/union.cpp` ~L49). Without it concatenate
-throws on mismatched types.
+Nothing is unimplemented — the title says *test*. `execute_union` retypes every branch column to
+the declared output type before `cudf::concatenate` (`union.cpp` ~L49), or it throws.
 
-What is open is that the coverage is *incidental*, and unverified. The implementation comment names the case it
-was written for — tpcds q5, which pairs a decimal measure against a `cast(0 AS decimal(7,2))`
+What is open is that the coverage is incidental. The implementation comment names the case it
+was written for — tpcds q5, pairing a decimal measure against a `cast(0 AS decimal(7,2))`
 literal that materializes as FLOAT64, plus cuDF's SUM drifting fixed_point scale per branch —
-and tpcds q5 does run `full_table_tp1_standard` GPU at `golden_exact` (tpch q5 is irrelevant:
-its plan has no `GpuUnionExec` at all). So the branch is exercised today, and breaking the
-cast would go red. But it is red by luck: nothing pins that q5 keeps a union with mismatched
-branch types, and if that shape changes the cast becomes untested silently — the exact
-situation this ticket was filed to end.
-
-Fix: a focused gtest that builds a two-branch union with FLOAT64 against DECIMAL128 and
-asserts the concatenate succeeds with the declared type. Cheap, and independent of any corpus
-query.
+and tpcds q5 does run `full_table_tp1_standard` GPU at `golden_exact`, so breaking the cast goes
+red today. But it is red by luck: nothing pins that q5 keeps a union with mismatched branch
+types, and if that shape changes the cast becomes untested silently, which is the situation this
+ticket was filed to end. (tpch q5 is irrelevant — its plan has no `GpuUnionExec`.) Fix: a
+focused gtest building a two-branch union with FLOAT64 against DECIMAL128, asserting the
+concatenate succeeds with the declared type. Cheap, and independent of any corpus query.
 
 ## Blockers for disabled coverage
 
@@ -318,329 +267,121 @@ rank/dense_rank gaps of #32 carry over unchanged.
 
 <a id="t155"></a>
 ### #155 — umbrella: join execution through a wider C and FlatBuffers API
-
-The batch-partitioned mode's join lowering runs entirely on the frozen surface. That is
-established rather than assumed: every join mode, streamed probe included, is executed as
-`Cudf*` nodes and existing cuDF calls in `scripts/exec_model`, and the lowering per mode is
-the join capability matrix in `llm-wiki/tasks/batch_partitioned_executor.md`. **What is
-open is not whether it runs but what running it that way costs**, and every cost is a
-consequence of one of two frozen properties: a handle is consumed by the call that reads
-it, and an fb node's fields are plan constants.
-
-This ticket is the place those trades are decided together, because they overlap: three of
-the five below are removed by more than one of the changes, and picking them one at a time
-buys the same thing twice. Scope is the join only.
+Every join mode already runs on the frozen surface (`scripts/exec_model`, and the capability
+matrix in `tasks/batch_partitioned_executor.md`); open is what running it there costs.
 
 | Cost | Ticket | What removes it | Surface change |
 |---|--:|---|---|
-| build side copied once per probe batch | [#152](#t152) | refcounted handles | **none** — a handle stays a `u64` |
-| probe batch copied once per batch (Left/Full) | [#152](#t152) | refcounted handles, **or** a node returning its input beside its output | none / fbs semantics only |
-| build side re-hashed once per probe batch | [#136](#t136) | a stateful join session | 3 new symbols |
-| probe keys held resident + an extra join at finish | [#136](#t136) | a match bitmap out-param, **or** the same session | 1 argument / 3 symbols |
-| a new symbol per runtime-varying field | — | per-call parameter overrides on `execute_node` | 1 symbol, replacing 3 |
+| build side copied per probe batch | [#152](#t152) | refcounted handles | none — a handle stays a `u64` |
+| probe batch copied per batch (Left/Full) | [#152](#t152) | refcount, or a node returning its input | none / fbs semantics |
+| build side re-hashed per probe batch | [#136](#t136) | a stateful join session | 3 new symbols |
+| probe keys resident + a finish join | [#136](#t136) | a match bitmap out-param, or that session | 1 argument / 3 symbols |
+| a symbol per runtime-varying field | — | per-call overrides on `execute_node` | 1 symbol, replacing 3 |
 
-Two of those need no ABI change at all, which is where to start. [#145](#t145) is the
-refcount and is already specified; the "node returns its input" form is the cheaper half of
-the same thing and has never been costed — the ABI already writes k handles into
-`out_handles` with an `out_cap`, so multiple outputs are expressible today and only the fbs
-vocabulary, where a node kind means one output, forbids it.
-
-**The session subsumes the bitmap.** A per-seq `cudf::hash_join` that lives across probe
-calls removes the re-hash *and* tracks matched build rows internally, so #136's option (a)
-is worth doing only if the session is rejected. The session is also the largest change here
-and the only one that puts state behind a handle id, so it wants a measurement first.
-
-**What to measure before deciding.** The prototype counts copies per plan and cannot price
-them: what is unknown is a device copy of the build side against a rebuild of its hash
-table, at real shapes. tpch q3 at `partitioned-tp8-standard` is the case to take — build
-30142 rows / 244904 bytes, probe 727305 rows / 17818976 bytes, from the committed
-`.cpu.txt` — since it is the join everyone looks at first and its build side is the narrow
-one, which flatters the copy. Invert the widths and the answer may too.
-
-**Land [#154](#t154) first, or the measurement is taken against the wrong baseline.** A
-join call today deep-copies its output once, twice where the node carries a projection —
-copies that have nothing to do with the build side and that inflate every per-call number.
-Weighed against that baseline the build-side copy looks proportionally cheaper than it is,
-and the row it decides is the first one in the table. #154 needs no decision from this
-ticket and should not wait on it; it just has to be in before the numbers are taken.
-
-**Also unlocked**: [#140](#t140)'s broadcast joins need exactly the non-consuming handle
-this umbrella's first row provides, and [#91](#t91)'s repartition spike is the same copy
-seen from the shuffle end.
-
-**Out of scope, deliberately.** [#153](#t153) is correctness. [#154](#t154) is a decision
-this ticket does not make — but it is a prerequisite of the measurement above, which is a
-stronger relationship than exclusion.
-
-**Decision point:** before T12 builds the join executors. The lowering does not change
-whichever way this goes — the frozen path is the fallback, and each row above is a
-substitution inside it.
+Each follows from a handle being consumed by its reader, or an fb node's fields being plan
+constants, and they overlap. The session subsumes the bitmap; the top two rows need no ABI
+change. Land [#154](#t154) first, or the numbers are inflated by per-call copies.
 
 <a id="t154"></a>
 ### #154 — every operator exit path deep-copies its output into a fresh table
+`std::make_unique<cudf::column>(view)` deep-copies the device buffer, and 18 sites under
+`cpp/src/` do it — 10 in `join.cpp` — mostly to a table the same function just produced.
 
-`std::make_unique<cudf::column>(some_view)` deep-copies the column's device buffer. There
-are 18 such sites under `cpp/src/`, 10 of them in `join.cpp`, and most are copying a table
-the same function just produced. `execute_hash_join` is the worst: `cudf::gather` returns
-an owning table, and rather than `release()`ing its columns the code copies each one into
-`all_cols` (~L337, ~L342), then — if the node carries a `projection` — copies the kept
-columns *again* into a third table (~L376). So a join with a projection allocates and
-copies its output twice over. The semi/anti path (~L202, ~L211) and the mark path (~L259,
-~L270) have the same pair.
-
-`release()` moves the columns out of the table cuDF just built, and the three sites that
-already use it (`scan.cpp` L108, `union.cpp` L38, `join.cpp` L254) are the pattern. **This
-is a C++-only change**: `TableResult` still owns a `std::unique_ptr<cudf::table>`, so no
-header, no fbs field, no Rust and no golden moves — results are identical, only the
-allocations differ.
-
-The 18 sites fall into three kinds, and the ticket exists because the kind is not visible
-from the call site:
-
-| Kind | Sites | What it takes |
-|---|---|---|
-| whole table, freshly produced | `join.cpp` 202, 337, 342, 512, 515 | `release()` and move — mechanical |
-| ordinal subset, freshly produced | `join.cpp` 211, 270, 376, 525; `filter.cpp` 41 | `release()`, then move by index, plus an assertion that the ordinals are distinct |
-| a column of an **input** table | `join.cpp` 259; `project.cpp` 44; `window.cpp` 46; `expr.cpp` 850 | release from the input's own `TableResult` — permitted, since both drivers hand the operator its inputs by value and consume-on-use is the contract, but it changes who destroys what |
-| unresolved without reading | `aggregate.cpp` 407, 602, 604, 682 | groupby-result tables; classify before touching |
-
-The traps, in the order they will be met:
-
-- **A view taken before the release dangles.** `release()` empties the table, so `ftv` at
-  ~L372 and the mask path's view have to be dropped first. Per-site ordering, and getting
-  it wrong is a use-after-free rather than a copy.
-- **A repeated ordinal in a projection would move the same column twice**, leaving a null
-  `unique_ptr` and a table with a hole — a wrong answer, not a throw. Across the committed
-  goldens no projection repeats an ordinal or reorders (157 distinct lists, zero of each),
-  which is exactly why the release form needs an assertion rather than the observation.
-- **Some sites copy an input rather than a freshly produced table** — the mark path takes
-  the left input's columns (~L259). Releasing there means releasing from the input's own
-  `TableResult`, which consume-on-use permits but which changes who destroys what, and the
-  recursive driver holds those same values in `NodeInputs`.
-- **A copy compacts a sliced column and a release does not.** Where a source view carries
-  an offset, `make_unique<cudf::column>(view)` materializes a compact column and lets the
-  parent go; `release()` keeps whatever the table owns, parent included. None of join.cpp's
-  sources are slices, so it does not bite there — but it is why the other ten sites under
-  `cpp/src/` cannot be swept in the same commit without checking each.
-
-Cost today: one extra copy of every node's output, per node, per query. Cost after the
-batch-partitioned mode lands: the same copy **per batch**, since a streamed probe calls the
-join once per probe batch — so this moves from a constant overhead to a per-batch one on
-the mode's hot path. Unrelated to the frozen ABI (#152, #136) and fixable independently of
-it; it is C++-internal, so no plan, golden or wire byte moves.
-
-**The same edit deletes the repetition.** The ten-line "copy each column, rebuild the name
-vector, apply the projection" block appears four times in `join.cpp` alone — the reviewer's
-count on that function was that ~80 of its 270 code lines are this ceremony. Two helpers
-beside `TableResult` (build one from an owned table plus names; select an ordinal subset of
-one by moving) turn every exit path into a line, which is where most of the length of
-`execute_hash_join` goes.
-
-That is not the scope creep coding-style.md forbids: you cannot stop copying without
-changing how each exit path builds its `TableResult`, and there are ten of them saying the
-same thing. The helpers are how the change is made once instead of ten times — writing the
-release form out ten times over would be the worse diff, not the disciplined one.
-
-**Land this before [#155](#t155)'s measurement.** That ticket weighs a build-side copy per
-probe batch against a hash-table rebuild, and these copies sit in the same per-call number
-without belonging to either side of the comparison — leave them in and the build-side copy
-reads as a smaller share of the call than it is.
-
-Found while modelling `execute_hash_join` call by call for the T0 join capability suite.
+`execute_hash_join` is worst: `cudf::gather` returns an owning table, the code copies each
+column into `all_cols` (~L337, ~L342), then copies the kept ones again if the node projects
+(~L376). `release()` moves instead; `scan.cpp` L108, `union.cpp` L38, `join.cpp` L254 are the
+pattern, and it is C++-internal — no header, fbs, Rust or golden moves. Four kinds: whole table
+freshly produced (`join.cpp` 202, 337, 342, 512, 515), mechanical; ordinal subset (`join.cpp`
+211, 270, 376, 525, `filter.cpp` 41), needing an assert the ordinals are distinct; a column of
+an **input** table (`join.cpp` 259, `project.cpp` 44, `window.cpp` 46, `expr.cpp` 850), changing
+who destroys what under `NodeInputs`; and `aggregate.cpp` 407, 602, 604, 682, unresolved without
+reading. Traps: a view taken before the release dangles (`ftv` ~L372), and a repeated projection
+ordinal moves one column twice leaving a hole — a wrong answer, not a throw, which is why it
+needs the assert and not the observation. Land before [#155](#t155).
 
 <a id="t152"></a>
 ### #152 — batch-partitioned GpuJoin: the build handle does not survive a streamed probe
+`NodeSession::execute_node` erases every input handle it reads (`node_session.cpp` ~L250, ~L339,
+~L427), but a streamed probe calls the join seq once per batch and needs it B times.
 
-`NodeSession::execute_node` erases every input handle it reads (`cpp/src/node_session.cpp`
-~L250, ~L339, ~L427), and the header states it: input handles are consumed. The
-batch-partitioned join calls the `CudfHashJoin` seq once per (partition, probe batch) with
-the build handle and that batch — so the build table is gone after the first probe call, and
-a lane with B probe batches needs it B times.
+[#136](#t136) assumes the table is there and so does the recipe mapping in
+`tasks/batch_partitioned_executor.md`; neither says how. [#140](#t140) records the same
+constraint one axis over — one build feeding N lanes — and [#145](#t145) is the mechanism both
+want. Until then the choices are a device copy of the build side per probe batch, the cost
+streaming exists to avoid, or a single-batch probe, which the capability matrix already forces
+for filtered and non-inner-NLJ joins. The finish pass (#136) is unaffected either way.
 
-[#136](#t136) assumes the table is there ("every call rebuilds the join from scratch"), and
-so does the recipe mapping in `llm-wiki/tasks/batch_partitioned_executor.md`; neither says
-how. [#140](#t140) records the same constraint one axis over — one build feeding N lanes —
-and [#145](#t145) is the mechanism both want: a handle that is an owner plus a view, so
-siblings share one table. Across probe calls the sharing is in time rather than across
-lanes, but it is the same refcount.
-
-Until then the choices are a device copy of the build side per probe batch, which is the
-cost streaming exists to avoid, or a single-batch probe, which is what the capability
-matrix already forces for filtered and non-inner-NLJ joins. Decide before T12 builds the
-join executors, and decide it beside the other join-surface trades rather than alone —
-[#155](#t155) is the umbrella. The finish pass (#136) is unaffected either way, since it
-addresses the build seq once at done.
-
-Whether the copy is tolerable in v1 is a quantitative question, and the numbers already
-exist: each join's two `GpuCoalescePartitionsExec` lines in the committed `.cpu.txt`
-goldens carry both sides' `output_bytes`, and B copies of the build cost `B × build_bytes`
-against one probe stream of `probe_bytes`. Take the ratio on **bytes, not rows** — a copy
-costs bytes, and the two ratios disagree by a factor of three on the first join anyone will
-look at. tpch q3 at `partitioned-tp8-standard`: build 30142 rows / 244904 bytes, probe
-727305 rows / 17818976 bytes, so 24:1 by rows and 73:1 by bytes. Rows understate the margin
-here only because this build side is the narrow one, which is a property of this join and
-not of joins; invert the widths and rows would flatter the copy instead. Answer it from the
-goldens before commissioning a measurement.
+Whether the copy is tolerable is answerable from the goldens: each join's two
+`GpuCoalescePartitionsExec` lines carry both sides' `output_bytes`, and B copies cost `B ×
+build_bytes` against one probe stream. Take the ratio on **bytes, not rows** — tpch q3 is 24:1
+by rows and 73:1 by bytes. Decide before T12, under [#155](#t155).
 
 <a id="t151"></a>
 ### #151 — the per-node benchmarks measure the engine with no RMM pool
+`peacock_gpu_benchmarks` times the engine through the FFI and the engine installs no device
+resource ([#148](#t148)), so every intermediate is a `cudaMalloc`/`cudaFree` inside `time_us`.
 
-`peacock_gpu_benchmarks` times the engine through the FFI, and the engine installs no
-device resource ([#148](#t148)) — so every intermediate it allocates is a
-`cudaMalloc`/`cudaFree` round trip, and a node's `time_us` includes that. The C++ gtest
-binaries stopped measuring it: `cpp/tests/gpu/rmm_pool.hpp` installs a pooled resource in
-`main()`, with `PEACOCK_RMM_POOL=0` to turn it back off and price the allocator itself. The
-two families of numbers in the tree are therefore taken under different allocators, and the
-per-node records charge a node for the default resource — worst exactly where its output is
-largest, which is where a reader is most likely to draw a conclusion.
+The C++ gtest binaries stopped measuring that — `cpp/tests/gpu/rmm_pool.hpp` installs a pooled
+resource in `main()`, `PEACOCK_RMM_POOL=0` turns it off — so the tree's two families of numbers
+are taken under different allocators, and the per-node records charge a node for the default
+resource worst where its output is largest. Fix by landing #148, so the benchmark inherits the
+shipping engine's pool; failing that, an install hook sharing `rmm_pool.hpp`'s sizing rule.
+Either way the record must name its allocator beside `build_profile` and `sync_floor_us`.
 
-The fix is to land #148: the engine installs the pool, the benchmark inherits it, and no
-test-only path exists that the shipping engine does not take. Failing that, an install hook
-for the benchmark binary with the same `PEACOCK_RMM_POOL=0` switch and the sizing rule
-shared with `rmm_pool.hpp` rather than copied — it is one rule either way.
-
-Either way the record has to carry which allocator produced it, beside `build_profile` and
-`sync_floor_us`, for the same reason those are there: a number whose meaning depends on how
-it was produced must travel with that fact. Until then, node times are comparable with each
-other and not with the C++ numbers in `llm-wiki/reports/benchmark-minimal.md`.
-
-A sweep settles a second, smaller thing, and the two halves of it are worth separating. The
-records' SHAPE is current — verified across all 127 on 2026-08-14: all 88 hash-repartition
-nodes bill their shared concat+scatter to p0, every node with sub-lines sums exactly to its
-node line, and every at-floor count uses floor x partitions. Their VALUES are not. They were
-measured before the scatter stopped opening a timed region of its own, and that region ended
-in a stream sync sitting between the scatter and the slice copies, so it barriered execution
-as well as costing a floor — which is why the move is larger than a floor. Re-running the
-same cases after the change put 66 of 88 repartition nodes faster, median -2.5% against
--0.6% for whole records; shuffle-additive tp8 reads 931us committed against 865-890us since.
-Nothing asserts the records, so nothing is red.
+The committed records' shape is current (all 127 verified 2026-08-14); their values are not —
+they predate the scatter's timed region, whose stream sync barriered execution as well as
+costing a floor. Re-running put 66 of 88 repartition nodes faster, median -2.5%, and nothing
+asserts the records, so nothing is red.
 
 <a id="t150"></a>
 ### #150 — store the embedding columns uncompressed; Snappy costs a third of a vector query to save 3%
+The sf40 embedding columns are written SNAPPY and do not compress: `ps_image_embedding`
+12306/12661 MB and `p_text_embedding` 3205/3293 MB, both 1.03x against ~1.6x elsewhere.
 
-The sf40 embedding columns are written SNAPPY like everything else, and they do not compress.
-From the parquet footers:
+Float32 embeddings are high-entropy, so that is the data rather than the writer — and the GPU
+decompresses them anyway. On q11v (`nsys`, share of GPU kernel time) `nvcomp::unsnap_kernel` is
+564.7 ms / 37.9% on H200 and 419.5 ms / 24.9% on GB10, against 60.5 ms / 4.0% for the cuVS
+distances and top-k the query exists to do; loading is 93.8% of H200 kernel time.
 
-| column | compressed | uncompressed | ratio |
-|---|--:|--:|--:|
-| `partsupp.ps_image_embedding` (96-dim float32, 32M rows) | 12306 MB | 12661 MB | **1.03x** |
-| `part.p_text_embedding` (100-dim float32, 8M rows) | 3205 MB | 3293 MB | **1.03x** |
-
-Float32 embeddings are high-entropy; Snappy finds ~3%. The non-vector columns manage ~1.6x,
-so this is a property of the data rather than of the writer.
-
-The GPU decompresses them anyway, and it is not cheap. q11v profiled (`nsys`, share of GPU
-kernel time):
-
-| kernel | H200 | GB10 |
-|---|--:|--:|
-| page decode | 634.6 ms (42.6%) | 590.2 ms (35.0%) |
-| **`nvcomp::unsnap_kernel`** | **564.7 ms (37.9%)** | **419.5 ms (24.9%)** |
-| cuVS distances + top-k | 60.5 ms (4.0%) | 421.6 ms (25.6%) |
-
-So a quarter to nearly two fifths of the GPU work in a vector query is Snappy decompression
-recovering 3%, and loading altogether is 93.8% of it on the H200 against 4% for the search
-the query exists to do.
-
-**The change.** Write the embedding columns with `compression=NONE` in
-`testdata/generate_testdata.sh`, leaving every other column SNAPPY. Parquet compression is
-lossless, so no value changes and no golden moves — only the file size and the load path.
-
-**The cost.** ~3% more bytes on disk and over the wire: sf40 grows by roughly 440 MB across
-the two columns. Against that, the `unsnap` kernel disappears from every vector load.
-
-**Why it is not free to do.** sf40 is generated, uploaded to `tpch-sf40` and mirrored to
-shad-gpu, so this means regenerating and re-uploading a 40 GB dataset and re-verifying the 16
-committed sf40 goldens. Worth pairing with any other dataset change rather than doing alone.
-
-**Measure it.** `load_ms` per vector probe before and after, plus the `unsnap` line from
-`nsys stats --report cuda_gpu_kern_sum`, which should vanish for the embedding reads.
+The change is `compression=NONE` for those two columns in `testdata/generate_testdata.sh`.
+Parquet compression is lossless, so no value changes and no golden moves — only file size (~440
+MB more) and the load path. Not free to do, though: sf40 is generated, uploaded and mirrored to
+shad-gpu, so it means re-uploading 40 GB and re-verifying the 16 sf40 goldens. Measure with
+`load_ms` per vector probe and the `unsnap` line from `nsys stats`.
 
 <a id="t149"></a>
 ### #149 — the parquet load must use pinned host memory
 **Priority: high**
 
-Measured on the two benchmark hosts (`llm-wiki/reports/benchmark-minimal.md`), 2 GiB buffers,
-2nd-minimum of 5:
+Nothing in the engine sets a host memory resource for IO, so parquet loads from pageable host
+memory — 10.6 GB/s H2D on the H200 against 47.3 GB/s pinned, 2 GiB buffers, 2nd-min of 5.
 
-| path | GB10 | H200 |
-|---|--:|--:|
-| H2D `cudaMemcpy`, pageable host memory | 59.5 GB/s | **10.6 GB/s** |
-| H2D `cudaMemcpy`, pinned host memory | 59.2 GB/s | **47.3 GB/s** |
-
-On a discrete GPU the DMA engine transfers by physical address and cannot be handed a page
-the OS may move, so a pageable source is first copied into an internal pinned staging buffer
-and DMA'd from there. That bounce is a host memcpy of every byte, and it is what bounds the
-pageable rate: H200's 10.6 GB/s sits just under its single-core memcpy rate of 11.8 GB/s,
-nowhere near its link rate. Pinning removes the copy and the rate quadruples.
-
-**4.4x on every byte the loader moves**, and the load is not a small term: on the H200 sf40
-queries the load column runs 400-690 ms against execute times of 19-48 ms, so end-to-end is
-dominated by it.
-
-Nothing in the engine sets a host memory resource for IO. cuDF exposes one
-(`cudf::io::set_host_memory_resource`, with a pinned or pooled-pinned host resource); the
-default is pageable. Same shape as [#148](#t148) on the device side: the allocator is left at
-its default and the default is the slow one.
-
-**Condition it on the device, do not assume.** GB10 shows no difference at all (59.5 vs 59.2)
-because there is one physical pool and its GPU addresses pageable host memory directly
-(`cudaDeviceProp::pageableMemoryAccess = 1`); pinning there buys nothing and the pinned
-allocation itself is not free. `integrated` / `pageableMemoryAccess` is the branch.
-
-**Tests.** Load time is the measurement, so it needs the harness that reports it: compare
-`load_ms` per query before and after on both hosts, and assert the discrete host improves
-while the integrated one does not regress. The existing `[bench] … load_ms=` line already
-carries the number.
+A discrete GPU's DMA engine transfers by physical address and cannot be handed a page the OS may
+move, so a pageable source is bounced through an internal pinned staging buffer: a host memcpy
+of every byte, which is what bounds the rate — H200's 10.6 GB/s sits just under its 11.8 GB/s
+single-core memcpy, nowhere near its link rate. That is 4.4x on every byte the loader moves, and
+the load dominates: 400-690 ms against 19-48 ms of execute on sf40. cuDF exposes
+`cudf::io::set_host_memory_resource` and defaults to pageable — [#148](#t148)'s shape one side
+over. Condition it on the device: GB10 shows 59.5 vs 59.2 because it has one physical pool, so
+`pageableMemoryAccess` is the branch. Tests: compare the existing `[bench] … load_ms=` on both
+hosts, asserting the discrete host improves and the integrated one does not regress.
 
 <a id="t148"></a>
 ### #148 — the engine installs no RMM allocator, and `gpu_memory_limit` is accepted and ignored
 **Priority: high**
 
-Nothing under `cpp/src/` or `cpp/include/` ever calls `set_current_device_resource` or
-`set_per_device_resource`. The engine uses rmm types throughout — `device_uvector`,
-`device_async_resource_ref` parameters defaulted to `get_current_device_resource_ref()` —
-but never installs a resource, so every cuDF intermediate the executor allocates goes
-through rmm's default: one `cudaMalloc`/`cudaFree` per allocation, each a driver round trip,
-and on a unified-memory part a page-table walk and a zeroing pass as well.
+Nothing under `cpp/src/` or `cpp/include/` calls `set_current_device_resource`, so every cuDF
+intermediate takes rmm's default: a `cudaMalloc`/`cudaFree` driver round trip each.
 
-The same gap was already found and fixed once, on the other side of the tree:
-`cpp/tests/gpu/multi_gpu.cpp` builds a per-device `pool_memory_resource` inside the worker
-that owns each device, sized off that device's free memory. The single-GPU test binaries
-have now been given the same treatment (`cpp/tests/gpu/rmm_pool.hpp`). The engine has not,
-and it is the only one of the three that ships.
-
-**Measured cost.** TPC-H q1 over sf40 whole-table on GB10: 76.5 s execute, 2nd-min of 5,
-every run inside [75.4, 78.8] — so this is steady state, not first-touch. The same query
-streamed through bounded batches is 3.9 s for the same answer, and the streamed form's
-advantage is that its intermediates are small enough that the per-allocation cost stops
-dominating. Numbers and the allocator A/B are in
-`llm-wiki/reports/benchmark-minimal.md`.
-
-**The second half, and why it is the same ticket.**
-`peacock_executor_create(uint64_t gpu_memory_limit, ...)` documents the parameter as
-"Maximum GPU memory (bytes) the executor may use" (`cpp/include/peacock_gpu.h`). The value
-is stored into the executor struct (`gpu_executor.cpp:99`) and never read again — three
-occurrences in the file, all of them the declaration, the parameter and the construction.
-So the FFI has a documented memory bound that does nothing, which is the #132 shape one
-level up: a contract with no consumer.
-
-The two halves have one fix. A pool built with `initial` and `maximum` sizes IS the
-implementation of `gpu_memory_limit`: pass the documented limit as the pool's maximum, and
-the parameter starts meaning what the header says while the per-allocation cost goes away.
-An unset limit (0) sizes off free memory the way the tests do.
-
-**Care required.** The pool must be installed per device, before any cuDF call, and torn
-down on the owning device's thread — `multi_gpu.cpp` documents the teardown footgun
-(`set_per_device_resource(id, nullptr)` resets the pointer map but not the ref map, so
-`reset_per_device_resource_ref` is also needed). Sizing must distinguish the two kinds of
-host: on a discrete part the reservation costs the host nothing, while on an integrated one
-it comes out of the same pool as the page cache and the parquet reader's host buffers, so a
-discrete part's 85% is wrong there. `rmm_pool.hpp` states both regimes.
-
-**Tests.** The existing GPU tiers must stay byte-identical — this changes where memory comes
-from, not what is computed. Worth adding: a case asserting a small `gpu_memory_limit` is
-actually honoured, which today cannot go red because nothing reads the field.
+Measured: TPC-H q1 over sf40 whole-table on GB10 is 76.5 s execute (2nd-min of 5, all runs
+inside [75.4, 78.8], so steady state) against 3.9 s streamed through bounded batches for the
+same answer. The gap was fixed twice already, in `multi_gpu.cpp` and `rmm_pool.hpp`; the engine
+is the only one of the three that ships. The second half is the same fix: `gpu_memory_limit` is
+documented as a bound, stored at `gpu_executor.cpp:99` and never read — the #132 shape one level
+up — and a pool's `maximum` IS that bound. Care: install per device before any cuDF call, tear
+down on the owning thread (`set_per_device_resource(id, nullptr)` misses the ref map), and size
+by host kind, an integrated part's reservation sharing the page cache's pool. Tests: the GPU
+tiers stay byte-identical, plus a case asserting a small limit is honoured.
 
 <a id="t19"></a>
 ### #19 — Stats propagation: 55 TPC-DS hash joins blind to cardinality
@@ -651,30 +392,20 @@ build 9.95× larger than probe. Foundation for all CBO work (#73, #20).
 
 <a id="t16"></a>
 ### #16 — Dynamic / runtime filters: build-side keys → probe-side scan
-Star-schema fact scans read 100% of rows while the joined dimension is filtered to ~30.
-Build an IN-set / min-max (later Bloom) at hash-join build completion and feed the
-probe-side GpuScan for row-group pruning and pre-filtering. Applies to 76/99 TPC-DS
-queries; validate on q3/q19/q33. Best after #19.
+Star-schema fact scans read 100% of rows while the joined dimension is filtered to ~30%. Build
+an IN-set / min-max (later Bloom) at build completion and feed the probe-side GpuScan.
 
-**Design it as the groundwork for CTEs, not as a join-to-scan special case.** A dynamic
-filter is the first thing in this engine whose producer has *two* consumers: the build side
-feeds the join, and it also feeds something that is not an execution node at all — a
-replanning consumer that turns those keys into a predicate on a scan below. That is a
-diamond, and every plan model here is a tree (`plan.py` and the DataFusion side both;
-a join takes exactly two children). Whatever serves it — a fork that hands the same batch
-stream to N consumers, plus a consumer that plans rather than executes — is exactly what a
-materialized CTE needs ([#101](#t101), where DataFusion inlines every reference and peacock
-re-scans each copy), and what [#147](#t147) calls refinement in flight, which is the same
-data arriving at a planning consumer one batch early.
-
-**The batch-partitioned model is unusually well suited to that shape**, which is the reason
-to do this after it rather than before. A stream of batches with explicit ownership can be
-forked where a single resident table cannot: with refcounted handles ([#145](#t145),
-[#155](#t155)) a tee costs nothing on the device, the accountant already models a fork's
-residency as the slowest consumer's backlog, and a consumer that blocks its producer is a
-shape the scheduler has already been proven on — it is the join hold, one rule, already
-mutation-tested (`scripts/exec_model`, finding F3). A diamond in the *plan* is then a
-routing question rather than a scheduling one, which is the cheap half.
+Applies to 76/99 TPC-DS queries; validate on q3/q19/q33. Best after #19. **Design it as the
+groundwork for CTEs, not a join-to-scan special case.** A dynamic filter is the first thing here
+whose producer has two consumers: the build side feeds the join, and it also feeds a replanning
+consumer that turns those keys into a predicate on a scan below. That is a diamond, and every
+plan model here is a tree. What serves it — a fork handing one batch stream to N consumers, plus
+a consumer that plans rather than executes — is what a materialized CTE needs ([#101](#t101))
+and what [#147](#t147) calls refinement in flight. Do it after the batch-partitioned mode, which
+suits the shape: with refcounted handles ([#145](#t145)) a tee costs nothing on the device, the
+accountant already models a fork's residency as the slowest consumer's backlog, and a consumer
+blocking its producer is the join hold, one rule already mutation-tested. A diamond in the plan
+is then routing rather than scheduling.
 
 <a id="t20"></a>
 ### #20 — Join enumeration: DPccp/DPhyp cost-based tree reshaping
@@ -729,73 +460,53 @@ and row-group pruning. Shape: preprocessor → flat per-node intermediate
 
 <a id="t136"></a>
 ### #136 — batch-partitioned GpuJoin: build-side match tracking when the probe side streams
+Left-outer, full, semi, anti and mark need "which build rows matched across all probe batches",
+and that never crosses the ABI — every call rebuilds the join from scratch.
 
-The batch-partitioned executor design streams a join's probe side in batches. Inner joins
-compose per-batch, and right-outer emits its unmatched probe rows batch-locally — but
-left-outer/full/semi/anti/mark need "which build rows matched at least once across all
-probe batches", and that information never crosses the current ABI:
-`peacock_executor_execute_node` returns only the joined table plus rows/varlen stats
-(`cpp/include/peacock_gpu.h`), and every call rebuilds the join from scratch — there is no
-persistent `cudf::hash_join` anywhere in `cpp/src/operators/join.cpp`.
-
-No-ABI-change plan (v1): accumulate each probe batch's key columns only (a project node
-plus the `GpuCoalescePartitions` concat arm — keys are small next to full rows), and at the
-join's finish call run one `left_anti_join(build, accumulated_keys)` — semi form for
-semi/mark — then null-pad the probe columns with a synthesized project. Correct for pure
-equi-joins; the per-join `null_equals_null` flag applies to the finish join too, and the
-#80 NOT IN caveat carries over unchanged. Not usable with a residual filter (a keys-only
-input cannot evaluate it), so filtered semi/anti keep a single-batch probe side. Cost:
-the accumulated keys stay resident, and the build side is built one extra time at finish.
-
-Weigh the options below together with the rest of the join surface — [#155](#t155).
-
-ABI-change options if that cost bites: (a) return a build-side match bitmap per probe
-call (new out-param, or a handle to a bool column) and OR the bitmaps in Rust; (b) a
-persistent per-seq `cudf::hash_join` session object with internal matched-row tracking —
-which also removes the per-probe-call build rebuild, the standing perf cost of streamed
-probes. Either would be additive, alongside the planned scan-with-row-groups entry point.
+`peacock_executor_execute_node` returns only the joined table plus rows/varlen stats, and there
+is no persistent `cudf::hash_join` in `join.cpp`. Inner composes per-batch and right-outer emits
+its unmatched probe rows batch-locally, so those are unaffected. No-ABI-change plan (v1):
+accumulate each probe batch's key columns only, keys being small next to rows, and at the finish
+call run one `left_anti_join(build, accumulated_keys)`, semi form for semi/mark, then null-pad
+the probe columns with a synthesized project. Correct for pure equi-joins, `null_equals_null`
+applying to the finish join too and #80's NOT IN caveat carrying over. A keys-only input cannot
+evaluate a residual filter, so filtered semi/anti keep a single-batch probe. Cost: the keys stay
+resident and the build side is built once more at finish. If that bites, the ABI options are a
+per-call match bitmap out-param or a per-seq join session that also removes the rebuild — weigh
+them with the rest of the join surface, [#155](#t155).
 
 <a id="t137"></a>
 ### #137 — batch-partitioned planner: drop null join keys before the shuffle
+With `null_equals_null=false` an all-null key matches nothing, and `spark_hash_partition.cu`
+skips null columns, so every such row lands in the one partition `pmod(seed, N)`.
 
-With `null_equals_null=false`, a row whose join key columns are all null matches nothing —
-and `spark_hash_partition.cu` skips null columns (comet conformance), so every such row
-lands in the one fixed partition `pmod(seed, N)`. On a null-dominated input that is pure
-shuffle skew carrying rows the join will discard anyway.
+On a null-dominated input that is pure shuffle skew carrying rows the join discards anyway. Fix,
+for the sides whose unmatched rows are never emitted — both sides of an inner join, the probe
+side of left-outer/semi/anti, and the capability matrix knows which: the translation layer
+inserts `GpuFilter(<key> IS NOT NULL)` under the feeding `GpuEmitPartitions`. Existing node and
+serialization, cost-accounted in the plan, and `GpuEmitPartitions` keeps its one routing.
 
-Fix, for the sides whose unmatched rows are never emitted (both sides of an inner join;
-the probe side of left-outer/semi/anti — the join-capability matrix knows which): the
-translation layer inserts `GpuFilter(<key> IS NOT NULL)` under the `GpuEmitPartitions`
-feeding that side. Existing filter node, existing serialization, visible and
-cost-accounted in the plan; the shuffle shrinks and the skew case never reaches the
-kernel. `GpuEmitPartitions` itself keeps exactly one routing (hash, nulls co-located) —
-no runtime knob.
-
-Two deliberately-out-of-scope halves. Scattering null-keyed rows on placement-free sides
-(the preserved side of outer/anti, where rows must be emitted but cannot match) needs a
-C++ kernel knob plus a conformance-gate extension, and no corpus query has a
-null-dominated join key to exercise it. And the adaptive form — partially execute a node,
-observe a null-dominated intermediate, insert the filter at replan time — waits on
-adaptive replanning existing at all; this ticket is the static planner tweak that the
-adaptive path would later reuse.
+Two halves are out of scope deliberately. Scattering null-keyed rows on placement-free sides
+(outer/anti's preserved side) needs a kernel knob and a conformance-gate extension, and no
+corpus query exercises it. The adaptive form — insert the filter at replan time — waits on
+adaptive replanning existing at all.
 
 <a id="t138"></a>
 ### #138 — batch-partitioned sort: ranged merge emission
-`GpuAccumulateBatchesAndSort` and `GpuMergeSortedPartitions` run one `cudf::merge` over
-all sorted input batches and materialize the full output, so the local peak is inputs +
-output (~2× the data). cuDF has no streaming merge; the hand-rolled alternative is a
-ranged merge — pick split keys, `cudf::slice` each sorted batch at `upper_bound`
-boundaries (zero-copy views), merge range by range, emit and release each range. Bounds
-the output term to one range; the inputs stay resident either way, so the win is at most
-~2× on the sort's local peak. Do it only if sort peaks bind after the mode ships; it also
-unlocks multi-batch output from merge nodes.
+`GpuAccumulateBatchesAndSort` and `GpuMergeSortedPartitions` run one `cudf::merge` over all
+sorted inputs and materialize the whole output, so the local peak is inputs + output.
 
-Landing this re-introduces a third `SortOrder` state. `SortOrder` is two-valued today
-because every node that orders a whole stream emits exactly one batch, so "stream sorted"
-is `BatchSorted` meeting `SingleBatch` and is derived rather than declared. Ranged
-emission produces the one shape that breaks it — a stream ordered across several batches —
-so it must add `PartitionSorted` back, and teach the limit-after-sort validation to accept
-it alongside the derived form.
+cuDF has no streaming merge. The hand-rolled alternative is a ranged merge: pick split keys,
+`cudf::slice` each sorted batch at `upper_bound` boundaries (zero-copy views), merge range by
+range, emit and release each. That bounds the output term to one range; the inputs stay resident
+either way, so the win is at most ~2x on the sort's local peak. Do it only if sort peaks bind
+after the mode ships — it also unlocks multi-batch output from merge nodes.
+
+Landing it re-introduces a third `SortOrder` state. The enum is two-valued today because every
+node that orders a whole stream emits one batch, so "stream sorted" is `BatchSorted` meeting
+`SingleBatch` and is derived rather than declared. Ranged emission produces the one shape that
+breaks that — a stream ordered across several batches — so it must add `PartitionSorted` back
+and teach the limit-after-sort validation to accept it alongside the derived form.
 
 <a id="t139"></a>
 ### #139 — batch-partitioned GpuCoalesceBatches(target): compact post-filter fragments
@@ -829,152 +540,71 @@ shuffle) needs a cardinality estimate that does not exist — the estimators are
 
 <a id="t147"></a>
 ### #147 — PlanEstimates: a tree the planner emits and the runtime refines
-The batch-partitioned planner derives `target_batch_bytes` by walking amplification up from
-each source to the nearest accumulator
-(`llm-wiki/tasks/batch_partitioned_executor.md`, ParquetBatchPartitioner). That walk already
-computes a per-node maximum resident size and then throws all but one number away. Keep it:
-`ParquetBatchPartitioner` emits `PlanEstimates` beside the row-group mapping, a tree shaped
-like the plan carrying the estimate per node.
+The planner's `target_batch_bytes` walk already computes a per-node maximum resident size and
+throws all but one number away. Keep it, as a tree shaped like the plan, one estimate per node.
 
-Nothing in the plan's executability depends on it: whatever the partitioner emits, the plan
-runs, so this is additive. It does not follow that a wrong estimate is free. Too low and
-the query dies — at the enforcer's `scratch_bytes` pre-check if the model catches it, and
-as a cuda out-of-memory below that if the model was under too. Neither is a wrong answer,
-and both are meant to be handled gracefully rather than fatally in later work (#142's
-adaptive replanning is the same need seen from the batch-size end). What a better estimate
-buys is fewer queries reaching either.
-
-Two consumers, neither of which exists yet.
-
-**Placement.** A separate planning component reads the tree and moves subtrees onto the CPU
-where the estimate says the GPU cannot hold them. The `Backend` trait already makes this
-expressible — executors are chosen per node, so a mixed plan is a matter of choosing
-differently, not of new machinery.
-
-**Refinement in flight.** The estimates rest on the optimizer's selectivity and cardinality,
-which are constants on most TPC-DS joins (#19). One batch actually read from a source is
-enough to do better by extrapolation: real rows, real bytes per column, a real filter
-selectivity at that node. Feeding measurements back rewrites the subtree's estimates for the
-batches still to come. This is where the estimate stops being a plan-time guess, and it is
-the reason to make it a first-class tree rather than a field on a node.
-
-What a refined estimate may change grows in two steps. The first version changes only what
-needs no re-planning — the remaining batch sizes of a loader still reading. Later revisions
-lift that entirely: a refined estimate may replace the plan, killing in-progress gpu
-execution and moving large subtrees to the cpu, which means dropping the driver and
-building a new one rather than editing the running tree. That is the reason the driver
-owns no state a caller needs to survive it, and the reason this is a tree the planner emits
-rather than a field the driver mutates.
+`ParquetBatchPartitioner` emits it beside the row-group mapping. Nothing in the plan's
+executability depends on it, but a wrong estimate is not free: too low and the query dies at the
+enforcer's `scratch_bytes` pre-check, or as a cuda OOM below that. Neither is a wrong answer,
+and #142 handles both gracefully later; a better estimate makes fewer queries reach either. Two
+consumers, neither existing yet. **Placement** moves subtrees onto the CPU where the GPU cannot
+hold them — the `Backend` trait already makes that a matter of choosing per node. **Refinement
+in flight** extrapolates from one batch actually read, since the estimates otherwise rest on
+constants (#19). The first version rewrites only what needs no replanning, a still-reading
+loader's remaining batch sizes; later revisions may replace the plan outright, killing
+in-progress GPU work and rebuilding the driver rather than editing the running tree — which is
+why the driver owns no state a caller must survive it.
 
 <a id="t146"></a>
 ### #146 — aggregate shaping beyond the fixed sequence
-**Priority: low** — each part is an optimization over an already-correct plan, and each
-needs the same estimate, which does not exist yet.
+**Priority: low** — each part optimizes an already-correct plan and needs the same estimate.
 
-The batch-partitioned aggregate sequence
-(`llm-wiki/tasks/batch_partitioned_executor.md`) applies one shape uniformly: a per-batch
-init, a merge per lane, a shuffle, a finalizing merge. That is correct everywhere and close
-to optimal where the group cardinality is far below the row count — the case it was designed
-for. Three shapes it cannot currently express or choose.
+The batch-partitioned aggregate applies one shape everywhere — per-batch init, merge per lane,
+shuffle, finalizing merge — right where group cardinality is far below row count.
 
-**(a) A merge that accepts raw rows.** `GpuAggregateBatches` requires pre-aggregated state,
-so the per-batch `GpuAggregate` is structurally mandatory: "accumulate raw batches, group
-once" is not expressible at all. Two situations want it. A lane with a handful of batches
-and no shuffle beneath it pays B groupbys plus a merge where one groupby over the
-concatenation would do. And an aggregate that does not reduce — groups nearly as numerous as
-rows — pays an init that shrinks nothing and then ships the same bytes into the shuffle
-anyway; there the right plan is to skip partial aggregation, shuffle the raw rows and
-aggregate once after. The trade is plain: a raw-accepting merge holds rows where a state
-merge holds groups, so it is right only when the aggregate does not reduce, or when there is
-too little to hold for it to matter.
-
-**(b) A loader told to emit one batch per partition.** Where a loader's stream feeds
-something that will materialize the whole partition regardless — a `GpuCoalesceAllBatches`
-under a join build, or an aggregate whose state is as big as its input — batching buys no
-residency and costs a call per batch plus a concat. The planner could size that loader's
-batches to the partition instead. Note this is exactly backwards for the mode's motivating
-pipeline (load → filter at 1% → aggregate), where per-batch loading *is* the point, so it
-has to be decided from the subtree beneath the loader rather than defaulted.
-
-**(c) The cardinality estimate all three want.** Each choice above is the same question —
-does this aggregate reduce? — and the planner cannot answer it: the estimators are constants
-([#19](#t19)). That is also why [#141](#t141)'s small-key-set shuffle skip is deferred, and
-why the mode's compaction threshold has to *discover* its regime by doubling instead of
-being told. An output-cardinality estimate for an aggregate, groups per input row, is the one
-number that unlocks all four. Land it after #19 and revisit these together rather than
-one at a time, since they trade against each other.
+Three shapes it cannot express or choose. **(a) A merge accepting raw rows.**
+`GpuAggregateBatches` requires pre-aggregated state, so the per-batch `GpuAggregate` is
+mandatory: a lane with few batches pays B groupbys where one over the concatenation would do,
+and a non-reducing aggregate pays an init that shrinks nothing. A raw-accepting merge holds
+rows where a state merge holds groups, so it fits only the non-reducing case. **(b) A loader
+emitting one batch per partition**, where its consumer materializes the whole partition anyway
+— decide it from the subtree beneath the loader. **(c) The cardinality estimate all three
+want** — does this aggregate reduce? — which the constant estimators (#19) cannot answer and
+which gates [#141](#t141). Land after #19.
 
 <a id="t145"></a>
 ### #145 — Refcounted handles: stop copying every partition out of a scatter
+`spark_hash_partition` returns one table whose N partitions are already contiguous, and
+`node_session.cpp` (~L265-272) deep-copies each range out, because a handle owns its memory.
 
-`spark_hash_partition` returns what `cudf::partition` returns — **one** table whose N
-partitions are already contiguous — plus the offsets. `node_session.cpp` (~L265-272) then
-walks those offsets and deep-copies each range into its own owning table
-(`std::make_unique<cudf::table>(slice)`), because a handle owns its memory. So every
-shuffle allocates and copies its whole input a second time, and peaks at twice the data
-before the parent is dropped. That is the concrete form of what [#91](#t91) calls the
-repartition "spiking peak memory and defeating the point of partitioning", and it is on the
-batch-partitioned mode's hot path — one scatter per aggregate and one per join side.
-
-**The change.** `TableResult` (`cpp/src/plan_executor.h:13`) becomes an owner plus a view:
-
-```cpp
-struct TableResult {
-  std::shared_ptr<cudf::table> owner;   // shared between sibling slices
-  cudf::table_view view;                // this handle's rows
-  std::vector<std::string> column_names;
-};
-```
-
-The scatter then registers N handles that share one owner and differ only in `view`, and
-the copies disappear.
-
-**Scope.** Mechanical but wide: 35 sites across 11 files touch `.table` / `->table`
-(`node_session.cpp`, `gpu_executor.cpp`, `dispatch.cpp`, and the eight operator files).
-Every `return {std::make_unique<cudf::table>(…), names}` becomes a shared owner and every
-`result.table->view()` becomes `result.view`. **No ABI change**: a handle stays a `u64`,
-consume-on-use is unchanged, and no new symbol is needed — so this does not touch the
-three-symbol budget in `llm-wiki/tasks/batch_partitioned_executor.md`.
-
-**The cost to weigh.** A slice pins its whole parent, so nothing is freed until the last
-sibling handle dies. Min-height scheduling advances all N lanes together, so they usually
-die together — but a skewed hash leaves one hot lane holding the entire pre-scatter table
-while the empty lanes finished long ago. Net: the peak at the scatter halves, the tail
-lengthens. If the tail bites, the fix is a threshold — materialize a slice that is a small
-fraction of its parent — which is a local change once the representation is in place.
-
-**Also unlocks [#140](#t140)**, whose broadcast joins need exactly "a C++-side
-non-consuming/refcounted handle" as one of their two options; a build side could then feed
-N probe lanes without a device copy.
-
-**Tests.** Existing GPU tiers must stay byte-identical, since results do not change. Add a
-gtest that scatters, asserts each handle's row count against the offsets, releases N−1
-handles and checks the survivor still reads correctly (the parent outlived its siblings),
-then releases the last and checks the pool returns to its prior size.
+So every shuffle copies its whole input a second time and peaks at twice the data — the concrete
+form of [#91](#t91)'s repartition spike, on the batch-partitioned hot path, once per aggregate
+and once per join side. The change: `TableResult` (`plan_executor.h:13`) becomes a
+`shared_ptr<cudf::table> owner` plus a `cudf::table_view view` beside the names, and the scatter
+registers N handles sharing one owner. Mechanical but wide — 35 sites across 11 files touch
+`.table` / `->table`. **No ABI change**: a handle stays a `u64` and consume-on-use is unchanged,
+so the three-symbol budget is untouched. The cost to weigh: a slice pins its whole parent, so a
+skewed hash leaves one hot lane holding the pre-scatter table after the empty lanes finished —
+the peak halves, the tail lengthens, and a materialize-if-small threshold is the local fix. Also
+unlocks [#140](#t140). Tests: the GPU tiers stay byte-identical, plus a gtest releasing N−1
+handles and checking the survivor still reads.
 
 <a id="t144"></a>
 ### #144 — multiple DISTINCT arguments need a gid-multiplying expand
 **Priority: low** — no query in either benchmark has this shape.
 
-`count(DISTINCT a), count(DISTINCT b)` over *different* expressions is the one distinct shape
-the batch-partitioned lowering cannot express. Single-distinct lowers to grouping on the
-distinct argument (see the DISTINCT subsection of
-`llm-wiki/tasks/batch_partitioned_executor.md`), and non-distinct companions ride along
-because grouping by the distinct argument partitions the rows without losing their
-multiplicity — Σ over the inner groups recovers each companion's total. Two distinct
-arguments break that: one inner grouping can dedup `a` or `b`, not both, and grouping by
-`(a, b)` dedups neither.
+`count(DISTINCT a), count(DISTINCT b)` over different expressions is the one distinct shape the
+batch-partitioned lowering cannot express.
 
-The standard fix is Spark's `RewriteDistinctAggregates`: an expand step multiplies each input
-row into one row per distinct argument, tagged with a group id, the inner aggregate groups by
-`(group keys, gid, the arguments)`, and the outer aggregate computes each distinct count from
-the rows carrying its own gid. That needs a new node — the row-multiplying expand — which is
-why it is a ticket rather than a planner tweak.
-
-Not to be confused with [#65](#t65), whose gid is the ROLLUP/CUBE `__grouping_id` and a
-different mechanism entirely; the two would coexist, and a query with both would carry two
-independent gid columns. Until this lands the planner refuses the shape at plan time, which
-is the scope section's rule for unsupported shapes inside supported features.
+Single-distinct lowers to grouping on the distinct argument, and non-distinct companions ride
+along because Σ over the inner groups recovers each total. Two distinct arguments break it: one
+grouping can dedup `a` or `b`, not both, and grouping by `(a, b)` dedups neither. The standard
+fix is Spark's `RewriteDistinctAggregates` — an expand multiplies each row into one per distinct
+argument tagged with a group id, the inner aggregate groups by `(keys, gid, args)`, and the
+outer computes each count from the rows carrying its own gid. That needs a new row-multiplying
+node, which is why it is a ticket rather than a planner tweak. Not [#65](#t65), whose gid is the
+ROLLUP/CUBE `__grouping_id` — the two would coexist as separate columns. Until it lands the
+planner refuses the shape at plan time.
 
 <a id="t142"></a>
 ### #142 — batch-partitioned: no recourse for oversized batches
@@ -1024,20 +654,19 @@ the two things happened.
 <a id="t135"></a>
 ### #135 — Column ordinals are enforced only by cuDF's `at()` and the final result
 Every column reference in the IR is an ordinal into the child's output table, and almost nothing
-checks them. Two concrete gaps. (a) `TableResult` is a `cudf::table` plus a
-`std::vector<std::string>` of names with no invariant that the two have the same length, and the
-six sites that index the names use `operator[]` — so a short names vector is undefined behaviour,
-not an exception (`filter.cpp` ~L42 reads `fv.column(idx)` and `input.column_names[idx]` in one
-loop iteration; only the first is checked, and it happens to run first). Assert
-`num_columns() == column_names.size()` where `TableResult` is built. (b) Nothing checks that a
-child produced its columns in the ORDER the plan assumed: the per-node golden records name,
-partitions, rows and bytes, and the bytes come from the plan's schema on both engines by design
-(`logical_size_from_schema`, single-sourced so CPU and GPU cannot drift) — so a node emitting the
-right column count in the wrong order yields identical per-node numbers everywhere and surfaces
-only at the root, in a `.result.txt`/oracle comparison. A per-node type or column-name check in
-the GPU tiers would close it. Also worth fixing while there: `expr.cpp` ~L349 bounds-checks a
-ColumnRef and returns `type_id::EMPTY` instead of throwing, converting a bad ordinal into a
-confusing type error later. Found auditing indexing for architecture.md.
+checks them. Two concrete gaps.
+
+(a) `TableResult` is a `cudf::table` plus a name vector with no invariant that the two have the
+same length, and the six sites indexing names use `operator[]` — so a short vector is undefined
+behaviour, not an exception. `filter.cpp` ~L42 reads `fv.column(idx)` and
+`input.column_names[idx]` in one iteration and only the first is checked; it happens to run
+first. Assert `num_columns() == column_names.size()` where `TableResult` is built. (b) Nothing
+checks a child produced its columns in the order the plan assumed. Per-node bytes come from the
+plan's schema on both engines by design (`logical_size_from_schema`, single-sourced so they
+cannot drift), so a node emitting the right count in the wrong order yields identical numbers
+everywhere and surfaces only at the root; a per-node type check in the GPU tiers closes it. Also
+there: `expr.cpp` ~L349 returns `type_id::EMPTY` for an out-of-range ColumnRef instead of
+throwing, turning a bad ordinal into a confusing type error further along.
 
 <a id="t134"></a>
 ### #134 — begin_plan's node count is returned and discarded
@@ -1084,21 +713,20 @@ respected in BOTH CPU modes and in neither GPU mode.
 
 <a id="t131"></a>
 ### #131 — resident model never accounts for cross / nested-loop join build sides
-`resident.rs::peak()` stacks a join's build side by matching `stat.node_name` against
-`"HashJoinExec" | "CrossJoinExec" | "NestedLoopJoinExec"`, and its own doc comment names all
-three. But `GpuCrossJoinExec` and `GpuNestedLoopJoinExec` are two of the five operators that
-do NOT strip, so the name reaching the classifier is `GpuCrossJoinExec` /
-`GpuNestedLoopJoinExec`, which matches nothing and falls into the streaming arm: the build
-side contributes zero and never stacks with the probe. `HashJoinExec` works only because its
-wrapper strips. So the resident-OOM enforcer under-estimates every plan containing a cross
-or nested-loop join, in the direction that lets a query through that should have tripped.
-Latent today — the tight-budget set (`test_cpu_oom`: tpcds q78, tpch q7/q18) has no such
+`resident.rs::peak()` stacks a build side by matching `stat.node_name` against `"HashJoinExec" |
+"CrossJoinExec" | "NestedLoopJoinExec"`, and two of the three never match.
+
+`GpuCrossJoinExec` and `GpuNestedLoopJoinExec` are two of the five operators that do not strip,
+so the name reaching the classifier keeps its `Gpu` prefix, matches nothing and falls into the
+streaming arm: the build side contributes zero and never stacks with the probe. `HashJoinExec`
+works only because its wrapper strips. So the resident-OOM enforcer under-estimates every plan
+containing a cross or nested-loop join, in the direction that lets a query through that should
+have tripped. Latent — the tight-budget set (`test_cpu_oom`: tpcds q78, tpch q7/q18) has no such
 join — and unreachable by the existing unit tests, which construct names by hand
-(`node("HashJoinExec", …)`) and so cannot see the mismatch: a guard that cannot go red.
-Fix: classify on a type, not a rendered name (`as_operator` + the wrapped node's identity),
-or normalize the `Gpu` prefix at the one place the name is recorded; then add a case built
-from a real wrapped plan rather than a hand-written name. Found auditing the operator
-tables for architecture.md.
+(`node("HashJoinExec", …)`) and so cannot see the mismatch: a guard that cannot go red. Fix:
+classify on a type rather than a rendered name (`as_operator` plus the wrapped node's identity),
+or normalize the prefix where the name is recorded, then add a case built from a real wrapped
+plan.
 
 <a id="t130"></a>
 ### #130 — `partition_topology()` is implemented 16 times and read by nobody
@@ -1193,19 +821,15 @@ drop/normalize the thread-sensitive field.
 ### #49 — Test crates bake CARGO_MANIFEST_DIR for testdata
 **Priority: low**
 
-Why it matters: a test binary is built on one host and run on another. Remote CPU runs ship
-binaries, goldens and data — never source — so any path baked in at compile time is a path
-that does not exist on the remote. `tests/common/mod.rs testdata_root()` solves that by
-honouring `PEACOCK_TESTDATA_DIR` first, and `build-test.sh` sets it for remote runs.
+Three test files read testdata through `env!("CARGO_MANIFEST_DIR")` instead of
+`testdata_root()`, so they only find their data where the build tree stood.
 
-The residual is three test files that read testdata through
-`env!("CARGO_MANIFEST_DIR")` directly instead of `testdata_root()`:
-`test_node_executor.rs` and `test_plan_serialiser.rs` (both for `tpch.minimal`) and
-`diag_flip_audit.rs`. Those binaries therefore only find their data where the build tree
-stood — which is exactly why a remote CPU host needs a `/media/data/peacockdb` symlink, and
-why `--gpu` runs, which set the env var, do not.
-
-`test_ci_coverage.rs` is on the old list but should come off it rather than be swept: its
-`CARGO_MANIFEST_DIR` use resolves the REPO root to read `.github/workflows/pipeline.yml`, not
-testdata, and no env var should redirect that. Sweep the three, drop the fourth from the
-list, then close.
+It matters because a test binary is built on one host and run on another: remote CPU runs ship
+binaries, goldens and data but never source, so a compile-time path is a path the remote does
+not have. `tests/common/mod.rs testdata_root()` solves that by honouring `PEACOCK_TESTDATA_DIR`
+first, which `build-test.sh` sets for remote runs. The residual is `test_node_executor.rs`,
+`test_plan_serialiser.rs` (both `tpch.minimal`) and `diag_flip_audit.rs` — which is exactly why
+a remote CPU host needs a `/media/data/peacockdb` symlink and why `--gpu` runs, which set the
+env var, do not. `test_ci_coverage.rs` is on the old list but should come off rather than be
+swept: its `CARGO_MANIFEST_DIR` resolves the repo root to read `pipeline.yml`, not testdata, and
+no env var should redirect that. Sweep the three, drop the fourth, close it.
