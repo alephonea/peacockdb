@@ -37,7 +37,16 @@ from ..layout import UniqueKeys, UniqueScope
 from ..limit import RowInterval
 from ..node import ExecutorBackends, ExecutorCategory, GpuNode, NodeExecutors
 from ..schema import aggregate_schema, finalized_schema
-from . import accumulators, aggregates, exec_ops, joins, partition_ops, source, validation
+from . import (
+    accumulators,
+    aggregates,
+    exec_ops,
+    joins,
+    partition_ops,
+    recipe_join,
+    source,
+    validation,
+)
 
 
 class PandasNode(GpuNode):
@@ -53,7 +62,12 @@ class PandasNode(GpuNode):
         row_interval: RowInterval | None = None,
         validator: Callable[["PandasNode"], None] | None = None,
         schema=None,
+        recipe_factory: Callable[[int | None], Executor] | None = None,
     ):
+        #: the second backend, where a node has one: an executor that answers by emitting
+        #: FlatBuffers nodes and making `execute_node` calls (`recipe_join.py`). Only the
+        #: joins carry one — the join is what the emulation was written to prove.
+        self._recipe_factory = recipe_factory
         self._schema = schema
         self._row_interval = row_interval
         self._validator = validator
@@ -92,7 +106,10 @@ class PandasNode(GpuNode):
     def make_executors(self) -> NodeExecutors:
         if self._forwarder is not None:
             return NodeExecutors(self._category, forwarder=self._forwarder)
-        return NodeExecutors(self._category, backends=ExecutorBackends(cpu=self._factory))
+        return NodeExecutors(
+            self._category,
+            backends=ExecutorBackends(cpu=self._factory, gpu=self._recipe_factory),
+        )
 
     def validate_schemas_and_partitions(self) -> None:
         """What this node needs of its children — layout expectations and the aggregate
@@ -514,11 +531,13 @@ def interleave(name, children) -> PandasNode:
 @_records_its_recipe
 def hash_join(
     name, build, probe, join_type, build_keys, probe_keys, null_equals_null=False,
-    fanout=joins.TRIVIAL_FANOUT, probe_schema=None,
+    fanout=joins.TRIVIAL_FANOUT, probe_schema=None, residual=None,
 ) -> PandasNode:
     """`fanout` is the optimizer's cardinality estimate for this join, carried as a node
     property so the executor built from it can model its own scratch. `probe_schema` is
-    the probe side's column list, consulted only when an outer finish saw no probe batch."""
+    the probe side's column list, consulted only when an outer finish saw no probe batch.
+    `residual` is the non-equi predicate `CudfHashJoin.filter` carries, over the joined
+    row's own column names."""
     return PandasNode(
         name,
         NodeKind.INTERMEDIATE,
@@ -527,7 +546,11 @@ def hash_join(
         [build, probe],
         factory=lambda lane: joins.HashJoin(
             join_type, build_keys, probe_keys, null_equals_null, f"{name}.p{lane}", fanout,
-            probe_schema,
+            probe_schema, residual,
+        ),
+        recipe_factory=lambda lane: recipe_join.RecipeHashJoin(
+            join_type, build_keys, probe_keys, null_equals_null, f"{name}.p{lane}", fanout,
+            probe_schema, residual,
         ),
         validator=validation.co_partitioned_join(build_keys, probe_keys),
     )
@@ -541,5 +564,26 @@ def cross_join(name, build, probe) -> PandasNode:
         _layout(_lanes(build)),
         ExecutorCategory.JOIN,
         [build, probe],
-        factory=lambda lane: joins.HashJoin(joins.JoinType.CROSS, [], [], False, f"{name}.p{lane}"),
+        factory=lambda lane: joins.CrossJoin(f"{name}.p{lane}"),
+        recipe_factory=lambda lane: recipe_join.RecipeCrossJoin(f"{name}.p{lane}"),
+    )
+
+
+@_records_its_recipe
+def nested_loop_join(name, build, probe, join_type, predicate) -> PandasNode:
+    """`CudfNestedLoopJoin` — a cross product cut down by a predicate over both sides.
+
+    Inner streams its probe side; Left takes a single-batch probe, so the planner puts a
+    `GpuCoalesceAllBatches` under the probe side of one (see `join_types.capability`).
+    """
+    return PandasNode(
+        name,
+        NodeKind.INTERMEDIATE,
+        _layout(_lanes(build)),
+        ExecutorCategory.JOIN,
+        [build, probe],
+        factory=lambda lane: joins.NestedLoopJoin(join_type, predicate, f"{name}.p{lane}"),
+        recipe_factory=lambda lane: recipe_join.RecipeNestedLoopJoin(
+            join_type, predicate, f"{name}.p{lane}"
+        ),
     )

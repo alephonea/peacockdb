@@ -103,6 +103,28 @@ class GpuBackendSelector(BackendSelector):
         return backends.gpu(lane)
 
 
+class RecipeJoinBackendSelector(BackendSelector):
+    """Joins through the FlatBuffers emulation; everything else through pandas.
+
+    The emulation (`operators/recipe_join.py`) stands in the GPU slot because it *is* the
+    GPU path modelled — a recipe plan of `Cudf*` nodes addressed by seq, one
+    `execute_node` call per (build, probe batch), handles consumed as the FFI consumes
+    them. Only the join carries one: it is the operator whose state has to survive a call,
+    so it is the operator the frozen-surface claim turns on. A join node without one is an
+    error rather than a silent fall back to pandas, or the suite would report a backend it
+    did not run.
+    """
+
+    def select(
+        self, category: ExecutorCategory, backends: ExecutorBackends, lane: int | None
+    ) -> Executor:
+        if category is not ExecutorCategory.JOIN:
+            return backends.cpu(lane)
+        if backends.gpu is None:
+            raise ValueError("a join node reached the recipe backend without one")
+        return backends.gpu(lane)
+
+
 class GpuNode(ABC):
     """A plan node. Immutable; all run-time state lives in the driver."""
 

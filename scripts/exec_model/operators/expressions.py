@@ -172,6 +172,32 @@ class Alias(Expr):
         return self.as_name
 
 
+def columns_of(expr: Expr) -> list[str]:
+    """Every column the expression reads, in first-seen order.
+
+    What the wire calls a filter's intermediate schema: `filter_columns[i]` is the origin
+    of `ColumnRef(i)`, and this is the list that map is built from (`recipe.JoinFilter`).
+    """
+    found: list[str] = []
+
+    def walk(node):
+        if isinstance(node, Col):
+            if node.column not in found:
+                found.append(node.column)
+            return
+        for value in vars(node).values():
+            for item in value if isinstance(value, (list, tuple)) else (value,):
+                if isinstance(item, Expr):
+                    walk(item)
+                elif isinstance(item, (list, tuple)):
+                    for inner in item:
+                        if isinstance(inner, Expr):
+                            walk(inner)
+
+    walk(expr)
+    return found
+
+
 def project(frame: pd.DataFrame, exprs: list[Expr]) -> pd.DataFrame:
     """Build a new frame from an expression list — column order is the list order."""
     return pd.DataFrame({expr.name(): expr.evaluate(frame).to_numpy() for expr in exprs})

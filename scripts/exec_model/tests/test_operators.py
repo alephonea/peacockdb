@@ -269,7 +269,7 @@ def test_null_equals_null_makes_null_keys_match():
 
 def test_left_outer_emits_unmatched_build_rows_only_at_finish():
     build = pd.DataFrame({"k": [1, 2], "bv": ["a", "b"]})
-    join = HashJoin(JoinType.LEFT_OUTER, ["k"], ["k"])
+    join = HashJoin(JoinType.LEFT, ["k"], ["k"])
     join.set_build(batch(build, "B"))
     probes, _ = join.probe_and_fetch(batch(pd.DataFrame({"k": [2], "pv": [20]}), "P"))
     assert sum(b.num_rows() for b in probes) == 1
@@ -553,7 +553,7 @@ def test_a_left_outer_finish_with_no_probe_batches_pads_the_declared_schema():
     # still come out with the probe columns null-padded, not with a shape that silently
     # depends on whether a probe batch happened to arrive.
     build = pd.DataFrame({"k": [1, 2], "bv": ["a", "b"]})
-    join = HashJoin(JoinType.LEFT_OUTER, ["k"], ["k"], probe_schema=["k", "pv"])
+    join = HashJoin(JoinType.LEFT, ["k"], ["k"], probe_schema=["k", "pv"])
     join.set_build(batch(build, "B"))
     finish, _ = join.finish_and_fetch()
     frame = finish[0].frame
@@ -563,7 +563,7 @@ def test_a_left_outer_finish_with_no_probe_batches_pads_the_declared_schema():
 
 
 def test_an_outer_finish_with_no_probe_batches_and_no_schema_is_loud():
-    join = HashJoin(JoinType.LEFT_OUTER, ["k"], ["k"])
+    join = HashJoin(JoinType.LEFT, ["k"], ["k"])
     join.set_build(batch(pd.DataFrame({"k": [1]}), "B"))
     with raises(ValueError, match="probe_schema"):
         join.finish_and_fetch()
