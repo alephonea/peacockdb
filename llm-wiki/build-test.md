@@ -4,7 +4,7 @@ Code and tests are authoritative; this page maps them.
 
 ## Test categories
 
-**Grand total: 2267 test cases — Rust 1833, C++ 65, Python 369.** The Python figure includes the 93 corpus queries, which only a manual dispatch runs. The header is the sum of the N column, and the rows below it count cases: a target's own `--list` total is larger, because its registry test is counted once in Registry ↔ CSV rather than again in each tier it belongs to. Comparing a row against a target total is how this page gets mistakenly reported as drifting.
+**Grand total: 2269 test cases — Rust 1835, C++ 65, Python 369.** The Python figure includes the 93 corpus queries, which only a manual dispatch runs. The header is the sum of the N column, and the rows below it count cases: a target's own `--list` total is larger, because its registry test is counted once in Registry ↔ CSV rather than again in each tier it belongs to. Comparing a row against a target total is how this page gets mistakenly reported as drifting.
 
 **Runs** — `dataset-matrix` = pipeline.yml's job with the generated dataset and the cuDF
 matrix, both legs unless a step says one · `cost-report` = the
@@ -24,7 +24,7 @@ and `2gpu` rows also runs locally; large CPU batches go to verda.
 | CPU exec, full_table tp1-mini (Rust) | one probe that tp1 also holds at 2 GiB | [scan_limit](../peacockdb-core/tests/test_cpu_full_table.rs#L24) | dataset-matrix | 1 |
 | CPU exec, partitioned tp8-standard (Rust) | real 8-way: N partitions stay live across nodes; the GPU tier's CPU oracle | [q6](../peacockdb-core/tests/test_cpu_partitioned.rs#L17), [shuffle_additive](../peacockdb-core/tests/test_cpu_partitioned.rs#L21) | dataset-matrix | 17 |
 | CPU exec, resident OOM micro (Rust) | the enforcer trips at a tight budget, and the boundary is real | [q78 oom](../peacockdb-core/tests/test_cpu_oom.rs#L24), [q7 fits](../peacockdb-core/tests/test_cpu_oom.rs#L27) | dataset-matrix | 3 |
-| CPU exec bespoke (Rust) | wrapper stripping, routing predicate, instrumented stats | [test_execution_strips_gpu_nodes](../peacockdb-core/tests/test_cpu_executor_misc.rs#L102) | dataset-matrix | 5 |
+| CPU exec bespoke (Rust) | wrapper stripping, routing predicate, instrumented stats, calibration record regions | [test_execution_strips_gpu_nodes](../peacockdb-core/tests/test_cpu_executor_misc.rs#L102) | dataset-matrix | 5 |
 | CPU node-by-node parity (Rust) | the unified walk must equal the recursive path, byte for byte | [cpu_node_executor_matches_recursive](../peacockdb-core/tests/test_node_executor.rs#L16) | dataset-matrix | 1 |
 | GPU exec, full_table tp1-standard (Rust) | one run asserts per-node rows+cost vs `.cpu.txt` AND the final result | [scan_limit](../peacockdb-core/tests/common/gpu_cases.inc#L29) | shad-gpu | 110 |
 | GPU exec, partitioned tp8-standard (Rust) | same on the real 8-way path, with per-partition asserts; `shuffle_stddev` is the only coverage of the 8-way Welford merge and names #103 beside itself | [q6](../peacockdb-core/tests/common/gpu_cases.inc#L154) | shad-gpu | 18 |
@@ -556,6 +556,23 @@ and a rebuild, so every record in the tree was taken at the same counts.
 `PEACOCK_GPU_DEBUG` is deliberately **not** forwarded to this run — it adds a
 `cudaStreamSynchronize` after every operator, which changes exactly the thing being
 measured.
+
+Setting `PEACOCK_RECORD_PATH` makes the same run also append calibration rows (#153) to
+that file — from the same 2nd-smallest run the record above reports. Unset by default:
+the record is for a fit, not for the committed tree, and the two must not start
+depending on each other. Its column meanings are in the `#` preamble the first append
+writes, and in [`tests/common/record.rs`](../peacockdb-core/tests/common/record.rs); the
+bare-cuDF sf40 side (C6) writes the same format by hand. Two properties of the format
+that a reader will otherwise assume wrong:
+
+- A row is one **region** — one (node, output partition) — not one node, for the same
+  reason the tree above carries `p<k>:` sub-lines: three of the four `execute_node`
+  branches loop over partitions, and a node row would average away the structure the
+  three timing terms exist to show.
+- `cuda_bytes` is the regressor, and on the `peacockdb` source it is exactly `out_bytes`
+  — what `cost_model.conf` charges the node's category. On the bare-cuDF source it comes
+  from that side's hand-written call→category mapping and need not coincide, which is why
+  it is a column rather than something the fit derives.
 
 ### Wall-time C++ suites (currently unscripted)
 

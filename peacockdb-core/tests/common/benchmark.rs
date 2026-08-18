@@ -370,6 +370,25 @@ pub async fn run_gpu_benchmark(
         ),
     )
     .unwrap();
+    // The same run, as calibration rows (#153 C5). Off unless PEACOCK_RECORD_PATH is
+    // set: the record is for a collection run, not for the committed .benchmark.txt,
+    // and the two must not start depending on each other. Sourced from the same
+    // second-minimum run the record above reports, so the two files never disagree.
+    super::record::append_records(
+        plan,
+        stats,
+        &super::record::RunMeta {
+            source: "peacockdb",
+            dataset,
+            sf,
+            query,
+            label: &label,
+            timing_mode: TIMING_MODE,
+            build_profile: BUILD_PROFILE,
+            allocator: &allocator.to_string(),
+        },
+    );
+
     eprintln!(
         "bench {dataset}/{query} [{label}]: total_us={total_us} \
          (min={} max={}) floor={sync_floor_us}us alloc=[{allocator}] -> {}",

@@ -19,6 +19,7 @@ pub mod golden_text;
 pub mod injection;
 pub mod join_fixture;
 pub mod rebuild;
+pub mod record;
 pub mod registry;
 pub mod result_text;
 
