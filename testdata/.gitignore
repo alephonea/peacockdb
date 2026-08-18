@@ -4,3 +4,7 @@
 # testdata/goldens/<dataset>.sf<N>/ (the unanchored form caught those too).
 /tpch.sf*/
 /tpcds.sf*/
+
+# Calibration records (#153) — measurement input for a fit, rewritten by every
+# benchmark run. The fitted result is what gets committed, not its input.
+/calibration/

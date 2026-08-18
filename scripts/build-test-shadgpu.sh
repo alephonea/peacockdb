@@ -35,6 +35,14 @@
 # where <label> is the <mode>-<tp>-<tier> component the .cpu.txt goldens carry.
 # Written on the GPU host and copied back by --pull-benchmarks; llm-wiki/build-test.md
 # has the file format.
+#
+#   testdata/calibration/records.tsv        (#153, git-ignored)
+# The same run also emits calibration rows, one per timed region. Unconditionally
+# rather than behind a flag: the rows are derived from the run that wrote the tree
+# above, and a flag someone has to remember is a way for the two to silently
+# disagree about which measurement they describe. Truncated at the start of every
+# run -- one file per run is what a fit reads, and appending across runs would mix
+# build profiles and allocators under one header.
 
 # pipefail so a failing cargo in stage_cargo_test_binary's pipeline reports as a build
 # failure, not a missing binary. The remote scripts do not inherit it: see launch_remote.
@@ -51,6 +59,8 @@ RUST_TESTS_STAGING=cpp/install/rust-tests
 # The measurement target and its own staging dir. setup-glibc.sh patches both.
 BENCH_TARGET=peacock_gpu_benchmarks
 BENCH_STAGING=cpp/install/rust-benchmarks
+# Relative to testdata/ on both sides, so one name drives the remote export and the pull.
+BENCH_RECORD_REL=calibration/records.tsv
 # opt-3: the default test profile leaves workspace crates at opt-level 1 and so measures
 # a host overhead that is not the engine's. See `[profile.benchmarks]` in Cargo.toml.
 BENCH_PROFILE=benchmarks
@@ -89,7 +99,7 @@ Usage: build-test-shadgpu.sh [flags]
   --run-benchmarks            attached measurement run
   --run-benchmarks-detached   setsid on the host; poll with --benchmark-status
   --benchmark-status          read-only: still going / finished / log tail
-  --pull-benchmarks           fetch testdata/benchmark-results/ back
+  --pull-benchmarks           fetch testdata/benchmark-results/ and the calibration record
   --all                       = --build --push-binaries --patch --run
 
 --all deliberately does NOT imply the benchmark phases: that is what keeps a
@@ -230,13 +240,30 @@ if [ "$RSYNC" -eq 1 ]; then
   # would erase the measurement history.
   ssh "$REMOTE" "mkdir -p $REMOTE_REPO/testdata/goldens"
   resilient_rsync -r --delete testdata/goldens/ "$REMOTE:$REMOTE_REPO/testdata/goldens/"
-  # A committed fixture the registry tests read; goldens alone leave them failing on
-  # "cannot read cost-registry.csv", which is a mis-provisioned run rather than a
-  # product fault. Every provisioning path names its files by hand, so a new fixture
-  # has to be added to each one independently.
-  resilient_rsync -a testdata/cost-registry.csv "$REMOTE:$REMOTE_REPO/testdata/"
-  # The query text every corpus case reads: a missing file is loud, a stale one silently runs old SQL.
-  resilient_rsync -a testdata/tpch-queries testdata/tpcds-queries "$REMOTE:$REMOTE_REPO/testdata/"
+  # Everything else under testdata/ that the binaries READ rather than assert against:
+  # cost-registry.csv, cost_model.conf, the query .sql sets, tpch.minimal. Swept from
+  # git rather than named, because the hand-maintained list this replaces had gone
+  # stale five times. The fifth was the expensive one: cost_model.conf was added to
+  # build-test.sh's sweep and to nothing else, so the host kept the pre-taxonomy-split
+  # file and a calibration run came home tagged with categories that no longer exist
+  # (#153) -- wrong data rather than a red test.
+  #
+  # Additive, unlike the goldens push above: --delete here would erase whatever else
+  # provisions this host, and nothing under testdata/ that we do not track is ours to
+  # remove. Generated datasets are not swept -- they are git-ignored, which is what
+  # --exclude-standard turns on, and they live on the host at tens of GiB.
+  # Two tracked trees are excluded. goldens/ is owned by the --delete mirror above,
+  # and re-adding it here additively would be the mirror's opposite. benchmark-results/
+  # is WRITTEN on the host and travels back through --pull-benchmarks, so pushing a
+  # checkout's copy over it replaces the host's measurements with whatever this box
+  # last pulled.
+  fixtures=$(mktemp)
+  git ls-files --cached --others --exclude-standard testdata \
+    | grep -vE '^testdata/(goldens|benchmark-results)/' > "$fixtures"
+  [ -s "$fixtures" ] || die "no tracked testdata fixtures found -- the git sweep is wrong"
+  echo "==> push $(wc -l < "$fixtures") committed testdata fixtures -> $REMOTE"
+  resilient_rsync -a --files-from="$fixtures" ./ "$REMOTE:$REMOTE_REPO/"
+  rm -f "$fixtures"
   # Our setup-glibc.sh, so --patch uses the version that knows both rust dirs.
   ssh "$REMOTE" "mkdir -p $REMOTE_REPO/scripts"
   resilient_rsync -a scripts/setup-glibc.sh "$REMOTE:$REMOTE_REPO/scripts/"
@@ -503,6 +530,13 @@ remote_bench_script() {
 
     results=\$PEACOCK_TESTDATA_DIR/benchmark-results
     mkdir -p "\$results"
+
+    # Calibration rows (#153) alongside the tree. Removed rather than appended to:
+    # record.rs writes the header only into a fresh file, so a leftover from an
+    # earlier run would swallow this one's rows under the earlier one's heading.
+    export PEACOCK_RECORD_PATH=\$PEACOCK_TESTDATA_DIR/$BENCH_RECORD_REL
+    mkdir -p "\$(dirname "\$PEACOCK_RECORD_PATH")"
+    rm -f "\$PEACOCK_RECORD_PATH"
     # What this run wrote, not what is on the host: the tree accumulates across runs,
     # so a total can only go red on a first-ever run and a filter that matches nothing
     # would read green having measured nothing. mktemp gives the comparison point.
@@ -519,6 +553,7 @@ remote_bench_script() {
     total=\$(find "\$results" -name '*.benchmark.txt' | wc -l)
     rm -f "\$stamp"
     echo "==> benchmark records written by this run: \$written (on host: \$total)"
+    echo "==> calibration rows: \$(grep -vc '^#' "\$PEACOCK_RECORD_PATH" 2>/dev/null || echo 0)"
     if [ "\$status" -ne 0 ]; then
       echo "!!! $BENCH_TARGET FAILED (exit \$status)"
       exit "\$status"
@@ -590,6 +625,20 @@ EOF
   # rides home on every later pull.
   resilient_rsync -r "$REMOTE:$REMOTE_REPO/testdata/benchmark-results/" testdata/benchmark-results/
   echo "==> fetched $(find testdata/benchmark-results -name '*.benchmark.txt' | wc -l) benchmark records"
+  # The calibration file, if the run that wrote it was recent enough to have one.
+  # Missing is not an error: --pull-benchmarks is also the recovery path for a run
+  # from before this existed, and for one that died before its first record. Tested
+  # over ssh rather than by letting the transfer fail -- resilient_rsync retries a
+  # missing source a hundred times before giving up, and eight minutes of backoff is
+  # not how "there is no record" should read.
+  if ssh "$REMOTE" test -f "$REMOTE_REPO/testdata/$BENCH_RECORD_REL"; then
+    mkdir -p "testdata/$(dirname "$BENCH_RECORD_REL")"
+    resilient_rsync "$REMOTE:$REMOTE_REPO/testdata/$BENCH_RECORD_REL" \
+      "testdata/$BENCH_RECORD_REL"
+    echo "==> fetched $(grep -vc '^#' "testdata/$BENCH_RECORD_REL") calibration rows"
+  else
+    echo "==> no calibration record on the host (a run from before it was emitted?)"
+  fi
 fi
 
 exit "$status_rc"
