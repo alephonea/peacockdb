@@ -370,7 +370,7 @@ pub async fn run_gpu_benchmark(
         ),
     )
     .unwrap();
-    // The same run, as calibration rows (#153 C5). Off unless PEACOCK_RECORD_PATH is
+    // The same run, as calibration rows (#153). Off unless PEACOCK_RECORD_PATH is
     // set: the record is for a collection run, not for the committed .benchmark.txt,
     // and the two must not start depending on each other. Sourced from the same
     // second-minimum run the record above reports, so the two files never disagree.

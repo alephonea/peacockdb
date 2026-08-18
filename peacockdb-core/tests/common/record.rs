@@ -1,16 +1,16 @@
-//! The calibration record (#153 C5): one line per timed region, in the one format
+//! The calibration record (#153): one line per timed region, in the one format
 //! both measurement sources write.
 //!
 //! The fit needs peacockdb sf1 rows and bare-cuDF sf40 rows on the same axes, so the
 //! format is defined once here and implemented twice — this side from the plan tree
-//! and [`NodeMemoryStats`], the sf40 side (C6) by hand in the C++ tests, which have
+//! and [`NodeMemoryStats`], the sf40 side by hand in the C++ tests, which have
 //! no plan to walk. Sharing the format rather than the code is forced: the two
 //! sources agree on what a row MEANS and on nothing else.
 //!
 //! TSV, because `build_profile` and `allocator` contain spaces and commas and are
 //! the fields a reader most needs verbatim.
 //!
-//! `hbm_bytes` is deliberately absent: it comes from Nsight (C7) and is joined in
+//! `hbm_bytes` is deliberately absent: it comes from Nsight and is joined in
 //! later on `(query, node_seq)`.
 
 use std::io::Write;

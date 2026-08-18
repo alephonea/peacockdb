@@ -210,7 +210,7 @@ async fn test_instrumented_stats_are_populated() {
     );
 }
 
-// --- the calibration record (#153 C5) ---------------------------------------
+// --- the calibration record (#153) ------------------------------------------
 
 /// Every region the record emits, in emission order, as `(out_rows, out_bytes)` read
 /// off a `.cpu.txt` golden: a node's `p<k>:` sub-lines when it has them, its own
@@ -240,7 +240,7 @@ fn golden_regions(text: &str) -> Vec<(usize, usize)> {
     regions
 }
 
-/// C5's proving test, and the half of the calibration record that can be checked
+/// The record's proving test, and the half of it that can be checked
 /// without a GPU: which regions exist, in what order, and with what rows and bytes.
 /// The timing columns are zero here — those are gated by `test_node_timing` on the
 /// device. Split that way on purpose: the structural half is what silently rots when

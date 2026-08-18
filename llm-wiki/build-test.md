@@ -562,7 +562,7 @@ that file — from the same 2nd-smallest run the record above reports. Unset by 
 the record is for a fit, not for the committed tree, and the two must not start
 depending on each other. Its column meanings are in the `#` preamble the first append
 writes, and in [`tests/common/record.rs`](../peacockdb-core/tests/common/record.rs); the
-bare-cuDF sf40 side (C6) writes the same format by hand. Two properties of the format
+bare-cuDF sf40 side writes the same format by hand. Two properties of the format
 that a reader will otherwise assume wrong:
 
 - A row is one **region** — one (node, output partition) — not one node, for the same

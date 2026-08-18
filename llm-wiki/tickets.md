@@ -170,7 +170,7 @@ merely a width mismatch, it is wrong in both directions: too wide for every corp
 
 Same shape as #195 (archived, fixed) and harmless for the same reasons — the ids are tiny, the
 goldens compare printed text, and `materialize` accepts whatever schema the IPC stream
-declares. Visible on tpcds q18/q22/q80, and only because the C4 byte cross-check asks about
+declares. Visible on tpcds q18/q22/q80, and only because the #153 byte cross-check asks about
 produced types. The >32-group case is the one that is not merely cosmetic, but no corpus query
 reaches it.
 
