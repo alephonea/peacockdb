@@ -205,8 +205,16 @@ set_tests_properties(peacock_plan_tests PROPERTIES LABELS "gpu")
 # dataset that lives on the GPU host, checked against committed DuckDB goldens. Skips
 # itself when that dataset is absent, so it is safe to run anywhere.
 add_executable(peacock_tpch_tests tests/gpu/test_tpch.cpp)
-target_include_directories(peacock_tpch_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(peacock_tpch_tests PRIVATE cudf::cudf GTest::gtest)
+# src/ for plan_executor.h, and the link to peacock_gpu, are both for one function:
+# logical_size_from_table, the byte formula the calibration record (#153) needs to be
+# identical at both ends. Re-deriving it here instead would be a third copy of a rule that
+# already has two, and a fit over two sources counting bytes differently is wrong by a
+# factor nothing in the pipeline can detect. The queries themselves stay bare cuDF.
+target_include_directories(peacock_tpch_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include
+                                                      ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(peacock_tpch_tests PRIVATE peacock_gpu cudf::cudf GTest::gtest)
+target_compile_definitions(peacock_tpch_tests PRIVATE
+                           PEACOCK_CXX_BUILD_PROFILE="${CMAKE_BUILD_TYPE}")
 set_target_properties(peacock_tpch_tests PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 add_test(NAME peacock_tpch_tests COMMAND peacock_tpch_tests)
 set_tests_properties(peacock_tpch_tests PROPERTIES LABELS "gpu")

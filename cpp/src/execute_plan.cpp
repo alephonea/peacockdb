@@ -63,6 +63,17 @@ uint64_t logical_size_from_table(const cudf::table_view& table, uint64_t varlen_
       // See the header on why 4-byte offsets are assumed.
       case cudf::type_id::STRING: data = (rows + 1) * 4; break;
       case cudf::type_id::DECIMAL128: data = rows * 16; break;
+      // DECIMAL32/64 have no Rust counterpart to mirror: arrow 54 has no narrower
+      // decimal than Decimal128, so the plan path cannot produce one and these arms are
+      // unreachable from it. They exist for the bare-cuDF calibration source, whose
+      // parquet reader picks the narrowest decimal that fits where arrow-rs always
+      // widens. Charged at their real width rather than at the 128-bit width the same
+      // column takes on the plan path: the two scans genuinely move different numbers of
+      // bytes, and hiding that behind a shared convention would let the fit average away
+      // a difference it exists to expose (the widening is a separate cast region on this
+      // source and part of the scan on the other).
+      case cudf::type_id::DECIMAL32: data = rows * 4; break;
+      case cudf::type_id::DECIMAL64: data = rows * 8; break;
       default:
         throw std::runtime_error(
             "logical_size_from_table: unhandled cudf type id " +
