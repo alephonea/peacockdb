@@ -17,7 +17,7 @@ reference still resolves there.
 | [Critical correctness](#critical-correctness) | 15 | #153 #103 #80 #59 #46 #47 #60 #121 #122 #123 #118 #119 #120 #117 #41 |
 | [Blockers for disabled coverage](#blockers-for-disabled-coverage) | 15 | #97 #23 #32 #65 #62 #91 #95 #57 #45 #63 #56 #55 #115 #96 #143 |
 | [Performance / architecture](#performance--architecture) | 26 | #155 #154 #152 #151 #150 #149 #148 #147 #146 #145 #19 #16 #20 #71 #101 #73 #110 #75 #136 #137 #138 #139 #140 #141 #144 #142 |
-| [Infrastructure / process](#infrastructure--process) | 16 | #113 #114 #116 #126 #132 #131 #130 #129 #128 #127 #124 #125 #13 #94 #69 #49 |
+| [Infrastructure / process](#infrastructure--process) | 19 | #113 #114 #116 #126 #135 #134 #133 #132 #131 #130 #129 #128 #127 #124 #125 #13 #94 #69 #49 |
 
 ## Critical correctness
 
@@ -436,6 +436,11 @@ beside `TableResult` (build one from an owned table plus names; select an ordina
 one by moving) turn every exit path into a line, which is where most of the length of
 `execute_hash_join` goes.
 
+That is not the scope creep coding-style.md forbids: you cannot stop copying without
+changing how each exit path builds its `TableResult`, and there are ten of them saying the
+same thing. The helpers are how the change is made once instead of ten times — writing the
+release form out ten times over would be the worse diff, not the disciplined one.
+
 **Land this before [#155](#t155)'s measurement.** That ticket weighs a build-side copy per
 probe batch against a hash-table rebuild, and these copies sit in the same per-call number
 without belonging to either side of the comparison — leave them in and the build-side copy
@@ -651,6 +656,26 @@ Build an IN-set / min-max (later Bloom) at hash-join build completion and feed t
 probe-side GpuScan for row-group pruning and pre-filtering. Applies to 76/99 TPC-DS
 queries; validate on q3/q19/q33. Best after #19.
 
+**Design it as the groundwork for CTEs, not as a join-to-scan special case.** A dynamic
+filter is the first thing in this engine whose producer has *two* consumers: the build side
+feeds the join, and it also feeds something that is not an execution node at all — a
+replanning consumer that turns those keys into a predicate on a scan below. That is a
+diamond, and every plan model here is a tree (`plan.py` and the DataFusion side both;
+a join takes exactly two children). Whatever serves it — a fork that hands the same batch
+stream to N consumers, plus a consumer that plans rather than executes — is exactly what a
+materialized CTE needs ([#101](#t101), where DataFusion inlines every reference and peacock
+re-scans each copy), and what [#147](#t147) calls refinement in flight, which is the same
+data arriving at a planning consumer one batch early.
+
+**The batch-partitioned model is unusually well suited to that shape**, which is the reason
+to do this after it rather than before. A stream of batches with explicit ownership can be
+forked where a single resident table cannot: with refcounted handles ([#145](#t145),
+[#155](#t155)) a tee costs nothing on the device, the accountant already models a fork's
+residency as the slowest consumer's backlog, and a consumer that blocks its producer is a
+shape the scheduler has already been proven on — it is the join hold, one rule, already
+mutation-tested (`scripts/exec_model`, finding F3). A diamond in the *plan* is then a
+routing question rather than a scheduling one, which is the cheap half.
+
 <a id="t20"></a>
 ### #20 — Join enumeration: DPccp/DPhyp cost-based tree reshaping
 DataFusion 45 has no join enumerator — trees come out in FROM-clause order, and ~70/99
@@ -672,6 +697,11 @@ multi-file scans, dynamic ranges (#16). Cause of red widget ratios on selective 
 DataFusion inlines every CTE reference and peacock re-scans each copy. Worst: tpcds q23
 (CTEs ×5/×3/×2 → 6 scans), q4/q11 (`year_total` ×6/×4), q31; tpch q15 (`revenue0` ×2),
 q2. Direction: CTE materialization or physical CSE; at minimum make the cost model aware.
+
+The mechanism a materialized CTE needs — one producer, N consumers of the same batch
+stream — is the one [#16](#t16) has to build first for dynamic filters, and it is cheap in
+the batch-partitioned model and expensive in a single-resident-table one. Sequence them
+that way round.
 
 <a id="t73"></a>
 ### #73 — Cost-based optimizer (CBO) umbrella
