@@ -164,10 +164,13 @@ jobs:
       # sort-order / clustering checks always run. numpy+pyarrow ship in the rapids base
       # image (cudf depends on pyarrow), but self-heal if a future image drops them
       # rather than letting the validator fail to import.
-      # The exec-model prototype's TPC-H plans, which need the sf1 tables generated
+      # The exec-model prototype's TPC-H plan shapes, which need the sf1 tables generated
       # above — the rest of that suite runs in the cost-report tier, which has no
       # dataset. One matrix leg only: the two legs differ in cuDF, which this pure-python
       # test cannot see, and a second run would only report the same failure twice.
+      # The corpus queries are minutes rather than seconds: they live in
+      # test_tpch_corpus.py and run in exec-model-corpus.yml on manual dispatch, so this
+      # file has none left to exclude.
       - name: Exec-model TPC-H plans (Python)
         if: matrix.cudf == '25.02'
         run: |
@@ -609,14 +612,20 @@ jobs:
           set -euo pipefail
           python3 -c "import pandas" 2>/dev/null || pip install --quiet pandas
           shopt -s nullglob
-          # test_tpch.py needs the generated sf1 tables, which only the cpp-cpu job
-          # produces; it runs there instead. Named rather than pattern-matched, and its
-          # absence is an error, so renaming it cannot silently drop it from both jobs.
-          elsewhere=scripts/exec_model/tests/test_tpch.py
-          [ -f "$elsewhere" ] || { echo "$elsewhere is missing; is it still run in cpp-cpu?"; exit 1; }
+          # These three need the generated sf1 tables, which this job does not have.
+          # test_tpch.py's plan shapes run in cpp-cpu; the two corpus files run in
+          # exec-model-corpus.yml on manual dispatch. Named rather than pattern-matched,
+          # and a missing one is an error, so renaming a file cannot silently drop it from
+          # every job.
+          elsewhere=(scripts/exec_model/tests/test_tpch.py
+                     scripts/exec_model/tests/test_tpch_corpus.py
+                     scripts/exec_model/tests/test_tpcds.py)
+          for e in "${elsewhere[@]}"; do
+            [ -f "$e" ] || { echo "$e is missing; is it still run elsewhere?"; exit 1; }
+          done
           files=()
           for f in scripts/exec_model/tests/test_*.py; do
-            [ "$f" = "$elsewhere" ] || files+=("$f")
+            case " ${elsewhere[*]} " in *" $f "*) ;; *) files+=("$f") ;; esac
           done
           # A vanished glob makes the loop body disappear and the step pass green.
           [ ${#files[@]} -gt 0 ] || { echo "no exec-model test files matched"; exit 1; }
