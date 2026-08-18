@@ -1,51 +1,57 @@
-GpuSortExec: expr=[cd_gender@0 ASC NULLS LAST, cd_marital_status@1 ASC NULLS LAST, cd_education_status@2 ASC NULLS LAST, cd_purchase_estimate@4 ASC NULLS LAST, cd_credit_rating@6 ASC NULLS LAST, cd_dep_count@8 ASC NULLS LAST, cd_dep_employed_count@10 ASC NULLS LAST, cd_dep_college_count@12 ASC NULLS LAST], fetch=100, time_us=1123
-  GpuProjectExec: expr=[cd_gender@0 as cd_gender, cd_marital_status@1 as cd_marital_status, cd_education_status@2 as cd_education_status, count(*)@8 as cnt1, cd_purchase_estimate@3 as cd_purchase_estimate, count(*)@8 as cnt2, cd_credit_rating@4 as cd_credit_rating, count(*)@8 as cnt3, cd_dep_count@5 as cd_dep_count, count(*)@8 as cnt4, cd_dep_employed_count@6 as cd_dep_employed_count, count(*)@8 as cnt5, cd_dep_college_count@7 as cd_dep_college_count, count(*)@8 as cnt6], time_us=272
-    GpuAggregateExec: group_by=[cd_gender, cd_marital_status, cd_education_status, cd_purchase_estimate, cd_credit_rating, cd_dep_count, cd_dep_employed_count, cd_dep_college_count], aggr=[count(*)], time_us=730
-      GpuCoalesceBatchesExec, time_us=1
-        GpuFilterExec: predicate=mark@8 OR mark@9, projection=[0, 1, 2, 3, 4, 5, 6, 7], time_us=561
-          GpuCoalesceBatchesExec, time_us=1
-            GpuHashJoinExec: join_type=LeftMark, on=[(c_customer_sk@0, cs_ship_customer_sk@1)], projection=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10], time_us=650
-              GpuCoalesceBatchesExec, time_us=1
-                GpuHashJoinExec: join_type=LeftMark, on=[(c_customer_sk@0, ws_bill_customer_sk@1)], time_us=412
-                  GpuCoalesceBatchesExec, time_us=1
-                    GpuHashJoinExec: join_type=LeftSemi, on=[(c_customer_sk@0, ss_customer_sk@0)], time_us=607
-                      GpuCoalesceBatchesExec, time_us=1
-                        GpuHashJoinExec: join_type=Inner, on=[(c_current_cdemo_sk@1, cd_demo_sk@0)], projection=[0, 3, 4, 5, 6, 7, 8, 9, 10], time_us=1306
-                          GpuCoalesceBatchesExec, time_us=1
-                            GpuHashJoinExec: join_type=Inner, on=[(ca_address_sk@0, c_current_addr_sk@2)], projection=[1, 2], time_us=291
-                              GpuCoalesceBatchesExec, time_us=1
-                                GpuFilterExec: predicate=ca_county@1 = Rush County OR ca_county@1 = Toole County OR ca_county@1 = Jefferson County OR ca_county@1 = Dona Ana County OR ca_county@1 = La Porte County, projection=[0], time_us=1102
-                                  GpuScanExec: table=customer_address, projections=[ca_address_sk, ca_county], time_us=15086
-                              GpuScanExec: table=customer, projections=[c_customer_sk, c_current_cdemo_sk, c_current_addr_sk], time_us=23448
-                          GpuScanExec: table=customer_demographics, projections=[cd_demo_sk, cd_gender, cd_marital_status, cd_education_status, cd_purchase_estimate, cd_credit_rating, cd_dep_count, cd_dep_employed_count, cd_dep_college_count], time_us=36632
-                      GpuCoalesceBatchesExec, time_us=1
-                        GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ss_sold_date_sk@0)], projection=[2], time_us=623
-                          GpuCoalesceBatchesExec, time_us=1
-                            GpuFilterExec: predicate=d_year@1 = 2002 AND d_moy@2 >= 1 AND d_moy@2 <= 4, projection=[0], time_us=180
-                              GpuScanExec: table=date_dim, projections=[d_date_sk, d_year, d_moy], time_us=18799
-                          GpuScanExec: table=store_sales, projections=[ss_sold_date_sk, ss_customer_sk], time_us=18194
-                  GpuCoalesceBatchesExec, time_us=1
-                    GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ws_sold_date_sk@0)], projection=[1, 2], time_us=372
-                      GpuCoalesceBatchesExec, time_us=1
-                        GpuFilterExec: predicate=d_year@1 = 2002 AND d_moy@2 >= 1 AND d_moy@2 <= 4, projection=[0], time_us=187
-                          GpuScanExec: table=date_dim, projections=[d_date_sk, d_year, d_moy], time_us=17400
-                      GpuScanExec: table=web_sales, projections=[ws_sold_date_sk, ws_bill_customer_sk], time_us=7077
-              GpuCoalesceBatchesExec, time_us=1
-                GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, cs_sold_date_sk@0)], projection=[1, 2], time_us=448
-                  GpuCoalesceBatchesExec, time_us=1
-                    GpuFilterExec: predicate=d_year@1 = 2002 AND d_moy@2 >= 1 AND d_moy@2 <= 4, projection=[0], time_us=176
-                      GpuScanExec: table=date_dim, projections=[d_date_sk, d_year, d_moy], time_us=17134
-                  GpuScanExec: table=catalog_sales, projections=[cs_sold_date_sk, cs_ship_customer_sk], time_us=8147
+GpuSortExec: expr=[cd_gender@0 ASC NULLS LAST, cd_marital_status@1 ASC NULLS LAST, cd_education_status@2 ASC NULLS LAST, cd_purchase_estimate@4 ASC NULLS LAST, cd_credit_rating@6 ASC NULLS LAST, cd_dep_count@8 ASC NULLS LAST, cd_dep_employed_count@10 ASC NULLS LAST, cd_dep_college_count@12 ASC NULLS LAST], fetch=100, setup_us=2 submit_us=1112 device_us=1111
+  GpuProjectExec: expr=[cd_gender@0 as cd_gender, cd_marital_status@1 as cd_marital_status, cd_education_status@2 as cd_education_status, count(*)@8 as cnt1, cd_purchase_estimate@3 as cd_purchase_estimate, count(*)@8 as cnt2, cd_credit_rating@4 as cd_credit_rating, count(*)@8 as cnt3, cd_dep_count@5 as cd_dep_count, count(*)@8 as cnt4, cd_dep_employed_count@6 as cd_dep_employed_count, count(*)@8 as cnt5, cd_dep_college_count@7 as cd_dep_college_count, count(*)@8 as cnt6], setup_us=1 submit_us=263 device_us=262
+    GpuAggregateExec: group_by=[cd_gender, cd_marital_status, cd_education_status, cd_purchase_estimate, cd_credit_rating, cd_dep_count, cd_dep_employed_count, cd_dep_college_count], aggr=[count(*)], setup_us=2 submit_us=705 device_us=704
+      GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
+        GpuFilterExec: predicate=mark@8 OR mark@9, projection=[0, 1, 2, 3, 4, 5, 6, 7], setup_us=2 submit_us=561 device_us=560
+          GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
+            GpuHashJoinExec: join_type=LeftMark, on=[(c_customer_sk@0, cs_ship_customer_sk@1)], projection=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10], setup_us=1 submit_us=643 device_us=642
+              GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
+                GpuHashJoinExec: join_type=LeftMark, on=[(c_customer_sk@0, ws_bill_customer_sk@1)], setup_us=2 submit_us=404 device_us=403
+                  GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
+                    GpuHashJoinExec: join_type=LeftSemi, on=[(c_customer_sk@0, ss_customer_sk@0)], setup_us=1 submit_us=595 device_us=594
+                      GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
+                        GpuHashJoinExec: join_type=Inner, on=[(c_current_cdemo_sk@1, cd_demo_sk@0)], projection=[0, 3, 4, 5, 6, 7, 8, 9, 10], setup_us=1 submit_us=1301 device_us=1300
+                          GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
+                            GpuHashJoinExec: join_type=Inner, on=[(ca_address_sk@0, c_current_addr_sk@2)], projection=[1, 2], setup_us=1 submit_us=292 device_us=291
+                              GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
+                                GpuFilterExec: predicate=ca_county@1 = Rush County OR ca_county@1 = Toole County OR ca_county@1 = Jefferson County OR ca_county@1 = Dona Ana County OR ca_county@1 = La Porte County, projection=[0], setup_us=1 submit_us=1092 device_us=1090
+                                  GpuScanExec: table=customer_address, projections=[ca_address_sk, ca_county], setup_us=2 submit_us=15053 device_us=15048
+                              GpuScanExec: table=customer, projections=[c_customer_sk, c_current_cdemo_sk, c_current_addr_sk], setup_us=2 submit_us=23411 device_us=23410
+                          GpuScanExec: table=customer_demographics, projections=[cd_demo_sk, cd_gender, cd_marital_status, cd_education_status, cd_purchase_estimate, cd_credit_rating, cd_dep_count, cd_dep_employed_count, cd_dep_college_count], setup_us=2 submit_us=36225 device_us=36224
+                      GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
+                        GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ss_sold_date_sk@0)], projection=[2], setup_us=1 submit_us=616 device_us=615
+                          GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
+                            GpuFilterExec: predicate=d_year@1 = 2002 AND d_moy@2 >= 1 AND d_moy@2 <= 4, projection=[0], setup_us=22 submit_us=153 device_us=152
+                              GpuScanExec: table=date_dim, projections=[d_date_sk, d_year, d_moy], setup_us=2 submit_us=18743 device_us=18742
+                          GpuScanExec: table=store_sales, projections=[ss_sold_date_sk, ss_customer_sk], setup_us=2 submit_us=18162 device_us=18161
+                  GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
+                    GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ws_sold_date_sk@0)], projection=[1, 2], setup_us=1 submit_us=361 device_us=360
+                      GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
+                        GpuFilterExec: predicate=d_year@1 = 2002 AND d_moy@2 >= 1 AND d_moy@2 <= 4, projection=[0], setup_us=22 submit_us=152 device_us=151
+                          GpuScanExec: table=date_dim, projections=[d_date_sk, d_year, d_moy], setup_us=2 submit_us=17290 device_us=17289
+                      GpuScanExec: table=web_sales, projections=[ws_sold_date_sk, ws_bill_customer_sk], setup_us=6 submit_us=6955 device_us=6954
+              GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
+                GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, cs_sold_date_sk@0)], projection=[1, 2], setup_us=1 submit_us=425 device_us=424
+                  GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
+                    GpuFilterExec: predicate=d_year@1 = 2002 AND d_moy@2 >= 1 AND d_moy@2 <= 4, projection=[0], setup_us=22 submit_us=147 device_us=146
+                      GpuScanExec: table=date_dim, projections=[d_date_sk, d_year, d_moy], setup_us=2 submit_us=17039 device_us=17038
+                  GpuScanExec: table=catalog_sales, projections=[cs_sold_date_sk, cs_ship_customer_sk], setup_us=6 submit_us=8011 device_us=8009
 
-# sync_floor_us = cost of the measurement itself (empty timed region: clock + cudaStreamSynchronize on an idle stream). Each node time INCLUDES one PER OUTPUT PARTITION, since a node line is the Σ over its partitions; a node at or below its own floor (sync_floor_us x partitions) is unresolved, not cheap. Do not subtract it.
-# nodes_total_us = Σ of the per-node times above; total_us = the whole query, end to end (parse + plan + serialize + node walk + materialize)
+# timing_mode = how the numbers were taken, and what they MEAN. sync: the region ends in a cudaStreamSynchronize, so submit_us contains the device execution and device_us is 0. events: no explicit drain, and CUDA events bracket the device work as device_us. submit_us is NOT launch cost in either mode — cuDF and rmm synchronize internally, so the host waits for most of what it submits and submit_us tracks device_us closely. Only total_us is comparable across the two.
+# setup_us = host time before the node's first device touch (flatbuffer decode, handle lookups, AST build) — the prologue bare cuDF has no analogue for, which is why it is fitted as its own constant. submit_us / device_us: see timing_mode.
+# sync_floor_us = cost of the SYNC measurement itself (empty timed region: clock + cudaStreamSynchronize on an idle stream). Measured in both modes: under sync it is the resolution floor every node time INCLUDES, once PER OUTPUT PARTITION; under events it is the per-region stall that is no longer paid. Do not subtract it.
+# nodes_total_us = Σ setup_us + Σ submit_us, the HOST side of the walk. nodes_device_us is deliberately NOT added to it — the host ran while the device did, so the two are concurrent spans of the same clock. Device regions are on one stream in program order, so nodes_device_us is disjoint and <= total_us; the gap is stream idle, i.e. the device waiting through host prologue. total_us = the whole query, end to end (parse + plan + serialize + node walk + materialize).
 # build_profile = how the harness itself was compiled. total_us MINUS nodes_total_us is that Rust; records from different profiles are not comparable on it. Node times are device work and barely move.
 # allocator = the rmm device resource the node times were taken under. Without a pool every cuDF intermediate is a cudaMalloc/cudaFree round trip, charged to the node that allocated it — so it inflates the largest-output nodes hardest and moves the PROFILE, not only the scale. Records under different allocators are not comparable, node for node or in total.
 # shared_work_charged_to = which p<k> sub-line carries work a node does once for all of its output partitions. A hash repartition concatenates its input and scatters it in a single operation, and that time is billed to p0 — so p0 standing far above its siblings is the accounting, not skew. Sub-lines sum to their node line either way. Written whether or not this plan has a repartition.
 build_profile=benchmarks opt-level=3
-allocator=rmm-pool initial=113.4GiB max=126.7GiB of 133.4GiB free on a discrete device
+allocator=rmm-pool initial=118.3GiB max=132.3GiB of 139.2GiB free on a discrete device
 shared_work_charged_to=p0
+timing_mode=events
 sync_floor_us=1
 nodes_at_or_below_floor=13/38
-nodes_total_us=170970
-total_us=184985
+nodes_setup_us=109
+nodes_submit_us=169711
+nodes_device_us=169680
+nodes_total_us=169820
+total_us=183839

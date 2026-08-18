@@ -1,28 +1,34 @@
-GpuSortExec: expr=[cntrycode@0 ASC NULLS LAST], time_us=137
-  GpuProjectExec: expr=[cntrycode@0 as cntrycode, count(*)@1 as numcust, sum(custsale.c_acctbal)@2 as totacctbal], time_us=34
-    GpuAggregateExec: group_by=[cntrycode], aggr=[count(*), sum(custsale.c_acctbal)], time_us=590
-      GpuProjectExec: expr=[substr(c_phone@0, 1, 2) as cntrycode, c_acctbal@1 as c_acctbal], time_us=228
-        GpuNestedLoopJoinExec: join_type=Inner, filter=CAST(c_acctbal@0 AS Decimal128(19, 6)) > avg(customer.c_acctbal)@1, projection=[1, 2], time_us=506
-          GpuAggregateExec: group_by=[], aggr=[avg(customer.c_acctbal)], time_us=370
-            GpuCoalesceBatchesExec, time_us=1
-              GpuFilterExec: predicate=c_acctbal@1 > Some(0),15,2 AND (substr(c_phone@0, 1, 2) = 13 OR substr(c_phone@0, 1, 2) = 31 OR substr(c_phone@0, 1, 2) = 23 OR substr(c_phone@0, 1, 2) = 29 OR substr(c_phone@0, 1, 2) = 30 OR substr(c_phone@0, 1, 2) = 18 OR substr(c_phone@0, 1, 2) = 17), projection=[1], time_us=2571
-                GpuScanExec: table=customer, projections=[c_phone, c_acctbal], time_us=59718
-          GpuCoalesceBatchesExec, time_us=1
-            GpuHashJoinExec: join_type=LeftAnti, on=[(c_custkey@0, o_custkey@0)], projection=[1, 2], time_us=383
-              GpuCoalesceBatchesExec, time_us=1
-                GpuFilterExec: predicate=substr(c_phone@1, 1, 2) = 13 OR substr(c_phone@1, 1, 2) = 31 OR substr(c_phone@1, 1, 2) = 23 OR substr(c_phone@1, 1, 2) = 29 OR substr(c_phone@1, 1, 2) = 30 OR substr(c_phone@1, 1, 2) = 18 OR substr(c_phone@1, 1, 2) = 17, time_us=2417
-                  GpuScanExec: table=customer, projections=[c_custkey, c_phone, c_acctbal], time_us=59358
-              GpuScanExec: table=orders, projections=[o_custkey], time_us=23516
+GpuSortExec: expr=[cntrycode@0 ASC NULLS LAST], setup_us=0 submit_us=136 device_us=135
+  GpuProjectExec: expr=[cntrycode@0 as cntrycode, count(*)@1 as numcust, sum(custsale.c_acctbal)@2 as totacctbal], setup_us=0 submit_us=31 device_us=31
+    GpuAggregateExec: group_by=[cntrycode], aggr=[count(*), sum(custsale.c_acctbal)], setup_us=1 submit_us=593 device_us=592
+      GpuProjectExec: expr=[substr(c_phone@0, 1, 2) as cntrycode, c_acctbal@1 as c_acctbal], setup_us=0 submit_us=217 device_us=216
+        GpuNestedLoopJoinExec: join_type=Inner, filter=CAST(c_acctbal@0 AS Decimal128(19, 6)) > avg(customer.c_acctbal)@1, projection=[1, 2], setup_us=31 submit_us=461 device_us=460
+          GpuAggregateExec: group_by=[], aggr=[avg(customer.c_acctbal)], setup_us=0 submit_us=370 device_us=369
+            GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
+              GpuFilterExec: predicate=c_acctbal@1 > Some(0),15,2 AND (substr(c_phone@0, 1, 2) = 13 OR substr(c_phone@0, 1, 2) = 31 OR substr(c_phone@0, 1, 2) = 23 OR substr(c_phone@0, 1, 2) = 29 OR substr(c_phone@0, 1, 2) = 30 OR substr(c_phone@0, 1, 2) = 18 OR substr(c_phone@0, 1, 2) = 17), projection=[1], setup_us=1 submit_us=2568 device_us=2567
+                GpuScanExec: table=customer, projections=[c_phone, c_acctbal], setup_us=2 submit_us=59530 device_us=59526
+          GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
+            GpuHashJoinExec: join_type=LeftAnti, on=[(c_custkey@0, o_custkey@0)], projection=[1, 2], setup_us=1 submit_us=370 device_us=369
+              GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
+                GpuFilterExec: predicate=substr(c_phone@1, 1, 2) = 13 OR substr(c_phone@1, 1, 2) = 31 OR substr(c_phone@1, 1, 2) = 23 OR substr(c_phone@1, 1, 2) = 29 OR substr(c_phone@1, 1, 2) = 30 OR substr(c_phone@1, 1, 2) = 18 OR substr(c_phone@1, 1, 2) = 17, setup_us=1 submit_us=2403 device_us=2402
+                  GpuScanExec: table=customer, projections=[c_custkey, c_phone, c_acctbal], setup_us=1 submit_us=59518 device_us=59517
+              GpuScanExec: table=orders, projections=[o_custkey], setup_us=1 submit_us=23322 device_us=23321
 
-# sync_floor_us = cost of the measurement itself (empty timed region: clock + cudaStreamSynchronize on an idle stream). Each node time INCLUDES one PER OUTPUT PARTITION, since a node line is the Σ over its partitions; a node at or below its own floor (sync_floor_us x partitions) is unresolved, not cheap. Do not subtract it.
-# nodes_total_us = Σ of the per-node times above; total_us = the whole query, end to end (parse + plan + serialize + node walk + materialize)
+# timing_mode = how the numbers were taken, and what they MEAN. sync: the region ends in a cudaStreamSynchronize, so submit_us contains the device execution and device_us is 0. events: no explicit drain, and CUDA events bracket the device work as device_us. submit_us is NOT launch cost in either mode — cuDF and rmm synchronize internally, so the host waits for most of what it submits and submit_us tracks device_us closely. Only total_us is comparable across the two.
+# setup_us = host time before the node's first device touch (flatbuffer decode, handle lookups, AST build) — the prologue bare cuDF has no analogue for, which is why it is fitted as its own constant. submit_us / device_us: see timing_mode.
+# sync_floor_us = cost of the SYNC measurement itself (empty timed region: clock + cudaStreamSynchronize on an idle stream). Measured in both modes: under sync it is the resolution floor every node time INCLUDES, once PER OUTPUT PARTITION; under events it is the per-region stall that is no longer paid. Do not subtract it.
+# nodes_total_us = Σ setup_us + Σ submit_us, the HOST side of the walk. nodes_device_us is deliberately NOT added to it — the host ran while the device did, so the two are concurrent spans of the same clock. Device regions are on one stream in program order, so nodes_device_us is disjoint and <= total_us; the gap is stream idle, i.e. the device waiting through host prologue. total_us = the whole query, end to end (parse + plan + serialize + node walk + materialize).
 # build_profile = how the harness itself was compiled. total_us MINUS nodes_total_us is that Rust; records from different profiles are not comparable on it. Node times are device work and barely move.
 # allocator = the rmm device resource the node times were taken under. Without a pool every cuDF intermediate is a cudaMalloc/cudaFree round trip, charged to the node that allocated it — so it inflates the largest-output nodes hardest and moves the PROFILE, not only the scale. Records under different allocators are not comparable, node for node or in total.
 # shared_work_charged_to = which p<k> sub-line carries work a node does once for all of its output partitions. A hash repartition concatenates its input and scatters it in a single operation, and that time is billed to p0 — so p0 standing far above its siblings is the accounting, not skew. Sub-lines sum to their node line either way. Written whether or not this plan has a repartition.
 build_profile=benchmarks opt-level=3
-allocator=rmm-pool initial=113.4GiB max=126.7GiB of 133.4GiB free on a discrete device
+allocator=rmm-pool initial=118.3GiB max=132.3GiB of 139.2GiB free on a discrete device
 shared_work_charged_to=p0
+timing_mode=events
 sync_floor_us=1
 nodes_at_or_below_floor=3/15
-nodes_total_us=149831
-total_us=153277
+nodes_setup_us=39
+nodes_submit_us=149519
+nodes_device_us=149505
+nodes_total_us=149558
+total_us=153101

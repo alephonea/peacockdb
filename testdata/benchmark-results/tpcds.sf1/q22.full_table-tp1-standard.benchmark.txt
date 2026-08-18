@@ -1,27 +1,33 @@
-GpuSortExec: expr=[qoh@4 ASC, i_product_name@0 ASC, i_brand@1 ASC, i_class@2 ASC, i_category@3 ASC], fetch=100, time_us=2254
-  GpuProjectExec: expr=[i_product_name@0 as i_product_name, i_brand@1 as i_brand, i_class@2 as i_class, i_category@3 as i_category, avg(inventory.inv_quantity_on_hand)@5 as qoh], time_us=206
-    GpuAggregateExec: group_by=[i_product_name, i_brand, i_class, i_category, __grouping_id], aggr=[avg(inventory.inv_quantity_on_hand)], time_us=835
-      GpuAggregateExec: group_by=[i_product_name, i_brand, i_class, i_category], aggr=[avg(inventory.inv_quantity_on_hand)], time_us=8066
-        GpuProjectExec: expr=[inv_quantity_on_hand@4 as inv_quantity_on_hand, i_brand@0 as i_brand, i_class@1 as i_class, i_category@2 as i_category, i_product_name@3 as i_product_name], time_us=334
-          GpuCoalesceBatchesExec, time_us=1
-            GpuHashJoinExec: join_type=Inner, on=[(i_item_sk@0, inv_item_sk@0)], projection=[1, 2, 3, 4, 6], time_us=2586
-              GpuScanExec: table=item, projections=[i_item_sk, i_brand, i_class, i_category, i_product_name], time_us=13522
-              GpuCoalesceBatchesExec, time_us=1
-                GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, inv_date_sk@0)], projection=[2, 3], time_us=1883
-                  GpuCoalesceBatchesExec, time_us=1
-                    GpuFilterExec: predicate=d_month_seq@1 >= 1200 AND d_month_seq@1 <= 1211, projection=[0], time_us=152
-                      GpuScanExec: table=date_dim, projections=[d_date_sk, d_month_seq], time_us=17849
-                  GpuScanExec: table=inventory, projections=[inv_date_sk, inv_item_sk, inv_quantity_on_hand], time_us=14347
+GpuSortExec: expr=[qoh@4 ASC, i_product_name@0 ASC, i_brand@1 ASC, i_class@2 ASC, i_category@3 ASC], fetch=100, setup_us=2 submit_us=2238 device_us=2238
+  GpuProjectExec: expr=[i_product_name@0 as i_product_name, i_brand@1 as i_brand, i_class@2 as i_class, i_category@3 as i_category, avg(inventory.inv_quantity_on_hand)@5 as qoh], setup_us=0 submit_us=215 device_us=214
+    GpuAggregateExec: group_by=[i_product_name, i_brand, i_class, i_category, __grouping_id], aggr=[avg(inventory.inv_quantity_on_hand)], setup_us=2 submit_us=825 device_us=824
+      GpuAggregateExec: group_by=[i_product_name, i_brand, i_class, i_category], aggr=[avg(inventory.inv_quantity_on_hand)], setup_us=2 submit_us=8048 device_us=8047
+        GpuProjectExec: expr=[inv_quantity_on_hand@4 as inv_quantity_on_hand, i_brand@0 as i_brand, i_class@1 as i_class, i_category@2 as i_category, i_product_name@3 as i_product_name], setup_us=0 submit_us=337 device_us=336
+          GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
+            GpuHashJoinExec: join_type=Inner, on=[(i_item_sk@0, inv_item_sk@0)], projection=[1, 2, 3, 4, 6], setup_us=1 submit_us=2633 device_us=2590
+              GpuScanExec: table=item, projections=[i_item_sk, i_brand, i_class, i_category, i_product_name], setup_us=3 submit_us=13510 device_us=13505
+              GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
+                GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, inv_date_sk@0)], projection=[2, 3], setup_us=1 submit_us=1818 device_us=1863
+                  GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
+                    GpuFilterExec: predicate=d_month_seq@1 >= 1200 AND d_month_seq@1 <= 1211, projection=[0], setup_us=15 submit_us=140 device_us=139
+                      GpuScanExec: table=date_dim, projections=[d_date_sk, d_month_seq], setup_us=3 submit_us=17715 device_us=17714
+                  GpuScanExec: table=inventory, projections=[inv_date_sk, inv_item_sk, inv_quantity_on_hand], setup_us=2 submit_us=14282 device_us=14282
 
-# sync_floor_us = cost of the measurement itself (empty timed region: clock + cudaStreamSynchronize on an idle stream). Each node time INCLUDES one PER OUTPUT PARTITION, since a node line is the Σ over its partitions; a node at or below its own floor (sync_floor_us x partitions) is unresolved, not cheap. Do not subtract it.
-# nodes_total_us = Σ of the per-node times above; total_us = the whole query, end to end (parse + plan + serialize + node walk + materialize)
+# timing_mode = how the numbers were taken, and what they MEAN. sync: the region ends in a cudaStreamSynchronize, so submit_us contains the device execution and device_us is 0. events: no explicit drain, and CUDA events bracket the device work as device_us. submit_us is NOT launch cost in either mode — cuDF and rmm synchronize internally, so the host waits for most of what it submits and submit_us tracks device_us closely. Only total_us is comparable across the two.
+# setup_us = host time before the node's first device touch (flatbuffer decode, handle lookups, AST build) — the prologue bare cuDF has no analogue for, which is why it is fitted as its own constant. submit_us / device_us: see timing_mode.
+# sync_floor_us = cost of the SYNC measurement itself (empty timed region: clock + cudaStreamSynchronize on an idle stream). Measured in both modes: under sync it is the resolution floor every node time INCLUDES, once PER OUTPUT PARTITION; under events it is the per-region stall that is no longer paid. Do not subtract it.
+# nodes_total_us = Σ setup_us + Σ submit_us, the HOST side of the walk. nodes_device_us is deliberately NOT added to it — the host ran while the device did, so the two are concurrent spans of the same clock. Device regions are on one stream in program order, so nodes_device_us is disjoint and <= total_us; the gap is stream idle, i.e. the device waiting through host prologue. total_us = the whole query, end to end (parse + plan + serialize + node walk + materialize).
 # build_profile = how the harness itself was compiled. total_us MINUS nodes_total_us is that Rust; records from different profiles are not comparable on it. Node times are device work and barely move.
 # allocator = the rmm device resource the node times were taken under. Without a pool every cuDF intermediate is a cudaMalloc/cudaFree round trip, charged to the node that allocated it — so it inflates the largest-output nodes hardest and moves the PROFILE, not only the scale. Records under different allocators are not comparable, node for node or in total.
 # shared_work_charged_to = which p<k> sub-line carries work a node does once for all of its output partitions. A hash repartition concatenates its input and scatters it in a single operation, and that time is billed to p0 — so p0 standing far above its siblings is the accounting, not skew. Sub-lines sum to their node line either way. Written whether or not this plan has a repartition.
 build_profile=benchmarks opt-level=3
-allocator=rmm-pool initial=113.4GiB max=126.7GiB of 133.4GiB free on a discrete device
+allocator=rmm-pool initial=118.3GiB max=132.3GiB of 139.2GiB free on a discrete device
 shared_work_charged_to=p0
+timing_mode=events
 sync_floor_us=1
 nodes_at_or_below_floor=3/14
-nodes_total_us=62037
-total_us=65942
+nodes_setup_us=31
+nodes_submit_us=61761
+nodes_device_us=61752
+nodes_total_us=61792
+total_us=65870

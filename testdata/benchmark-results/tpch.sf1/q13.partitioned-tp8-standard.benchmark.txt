@@ -1,173 +1,179 @@
-GpuSortPreservingMergeExec: [custdist@1 DESC, c_count@0 DESC], time_us=410
-  GpuSortExec: expr=[custdist@1 DESC, c_count@0 DESC], time_us=997
-    p0: time_us=131
-    p1: time_us=124
-    p2: time_us=126
-    p3: time_us=129
-    p4: time_us=116
-    p5: time_us=123
-    p6: time_us=125
-    p7: time_us=123
-    GpuProjectExec: expr=[c_count@0 as c_count, count(*)@1 as custdist], time_us=99
-      p0: time_us=13
-      p1: time_us=12
-      p2: time_us=12
-      p3: time_us=12
-      p4: time_us=13
-      p5: time_us=13
-      p6: time_us=12
-      p7: time_us=12
-      GpuAggregateExec: group_by=[c_count], aggr=[count(*)], time_us=1015
-        p0: time_us=122
-        p1: time_us=120
-        p2: time_us=118
-        p3: time_us=119
-        p4: time_us=117
-        p5: time_us=149
-        p6: time_us=145
-        p7: time_us=125
-        GpuCoalesceBatchesExec, time_us=8
-          p0: time_us=1
-          p1: time_us=1
-          p2: time_us=1
-          p3: time_us=1
-          p4: time_us=1
-          p5: time_us=1
-          p6: time_us=1
-          p7: time_us=1
-          GpuRepartitionExec: partitioning=Hash([c_count@0], 8), input_partitions=1, time_us=184
-            p0: time_us=94
-            p1: time_us=14
-            p2: time_us=13
-            p3: time_us=13
-            p4: time_us=12
-            p5: time_us=12
-            p6: time_us=13
-            p7: time_us=13
-            GpuCoalescePartitionsExec, time_us=49
-              GpuAggregateExec: group_by=[c_count], aggr=[count(*)], time_us=1338
-                p0: time_us=174
-                p1: time_us=166
-                p2: time_us=171
-                p3: time_us=171
-                p4: time_us=164
-                p5: time_us=166
-                p6: time_us=161
-                p7: time_us=165
-                GpuProjectExec: expr=[count(orders.o_orderkey)@1 as c_count], time_us=71
-                  p0: time_us=9
-                  p1: time_us=9
-                  p2: time_us=8
-                  p3: time_us=9
-                  p4: time_us=9
-                  p5: time_us=9
-                  p6: time_us=9
-                  p7: time_us=9
-                  GpuAggregateExec: group_by=[c_custkey], aggr=[count(orders.o_orderkey)], time_us=1211
-                    p0: time_us=179
-                    p1: time_us=159
-                    p2: time_us=148
-                    p3: time_us=146
-                    p4: time_us=146
-                    p5: time_us=144
-                    p6: time_us=145
-                    p7: time_us=144
-                    GpuCoalesceBatchesExec, time_us=8
-                      p0: time_us=1
-                      p1: time_us=1
-                      p2: time_us=1
-                      p3: time_us=1
-                      p4: time_us=1
-                      p5: time_us=1
-                      p6: time_us=1
-                      p7: time_us=1
-                      GpuHashJoinExec: join_type=Left, on=[(c_custkey@0, o_custkey@1)], projection=[0, 1], time_us=2436
-                        p0: time_us=327
-                        p1: time_us=291
-                        p2: time_us=298
-                        p3: time_us=295
-                        p4: time_us=297
-                        p5: time_us=288
-                        p6: time_us=330
-                        p7: time_us=310
-                        GpuCoalesceBatchesExec, time_us=9
-                          p0: time_us=2
-                          p1: time_us=1
-                          p2: time_us=1
-                          p3: time_us=1
-                          p4: time_us=1
-                          p5: time_us=1
-                          p6: time_us=1
-                          p7: time_us=1
-                          GpuRepartitionExec: partitioning=Hash([c_custkey@0], 8), input_partitions=1, time_us=178
-                            p0: time_us=114
-                            p1: time_us=9
-                            p2: time_us=10
-                            p3: time_us=9
-                            p4: time_us=9
-                            p5: time_us=10
-                            p6: time_us=8
-                            p7: time_us=9
-                            GpuCoalescePartitionsExec, time_us=18
-                              GpuScanExec: table=customer, projections=[c_custkey], time_us=33973
-                                p0: time_us=27497
-                                p1: time_us=6476
-                        GpuCoalesceBatchesExec, time_us=8
-                          p0: time_us=1
-                          p1: time_us=1
-                          p2: time_us=1
-                          p3: time_us=1
-                          p4: time_us=1
-                          p5: time_us=1
-                          p6: time_us=1
-                          p7: time_us=1
-                          GpuRepartitionExec: partitioning=Hash([o_custkey@1], 8), input_partitions=1, time_us=543
-                            p0: time_us=402
-                            p1: time_us=19
-                            p2: time_us=20
-                            p3: time_us=20
-                            p4: time_us=20
-                            p5: time_us=20
-                            p6: time_us=21
-                            p7: time_us=21
-                            GpuCoalescePartitionsExec, time_us=70
-                              GpuCoalesceBatchesExec, time_us=8
-                                p0: time_us=1
-                                p1: time_us=1
-                                p2: time_us=1
-                                p3: time_us=1
-                                p4: time_us=1
-                                p5: time_us=1
-                                p6: time_us=1
-                                p7: time_us=1
-                                GpuFilterExec: predicate=o_comment@2 NOT LIKE %special%requests%, projection=[0, 1], time_us=4000
-                                  p0: time_us=583
-                                  p1: time_us=535
-                                  p2: time_us=545
-                                  p3: time_us=535
-                                  p4: time_us=546
-                                  p5: time_us=450
-                                  p6: time_us=423
-                                  p7: time_us=383
-                                  GpuScanExec: table=orders, projections=[o_orderkey, o_custkey, o_comment], time_us=840172
-                                    p0: time_us=118845
-                                    p1: time_us=118505
-                                    p2: time_us=118816
-                                    p3: time_us=118828
-                                    p4: time_us=119206
-                                    p5: time_us=112253
-                                    p6: time_us=110232
-                                    p7: time_us=23487
+GpuSortPreservingMergeExec: [custdist@1 DESC, c_count@0 DESC], setup_us=0 submit_us=407 device_us=406
+  GpuSortExec: expr=[custdist@1 DESC, c_count@0 DESC], setup_us=1 submit_us=970 device_us=964
+    p0: setup_us=1 submit_us=128 device_us=127
+    p1: setup_us=0 submit_us=120 device_us=119
+    p2: setup_us=0 submit_us=122 device_us=121
+    p3: setup_us=0 submit_us=126 device_us=127
+    p4: setup_us=0 submit_us=112 device_us=111
+    p5: setup_us=0 submit_us=119 device_us=118
+    p6: setup_us=0 submit_us=122 device_us=121
+    p7: setup_us=0 submit_us=121 device_us=120
+    GpuProjectExec: expr=[c_count@0 as c_count, count(*)@1 as custdist], setup_us=0 submit_us=72 device_us=67
+      p0: setup_us=0 submit_us=9 device_us=8
+      p1: setup_us=0 submit_us=9 device_us=10
+      p2: setup_us=0 submit_us=9 device_us=8
+      p3: setup_us=0 submit_us=9 device_us=8
+      p4: setup_us=0 submit_us=9 device_us=9
+      p5: setup_us=0 submit_us=9 device_us=8
+      p6: setup_us=0 submit_us=9 device_us=8
+      p7: setup_us=0 submit_us=9 device_us=8
+      GpuAggregateExec: group_by=[c_count], aggr=[count(*)], setup_us=0 submit_us=948 device_us=941
+        p0: setup_us=0 submit_us=122 device_us=121
+        p1: setup_us=0 submit_us=119 device_us=118
+        p2: setup_us=0 submit_us=121 device_us=120
+        p3: setup_us=0 submit_us=117 device_us=116
+        p4: setup_us=0 submit_us=119 device_us=118
+        p5: setup_us=0 submit_us=117 device_us=116
+        p6: setup_us=0 submit_us=116 device_us=115
+        p7: setup_us=0 submit_us=117 device_us=117
+        GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
+          p0: setup_us=0 submit_us=0 device_us=0
+          p1: setup_us=0 submit_us=0 device_us=0
+          p2: setup_us=0 submit_us=0 device_us=0
+          p3: setup_us=0 submit_us=0 device_us=0
+          p4: setup_us=0 submit_us=0 device_us=0
+          p5: setup_us=0 submit_us=0 device_us=0
+          p6: setup_us=0 submit_us=0 device_us=0
+          p7: setup_us=0 submit_us=0 device_us=0
+          GpuRepartitionExec: partitioning=Hash([c_count@0], 8), input_partitions=1, setup_us=0 submit_us=143 device_us=140
+            p0: setup_us=0 submit_us=83 device_us=83
+            p1: setup_us=0 submit_us=8 device_us=8
+            p2: setup_us=0 submit_us=8 device_us=8
+            p3: setup_us=0 submit_us=9 device_us=8
+            p4: setup_us=0 submit_us=8 device_us=8
+            p5: setup_us=0 submit_us=8 device_us=7
+            p6: setup_us=0 submit_us=10 device_us=10
+            p7: setup_us=0 submit_us=9 device_us=8
+            GpuCoalescePartitionsExec, setup_us=0 submit_us=48 device_us=48
+              GpuAggregateExec: group_by=[c_count], aggr=[count(*)], setup_us=0 submit_us=1371 device_us=1364
+                p0: setup_us=0 submit_us=174 device_us=173
+                p1: setup_us=0 submit_us=171 device_us=170
+                p2: setup_us=0 submit_us=172 device_us=171
+                p3: setup_us=0 submit_us=172 device_us=172
+                p4: setup_us=0 submit_us=170 device_us=169
+                p5: setup_us=0 submit_us=171 device_us=170
+                p6: setup_us=0 submit_us=171 device_us=170
+                p7: setup_us=0 submit_us=170 device_us=169
+                GpuProjectExec: expr=[count(orders.o_orderkey)@1 as c_count], setup_us=0 submit_us=44 device_us=42
+                  p0: setup_us=0 submit_us=7 device_us=6
+                  p1: setup_us=0 submit_us=5 device_us=6
+                  p2: setup_us=0 submit_us=5 device_us=5
+                  p3: setup_us=0 submit_us=7 device_us=7
+                  p4: setup_us=0 submit_us=5 device_us=5
+                  p5: setup_us=0 submit_us=5 device_us=4
+                  p6: setup_us=0 submit_us=5 device_us=5
+                  p7: setup_us=0 submit_us=5 device_us=4
+                  GpuAggregateExec: group_by=[c_custkey], aggr=[count(orders.o_orderkey)], setup_us=1 submit_us=1254 device_us=1246
+                    p0: setup_us=1 submit_us=185 device_us=184
+                    p1: setup_us=0 submit_us=155 device_us=154
+                    p2: setup_us=0 submit_us=150 device_us=149
+                    p3: setup_us=0 submit_us=158 device_us=157
+                    p4: setup_us=0 submit_us=147 device_us=146
+                    p5: setup_us=0 submit_us=150 device_us=149
+                    p6: setup_us=0 submit_us=156 device_us=155
+                    p7: setup_us=0 submit_us=153 device_us=152
+                    GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
+                      p0: setup_us=0 submit_us=0 device_us=0
+                      p1: setup_us=0 submit_us=0 device_us=0
+                      p2: setup_us=0 submit_us=0 device_us=0
+                      p3: setup_us=0 submit_us=0 device_us=0
+                      p4: setup_us=0 submit_us=0 device_us=0
+                      p5: setup_us=0 submit_us=0 device_us=0
+                      p6: setup_us=0 submit_us=0 device_us=0
+                      p7: setup_us=0 submit_us=0 device_us=0
+                      GpuHashJoinExec: join_type=Left, on=[(c_custkey@0, o_custkey@1)], projection=[0, 1], setup_us=1 submit_us=2452 device_us=2395
+                        p0: setup_us=1 submit_us=379 device_us=327
+                        p1: setup_us=0 submit_us=306 device_us=306
+                        p2: setup_us=0 submit_us=290 device_us=289
+                        p3: setup_us=0 submit_us=298 device_us=297
+                        p4: setup_us=0 submit_us=292 device_us=291
+                        p5: setup_us=0 submit_us=299 device_us=298
+                        p6: setup_us=0 submit_us=292 device_us=291
+                        p7: setup_us=0 submit_us=296 device_us=296
+                        GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
+                          p0: setup_us=0 submit_us=0 device_us=0
+                          p1: setup_us=0 submit_us=0 device_us=0
+                          p2: setup_us=0 submit_us=0 device_us=0
+                          p3: setup_us=0 submit_us=0 device_us=0
+                          p4: setup_us=0 submit_us=0 device_us=0
+                          p5: setup_us=0 submit_us=0 device_us=0
+                          p6: setup_us=0 submit_us=0 device_us=0
+                          p7: setup_us=0 submit_us=0 device_us=0
+                          GpuRepartitionExec: partitioning=Hash([c_custkey@0], 8), input_partitions=1, setup_us=0 submit_us=149 device_us=148
+                            p0: setup_us=0 submit_us=112 device_us=112
+                            p1: setup_us=0 submit_us=5 device_us=5
+                            p2: setup_us=0 submit_us=5 device_us=5
+                            p3: setup_us=0 submit_us=6 device_us=6
+                            p4: setup_us=0 submit_us=5 device_us=5
+                            p5: setup_us=0 submit_us=6 device_us=5
+                            p6: setup_us=0 submit_us=5 device_us=5
+                            p7: setup_us=0 submit_us=5 device_us=5
+                            GpuCoalescePartitionsExec, setup_us=0 submit_us=15 device_us=15
+                              GpuScanExec: table=customer, projections=[c_custkey], setup_us=4 submit_us=34043 device_us=34036
+                                p0: setup_us=2 submit_us=27555 device_us=27549
+                                p1: setup_us=2 submit_us=6488 device_us=6487
+                        GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
+                          p0: setup_us=0 submit_us=0 device_us=0
+                          p1: setup_us=0 submit_us=0 device_us=0
+                          p2: setup_us=0 submit_us=0 device_us=0
+                          p3: setup_us=0 submit_us=0 device_us=0
+                          p4: setup_us=0 submit_us=0 device_us=0
+                          p5: setup_us=0 submit_us=0 device_us=0
+                          p6: setup_us=0 submit_us=0 device_us=0
+                          p7: setup_us=0 submit_us=0 device_us=0
+                          GpuRepartitionExec: partitioning=Hash([o_custkey@1], 8), input_partitions=1, setup_us=0 submit_us=437 device_us=497
+                            p0: setup_us=0 submit_us=344 device_us=395
+                            p1: setup_us=0 submit_us=14 device_us=14
+                            p2: setup_us=0 submit_us=13 device_us=14
+                            p3: setup_us=0 submit_us=12 device_us=14
+                            p4: setup_us=0 submit_us=13 device_us=15
+                            p5: setup_us=0 submit_us=15 device_us=15
+                            p6: setup_us=0 submit_us=13 device_us=15
+                            p7: setup_us=0 submit_us=13 device_us=15
+                            GpuCoalescePartitionsExec, setup_us=0 submit_us=58 device_us=68
+                              GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
+                                p0: setup_us=0 submit_us=0 device_us=0
+                                p1: setup_us=0 submit_us=0 device_us=0
+                                p2: setup_us=0 submit_us=0 device_us=0
+                                p3: setup_us=0 submit_us=0 device_us=0
+                                p4: setup_us=0 submit_us=0 device_us=0
+                                p5: setup_us=0 submit_us=0 device_us=0
+                                p6: setup_us=0 submit_us=0 device_us=0
+                                p7: setup_us=0 submit_us=0 device_us=0
+                                GpuFilterExec: predicate=o_comment@2 NOT LIKE %special%requests%, projection=[0, 1], setup_us=1 submit_us=3945 device_us=3937
+                                  p0: setup_us=1 submit_us=563 device_us=562
+                                  p1: setup_us=0 submit_us=534 device_us=533
+                                  p2: setup_us=0 submit_us=537 device_us=536
+                                  p3: setup_us=0 submit_us=538 device_us=537
+                                  p4: setup_us=0 submit_us=532 device_us=531
+                                  p5: setup_us=0 submit_us=426 device_us=425
+                                  p6: setup_us=0 submit_us=425 device_us=424
+                                  p7: setup_us=0 submit_us=390 device_us=389
+                                  GpuScanExec: table=orders, projections=[o_orderkey, o_custkey, o_comment], setup_us=8 submit_us=828224 device_us=828213
+                                    p0: setup_us=1 submit_us=118074 device_us=118073
+                                    p1: setup_us=1 submit_us=115994 device_us=115992
+                                    p2: setup_us=1 submit_us=114830 device_us=114829
+                                    p3: setup_us=1 submit_us=117038 device_us=117037
+                                    p4: setup_us=1 submit_us=116219 device_us=116217
+                                    p5: setup_us=1 submit_us=112596 device_us=112595
+                                    p6: setup_us=1 submit_us=109992 device_us=109991
+                                    p7: setup_us=1 submit_us=23481 device_us=23479
 
-# sync_floor_us = cost of the measurement itself (empty timed region: clock + cudaStreamSynchronize on an idle stream). Each node time INCLUDES one PER OUTPUT PARTITION, since a node line is the Σ over its partitions; a node at or below its own floor (sync_floor_us x partitions) is unresolved, not cheap. Do not subtract it.
-# nodes_total_us = Σ of the per-node times above; total_us = the whole query, end to end (parse + plan + serialize + node walk + materialize)
+# timing_mode = how the numbers were taken, and what they MEAN. sync: the region ends in a cudaStreamSynchronize, so submit_us contains the device execution and device_us is 0. events: no explicit drain, and CUDA events bracket the device work as device_us. submit_us is NOT launch cost in either mode — cuDF and rmm synchronize internally, so the host waits for most of what it submits and submit_us tracks device_us closely. Only total_us is comparable across the two.
+# setup_us = host time before the node's first device touch (flatbuffer decode, handle lookups, AST build) — the prologue bare cuDF has no analogue for, which is why it is fitted as its own constant. submit_us / device_us: see timing_mode.
+# sync_floor_us = cost of the SYNC measurement itself (empty timed region: clock + cudaStreamSynchronize on an idle stream). Measured in both modes: under sync it is the resolution floor every node time INCLUDES, once PER OUTPUT PARTITION; under events it is the per-region stall that is no longer paid. Do not subtract it.
+# nodes_total_us = Σ setup_us + Σ submit_us, the HOST side of the walk. nodes_device_us is deliberately NOT added to it — the host ran while the device did, so the two are concurrent spans of the same clock. Device regions are on one stream in program order, so nodes_device_us is disjoint and <= total_us; the gap is stream idle, i.e. the device waiting through host prologue. total_us = the whole query, end to end (parse + plan + serialize + node walk + materialize).
 # build_profile = how the harness itself was compiled. total_us MINUS nodes_total_us is that Rust; records from different profiles are not comparable on it. Node times are device work and barely move.
 # allocator = the rmm device resource the node times were taken under. Without a pool every cuDF intermediate is a cudaMalloc/cudaFree round trip, charged to the node that allocated it — so it inflates the largest-output nodes hardest and moves the PROFILE, not only the scale. Records under different allocators are not comparable, node for node or in total.
 # shared_work_charged_to = which p<k> sub-line carries work a node does once for all of its output partitions. A hash repartition concatenates its input and scatters it in a single operation, and that time is billed to p0 — so p0 standing far above its siblings is the accounting, not skew. Sub-lines sum to their node line either way. Written whether or not this plan has a repartition.
 build_profile=benchmarks opt-level=3
-allocator=rmm-pool initial=113.4GiB max=126.7GiB of 133.4GiB free on a discrete device
+allocator=rmm-pool initial=118.3GiB max=132.3GiB of 139.2GiB free on a discrete device
 shared_work_charged_to=p0
+timing_mode=events
 sync_floor_us=1
-nodes_at_or_below_floor=4/22
-nodes_total_us=886805
-total_us=889583
+nodes_at_or_below_floor=5/22
+nodes_setup_us=16
+nodes_submit_us=874580
+nodes_device_us=874527
+nodes_total_us=874596
+total_us=878245

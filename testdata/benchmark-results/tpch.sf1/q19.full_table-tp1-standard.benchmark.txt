@@ -1,23 +1,29 @@
-GpuProjectExec: expr=[sum(lineitem.l_extendedprice * Int64(1) - lineitem.l_discount)@0 as revenue], time_us=9
-  GpuAggregateExec: group_by=[], aggr=[sum(lineitem.l_extendedprice * Int64(1) - lineitem.l_discount)], time_us=384
-    GpuCoalesceBatchesExec, time_us=1
-      GpuHashJoinExec: join_type=Inner, on=[(p_partkey@0, l_partkey@0)], filter=p_brand@1 = Brand#12 AND (p_container@3 = SM CASE OR p_container@3 = SM BOX OR p_container@3 = SM PACK OR p_container@3 = SM PKG) AND l_quantity@0 >= Some(100),15,2 AND l_quantity@0 <= Some(1100),15,2 AND p_size@2 <= 5 OR p_brand@1 = Brand#23 AND (p_container@3 = MED BAG OR p_container@3 = MED BOX OR p_container@3 = MED PKG OR p_container@3 = MED PACK) AND l_quantity@0 >= Some(1000),15,2 AND l_quantity@0 <= Some(2000),15,2 AND p_size@2 <= 10 OR p_brand@1 = Brand#34 AND (p_container@3 = LG CASE OR p_container@3 = LG BOX OR p_container@3 = LG PACK OR p_container@3 = LG PKG) AND l_quantity@0 >= Some(2000),15,2 AND l_quantity@0 <= Some(3000),15,2 AND p_size@2 <= 15, projection=[6, 7], time_us=4447
-        GpuCoalesceBatchesExec, time_us=1
-          GpuFilterExec: predicate=(p_brand@1 = Brand#12 AND (p_container@3 = SM CASE OR p_container@3 = SM BOX OR p_container@3 = SM PACK OR p_container@3 = SM PKG) AND p_size@2 <= 5 OR p_brand@1 = Brand#23 AND (p_container@3 = MED BAG OR p_container@3 = MED BOX OR p_container@3 = MED PKG OR p_container@3 = MED PACK) AND p_size@2 <= 10 OR p_brand@1 = Brand#34 AND (p_container@3 = LG CASE OR p_container@3 = LG BOX OR p_container@3 = LG PACK OR p_container@3 = LG PKG) AND p_size@2 <= 15) AND p_size@2 >= 1, time_us=3401
-            GpuScanExec: table=part, projections=[p_partkey, p_brand, p_size, p_container], time_us=31060
-        GpuCoalesceBatchesExec, time_us=1
-          GpuFilterExec: predicate=(l_quantity@1 >= Some(100),15,2 AND l_quantity@1 <= Some(1100),15,2 OR l_quantity@1 >= Some(1000),15,2 AND l_quantity@1 <= Some(2000),15,2 OR l_quantity@1 >= Some(2000),15,2 AND l_quantity@1 <= Some(3000),15,2) AND (l_shipmode@5 = AIR OR l_shipmode@5 = AIR REG) AND l_shipinstruct@4 = DELIVER IN PERSON, projection=[0, 1, 2, 3], time_us=3043
-            GpuScanExec: table=lineitem, projections=[l_partkey, l_quantity, l_extendedprice, l_discount, l_shipinstruct, l_shipmode], time_us=40254
+GpuProjectExec: expr=[sum(lineitem.l_extendedprice * Int64(1) - lineitem.l_discount)@0 as revenue], setup_us=0 submit_us=7 device_us=6
+  GpuAggregateExec: group_by=[], aggr=[sum(lineitem.l_extendedprice * Int64(1) - lineitem.l_discount)], setup_us=0 submit_us=383 device_us=382
+    GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
+      GpuHashJoinExec: join_type=Inner, on=[(p_partkey@0, l_partkey@0)], filter=p_brand@1 = Brand#12 AND (p_container@3 = SM CASE OR p_container@3 = SM BOX OR p_container@3 = SM PACK OR p_container@3 = SM PKG) AND l_quantity@0 >= Some(100),15,2 AND l_quantity@0 <= Some(1100),15,2 AND p_size@2 <= 5 OR p_brand@1 = Brand#23 AND (p_container@3 = MED BAG OR p_container@3 = MED BOX OR p_container@3 = MED PKG OR p_container@3 = MED PACK) AND l_quantity@0 >= Some(1000),15,2 AND l_quantity@0 <= Some(2000),15,2 AND p_size@2 <= 10 OR p_brand@1 = Brand#34 AND (p_container@3 = LG CASE OR p_container@3 = LG BOX OR p_container@3 = LG PACK OR p_container@3 = LG PKG) AND l_quantity@0 >= Some(2000),15,2 AND l_quantity@0 <= Some(3000),15,2 AND p_size@2 <= 15, projection=[6, 7], setup_us=1 submit_us=4412 device_us=4411
+        GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
+          GpuFilterExec: predicate=(p_brand@1 = Brand#12 AND (p_container@3 = SM CASE OR p_container@3 = SM BOX OR p_container@3 = SM PACK OR p_container@3 = SM PKG) AND p_size@2 <= 5 OR p_brand@1 = Brand#23 AND (p_container@3 = MED BAG OR p_container@3 = MED BOX OR p_container@3 = MED PKG OR p_container@3 = MED PACK) AND p_size@2 <= 10 OR p_brand@1 = Brand#34 AND (p_container@3 = LG CASE OR p_container@3 = LG BOX OR p_container@3 = LG PACK OR p_container@3 = LG PKG) AND p_size@2 <= 15) AND p_size@2 >= 1, setup_us=1 submit_us=3396 device_us=3395
+            GpuScanExec: table=part, projections=[p_partkey, p_brand, p_size, p_container], setup_us=2 submit_us=31100 device_us=31095
+        GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
+          GpuFilterExec: predicate=(l_quantity@1 >= Some(100),15,2 AND l_quantity@1 <= Some(1100),15,2 OR l_quantity@1 >= Some(1000),15,2 AND l_quantity@1 <= Some(2000),15,2 OR l_quantity@1 >= Some(2000),15,2 AND l_quantity@1 <= Some(3000),15,2) AND (l_shipmode@5 = AIR OR l_shipmode@5 = AIR REG) AND l_shipinstruct@4 = DELIVER IN PERSON, projection=[0, 1, 2, 3], setup_us=2 submit_us=3016 device_us=3014
+            GpuScanExec: table=lineitem, projections=[l_partkey, l_quantity, l_extendedprice, l_discount, l_shipinstruct, l_shipmode], setup_us=2 submit_us=37989 device_us=37988
 
-# sync_floor_us = cost of the measurement itself (empty timed region: clock + cudaStreamSynchronize on an idle stream). Each node time INCLUDES one PER OUTPUT PARTITION, since a node line is the Σ over its partitions; a node at or below its own floor (sync_floor_us x partitions) is unresolved, not cheap. Do not subtract it.
-# nodes_total_us = Σ of the per-node times above; total_us = the whole query, end to end (parse + plan + serialize + node walk + materialize)
+# timing_mode = how the numbers were taken, and what they MEAN. sync: the region ends in a cudaStreamSynchronize, so submit_us contains the device execution and device_us is 0. events: no explicit drain, and CUDA events bracket the device work as device_us. submit_us is NOT launch cost in either mode — cuDF and rmm synchronize internally, so the host waits for most of what it submits and submit_us tracks device_us closely. Only total_us is comparable across the two.
+# setup_us = host time before the node's first device touch (flatbuffer decode, handle lookups, AST build) — the prologue bare cuDF has no analogue for, which is why it is fitted as its own constant. submit_us / device_us: see timing_mode.
+# sync_floor_us = cost of the SYNC measurement itself (empty timed region: clock + cudaStreamSynchronize on an idle stream). Measured in both modes: under sync it is the resolution floor every node time INCLUDES, once PER OUTPUT PARTITION; under events it is the per-region stall that is no longer paid. Do not subtract it.
+# nodes_total_us = Σ setup_us + Σ submit_us, the HOST side of the walk. nodes_device_us is deliberately NOT added to it — the host ran while the device did, so the two are concurrent spans of the same clock. Device regions are on one stream in program order, so nodes_device_us is disjoint and <= total_us; the gap is stream idle, i.e. the device waiting through host prologue. total_us = the whole query, end to end (parse + plan + serialize + node walk + materialize).
 # build_profile = how the harness itself was compiled. total_us MINUS nodes_total_us is that Rust; records from different profiles are not comparable on it. Node times are device work and barely move.
 # allocator = the rmm device resource the node times were taken under. Without a pool every cuDF intermediate is a cudaMalloc/cudaFree round trip, charged to the node that allocated it — so it inflates the largest-output nodes hardest and moves the PROFILE, not only the scale. Records under different allocators are not comparable, node for node or in total.
 # shared_work_charged_to = which p<k> sub-line carries work a node does once for all of its output partitions. A hash repartition concatenates its input and scatters it in a single operation, and that time is billed to p0 — so p0 standing far above its siblings is the accounting, not skew. Sub-lines sum to their node line either way. Written whether or not this plan has a repartition.
 build_profile=benchmarks opt-level=3
-allocator=rmm-pool initial=113.4GiB max=126.7GiB of 133.4GiB free on a discrete device
+allocator=rmm-pool initial=118.3GiB max=132.3GiB of 139.2GiB free on a discrete device
 shared_work_charged_to=p0
+timing_mode=events
 sync_floor_us=1
 nodes_at_or_below_floor=3/10
-nodes_total_us=82601
-total_us=89270
+nodes_setup_us=8
+nodes_submit_us=80303
+nodes_device_us=80291
+nodes_total_us=80311
+total_us=86923

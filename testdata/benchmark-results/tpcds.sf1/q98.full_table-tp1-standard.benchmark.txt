@@ -1,30 +1,36 @@
-GpuSortExec: expr=[i_category@2 ASC, i_class@3 ASC, i_item_id@0 ASC, i_item_desc@1 ASC, revenueratio@6 ASC], time_us=1969
-  GpuProjectExec: expr=[i_item_id@0 as i_item_id, i_item_desc@1 as i_item_desc, i_category@2 as i_category, i_class@3 as i_class, i_current_price@4 as i_current_price, sum(store_sales.ss_ext_sales_price)@5 as itemrevenue, CAST(sum(store_sales.ss_ext_sales_price)@5 AS Float64) * 100 / CAST(sum(sum(store_sales.ss_ext_sales_price)) PARTITION BY [item.i_class] ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING@6 AS Float64) as revenueratio], time_us=306
-    GpuWindowExec: wdw=[sum(sum(store_sales.ss_ext_sales_price)) PARTITION BY [item.i_class] ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING], time_us=827
-      GpuSortExec: expr=[i_class@3 ASC NULLS LAST], time_us=855
-        GpuAggregateExec: group_by=[i_item_id, i_item_desc, i_category, i_class, i_current_price], aggr=[sum(store_sales.ss_ext_sales_price)], time_us=6662
-          GpuCoalesceBatchesExec, time_us=1
-            GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ss_sold_date_sk@0)], projection=[2, 3, 4, 5, 6, 7], time_us=1031
-              GpuCoalesceBatchesExec, time_us=1
-                GpuFilterExec: predicate=d_date@1 >= 1999-02-22 AND d_date@1 <= 1999-03-24, projection=[0], time_us=170
-                  GpuScanExec: table=date_dim, projections=[d_date_sk, d_date], time_us=16767
-              GpuProjectExec: expr=[ss_sold_date_sk@5 as ss_sold_date_sk, ss_ext_sales_price@6 as ss_ext_sales_price, i_item_id@0 as i_item_id, i_item_desc@1 as i_item_desc, i_current_price@2 as i_current_price, i_class@3 as i_class, i_category@4 as i_category], time_us=352
-                GpuCoalesceBatchesExec, time_us=1
-                  GpuHashJoinExec: join_type=Inner, on=[(i_item_sk@0, ss_item_sk@1)], projection=[1, 2, 3, 4, 5, 6, 8], time_us=2187
-                    GpuCoalesceBatchesExec, time_us=1
-                      GpuFilterExec: predicate=i_category@5 = Sports OR i_category@5 = Books OR i_category@5 = Home, time_us=901
-                        GpuScanExec: table=item, projections=[i_item_sk, i_item_id, i_item_desc, i_current_price, i_class, i_category], time_us=45651
-                    GpuScanExec: table=store_sales, projections=[ss_sold_date_sk, ss_item_sk, ss_ext_sales_price], time_us=14172
+GpuSortExec: expr=[i_category@2 ASC, i_class@3 ASC, i_item_id@0 ASC, i_item_desc@1 ASC, revenueratio@6 ASC], setup_us=1 submit_us=1974 device_us=1973
+  GpuProjectExec: expr=[i_item_id@0 as i_item_id, i_item_desc@1 as i_item_desc, i_category@2 as i_category, i_class@3 as i_class, i_current_price@4 as i_current_price, sum(store_sales.ss_ext_sales_price)@5 as itemrevenue, CAST(sum(store_sales.ss_ext_sales_price)@5 AS Float64) * 100 / CAST(sum(sum(store_sales.ss_ext_sales_price)) PARTITION BY [item.i_class] ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING@6 AS Float64) as revenueratio], setup_us=0 submit_us=291 device_us=290
+    GpuWindowExec: wdw=[sum(sum(store_sales.ss_ext_sales_price)) PARTITION BY [item.i_class] ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING], setup_us=0 submit_us=817 device_us=816
+      GpuSortExec: expr=[i_class@3 ASC NULLS LAST], setup_us=1 submit_us=855 device_us=854
+        GpuAggregateExec: group_by=[i_item_id, i_item_desc, i_category, i_class, i_current_price], aggr=[sum(store_sales.ss_ext_sales_price)], setup_us=2 submit_us=6586 device_us=6585
+          GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
+            GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ss_sold_date_sk@0)], projection=[2, 3, 4, 5, 6, 7], setup_us=1 submit_us=1002 device_us=1001
+              GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
+                GpuFilterExec: predicate=d_date@1 >= 1999-02-22 AND d_date@1 <= 1999-03-24, projection=[0], setup_us=15 submit_us=140 device_us=139
+                  GpuScanExec: table=date_dim, projections=[d_date_sk, d_date], setup_us=3 submit_us=16597 device_us=16593
+              GpuProjectExec: expr=[ss_sold_date_sk@5 as ss_sold_date_sk, ss_ext_sales_price@6 as ss_ext_sales_price, i_item_id@0 as i_item_id, i_item_desc@1 as i_item_desc, i_current_price@2 as i_current_price, i_class@3 as i_class, i_category@4 as i_category], setup_us=0 submit_us=337 device_us=336
+                GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
+                  GpuHashJoinExec: join_type=Inner, on=[(i_item_sk@0, ss_item_sk@1)], projection=[1, 2, 3, 4, 5, 6, 8], setup_us=2 submit_us=2127 device_us=2126
+                    GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
+                      GpuFilterExec: predicate=i_category@5 = Sports OR i_category@5 = Books OR i_category@5 = Home, setup_us=2 submit_us=847 device_us=846
+                        GpuScanExec: table=item, projections=[i_item_sk, i_item_id, i_item_desc, i_current_price, i_class, i_category], setup_us=2 submit_us=45628 device_us=45627
+                    GpuScanExec: table=store_sales, projections=[ss_sold_date_sk, ss_item_sk, ss_ext_sales_price], setup_us=2 submit_us=13641 device_us=13640
 
-# sync_floor_us = cost of the measurement itself (empty timed region: clock + cudaStreamSynchronize on an idle stream). Each node time INCLUDES one PER OUTPUT PARTITION, since a node line is the Σ over its partitions; a node at or below its own floor (sync_floor_us x partitions) is unresolved, not cheap. Do not subtract it.
-# nodes_total_us = Σ of the per-node times above; total_us = the whole query, end to end (parse + plan + serialize + node walk + materialize)
+# timing_mode = how the numbers were taken, and what they MEAN. sync: the region ends in a cudaStreamSynchronize, so submit_us contains the device execution and device_us is 0. events: no explicit drain, and CUDA events bracket the device work as device_us. submit_us is NOT launch cost in either mode — cuDF and rmm synchronize internally, so the host waits for most of what it submits and submit_us tracks device_us closely. Only total_us is comparable across the two.
+# setup_us = host time before the node's first device touch (flatbuffer decode, handle lookups, AST build) — the prologue bare cuDF has no analogue for, which is why it is fitted as its own constant. submit_us / device_us: see timing_mode.
+# sync_floor_us = cost of the SYNC measurement itself (empty timed region: clock + cudaStreamSynchronize on an idle stream). Measured in both modes: under sync it is the resolution floor every node time INCLUDES, once PER OUTPUT PARTITION; under events it is the per-region stall that is no longer paid. Do not subtract it.
+# nodes_total_us = Σ setup_us + Σ submit_us, the HOST side of the walk. nodes_device_us is deliberately NOT added to it — the host ran while the device did, so the two are concurrent spans of the same clock. Device regions are on one stream in program order, so nodes_device_us is disjoint and <= total_us; the gap is stream idle, i.e. the device waiting through host prologue. total_us = the whole query, end to end (parse + plan + serialize + node walk + materialize).
 # build_profile = how the harness itself was compiled. total_us MINUS nodes_total_us is that Rust; records from different profiles are not comparable on it. Node times are device work and barely move.
 # allocator = the rmm device resource the node times were taken under. Without a pool every cuDF intermediate is a cudaMalloc/cudaFree round trip, charged to the node that allocated it — so it inflates the largest-output nodes hardest and moves the PROFILE, not only the scale. Records under different allocators are not comparable, node for node or in total.
 # shared_work_charged_to = which p<k> sub-line carries work a node does once for all of its output partitions. A hash repartition concatenates its input and scatters it in a single operation, and that time is billed to p0 — so p0 standing far above its siblings is the accounting, not skew. Sub-lines sum to their node line either way. Written whether or not this plan has a repartition.
 build_profile=benchmarks opt-level=3
-allocator=rmm-pool initial=113.4GiB max=126.7GiB of 133.4GiB free on a discrete device
+allocator=rmm-pool initial=118.3GiB max=132.3GiB of 139.2GiB free on a discrete device
 shared_work_charged_to=p0
+timing_mode=events
 sync_floor_us=1
 nodes_at_or_below_floor=4/17
-nodes_total_us=91854
-total_us=97044
+nodes_setup_us=31
+nodes_submit_us=90842
+nodes_device_us=90826
+nodes_total_us=90873
+total_us=96014
