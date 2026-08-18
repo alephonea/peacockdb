@@ -1695,7 +1695,7 @@ Legacy tests stay green throughout — every task that touches shared code runs 
 affected legacy subsets (one query per mode/tier per binary plus the rust-only tier, per
 build-test.md).
 
-**T0 — Python prototype of the whole execution model.** All node types and both drivers
+**T0 — Python prototype of the whole execution model** (done). All node types and both drivers
 in Python, operators built with pandas, plans hand-built (no DataFusion, no planner) — an
 emulation of tree execution whose purpose is to settle the push model before any Rust
 exists. Lives in [`scripts/exec_model/`](../../scripts/exec_model/README.md); its tests run
@@ -1732,16 +1732,18 @@ Done — struck through, and folded into this document where it changed a decisi
 - ~~validation scope~~ — partitioning and `SingleBatch` constraints in scope, schema checks
   not.
 
-Still open:
+- ~~the hand-built plan corpus~~ — 22 TPC-H and 71 TPC-DS query texts rather than the
+  3–4 and ~10 the plan asked for, each at three layouts and on both join backends. It was
+  the piece most likely to find something and it did: [what the corpus rollout
+  measured](#what-the-corpus-rollout-measured) is the section it produced, and every item
+  there is a property of the design rather than of the prototype.
 
-- the **estimator** (`estimated_max_resident_size`, `target_batch_bytes`) — the prototype
-  models scratch per executor but does not derive batch sizes from a budget;
-- the **hand-built plan corpus**: 3–4 TPC-H plans beyond the ones `test_tpch.py` already
-  runs, and ~10 interesting TPC-DS plans — unions and interleaves, rollup aggregates,
-  semi/anti joins, cross joins beside aggregates, multi-shuffle trees. This is the piece
-  most likely to find something, because the shapes it adds are the ones no test has run.
+Closed without the **estimator** (`estimated_max_resident_size`, `target_batch_bytes`).
+The prototype models scratch per executor and never derived batch sizes from a budget,
+and T6 derives both in Rust directly — a prototype estimator would be a second model to
+keep true against the one that ships. The corpus is what T6 will calibrate against.
 
-**T1 — flatbuffer operation-name refactor.** Nine of the fifteen legacy node-kind names
+**T1 — flatbuffer operation-name refactor** (done). Nine of the fifteen legacy node-kind names
 (`GpuFilter`, `GpuProject`, `GpuSort`, `GpuAggregate`, `GpuCrossJoin`,
 `GpuNestedLoopJoin`, `GpuUnion`, `GpuLimit`, `GpuCoalesceBatches`) collide with the new
 mode's node names. Rename the fbs tables and `PlanNodeKind` variants to a `Cudf` prefix
@@ -1751,6 +1753,9 @@ Rust side. A pure rename: FlatBuffers wire bytes carry no table names and enum o
 do not move, so the proof is `plan_bytes.sha256` staying byte-identical with no
 regeneration, plus green legacy subsets. The same commit sweeps the llm-wiki references
 (architecture.md's fb names, affected tickets, and the recipe-plan table in this spec).
+
+Landed on master as PR #120, with `plan_bytes.sha256` byte-identical and no golden
+regenerated, which is the proof the rename asked for.
 
 **T2 — ParquetBatchPartitioner.** The pure policy class and its unit tests: fewer
 survivors than N; N=3; single row group over target; batching off ⇒ one batch per chunk;

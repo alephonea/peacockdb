@@ -365,6 +365,6 @@ F12. **Modelling the wire found a defect in the shipping engine, not in the mode
 
 ## Not in this cut
 
-The plan-time `estimated_max_resident_size` estimator, and the hand-built TPC-H / TPC-DS
-plan corpus. Window functions are refused by the design (#143). The enforcer is here with
-the accounting formula, and trips cleanly on a tight budget.
+The plan-time `estimated_max_resident_size` estimator, which T6 derives in Rust directly
+rather than here. Window functions are refused by the design (#143). The enforcer is here
+with the accounting formula, and trips cleanly on a tight budget.
