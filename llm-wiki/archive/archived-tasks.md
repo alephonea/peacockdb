@@ -4,8 +4,7 @@ Specs for tasks whose PR has merged, newest first. Each is the contract the work
 done against, kept verbatim -- including the amendments and corrections made mid-task,
 since those are the part a later reader cannot reconstruct from the diff.
 
-Archived 2026-08-18 with PR #121 still open — the work it specifies is complete and the
-spec is smaller than the branch it describes, so it is filed here rather than carried.
+Merged 2026-08-18 as PR #121.
 
 
 ---
