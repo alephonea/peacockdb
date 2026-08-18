@@ -42,7 +42,7 @@
   guarantees. No fallbacks or feature flags the task didn't ask for.
 - **No scope-creep refactors**: a bug fix doesn't need surrounding cleanup.
 
-## Length limits in llm-wiki
+## Length limits
 
 - **A ticket is at most 15 lines**: one header, at most two stating the problem, the rest
   describing it. What runs longer is a design document wearing a ticket's number — put it
@@ -54,6 +54,11 @@
   and `build-test.md` answer what is true today; git holds the sequence, and a decision
   worth carrying forward goes to `llm-wiki/archive/`. A page that narrates its own history
   makes the reader work out which sentence is still in force.
+- **A commit message, a PR description or a PR comment is at most 10 lines**, subject line
+  included. All three are read in a narrow column next to the thing they describe, and the
+  diff is the detail — a message that restates the diff is read by nobody, and one that
+  argues a design is in the wrong place. Point at the ticket or the task spec instead, which
+  is where a later reader will look anyway.
 
 ## Antipatterns
 
