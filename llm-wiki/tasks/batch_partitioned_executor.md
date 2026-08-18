@@ -52,6 +52,7 @@ Companion tickets: [#136](../tickets.md#t136),
   - [The test surface](#the-test-surface)
 - [Memory accounting](#memory-accounting)
 - [GPU execution through the frozen FFI](#gpu-execution-through-the-frozen-ffi)
+- [What the frozen surface costs, and what unfreezing would buy](#what-the-frozen-surface-costs-and-what-unfreezing-would-buy)
 - [Determinism rules](#determinism-rules)
 - [Goldens, registry, widget](#goldens-registry-widget)
   - [Node display](#node-display)
@@ -695,25 +696,151 @@ semantic gain) and `GpuCoalesceBatches(target)` (an optimization, not a correctn
 The build side is always left, single batch per partition (planner inserts
 `GpuCoalesceAllBatches`). The streamable side is always right: the translation layer
 swaps sides where DataFusion chose otherwise, remapping the join type
-(Left ↔ Right forms) and restoring output column order with a project. Per type:
+(Left ↔ Right forms) and restoring output column order with a project.
 
-| Join type | Probe streams? | Per-probe-call emits | `finish_and_fetch()` emits |
+Three tables, one row per join mode in each. The **first** is what the mode is and what it
+becomes in this vocabulary; the **second** is what crosses the wire and what cuDF runs,
+which is where the frozen-surface claim is either true or not; the **third** works one
+example per mode end to end, from SQL to what a single lane actually does.
+
+None of it is paper. `scripts/exec_model` runs every row on two backends that share no join
+code — one joining with pandas, one emitting these seqs and interpreting them with these
+calls — at every batching and partitioning shape the layout injector can produce, and the
+seq sequences in the second table are asserted per mode.
+
+**Mode, and the plan it becomes.**
+
+| Mode | Requires `GpuMergePartitions`? | Also covers | Batch-partitioned nodes |
 |---|---|---|---|
-| Inner | yes | matches | nothing |
-| Right-outer (build=left) | yes | matches + unmatched probe rows (batch-local) | nothing |
-| Left-outer / Full | yes, with finish | matches (+ unmatched probe for Full) | unmatched build rows, null-padded |
-| LeftSemi / LeftAnti / LeftMark | yes, with finish | nothing | build rows with / without a match |
-| CrossJoin, NestedLoop Inner | yes | left × probe batch (predicate-filtered for NLJ) | nothing |
-| NestedLoop non-inner | no — single-batch probe (no keys for the #136 finish trick) | — | — |
-| Any type with a residual filter | no — single-batch probe | — | — |
+| **Inner** | no — not by the join | multi-key and composite keys; `null_equals_null=true` (INTERSECT-derived); a residual filter — which still streams, since every emitted row is decided by (build, this batch) | `GpuJoin{Inner}`, probe streams, no finish |
+| **Right outer** (probe side preserved) | no — not by the join | a DataFusion Left-outer whose build side the swap moved left | `GpuJoin{Right}`, probe streams, no finish — a probe row unmatched in this batch is unmatched everywhere, because the build side is complete before the first call |
+| **Left outer** (build side preserved) | no — not by the join | a DataFusion Right-outer after the swap | `GpuJoin{Left}`, probe streams **with finish**; the accumulated probe keys are resident until it runs |
+| **Full outer** | no — not by the join | — | `GpuJoin{Full}` — Left's finish, Right's per-call emission |
+| **Build-side semi family** — `LeftSemi` | no — not by the join | `LeftAnti`, `LeftMark`; IN/EXISTS semi (UNEQUAL) against INTERSECT semi (EQUAL); the filtered forms, which take a single-batch probe and are then one legacy call | `GpuJoin{LeftSemi\|LeftAnti\|LeftMark}`, probe streams with finish. **The per-call join disappears**: a probe call is only the key project, so the build side is not touched until the finish consumes it |
+| **Probe-side semi family** — `RightSemi` | no — not by the join | `RightAnti` | `GpuJoin{RightSemi\|RightAnti}`, probe streams, no finish — membership in a complete build side is a per-row question |
+| **Cross join** | **yes**, both sides | — | `GpuCrossJoin`, probe streams, no finish; both inputs one lane (broadcast is [#140](../tickets.md#t140)) |
+| **Nested-loop Inner** | **yes**, both sides | a predicate that is not AST-able (tpch q11/q22), which takes the cross-then-mask path | `GpuNestedLoopJoin{Inner}`, probe streams, no finish |
+| **Nested-loop Left** | **yes**, both sides | — | `GpuNestedLoopJoin{Left}` with a **single-batch probe**: `GpuCoalesceAllBatches` under the probe side too, since #136's finish trick accumulates keys and a predicate join has none |
 
-The finish pass needs "which build rows matched at least once", which never crosses the
-current ABI; the v1 GPU implementation is the probe-key-accumulation trick, and the
-per-probe-call build rebuild is an accepted v1 cost — both recorded with the ABI-change
-alternatives in [#136](../tickets.md#t136). `null_equals_null` rides on `GpuJoin`
-per join and applies to the finish join too; the #80 NOT IN semantics carry over
-unchanged. This matrix is unit-tested: one case per (type × batch layout) asserting
-stream-vs-refuse and correctness against the single-batch oracle.
+**On that second column.** A merge is not something a join asks for, it is what a *shuffle*
+needs: `GpuEmitPartitions` takes a single-lane input, so any plan that hash-partitions a
+side puts a `GpuMergePartitions` under the emitter. A side already co-located on the join
+keys — a scan partitioned that way, or the output of an earlier join on the same key —
+needs neither node. Cross and nested-loop joins are the exception, and it is the join
+itself asking: with no key to co-locate on, both inputs must be one lane.
+
+**What crosses the wire, and what cuDF runs.**
+
+| Mode | fb seqs: per probe call / at finish | cuDF underneath |
+|---|---|---|
+| **Inner** | `CudfHashJoin{Inner, keys, filter, projection, null_equals_null}` / — | `inner_join(bk, pk, nulls)` → two gather maps → `gather(build, ·, DONT_CHECK)` + `gather(batch, ·, DONT_CHECK)` → column concat → residual: `build_column` + `apply_boolean_mask` → `projection` |
+| **Right outer** | `CudfHashJoin{Right}` / — | `left_join(pk, bk, nulls)` with the pair swapped back → `gather(build, ·, NULLIFY)` + `gather(batch, ·, DONT_CHECK)` |
+| **Left outer** | `CudfHashJoin{Inner}` + `CudfProject`(key ordinals) / `CudfCoalescePartitions` → `CudfHashJoin{LeftAnti}` → `CudfProject`(build columns + typed NULL literals) | per call as Inner; at finish `left_anti_join(bk, accumulated_keys, EQUAL)` → `gather` → one literal-only `compute_column` per padded column |
+| **Full outer** | `CudfHashJoin{Right}` + `CudfProject`(keys) / as Left outer | per call as Right outer; finish as Left outer |
+| **Build-side semi family** | `CudfProject`(key ordinals) / `CudfCoalescePartitions` → `CudfHashJoin{LeftSemi\|LeftAnti\|LeftMark}` | finish only: `left_semi_join` / `left_anti_join` (`filtered_join::semi_join` / `anti_join` where the header exists) → `gather`; mark scatters `true` into an all-false column and appends it |
+| **Probe-side semi family** | `CudfHashJoin{RightSemi\|RightAnti}` / — | `left_semi_join(pk, bk, nulls)` with the sides swapped, as the C++ does → `gather(batch, ·)` |
+| **Cross join** | `CudfCrossJoin` / — | `cross_join(build, batch)` |
+| **Nested-loop Inner** | `CudfNestedLoopJoin{Inner, filter, filter_columns}` / — | `conditional_inner_join(build, batch, ast)` → `gather` ×2; or `cross_join` → `build_column` → `apply_boolean_mask` when the predicate is not AST-able |
+| **Nested-loop Left** | one `CudfNestedLoopJoin{Left, filter}` / — | `conditional_left_join` → `gather(build, ·)` + `gather(probe, ·, NULLIFY)` |
+
+**One worked example per mode.** `dim(k, label)` is the build side and `fact(fk, v)` the
+probe throughout, so the shapes are comparable; the plan column shows the join subtree only,
+since everything above and below it is the same in every row. Read the fourth column as one
+lane: `p` is any lane, and every lane does this.
+
+| Mode | SQL | batch-partitioned plan | inside lane `p`, in cuDF |
+|---|---|---|---|
+| **Inner** | `SELECT * FROM dim d JOIN fact f ON d.k = f.fk` | `GpuJoin{Inner, on d.k@0 = f.fk@0}`<br>`├─ build: GpuEmitPartitions(k) → GpuCoalesceAllBatches`<br>`└─ probe: GpuEmitPartitions(fk)` | build lands as one resident `cudf::table`; then per probe batch: copy the build handle (it is consumed), `inner_join` → two gather maps, `gather` each side, concat the columns, slice to the `projection`, hand the output up as a handle. Nothing at done |
+| **Right outer** | `SELECT * FROM dim d RIGHT JOIN fact f ON d.k = f.fk` | same, `GpuJoin{Right}` | as Inner, but the map for the build side carries `JoinNoneValue` where the batch had no match, and that gather is `NULLIFY` — so this batch's unmatched probe rows come out with NULL build columns. Correct batch-locally: the build side was complete before the first probe call |
+| **Left outer** | `SELECT * FROM dim d LEFT JOIN fact f ON d.k = f.fk` | `GpuJoin{Left, on k@0 = fk@0}`<br>`├─ build: … → GpuCoalesceAllBatches`<br>`└─ probe: GpuEmitPartitions(fk)` | per probe batch, two calls: `CudfProject` off a copy of the batch keeps its key column (that is the lane's growing key table), and `CudfHashJoin{Inner}` off a copy of the build emits this batch's matches. At done: concat the key tables, `left_anti_join(build, keys)` → the build rows nothing ever matched, then one project that appends a typed NULL per probe column |
+| **Full outer** | `SELECT * FROM dim d FULL OUTER JOIN fact f ON d.k = f.fk` | same, `GpuJoin{Full}` | Right outer's per-batch call, Left outer's done call, and nothing else — the two halves are independent because unmatched probe rows are batch-local and unmatched build rows are not |
+| **Build-side semi family** | `SELECT * FROM dim d WHERE EXISTS (SELECT 1 FROM fact f WHERE f.fk = d.k)` | `GpuJoin{LeftSemi, on k@0 = fk@0}`<br>`├─ build: … → GpuCoalesceAllBatches`<br>`└─ probe: GpuEmitPartitions(fk)` | per probe batch: one `CudfProject`, keeping the key column. No join call, no build copy, no output. At done: concat the key tables and run `left_semi_join(build, keys)` — `anti_join` for NOT EXISTS, and the mark form scatters `true` into an all-false column and appends it. The whole lane's output is that one table |
+| **Probe-side semi family** | `SELECT * FROM fact f WHERE EXISTS (SELECT 1 FROM dim d WHERE d.k = f.fk)` | `GpuJoin{RightSemi, on k@0 = fk@0}`<br>`├─ build: … → GpuCoalesceAllBatches`<br>`└─ probe: GpuEmitPartitions(fk)` | per probe batch: copy the build handle, `left_semi_join(batch keys, build keys)` — the sides swapped, as the C++ does — then `gather` the batch by the returned indices. The batch's surviving rows leave immediately; nothing accumulates and there is no done call |
+| **Cross join** | `SELECT * FROM region, nation` | `GpuCrossJoin`<br>`├─ build: GpuMergePartitions → GpuCoalesceAllBatches`<br>`└─ probe: GpuMergePartitions` | one lane only, since there is no key to co-locate on. Per probe batch: copy the build handle, `cross_join(build, batch)` — every build row against every row of this batch — out as a handle |
+| **Nested-loop Inner** | `SELECT * FROM dim d, fact f WHERE d.k < f.fk` | `GpuNestedLoopJoin{Inner, filter=k@0 < fk@0}`<br>`├─ build: GpuMergePartitions → GpuCoalesceAllBatches`<br>`└─ probe: GpuMergePartitions` | per probe batch: copy the build handle, then `conditional_inner_join(build, batch, ast)` evaluates the predicate per pair without materializing the product, and two gathers build the output. Where the predicate is not AST-able the shape is instead `cross_join` → mask → `apply_boolean_mask`, which does materialize it |
+| **Nested-loop Left** | `SELECT * FROM dim d LEFT JOIN fact f ON d.k < f.fk` | `GpuNestedLoopJoin{Left, filter=k@0 < fk@0}`<br>`├─ build: GpuMergePartitions → GpuCoalesceAllBatches`<br>`└─ probe: GpuMergePartitions → GpuCoalesceAllBatches` | the probe side arrives as one batch, so this is a single call and the build handle is handed over rather than copied: `conditional_left_join` → `gather(build)` + `gather(probe, NULLIFY)`, which emits the unmatched build rows in the same pass. No done call, because there is no second batch for one to wait through |
+
+**A single-batch probe is always the legacy call.** Where the matrix refuses to stream, the
+planner puts a `GpuCoalesceAllBatches` under the probe side and the join is one
+`CudfHashJoin` / `CudfNestedLoopJoin` over the whole of it — the same node the legacy modes
+emit, doing the whole join in one call with no finish pass. That is what makes the fallback
+cheap to trust.
+
+**Three shapes are refused at plan time**, per the scope rule for an unsupported shape
+inside a supported feature:
+
+- **Left, Right or Full with a residual filter — [#153](../tickets.md#t153), and it is a
+  live defect in the shipping engine, not a limitation of this mode.**
+  `execute_hash_join` applies the filter with `apply_boolean_mask` *after* the outer
+  gather, so a padded row's NULL columns make the predicate NULL and the row is dropped:
+  `LEFT JOIN b ON a.k = b.k AND b.v > a.v` returns an inner join. Latent because
+  DataFusion pushes an ON predicate that reads only the nullable side below the join, so
+  what is left on a join is a predicate reading both sides — and no corpus query has one.
+  Refused here until #153 lands; nothing in this mode's design depends on the outcome.
+- **RightSemi or RightAnti with a residual filter**: no swapped `mixed_*` variant exists and
+  the C++ throws. The fix is orientation rather than code — keep the emitted side as the
+  build, and the join stays a Left form, whose `mixed_left_semi_join` path works.
+- **A nested-loop join that is neither Inner nor Left**, which `execute_nested_loop_join`
+  rejects outright.
+
+**What a streamed probe costs on the frozen surface.** `execute_node` erases every handle it
+reads, and no node duplicates one — passing the same handle twice to a concat fails on the
+second read, because the first erased it. So a build side probed by B batches is needed B
+times and exists once, which is [#152](../tickets.md#t152) exactly. Per family, per probe
+batch: the probe-local types (Inner, Right, RightSemi, RightAnti) need **one build-side
+copy**; Left and Full need that **plus a copy of the probe batch**, because the join
+consumes the batch and the key accumulation needs it too; the build-side semi family needs
+**none at all**, since its probe calls never touch the build side. [#145](../tickets.md#t145)'s
+refcounted handle removes all of them, and it is the one change that would let this mode
+stream a probe without a copy. The prototype counts every copy it takes, so the figure for
+a given plan is a test assertion rather than an estimate.
+
+**The `CudfCoalescePartitions` in those finish sequences is a concat, not a partition
+operation.** Left outer, Full outer and the whole build-side semi family carry one.
+
+It concatenates its inputs **whole** — it has no idea what a key is. What makes it cheap is
+what it is handed. The `CudfProject` beside it runs once per probe batch and writes its
+result to a *new handle*: a table of the key columns and nothing else. The probe batch's
+own handle goes to the join (or, for the semi family, is consumed by that project and goes
+nowhere else). So a lane arrives at its finish holding k tables that are already key-only,
+and the concat does the ordinary thing to them. Nothing selective happens anywhere: the
+narrowing is the project's, one batch at a time, and the concat merely inherits it.
+
+Three things follow. It is *that* node because its arity is a call argument rather than a plan
+constant: the collapse arm concatenates whatever k handles the call hands it, and k here is
+a runtime number, how many batches this lane happened to see. (`CudfUnion` also
+concatenates, but declares its inputs in the node.) It fires only where k > 1 — one probe
+batch hands its key table straight to the finish join, none registers an empty one, which
+is what an empty lane means. And the word "partitions" in its name is the wire's
+vocabulary, not this mode's; `ScanBatch` sets the same trap in architecture.md.
+
+**Why keys and not the probe rows.** The alternative to accumulating keys is not "a smaller
+concat" — it is the single-batch probe, a `GpuCoalesceAllBatches` under the probe side, and
+that changes the join rather than its inputs. One probe batch means one join call, and one
+call means the whole *join result* materializes as one table; on a fan-out join that result
+is the biggest thing in the lane. Accumulating keys keeps the output leaving a batch at a
+time and holds only the key columns between calls.
+
+Held bytes alone would not settle it: on tpch q3 the keys are about a third of the probe
+side (8 B/row against 24.5, from the `.cpu.txt` goldens #152 quotes), and Left and Full pay
+that back in the per-batch probe copy. The output is what settles it. For the semi family
+it is not close in any case — those lanes make no per-batch join call at all, so neither
+the probe side nor the join result ever exists as a table.
+
+**What the finish pass computes.** "Which build rows matched at least once" is the one fact
+a streamed probe loses, and it never crosses the current ABI:
+`peacock_executor_execute_node` returns a table and row counts. Hence the trick — keep the
+probe keys, and at done let one `left_anti_join` (or `left_semi_join`) against them answer
+the question in a single call. The build side is therefore built once more at finish, an
+accepted v1 cost recorded with the ABI-change alternatives in
+[#136](../tickets.md#t136).
+
+**And it computes it with the legacy semantics, not a variant.** `null_equals_null` rides
+on `GpuJoin` per join and reaches the finish join too, hardcoded `EQUAL` for anti and mark
+included — so a build row with a NULL key is matched by a NULL probe key at finish exactly
+as it would be inside a legacy single call, three-valued `NOT IN` trap and all (#80, #59).
+That equivalence is the point: the finish pass has to be a substitute for the legacy join,
+and a lowering that quietly fixed the null semantics would not be one.
 
 ## Traits
 
@@ -1244,7 +1371,7 @@ structure. The mapping:
 | `GpuCoalesceAllBatches` | `CudfCoalescePartitions` | one collapse-arm call over the partition's batch handles |
 | `GpuAggregateBatches` | `CudfCoalescePartitions` + `CudfAggregate` (merge aggregators, with `final` when it finalizes) | one concat + one aggregate call per compaction, and again at done |
 | `GpuEmitPartitions` | `CudfRepartition(Hash, 1→N)` | repartition arm, one call per batch → N handles |
-| `GpuJoin` | `CudfHashJoin`, plus finish-pass seqs (key project, concat, anti/semi join, pad project) per #136 | map arm per (partition, probe batch) |
+| `GpuJoin` | `CudfHashJoin`, plus finish-pass seqs (key project, concat, anti/semi join, pad project) per #136 — per type in the [capability matrix](#join-capability-matrix), which is where the seq sequence for each join mode is spelled out and tested | map arm per (partition, probe batch), plus a copy of the build handle before each, since the call consumes it (#152) |
 | `GpuCrossJoin` / `GpuNestedLoopJoin` | same-kind node (`CudfCrossJoin` / `CudfNestedLoopJoin`) | one map-arm call |
 | `GpuLimit` | none — `peacock_executor_slice_handle` on the two straddling batches, and nothing at all on the rest | not a seq: the bounds are runtime values. Root-adjacent there is no node either — the interval rides `GpuUnload`'s fetch |
 | `GpuMergePartitions` / `GpuUnion` / `GpuInterleave` | none (union casts are `CudfProject` seqs) | `BatchForwarder` routing in the driver, zero FFI calls |
@@ -1329,6 +1456,46 @@ The two limit symbols are not interchangeable — one produces a result, the oth
 though the fetch range could in principle be dropped in favour of slicing and then exporting
 whole, at the cost of one bounded device copy immediately before a PCIe transfer of the same
 rows.
+
+## What the frozen surface costs, and what unfreezing would buy
+
+The frozen-surface preference is a choice, not a law ([Scope](#scope-and-constraints)), and
+the join lowering is where its bill comes due — the join is the only operator whose state
+has to outlive a call. Five costs, each with the smallest unfreeze that removes it. They
+are ordered by what they buy, and the last one is not an ABI matter at all. Deciding them
+is [#155](../tickets.md#t155), which exists because they overlap: three of the five are
+removed by more than one of the changes, so taken one at a time they buy the same thing
+twice.
+
+| Cost | Why the frozen surface causes it | The unfreeze that removes it | What that costs |
+|---|---|---|---|
+| **A build-side copy per probe batch** (#152) | `execute_node` erases the handles it reads and nothing duplicates one, so a build side probed by B batches is needed B times and exists once | [#145](../tickets.md#t145): `TableResult` becomes a shared owner plus a view, so sibling handles share one table | **no ABI change** — a handle stays a `u64`. 35 call sites across 11 C++ files; the frozen thing here is the *implementation*, not the surface |
+| **A probe-batch copy per batch on Left/Full** (#152) | two consumers, one handle: the join needs the batch and the key project needs it too | the same refcount, or a node allowed to return its input alongside its output | as above; the second form is an fbs *semantics* change with no ABI change (below) |
+| **The build side re-hashed per probe batch** (#136) | `CudfHashJoin` is stateless per call — every call builds a fresh `cudf::hash_join` from the build table, so B batches means B builds. Refcounting removes the copy and not this | a join session: `join_begin(seq, build) → id`, `join_probe(id, batch)`, `join_finish(id)`, holding one `cudf::hash_join` | three new symbols and session state keyed by id. The largest of these changes, and the one that also removes the next row |
+| **Probe keys held resident, plus an extra join at finish** (#136) | "which build rows matched at least once" cannot cross the ABI: `execute_node` returns a table and row counts | either a match bitmap out-param on the probe call, or the join session above, which tracks it internally | the bitmap is a one-argument ABI delta; the session is the fuller answer. Both delete the key accumulation, the finish concat, and the extra anti/semi join |
+| **A new symbol per runtime-varying parameter** | an fb node's fields are plan constants, so anything the driver decides per call — a limit's bounds, a scan's row groups — cannot ride the node. Three additive symbols exist for exactly this | per-call parameter overrides: one `execute_node` variant taking a small override struct | one symbol instead of three, and the next runtime-varying field costs nothing. The generalization is the point: without it every such field is a new entry point |
+
+**The ABI is already more general than the node semantics**, which is worth knowing before
+adding to it. `peacock_executor_execute_node` writes into `uint64_t* out_handles` with an
+`out_cap` and an `out_count` — k outputs are expressible today, and the repartition arm
+already uses that. What forbids a node from emitting two things is the fbs vocabulary,
+where every node kind means one output. So "return the input beside the output", which
+would remove the Left/Full probe copy, is an fbs semantics change with **no ABI change at
+all** — the cheapest unfreeze on this page, and the one nobody has costed.
+
+**One cost on this list is not about the surface.** Every operator exit path deep-copies its
+columns into a fresh table where `release()` would move them
+([#154](../tickets.md#t154)) — for a join with a projection, twice over. Legacy pays that
+once per node per query; this mode pays it once per node per *batch*. No ABI, no fbs and no
+golden moves, which makes it independent of everything above it rather than trivial: five of
+the ten join sites are a mechanical swap and the rest turn on dangling views, projection
+ordinals and who owns a sliced column, which is what the ticket is for.
+
+**What none of this changes** is the capability claim. The
+[capability matrix](#join-capability-matrix) is what the frozen surface can already run,
+demonstrated rather than argued; everything above is the price of running it that way, and
+each row is a decision that can be taken later, on its own, without disturbing the
+lowering.
 
 ## Determinism rules
 
