@@ -9,5 +9,6 @@ pub use crate::executors::all_at_once_gpu_executor::{AllAtOnceGpuExecutor, GpuEx
 /// what it reports, and the pooled device allocator those numbers should be taken under.
 /// See [`crate::executors::backend::gpu_node_executor`].
 pub use crate::executors::backend::gpu_node_executor::{
-    install_rmm_pool, measure_timing_floor_us, set_node_timing, NodeTiming, RmmPool,
+    install_rmm_pool, measure_timing_floor_us, set_node_timing, set_nvtx_ranges, NodeTiming,
+    RmmPool,
 };

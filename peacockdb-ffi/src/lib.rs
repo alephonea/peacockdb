@@ -127,6 +127,13 @@ pub mod raw {
         /// `peacock_gpu_benchmarks` target.
         pub fn peacock_set_node_timing(mode: i32);
 
+        /// Emit NVTX ranges around plan nodes and their output partitions
+        /// (process-global; off by default). A separate switch from
+        /// [`peacock_set_node_timing`]: a profiling run wants the node boundaries
+        /// without the event pairs, whose recording is device work a capture would
+        /// show inside the node. Nonzero to emit.
+        pub fn peacock_set_nvtx_ranges(on: i32);
+
         /// Drain the device intervals recorded since the last call, in execution
         /// order. Only [`PEACOCK_NODE_TIMING_EVENTS`] produces any. Call AFTER the
         /// root [`peacock_result_from_handle`] and BEFORE

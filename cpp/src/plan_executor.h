@@ -101,6 +101,21 @@ NodeTiming node_timing();
 /// True unless the mode is `Off`.
 bool node_timing_enabled();
 
+/// Emit NVTX ranges around plan nodes and their output partitions
+/// (process-global; off by default).
+///
+/// A separate switch from `set_node_timing` on purpose. The two answer different
+/// questions -- ranges say where a node's work is on a timeline, the modes say how
+/// long it took -- and a profiled run wants the first WITHOUT the second: recording
+/// an event pair is device work, and a capture would show it inside the node.
+///
+/// Ranges go in our own NVTX domain, so a capture keeps them apart from the ones
+/// libcudf pushes from inside the calls they enclose.
+void set_nvtx_ranges(bool on);
+
+/// Whether ranges are being emitted (see `set_nvtx_ranges`).
+bool nvtx_ranges();
+
 /// Mark where the current timed region begins touching the device — after the decode,
 /// the registry lookups and any `ExprContext`/AST construction, immediately before
 /// issuing device work.

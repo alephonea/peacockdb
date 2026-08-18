@@ -27,7 +27,8 @@ use peacockdb_ffi::raw::{
     peacock_executor_begin_plan, peacock_executor_collect_node_times, peacock_executor_end_plan,
     peacock_executor_execute_node, peacock_handle_release, peacock_install_rmm_pool,
     peacock_last_error, peacock_result_free, peacock_result_from_handle,
-    peacock_measure_timing_floor_us, peacock_set_node_timing, PeacockExecutor,
+    peacock_measure_timing_floor_us, peacock_set_node_timing, peacock_set_nvtx_ranges,
+    PeacockExecutor,
     PeacockNodeDeviceTime, PeacockNodeStats, PeacockRmmPoolInfo, PEACOCK_NODE_TIMING_EVENTS,
     PEACOCK_NODE_TIMING_OFF, PEACOCK_NODE_TIMING_SYNC, PEACOCK_RMM_POOL_INSTALLED,
 };
@@ -134,6 +135,16 @@ pub fn set_node_timing(mode: NodeTiming) {
         NodeTiming::Events => PEACOCK_NODE_TIMING_EVENTS,
     };
     unsafe { peacock_set_node_timing(raw) };
+}
+
+/// Emit NVTX ranges around plan nodes and their output partitions (process-global, off
+/// by default).
+///
+/// Why this is not folded into [`set_node_timing`] is argued on `set_nvtx_ranges` in
+/// `cpp/src/plan_executor.h`. Nothing reads the ranges unless a profiler is attached,
+/// so this is for capture runs, not for the benchmark tree.
+pub fn set_nvtx_ranges(on: bool) {
+    unsafe { peacock_set_nvtx_ranges(i32::from(on)) };
 }
 
 /// Microseconds the measurement costs under [`NodeTiming::Sync`]: that mode's timed

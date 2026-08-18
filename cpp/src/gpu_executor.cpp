@@ -161,6 +161,8 @@ void peacock_set_node_timing(int mode) {
   }
 }
 
+void peacock_set_nvtx_ranges(int on) { peacock::set_nvtx_ranges(on != 0); }
+
 uint64_t peacock_measure_timing_floor_us(unsigned samples) {
   // No executor handle here, so no `last_error` to park a message in — print and
   // return 0. A 0 floor is self-announcing in the output file (a floor of zero

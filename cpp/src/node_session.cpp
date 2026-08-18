@@ -14,6 +14,7 @@
 #include <cudf/utilities/default_stream.hpp>
 
 #include <cuda_runtime.h>
+#include <nvtx3/nvtx3.hpp>
 
 #include <algorithm>
 #include <atomic>
@@ -36,6 +37,33 @@ namespace peacock {
 
 namespace {
 std::atomic<NodeTiming> g_node_timing{NodeTiming::Off};
+
+// ----------------------------------------------------------------------------
+// NVTX ranges
+// ----------------------------------------------------------------------------
+// Our own domain, so a capture can separate our node boundaries from the ranges
+// libcudf pushes from inside the calls those boundaries contain. Same reason the two
+// are not one switch: a profiled run wants the boundaries WITHOUT the event pairs,
+// whose recording is itself device work nsys would attribute to the node.
+struct peacock_domain {
+  static constexpr char const* name{"peacockdb"};
+};
+using scoped_range = ::nvtx3::scoped_range_in<peacock_domain>;
+
+std::atomic<bool> g_nvtx{false};
+
+/// A range that exists only when ranges are on. `std::optional` rather than a branch
+/// at each site: the range has to outlive the `if`, and a scope that closes at the
+/// brace would time the check instead of the work.
+class OptionalRange {
+ public:
+  explicit OptionalRange(const std::string& name) {
+    if (g_nvtx.load(std::memory_order_relaxed)) range_.emplace(name.c_str());
+  }
+
+ private:
+  std::optional<scoped_range> range_;
+};
 
 inline uint64_t us_since(std::chrono::steady_clock::time_point t0,
                          std::chrono::steady_clock::time_point t1) {
@@ -88,6 +116,16 @@ class ScopedNodeTimer {
  public:
   ScopedNodeTimer(RegionSink* sink, uint64_t seq, uint64_t partition)
       : mode_(g_node_timing.load(std::memory_order_relaxed)) {
+    // Before the early return, and closed by `stop`: the range has to span the same
+    // interval the host/device numbers do, or a capture and a record disagree about
+    // what "this region" was. Independent of mode_ so a profiled run can leave timing
+    // off -- recording an event pair is device work of its own.
+    //
+    // No sink means no plan node -- `measure_timing_floor_us` times an empty region to
+    // find what the instrument itself costs. Ranging it would put its samples (200 per
+    // benchmark case) in the domain beside the real regions, where they read as work.
+    if (sink && g_nvtx.load(std::memory_order_relaxed))
+      range_.emplace(("p" + std::to_string(partition)).c_str());
     if (mode_ == NodeTiming::Off) return;
     if (mode_ == NodeTiming::Events && sink) {
       sink->pairs.push_back(EventPair{seq, partition, nullptr, nullptr, false, false});
@@ -127,6 +165,9 @@ class ScopedNodeTimer {
   /// second call returns zeros, so a region can be stopped early without
   /// double-counting.
   std::pair<uint64_t, uint64_t> stop() {
+    // First, and outside the mode check: the range is on its own switch, and the
+    // work after this call belongs to the next node, not to this region.
+    range_.reset();
     if (mode_ == NodeTiming::Off || stopped_) return {0, 0};
     stopped_ = true;
     // Closed here rather than in the destructor: handle bookkeeping and moving the
@@ -164,6 +205,7 @@ class ScopedNodeTimer {
   EventPair* pair_ = nullptr;
   EventPair* prev_region_ = nullptr;
   ScopedNodeTimer* prev_timer_ = nullptr;
+  std::optional<scoped_range> range_;
   std::chrono::steady_clock::time_point t0_{};
   std::chrono::steady_clock::time_point t1_{};
 };
@@ -174,6 +216,10 @@ void set_node_timing(NodeTiming mode) { g_node_timing.store(mode, std::memory_or
 NodeTiming node_timing() { return g_node_timing.load(std::memory_order_relaxed); }
 
 bool node_timing_enabled() { return node_timing() != NodeTiming::Off; }
+
+void set_nvtx_ranges(bool on) { g_nvtx.store(on, std::memory_order_relaxed); }
+
+bool nvtx_ranges() { return g_nvtx.load(std::memory_order_relaxed); }
 
 void mark_device_start() {
   auto* timer = t_open_timer;
@@ -316,6 +362,12 @@ void NodeSession::execute_node(uint64_t seq, const uint64_t* input_handles,
   if (seq >= impl_->post_order.size())
     throw std::runtime_error("NodeSession::execute_node: seq out of range");
   const fb::PlanNode* node = impl_->post_order[seq];
+  // One per node, wrapping every partition this call executes -- so a capture's
+  // top-level range count is the plan's node count, and the per-partition ranges
+  // below nest inside the node they belong to. `seq` first because it is the column
+  // the calibration record and an Nsight export join on.
+  OptionalRange node_range(std::to_string(seq) + " " +
+                           fb::EnumNamePlanNodeKind(node->node_type()));
 
   // Each child contributes a VECTOR of partition handles; the flat
   // `input_handles` is grouped by child via `input_child_counts`.

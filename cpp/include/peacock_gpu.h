@@ -168,6 +168,15 @@ enum {
 /// @param mode one of PEACOCK_NODE_TIMING_*. Unknown values are treated as OFF.
 void peacock_set_node_timing(int mode);
 
+/// Emit NVTX ranges around plan nodes and their output partitions (process-global;
+/// off by default). Independent of peacock_set_node_timing: a profiling run wants
+/// the node boundaries without the event pairs, whose recording is device work a
+/// capture would attribute to the node.
+///
+/// @param on nonzero to emit. Cheap but not free when on, and nothing reads the
+///        ranges unless a profiler is attached.
+void peacock_set_nvtx_ranges(int on);
+
 /// One collected device interval: which node output partition it belongs to, and
 /// what the device spent on it.
 typedef struct PeacockNodeDeviceTime {

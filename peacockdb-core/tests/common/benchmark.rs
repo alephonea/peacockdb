@@ -330,6 +330,14 @@ pub async fn run_gpu_benchmark(
     set_node_timing(NodeTiming::Events);
     let _timing = NodeTimingLoan;
 
+    // NVTX ranges for an Nsight capture, env-gated like the calibration record: nothing
+    // reads them without a profiler attached, and the committed tree stays measured
+    // without them. No loan, unlike the timing switch above: the env var scopes this to
+    // a whole capture process, where every later case wants the ranges too.
+    if std::env::var_os("PEACOCK_NVTX").is_some() {
+        peacockdb_core::gpu_executor::set_nvtx_ranges(true);
+    }
+
     let gpu = GpuExecutor::new_mode(&data_dir, partitions, budget, mode.partition_mode())
         .await
         .unwrap();
