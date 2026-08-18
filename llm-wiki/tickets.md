@@ -6,7 +6,7 @@ anchor that the cost widget links to. Device labels are `tp<N>-<tier>` (micro=10
 mini=2GiB, standard=12GiB).
 
 A ticket carries a **Priority** line only when it is not medium; medium is the default.
-New tickets take the next free number (currently 153). Finished and lapsed tickets move to
+New tickets take the next free number (currently 156). Finished and lapsed tickets move to
 `llm-wiki/archive/archived-tickets.md` (Done / Stale) — numbers are never reused, so an old
 reference still resolves there.
 
@@ -14,9 +14,9 @@ reference still resolves there.
 
 | Section | Open | Tickets |
 |---|--:|---|
-| [Critical correctness](#critical-correctness) | 14 | #103 #80 #59 #46 #47 #60 #121 #122 #123 #118 #119 #120 #117 #41 |
+| [Critical correctness](#critical-correctness) | 15 | #153 #103 #80 #59 #46 #47 #60 #121 #122 #123 #118 #119 #120 #117 #41 |
 | [Blockers for disabled coverage](#blockers-for-disabled-coverage) | 15 | #97 #23 #32 #65 #62 #91 #95 #57 #45 #63 #56 #55 #115 #96 #143 |
-| [Performance / architecture](#performance--architecture) | 24 | #152 #151 #150 #149 #148 #147 #146 #145 #19 #16 #20 #71 #101 #73 #110 #75 #136 #137 #138 #139 #140 #141 #144 #142 |
+| [Performance / architecture](#performance--architecture) | 26 | #155 #154 #152 #151 #150 #149 #148 #147 #146 #145 #19 #16 #20 #71 #101 #73 #110 #75 #136 #137 #138 #139 #140 #141 #144 #142 |
 | [Infrastructure / process](#infrastructure--process) | 16 | #113 #114 #116 #126 #132 #131 #130 #129 #128 #127 #124 #125 #13 #94 #69 #49 |
 
 ## Critical correctness
@@ -30,6 +30,67 @@ crashes. Suspect the 8-way Welford M2 merge (`cpp/src/operators/aggregate.cpp`).
 **Test quarantined** 2026-07-31 (commented out in `test_gpu_partitioned.rs`) — it was the only
 coverage of the 8-way M2 merge; tp8 goldens kept. Has already caused one wrongly
 diagnosed "regression" + rollback: check this ticket before blaming your change.
+
+<a id="t153"></a>
+### #153 — equi-join residual filter is applied after the outer gather
+**Priority: high**
+
+`cpp/src/operators/join.cpp` (~L353) evaluates a `CudfHashJoin.filter` over the gathered
+`[left…, right…]` table and applies it with `cudf::apply_boolean_mask` — *after* the join
+has already null-padded its unmatched rows. Correct for Inner, where every output row is a
+match. For Left, Right and Full it demotes the ON-condition to a WHERE, in two ways at
+once: a padded row's NULL columns make the predicate NULL and `apply_boolean_mask` drops
+it, and a left row whose only matches fail the predicate is dropped instead of being
+emitted null-padded. `SELECT … LEFT JOIN b ON a.k = b.k AND b.v > 50` therefore returns an
+inner join.
+
+**The same file already knows.** `execute_nested_loop_join` reaches the same
+cross-then-mask shape on its non-AST-able path and refuses it, one hundred lines below
+(~L453):
+
+```
+// Inner only — a LEFT join would also have to re-emit unmatched left rows with
+// null right columns, which a mask cannot express.
+```
+
+That is this ticket's argument, correctly reasoned, in the operator next door — so the fix
+direction is settled in this codebase rather than proposed. It also says where the gap came
+from: whoever wrote that guard had the argument in hand and did not carry it to the equi
+path. The nested-loop path is therefore **not** affected — AST-able filters go to
+`conditional_left_join`, non-AST-able ones throw.
+
+Latent, which is why it has not bitten: across the committed goldens a `filter=` on a hash
+join appears beside Inner (27 distinct queries, 115 golden lines), LeftSemi (3) and
+LeftAnti (1), and beside no other join type in either the `.plan.txt` or the `.cpu.txt`
+set.
+
+And that is not luck. DataFusion pushes an ON predicate that reads only the nullable side
+*below* the join, where it means the same thing — tpch q13 is the worked example, whose
+`left outer join … on c_custkey = o_custkey and o_comment not like '%special%requests%'`
+plans as a bare `join_type=Left` over a `GpuFilterExec: predicate=o_comment NOT LIKE …`
+(`goldens/tpch.sf1/q13.tp8-mini.plan.txt`). So the reachability condition is sharper than
+"an outer join with a filter": it needs an ON predicate referencing **both** sides, e.g.
+`LEFT JOIN b ON a.k = b.k AND b.v > a.v`, which cannot be pushed anywhere and stays on the
+join. No corpus query has one; one query would.
+
+Fix: evaluate the residual during the join for the outer types (the `mixed_*` family
+covers Left; Right is its swap; Full has no mixed variant and needs the inner-plus-re-add
+form), or run inner + filter and re-add the unmatched side afterwards. A `PlanExecutor`
+gtest with a Left join carrying a filter is what would have caught it — the existing ones
+are all Inner.
+
+**Two prototype changes belong to that same commit**, because nothing links them to the C++
+and they will not go red on their own: `scripts/exec_model/operators/recipe.py` reproduces
+this bug deliberately, and
+`tests/test_join_capability.py::test_an_outer_join_with_a_residual_filter_is_wrong_today_which_is_153`
+asserts the wrong behaviour so the pin has something to hold. Fixing the C++ without them
+leaves a model that quietly no longer models it — and leaves the refusal standing in
+`llm-wiki/tasks/batch_partitioned_executor.md`, which should come out at the same time.
+
+Found writing the T0 join-capability suite (`scripts/exec_model`), whose recipe backend
+reproduces `execute_hash_join` branch for branch and disagreed with the SQL oracle.
+Until it is fixed the batch-partitioned planner refuses the shape at plan time
+(`llm-wiki/tasks/batch_partitioned_executor.md`, the join lowering table).
 
 <a id="t80"></a>
 ### #80 — Anti-join NOT IN three-valued logic + independent DuckDB result oracle
@@ -255,6 +316,133 @@ rank/dense_rank gaps of #32 carry over unchanged.
 
 ## Performance / architecture
 
+<a id="t155"></a>
+### #155 — umbrella: join execution through a wider C and FlatBuffers API
+
+The batch-partitioned mode's join lowering runs entirely on the frozen surface. That is
+established rather than assumed: every join mode, streamed probe included, is executed as
+`Cudf*` nodes and existing cuDF calls in `scripts/exec_model`, and the lowering per mode is
+the join capability matrix in `llm-wiki/tasks/batch_partitioned_executor.md`. **What is
+open is not whether it runs but what running it that way costs**, and every cost is a
+consequence of one of two frozen properties: a handle is consumed by the call that reads
+it, and an fb node's fields are plan constants.
+
+This ticket is the place those trades are decided together, because they overlap: three of
+the five below are removed by more than one of the changes, and picking them one at a time
+buys the same thing twice. Scope is the join only.
+
+| Cost | Ticket | What removes it | Surface change |
+|---|--:|---|---|
+| build side copied once per probe batch | [#152](#t152) | refcounted handles | **none** — a handle stays a `u64` |
+| probe batch copied once per batch (Left/Full) | [#152](#t152) | refcounted handles, **or** a node returning its input beside its output | none / fbs semantics only |
+| build side re-hashed once per probe batch | [#136](#t136) | a stateful join session | 3 new symbols |
+| probe keys held resident + an extra join at finish | [#136](#t136) | a match bitmap out-param, **or** the same session | 1 argument / 3 symbols |
+| a new symbol per runtime-varying field | — | per-call parameter overrides on `execute_node` | 1 symbol, replacing 3 |
+
+Two of those need no ABI change at all, which is where to start. [#145](#t145) is the
+refcount and is already specified; the "node returns its input" form is the cheaper half of
+the same thing and has never been costed — the ABI already writes k handles into
+`out_handles` with an `out_cap`, so multiple outputs are expressible today and only the fbs
+vocabulary, where a node kind means one output, forbids it.
+
+**The session subsumes the bitmap.** A per-seq `cudf::hash_join` that lives across probe
+calls removes the re-hash *and* tracks matched build rows internally, so #136's option (a)
+is worth doing only if the session is rejected. The session is also the largest change here
+and the only one that puts state behind a handle id, so it wants a measurement first.
+
+**What to measure before deciding.** The prototype counts copies per plan and cannot price
+them: what is unknown is a device copy of the build side against a rebuild of its hash
+table, at real shapes. tpch q3 at `partitioned-tp8-standard` is the case to take — build
+30142 rows / 244904 bytes, probe 727305 rows / 17818976 bytes, from the committed
+`.cpu.txt` — since it is the join everyone looks at first and its build side is the narrow
+one, which flatters the copy. Invert the widths and the answer may too.
+
+**Land [#154](#t154) first, or the measurement is taken against the wrong baseline.** A
+join call today deep-copies its output once, twice where the node carries a projection —
+copies that have nothing to do with the build side and that inflate every per-call number.
+Weighed against that baseline the build-side copy looks proportionally cheaper than it is,
+and the row it decides is the first one in the table. #154 needs no decision from this
+ticket and should not wait on it; it just has to be in before the numbers are taken.
+
+**Also unlocked**: [#140](#t140)'s broadcast joins need exactly the non-consuming handle
+this umbrella's first row provides, and [#91](#t91)'s repartition spike is the same copy
+seen from the shuffle end.
+
+**Out of scope, deliberately.** [#153](#t153) is correctness. [#154](#t154) is a decision
+this ticket does not make — but it is a prerequisite of the measurement above, which is a
+stronger relationship than exclusion.
+
+**Decision point:** before T12 builds the join executors. The lowering does not change
+whichever way this goes — the frozen path is the fallback, and each row above is a
+substitution inside it.
+
+<a id="t154"></a>
+### #154 — every operator exit path deep-copies its output into a fresh table
+
+`std::make_unique<cudf::column>(some_view)` deep-copies the column's device buffer. There
+are 18 such sites under `cpp/src/`, 10 of them in `join.cpp`, and most are copying a table
+the same function just produced. `execute_hash_join` is the worst: `cudf::gather` returns
+an owning table, and rather than `release()`ing its columns the code copies each one into
+`all_cols` (~L337, ~L342), then — if the node carries a `projection` — copies the kept
+columns *again* into a third table (~L376). So a join with a projection allocates and
+copies its output twice over. The semi/anti path (~L202, ~L211) and the mark path (~L259,
+~L270) have the same pair.
+
+`release()` moves the columns out of the table cuDF just built, and the three sites that
+already use it (`scan.cpp` L108, `union.cpp` L38, `join.cpp` L254) are the pattern. **This
+is a C++-only change**: `TableResult` still owns a `std::unique_ptr<cudf::table>`, so no
+header, no fbs field, no Rust and no golden moves — results are identical, only the
+allocations differ.
+
+The 18 sites fall into three kinds, and the ticket exists because the kind is not visible
+from the call site:
+
+| Kind | Sites | What it takes |
+|---|---|---|
+| whole table, freshly produced | `join.cpp` 202, 337, 342, 512, 515 | `release()` and move — mechanical |
+| ordinal subset, freshly produced | `join.cpp` 211, 270, 376, 525; `filter.cpp` 41 | `release()`, then move by index, plus an assertion that the ordinals are distinct |
+| a column of an **input** table | `join.cpp` 259; `project.cpp` 44; `window.cpp` 46; `expr.cpp` 850 | release from the input's own `TableResult` — permitted, since both drivers hand the operator its inputs by value and consume-on-use is the contract, but it changes who destroys what |
+| unresolved without reading | `aggregate.cpp` 407, 602, 604, 682 | groupby-result tables; classify before touching |
+
+The traps, in the order they will be met:
+
+- **A view taken before the release dangles.** `release()` empties the table, so `ftv` at
+  ~L372 and the mask path's view have to be dropped first. Per-site ordering, and getting
+  it wrong is a use-after-free rather than a copy.
+- **A repeated ordinal in a projection would move the same column twice**, leaving a null
+  `unique_ptr` and a table with a hole — a wrong answer, not a throw. Across the committed
+  goldens no projection repeats an ordinal or reorders (157 distinct lists, zero of each),
+  which is exactly why the release form needs an assertion rather than the observation.
+- **Some sites copy an input rather than a freshly produced table** — the mark path takes
+  the left input's columns (~L259). Releasing there means releasing from the input's own
+  `TableResult`, which consume-on-use permits but which changes who destroys what, and the
+  recursive driver holds those same values in `NodeInputs`.
+- **A copy compacts a sliced column and a release does not.** Where a source view carries
+  an offset, `make_unique<cudf::column>(view)` materializes a compact column and lets the
+  parent go; `release()` keeps whatever the table owns, parent included. None of join.cpp's
+  sources are slices, so it does not bite there — but it is why the other ten sites under
+  `cpp/src/` cannot be swept in the same commit without checking each.
+
+Cost today: one extra copy of every node's output, per node, per query. Cost after the
+batch-partitioned mode lands: the same copy **per batch**, since a streamed probe calls the
+join once per probe batch — so this moves from a constant overhead to a per-batch one on
+the mode's hot path. Unrelated to the frozen ABI (#152, #136) and fixable independently of
+it; it is C++-internal, so no plan, golden or wire byte moves.
+
+**The same edit deletes the repetition.** The ten-line "copy each column, rebuild the name
+vector, apply the projection" block appears four times in `join.cpp` alone — the reviewer's
+count on that function was that ~80 of its 270 code lines are this ceremony. Two helpers
+beside `TableResult` (build one from an owned table plus names; select an ordinal subset of
+one by moving) turn every exit path into a line, which is where most of the length of
+`execute_hash_join` goes.
+
+**Land this before [#155](#t155)'s measurement.** That ticket weighs a build-side copy per
+probe batch against a hash-table rebuild, and these copies sit in the same per-call number
+without belonging to either side of the comparison — leave them in and the build-side copy
+reads as a smaller share of the call than it is.
+
+Found while modelling `execute_hash_join` call by call for the T0 join capability suite.
+
 <a id="t152"></a>
 ### #152 — batch-partitioned GpuJoin: the build handle does not survive a streamed probe
 
@@ -274,8 +462,9 @@ lanes, but it is the same refcount.
 Until then the choices are a device copy of the build side per probe batch, which is the
 cost streaming exists to avoid, or a single-batch probe, which is what the capability
 matrix already forces for filtered and non-inner-NLJ joins. Decide before T12 builds the
-join executors; the finish pass (#136) is unaffected either way, since it addresses the
-build seq once at done.
+join executors, and decide it beside the other join-surface trades rather than alone —
+[#155](#t155) is the umbrella. The finish pass (#136) is unaffected either way, since it
+addresses the build seq once at done.
 
 Whether the copy is tolerable in v1 is a quantitative question, and the numbers already
 exist: each join's two `GpuCoalescePartitionsExec` lines in the committed `.cpu.txt`
@@ -527,6 +716,8 @@ equi-joins; the per-join `null_equals_null` flag applies to the finish join too,
 #80 NOT IN caveat carries over unchanged. Not usable with a residual filter (a keys-only
 input cannot evaluate it), so filtered semi/anti keep a single-batch probe side. Cost:
 the accumulated keys stay resident, and the build side is built one extra time at finish.
+
+Weigh the options below together with the rest of the join surface — [#155](#t155).
 
 ABI-change options if that cost bites: (a) return a build-side match bitmap per probe
 call (new out-param, or a handle to a bool column) and OR the bitmaps in Rust; (b) a

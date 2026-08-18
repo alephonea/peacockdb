@@ -7,6 +7,9 @@ somewhere to show. That is the class the whole mode exists to create: partial ag
 merged out of order, a join whose finish pass runs per lane, a sort whose batches are
 individually ordered and collectively not.
 
+Joins live in `test_join_capability.py`, which shares this file's helpers — one case per
+join mode on two backends outgrew this file.
+
 pandas is imported unconditionally. If it is missing this file fails rather than skipping:
 a skipped operator suite reads exactly like a passing one.
 """
@@ -29,7 +32,6 @@ from ..node import CpuBackendSelector
 from ..operators import aggregates as A
 from ..operators import nodes as N
 from ..operators.expressions import Alias, Binary, Col, Lit
-from ..operators.joins import JoinType
 from ..plan import Plan
 
 #: (n_partitions, rows_per_group, target_batch_rows). The first is the degenerate
@@ -48,18 +50,16 @@ def fixture(n=60, seed=7):
     )
 
 
-def dim_fixture():
-    return pd.DataFrame({"k": [0, 1, 2, 3, 9], "label": list("ABCDE")})
-
-
 #: Every plan here runs under a real budget rather than `None`, so the accounting path is
 #: live on each call and a regression that blew the resident set fails rather than passing
 #: quietly. Generous against these fixtures (peaks are kilobytes) and far from unbounded.
 BUDGET = 8 * 1024 * 1024
 
 
-def execute(root, budget: int | None = BUDGET):
-    driver = batch_partitioned_driver(Plan.build(root), CpuBackendSelector(), budget)
+def execute(root, budget: int | None = BUDGET, selector=None):
+    driver = batch_partitioned_driver(
+        Plan.build(root), selector or CpuBackendSelector(), budget
+    )
     driver.run()
     frames = [b.frame for b in driver.results if len(b.frame)]
     if not frames:
@@ -426,93 +426,6 @@ def test_a_distinct_beside_non_distinct_aggregates_lowers_the_same_way():
         ]
         got, _ = execute(N.unload("unload", N.project("avg", totalled, exprs)))
         same(got, want, f"mixed distinct {(parts, group, target)}")
-
-
-def test_inner_join_with_a_shuffle_on_both_sides():
-    fact, dim = fixture(), dim_fixture()
-    want = dim.merge(fact, how="inner", on="k")
-    for parts, group, target in CONFIGS:
-        build = N.coalesce_all(
-            "build_collect",
-            N.emit_partitions(
-                "build_emit",
-                N.merge_partitions("build_merge", N.scan("dim", dim, parts, group, target)),
-                ["k"],
-                parts,
-            ),
-            schema=dict(dim.dtypes),
-        )
-        probe = N.emit_partitions(
-            "probe_emit",
-            N.merge_partitions("probe_merge", N.scan("fact", fact, parts, group, target)),
-            ["k"],
-            parts,
-        )
-        root = N.unload(
-            "unload", N.hash_join("join", build, probe, JoinType.INNER, ["k"], ["k"])
-        )
-        got, _ = execute(root)
-        same(got, want, f"inner join {(parts, group, target)}")
-
-
-def test_left_outer_join_finish_pass_matches_the_oracle():
-    fact, dim = fixture(), dim_fixture()
-    want = dim.merge(fact, how="left", on="k")
-    for parts, group, target in CONFIGS:
-        build = N.coalesce_all(
-            "build_collect",
-            N.emit_partitions(
-                "build_emit",
-                N.merge_partitions("build_merge", N.scan("dim", dim, parts, group, target)),
-                ["k"],
-                parts,
-            ),
-            schema=dict(dim.dtypes),
-        )
-        probe = N.emit_partitions(
-            "probe_emit",
-            N.merge_partitions("probe_merge", N.scan("fact", fact, parts, group, target)),
-            ["k"],
-            parts,
-        )
-        root = N.unload(
-            "unload",
-            # probe_schema: a post-shuffle probe lane can be empty, and the finish must
-            # still null-pad the probe columns it never saw.
-            N.hash_join(
-                "join", build, probe, JoinType.LEFT_OUTER, ["k"], ["k"],
-                probe_schema=list(fact.columns),
-            ),
-        )
-        got, _ = execute(root)
-        same(got, want, f"left outer join {(parts, group, target)}")
-
-
-def test_semi_and_anti_joins_match_the_oracle():
-    fact, dim = fixture(), dim_fixture()
-    present = set(fact.k.unique())
-    for join_type, keep in ((JoinType.LEFT_SEMI, True), (JoinType.LEFT_ANTI, False)):
-        want = dim[dim.k.isin(present) == keep].reset_index(drop=True)
-        for parts, group, target in CONFIGS:
-            build = N.coalesce_all(
-                "build_collect",
-                N.emit_partitions(
-                    "build_emit",
-                    N.merge_partitions("build_merge", N.scan("dim", dim, parts, group, target)),
-                    ["k"],
-                    parts,
-                ),
-                schema=dict(dim.dtypes),
-            )
-            probe = N.emit_partitions(
-                "probe_emit",
-                N.merge_partitions("probe_merge", N.scan("fact", fact, parts, group, target)),
-                ["k"],
-                parts,
-            )
-            root = N.unload("unload", N.hash_join("join", build, probe, join_type, ["k"], ["k"]))
-            got, _ = execute(root)
-            same(got, want, f"{join_type.value} {(parts, group, target)}")
 
 
 def test_union_of_two_branches_matches_the_oracle():
