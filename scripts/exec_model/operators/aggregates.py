@@ -116,7 +116,10 @@ def _partial_frame(group: pd.DataFrame, aggs: list[Agg]) -> dict:
             # COUNT(*) counts rows; COUNT(col) counts non-nulls.
             out[agg.output] = len(group) if agg.column is None else group[agg.column].count()
         elif agg.func == SUM:
-            out[agg.output] = group[agg.column].sum()
+            # min_count=1: SUM over a group whose values are all null is NULL, not zero —
+            # SQL's rule and cuDF's (null_policy EXCLUDE over an all-null group yields
+            # null). pandas' default of 0 put a real number where TPC-DS q93 expects none.
+            out[agg.output] = group[agg.column].sum(min_count=1)
         elif agg.func == MIN:
             out[agg.output] = group[agg.column].min()
         else:
@@ -148,7 +151,12 @@ def _merge_frame(group: pd.DataFrame, aggs: list[Agg]) -> dict:
             out[f"{agg.output}$count"] = total
             out[f"{agg.output}$mean"] = mean
             out[f"{agg.output}$m2"] = m2
-        elif agg.func in (SUM, COUNT):
+        elif agg.func == SUM:
+            # As in the init phase: a merge of partials that are all null is still null,
+            # and pandas' `.sum()` would make it zero.
+            out[agg.output] = group[agg.output].sum(min_count=1)
+        elif agg.func == COUNT:
+            # A count merges by summing, and no count is ever null — an empty merge is 0.
             out[agg.output] = group[agg.output].sum()
         elif agg.func == MIN:
             out[agg.output] = group[agg.output].min()

@@ -30,94 +30,26 @@ import pathlib
 
 import numpy as np
 import pandas as pd
-import pyarrow as pa
-import pyarrow.parquet as pq
 
+from . import corpus
+from .corpus import BUDGET, agg_schemas, execute, in_order, same
 from .harness import main, raises
-from ..batch_partitioned_driver import batch_partitioned_driver
 from ..errors import ResidentBudgetExceeded
-from ..node import CpuBackendSelector
 from ..operators import aggregates as A
 from ..operators import nodes as N
-from ..operators.expressions import Alias, Binary, Col, Lit
+from ..operators.expressions import Alias, Binary, Case, Col, Lit
 from ..operators.injection import HashMode, LayoutInjector, LayoutPreset
 from ..operators.joins import JoinType
 from ..plan import Plan
-
-#: Generous against these plans' real peaks (~tens of MB) and far from unbounded, so the
-#: enforcer is exercised on every call and a blown resident set fails the test.
-BUDGET = 256 * 1024 * 1024
 
 #: Enough rows for real skew and multi-batch lanes; small enough that the row-wise hash in
 #: `partition_ids` does not dominate the suite's runtime.
 SHUFFLE_ROWS = 20_000
 
-_ROOT = pathlib.Path(__file__).resolve().parents[3] / "testdata"
-
-
-def tpch_dir() -> pathlib.Path:
-    for candidate in ("tpch.sf1", "tpch.minimal"):
-        path = _ROOT / candidate
-        if (path / "customer.parquet").exists():
-            return path
-    raise FileNotFoundError(
-        f"no TPC-H tables under {_ROOT}; tpch.minimal is committed and should always be here"
-    )
-
 
 def table(name: str, columns: list[str], limit: int | None = None) -> pd.DataFrame:
-    """Read columns, casting decimals to float64.
-
-    TPC-H money columns are `decimal128(15, 2)`, and pandas has no decimal dtype — it
-    hands back an object column of Python `Decimal`s, which will not multiply by a float
-    literal. Casting is the prototype standing in for the decimal support `frame.py`
-    already names as a known divergence, and it is a reminder of why the real engine
-    carries precision and scale in the flat buffers rather than letting cuDF re-derive
-    them (architecture.md's cuDF options table).
-    """
-    arrow = pq.read_table(tpch_dir() / f"{name}.parquet", columns=columns)
-    decimals = [f.name for f in arrow.schema if pa.types.is_decimal(f.type)]
-    frame = arrow.to_pandas()
-    for column in decimals:
-        frame[column] = frame[column].astype("float64")
-    return frame.head(limit) if limit is not None else frame
-
-
-def agg_schemas(df, keys, aggs):
-    """Typed `{column: dtype}` per aggregate phase, derived over a zero-row slice — what
-    an empty lane's `aggregate_batches` has to emit."""
-    state = A.partial(df.iloc[0:0], list(keys), aggs)
-    return dict(state.dtypes), dict(A.final(state, list(keys), aggs).dtypes)
-
-
-def execute(root, budget: int | None = BUDGET):
-    driver = batch_partitioned_driver(Plan.build(root), CpuBackendSelector(), budget)
-    driver.run()
-    frames = [b.frame for b in driver.results if len(b.frame)]
-    got = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
-    return got, driver
-
-
-def same(got: pd.DataFrame, want: pd.DataFrame, label: str) -> None:
-    """Row order is not part of the contract unless a sort says so."""
-    assert list(got.columns) == list(want.columns), f"{label}: {list(got.columns)}"
-    got = got.sort_values(list(got.columns)).reset_index(drop=True)
-    want = want.sort_values(list(want.columns)).reset_index(drop=True)
-    assert len(got) == len(want), f"{label}: {len(got)} rows vs {len(want)}"
-    for column in want.columns:
-        left, right = got[column].to_numpy(), want[column].to_numpy()
-        # pandas' predicate rather than np.issubdtype — see test_end_to_end.same(): a
-        # pandas 3 string column is an extension dtype numpy refuses to classify.
-        if pd.api.types.is_numeric_dtype(want[column]):
-            assert np.allclose(left.astype(float), right.astype(float), equal_nan=True), (
-                f"{label}: column {column}"
-            )
-        else:
-            # NaN != NaN: normalize nulls before comparing a non-numeric column.
-            def nulls_alike(values):
-                return [None if pd.isna(v) else v for v in values]
-
-            assert nulls_alike(left) == nulls_alike(right), f"{label}: column {column}"
+    """This file's tables, through the shared reader (`corpus.py`)."""
+    return corpus.table("tpch", name, columns, limit)
 
 
 # -- the dataset ------------------------------------------------------------------

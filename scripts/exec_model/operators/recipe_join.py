@@ -55,11 +55,22 @@ class RecipeJoin(JoinExecutor):
 
     # -- Executor ---------------------------------------------------------------
 
-    def resident_bytes(self) -> int:
+    def build_bytes(self) -> int:
+        """The build side alone — what one probe call rebuilds and gathers against."""
         return self.session.bytes_of(self.build_handle) if self.build_handle is not None else 0
 
+    def resident_bytes(self) -> int:
+        return self.build_bytes()
+
     def scratch_bytes(self, n_rows: int, n_bytes: int) -> int:
-        return merged_scratch(self.resident_bytes(), self.build_rows, self.fanout,
+        # `build_bytes`, not `resident_bytes`: a semi/anti/mark join's residency also holds
+        # the probe keys it has accumulated (#136), and `merged_scratch` divides what it is
+        # given by the *build* row count to price one output row. Feeding it the
+        # accumulation turned 94 MB of keys over thirty build rows into megabytes per row
+        # and a scratch estimate three orders of magnitude too large — TPC-DS q37 tripped
+        # the enforcer on an 11.7M-row probe that fits comfortably. The accumulation is
+        # still resident and still counted; it is just not a per-output-row cost.
+        return merged_scratch(self.build_bytes(), self.build_rows, self.fanout,
                               n_rows, n_bytes)
 
     # -- JoinExecutor -----------------------------------------------------------
