@@ -21,6 +21,7 @@ pub mod node;
 pub mod nodes;
 pub mod parquet_meta;
 pub mod partitioner;
+pub mod plan;
 pub mod plan_text;
 pub mod schema;
 pub mod translate;

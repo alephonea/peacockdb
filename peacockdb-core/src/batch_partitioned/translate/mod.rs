@@ -51,10 +51,16 @@ pub struct Translator {
     /// Lanes a source is partitioned into, before the small-table rule.
     pub target_partitions: usize,
     pub batching: Batching,
-    /// A source with fewer surviving rows than this plans one lane whatever the target,
-    /// and the nodes a one-lane region does not need are then not emitted at all. A
-    /// stated planner input, and inert while batching is off.
-    pub small_table_rows: u64,
+    /// Batch sizes the estimator derived, one per source in the order translation reaches
+    /// them. Empty on the first pass, when there is nothing derived yet.
+    source_targets: Vec<u64>,
+    next_source: std::cell::Cell<usize>,
+    /// A source reading fewer bytes than this plans one lane whatever the target, and the
+    /// nodes a one-lane region does not need are then not emitted at all. Bytes rather
+    /// than rows because a narrow table of many rows reads less than a wide table of few;
+    /// measured on the columns this scan projects, of the row groups pruning left it, so
+    /// it is a property of the scan and not of the table.
+    pub small_table_bytes: u64,
 }
 
 impl Translator {
@@ -62,12 +68,21 @@ impl Translator {
         Self {
             target_partitions,
             batching,
-            small_table_rows: 0,
+            source_targets: Vec::new(),
+            next_source: std::cell::Cell::new(0),
+            small_table_bytes: 0,
         }
     }
 
-    pub fn with_small_table_rows(mut self, rows: u64) -> Self {
-        self.small_table_rows = rows;
+    /// The second pass: each source gets the batch size the estimator solved for it,
+    /// rather than the one number the first pass had to assume.
+    pub fn with_source_targets(mut self, targets: Vec<u64>) -> Self {
+        self.source_targets = targets;
+        self
+    }
+
+    pub fn with_small_table_bytes(mut self, bytes: u64) -> Self {
+        self.small_table_bytes = bytes;
         self
     }
 
@@ -357,6 +372,19 @@ impl Translator {
         ))
     }
 
+    /// Sources are reached in one order, left to right, so the estimator's figures are
+    /// consumed in that order — the same order it indexed them in.
+    fn batching_for_source(&self) -> Batching {
+        let seq = self.next_source.get();
+        self.next_source.set(seq + 1);
+        match (self.batching, self.source_targets.get(seq)) {
+            (Batching::Sized { .. }, Some(target)) => Batching::Sized {
+                target_batch_bytes: *target as usize,
+            },
+            (batching, _) => batching,
+        }
+    }
+
     /// The small-table rule: a source under the threshold plans one lane whatever the
     /// target, and the nodes a one-lane region does not need are then never emitted. It
     /// bites only while batching is on, which is what makes the threshold mean anything.
@@ -368,9 +396,12 @@ impl Translator {
         if limit.is_some() {
             return 1;
         }
-        let rows: u64 = survivors.iter().map(|group| group.rows).sum();
+        let bytes: u64 = survivors.iter().map(|group| group.bytes).sum();
         match self.batching {
-            Batching::On { .. } if rows < self.small_table_rows => 1,
+            // With one batch per lane there is nothing for a size threshold to size, so the
+            // rule that drops a source to one lane has nothing to act on either.
+            Batching::Off => self.target_partitions,
+            _ if bytes < self.small_table_bytes => 1,
             _ => self.target_partitions,
         }
     }
@@ -379,7 +410,7 @@ impl Translator {
         let config = parquet.base_config();
         let survivors = survivor_metadata(parquet)?;
         let lanes = self.lanes_for(&survivors, config.limit);
-        let partition_groups = partition(&survivors, lanes, self.batching)?;
+        let partition_groups = partition(&survivors, lanes, self.batching_for_source())?;
 
         let files = config
             .file_groups
@@ -467,9 +498,18 @@ impl Translator {
                 )));
             }
         };
-        let filter = join.filter().ok_or_else(|| {
-            PlanError::Invalid("a nested-loop join with no predicate is a cross join".to_string())
-        })?;
+        // DataFusion uses a nested-loop join with no predicate where the product itself is
+        // what the query asked for — tpcds q9 pairs one-row aggregates that way — and that
+        // is a cross join by any other name.
+        let Some(filter) = join.filter() else {
+            let build = self.build_side(join.left())?;
+            let probe = self.node(join.right())?;
+            return Ok(Box::new(GpuCrossJoin::new(
+                build,
+                probe,
+                Schema::new(join.schema()),
+            )));
+        };
         let build = self.build_side(join.left())?;
         let mut probe = self.node(join.right())?;
         // A Left form emits its unmatched build rows in the same pass, so it cannot

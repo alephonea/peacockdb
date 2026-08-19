@@ -19,10 +19,18 @@ pub struct RowGroupMeta {
     pub bytes: u64,
 }
 
+/// How a lane's row groups are cut into batches. Three named forms rather than one number
+/// with special values: which one a mode uses is a statement about the mode, and a target
+/// of one byte reaching the same place would hide it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Batching {
+    /// One batch per lane — the whole chunk arrives at once.
     Off,
-    On { target_batch_bytes: usize },
+    /// One batch per row group: the finest the mapping can express, since a row group is
+    /// its minimum granularity, and the only form that needs no budget.
+    PerRowGroup,
+    /// Batches packed to the size the estimator solved for this source.
+    Sized { target_batch_bytes: usize },
 }
 
 /// Survivors → partitions → batches → row-group indices.
@@ -99,7 +107,8 @@ fn batches_of(chunk: &[RowGroupMeta], batching: Batching) -> Vec<Vec<u32>> {
     }
     let target = match batching {
         Batching::Off => return vec![chunk.iter().map(|g| g.index).collect()],
-        Batching::On { target_batch_bytes } => target_batch_bytes as u64,
+        Batching::PerRowGroup => return chunk.iter().map(|g| vec![g.index]).collect(),
+        Batching::Sized { target_batch_bytes } => target_batch_bytes as u64,
     };
 
     let mut batches: Vec<Vec<u32>> = Vec::new();
@@ -175,12 +184,20 @@ mod tests {
     }
 
     #[test]
+    fn batching_per_row_group_is_one_batch_per_group() {
+        let survivors = pruned(&[(10, 40), (10, 500), (10, 30)]);
+        let mapping = partition(&survivors, 1, Batching::PerRowGroup).unwrap();
+        // The finest the mapping can express, and it needs no target to express it.
+        assert_eq!(mapping, vec![vec![vec![1], vec![2], vec![4]]]);
+    }
+
+    #[test]
     fn a_row_group_over_target_is_its_own_batch() {
         let survivors = pruned(&[(10, 40), (10, 500), (10, 30), (10, 30)]);
         let mapping = partition(
             &survivors,
             1,
-            Batching::On {
+            Batching::Sized {
                 target_batch_bytes: 100,
             },
         )
@@ -231,7 +248,7 @@ mod tests {
     #[test]
     fn the_mapping_is_a_fixed_function_of_its_inputs() {
         let survivors = pruned(&[(90, 900), (10, 100), (50, 500), (50, 500), (30, 300)]);
-        let batching = Batching::On {
+        let batching = Batching::Sized {
             target_batch_bytes: 600,
         };
         let expected = vec![vec![vec![1], vec![2]], vec![vec![4], vec![5], vec![6]]];

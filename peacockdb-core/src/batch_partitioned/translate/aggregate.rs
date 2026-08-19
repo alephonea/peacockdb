@@ -64,25 +64,30 @@ impl Translator {
         let input = self.node(partial.input())?;
         let input_schema = partial.input().schema();
         let group = partial.group_expr();
-        if !group.is_single() {
-            return Err(PlanError::Unsupported(
-                "grouping sets in batch-partitioned mode".to_string(),
-            ));
-        }
         if partial.filter_expr().iter().any(Option::is_some) {
             return Err(PlanError::Unsupported("a filtered aggregate".to_string()));
         }
 
         let mut group_by = Vec::with_capacity(group.expr().len());
-        let mut key_fields = Vec::with_capacity(group.expr().len());
-        for (index, (expr, name)) in group.expr().iter().enumerate() {
+        for (expr, _) in group.expr().iter() {
             group_by.push(translate_expr(expr, &input_schema)?);
-            key_fields.push(Field::new(
-                name,
-                partial.schema().field(index).data_type().clone(),
-                true,
-            ));
         }
+        // Grouping sets add one output column, `__grouping_id`, which the init emits like
+        // any other and everything above groups on beside the keys. Its name and type are
+        // DataFusion's, off the partial's own schema.
+        let key_columns = group.expr().len() + usize::from(!group.is_single());
+        let key_fields: Vec<Field> = (0..key_columns)
+            .map(|index| partial.schema().field(index).clone())
+            .collect();
+        let mut null_exprs = Vec::new();
+        for (expr, _) in group.null_expr().iter() {
+            null_exprs.push(translate_expr(expr, &input_schema)?);
+        }
+        let grouping_sets: Vec<Vec<bool>> = if group.is_single() {
+            Vec::new()
+        } else {
+            group.groups().to_vec()
+        };
 
         let decomposed = decompose(partial.aggr_expr(), &input_schema, key_fields.len())?;
         let intermediate = Schema {
@@ -123,6 +128,8 @@ impl Translator {
                 input,
                 AggregateBody {
                     group_by,
+                    grouping_sets,
+                    null_exprs,
                     aggs: decomposed.init,
                     finalize: Some(finalize.clone()),
                 },
@@ -135,6 +142,8 @@ impl Translator {
             input,
             AggregateBody {
                 group_by,
+                grouping_sets,
+                null_exprs,
                 aggs: decomposed.init,
                 finalize: None,
             },
@@ -142,8 +151,12 @@ impl Translator {
             intermediate.clone(),
         ));
 
+        // A merge groups on what the init emitted — keys and, where there was one, the
+        // grouping id — and expands nothing: the sets were expanded once, below.
         let merge_body = |aggs: &[AggCall], finalize: Option<Vec<NamedExpr>>| AggregateBody {
             group_by: keys_through.clone(),
+            grouping_sets: Vec::new(),
+            null_exprs: Vec::new(),
             aggs: aggs.to_vec(),
             finalize,
         };

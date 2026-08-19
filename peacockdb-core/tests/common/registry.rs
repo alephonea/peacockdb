@@ -50,13 +50,24 @@ pub struct RegistryEntry {
 inventory::collect!(RegistryEntry);
 
 /// The CSV's per-mode columns, in file order.
-pub const COLUMNS: [&str; 6] = [
+///
+/// The five `bp_` columns are the batch-partitioned mode's plan enablement, one per
+/// mode — the three batching forms crossed with the lane counts that make them distinct. They are the one group no test macro registers: that mode's plan goldens are
+/// one file per mode rather than one file per query, so what declares a cell is the
+/// golden's section for that query, and `test_batch_partitioned_plans` is what holds
+/// the two to each other in both directions.
+pub const COLUMNS: [&str; 11] = [
     "plan",
     "ftc_tp1",
     "ftc_tp8",
     "partitioned_cpu",
     "full_table_gpu",
     "partitioned_gpu",
+    "bp_tp1_single",
+    "bp_tp1_rowgroup",
+    "bp_tp4_single",
+    "bp_tp4_rowgroup",
+    "bp_tp4_sized",
 ];
 
 /// Map a registration to its CSV column.

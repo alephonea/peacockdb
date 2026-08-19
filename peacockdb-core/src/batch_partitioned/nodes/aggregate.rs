@@ -20,6 +20,13 @@ use super::{check_column_refs, input_layout, input_schema};
 #[derive(Debug)]
 pub struct AggregateBody {
     pub group_by: Vec<Expr>,
+    /// One mask per grouping set, in key order — true where that key is NULL in that set.
+    /// Empty unless this node expands grouping sets, which only an init node does: it
+    /// emits `__grouping_id` as an ordinary column and every node above groups on the
+    /// keys plus that column.
+    pub grouping_sets: Vec<Vec<bool>>,
+    /// The NULL substituted for each key a set excludes, in key order.
+    pub null_exprs: Vec<Expr>,
     pub aggs: Vec<AggCall>,
     pub finalize: Option<Vec<NamedExpr>>,
 }

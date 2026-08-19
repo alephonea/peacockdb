@@ -17,10 +17,11 @@ pub struct GpuLoadParquet {
     pub files: Vec<String>,
     pub projection: Vec<u32>,
     pub partition_groups: Vec<Vec<Vec<u32>>>,
-    /// Surviving rows and their parquet bytes over the projected columns — what the
-    /// estimator divides a budget among, and the only real numbers in a plan-time model.
-    pub rows: u64,
-    pub bytes: u64,
+    /// The row groups the mapping addresses, with their rows and their parquet bytes over
+    /// the projected columns — the only real numbers a plan-time model has, and what lets
+    /// the estimator price the batches this mapping actually produces rather than the ones
+    /// a budget would have afforded.
+    pub survivors: Vec<RowGroupMeta>,
     /// A limit pushed into the scan by DataFusion, not one this mode derived.
     pub limit: Option<usize>,
 }
@@ -49,10 +50,37 @@ impl GpuLoadParquet {
             files,
             projection,
             partition_groups,
-            rows: survivors.iter().map(|group| group.rows).sum(),
-            bytes: survivors.iter().map(|group| group.bytes).sum(),
+            survivors: survivors.to_vec(),
             limit,
         }
+    }
+}
+
+impl GpuLoadParquet {
+    pub fn rows(&self) -> u64 {
+        self.survivors.iter().map(|group| group.rows).sum()
+    }
+
+    pub fn bytes(&self) -> u64 {
+        self.survivors.iter().map(|group| group.bytes).sum()
+    }
+
+    /// The largest batch the mapping produces. One batch per lane, one per row group and a
+    /// budgeted size are three different answers to this, which is why the model reads it
+    /// off the mapping rather than off the budget.
+    pub fn largest_batch_bytes(&self) -> u64 {
+        let bytes_of = |index: &u32| {
+            self.survivors
+                .iter()
+                .find(|group| group.index == *index)
+                .map_or(0, |group| group.bytes)
+        };
+        self.partition_groups
+            .iter()
+            .flatten()
+            .map(|batch| batch.iter().map(bytes_of).sum::<u64>())
+            .max()
+            .unwrap_or(0)
     }
 }
 

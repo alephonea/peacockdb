@@ -209,6 +209,24 @@ fn node_fields(node: &dyn GpuNode) -> Vec<String> {
 fn aggregate_fields(fields: &mut Vec<String>, body: &super::nodes::AggregateBody) {
     let keys: Vec<String> = body.group_by.iter().map(expr_text).collect();
     fields.push(format!("group_by=[{}]", keys.join(", ")));
+    if !body.grouping_sets.is_empty() {
+        // The keys each set groups on — the complement of the mask, which is the half a
+        // reader checks against the rollup the query asked for.
+        let sets: Vec<String> = body
+            .grouping_sets
+            .iter()
+            .map(|mask| {
+                let held: Vec<&str> = mask
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, is_null)| !**is_null)
+                    .filter_map(|(index, _)| keys.get(index).map(String::as_str))
+                    .collect();
+                format!("[{}]", held.join(", "))
+            })
+            .collect();
+        fields.push(format!("grouping_sets=[{}]", sets.join(", ")));
+    }
     let aggs: Vec<String> = body.aggs.iter().map(agg_call_text).collect();
     fields.push(format!("aggs=[{}]", aggs.join(", ")));
     if let Some(finalize) = &body.finalize {
@@ -499,8 +517,8 @@ fn binary_op_text(op: BinaryOp) -> &'static str {
 /// is the one number the partitioner reads back.
 pub fn render_plan_memory(root: &dyn GpuNode, model: &MemoryModel) -> String {
     let mut text = format!(
-        "budget={}, accumulators={}\n",
-        model.budget, model.accumulator_bytes
+        "budget={}, accumulators={}, certain={}\n",
+        model.budget, model.accumulator_bytes, model.certain_accumulator_bytes
     );
     render_memory_node(root, 0, &mut Sequence::default(), model, &mut text);
     text
@@ -534,8 +552,17 @@ fn render_memory_node(
         "estimated_max_resident_size={}",
         model.resident.get(seq).copied().unwrap_or(0)
     )];
-    if let Some(target) = model.target_batch_bytes.get(&seq) {
-        fields.push(format!("target_batch_bytes={target}"));
+    if let Some(source) = model.sources.iter().find(|source| source.seq == seq) {
+        // What the source holds is what makes the rest of the line legible: it is the cap
+        // on the target, so a reader sees whether the target is the source or the budget
+        // talking, and it is what the small-table threshold compared to decide the lanes.
+        if let NodeRef::LoadParquet(load) = as_node_ref(node) {
+            fields.push(format!("source_bytes={}", load.bytes()));
+        }
+        fields.push(format!(
+            "target_batch_bytes={}, amplification={:.1}",
+            source.target_batch_bytes, source.amplification
+        ));
     }
     let _ = writeln!(
         text,
@@ -571,7 +598,7 @@ mod tests {
             .expect("physical plan");
         let tree = Translator::new(
             target_partitions,
-            Batching::On {
+            Batching::Sized {
                 target_batch_bytes: 1 << 20,
             },
         )

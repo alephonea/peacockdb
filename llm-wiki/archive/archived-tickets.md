@@ -4,6 +4,14 @@ Tickets that are finished or that the tree outgrew. Numbers stay permanent and a
 reused, so a commit message or comment naming an old ticket still resolves — here.
 `llm-wiki/tickets.md` holds only open work.
 
+**Numbers spent without a ticket.** A number withdrawn before it described anything real is
+recorded here and nowhere else, so the counter never walks back over it:
+
+- **#156** — filed and withdrawn 2026-08-19. It called the exec-model prototype's row-group
+  chunking a defect against the engine; the prototype is a model, not a specification, so
+  diverging from it where it is wrong is the outcome rather than a drift to reconcile
+  (`scripts/exec_model/README.md`). Named by commit 4c89d91.
+
 One caveat before archiving anything else: the cost widget links tickets as
 `llm-wiki/tickets.md#tNN` (`cost-report/src/main.rs`), so a ticket named in the `tickets`
 column of `testdata/cost-registry.csv` must not be moved here without also updating that
@@ -73,19 +81,6 @@ under `rust-only` with no C++ at all. Re-file with concrete time targets if CI l
 becomes a problem again.
 
 ## Stale
-
-<a id="t156"></a>
-### #156 — the prototype's row-group chunking overshoots a lane's share by a whole group
-`source.py::partition_row_groups` takes groups until the running count reaches a lane's
-share, so a lane can end a whole group past it. The Rust `ParquetBatchPartitioner` ends a
-chunk where taking the next group would land further from the share than stopping does,
-which holds the balance bound; the two therefore disagree on chunk boundaries wherever a
-share falls mid-group.
-
-**Withdrawn 2026-08-19, filed the same day.** Not a defect to fix: the prototype is a model,
-not a specification, and diverging from it where it is wrong is the correct outcome rather
-than a drift to reconcile. The Rust policy is the one that holds the bound and the one that
-ships. Recorded here because the number is named by commit 4c89d91.
 
 <a id="t53"></a>
 ### #53 — Deterministic multi-partition CPU node-by-node execution

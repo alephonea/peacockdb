@@ -4,7 +4,7 @@ Code and tests are authoritative; this page maps them.
 
 ## Test categories
 
-**Grand total: 1224 test cases — Rust 818, C++ 37, Python 369.** The Python figure includes the 93 corpus queries, which only a manual dispatch runs.
+**Grand total: 1245 test cases — Rust 839, C++ 37, Python 369.** The Python figure includes the 93 corpus queries, which only a manual dispatch runs.
 
 **Runs** — `cpp-cpu` = pipeline.yml's cpp-cpu job, both cuDF legs · `cost-report` = the
 cost-report job · `shad-gpu` = CI GPU job on the remote host, `--test-threads=1` ·
@@ -31,10 +31,16 @@ and `2gpu` rows also runs locally; large CPU batches go to verda.
 | GPU all-at-once smoke (Rust) | whole-plan `peacock_execute` FFI; retires with [#110](tickets.md) | [scan_nation](../peacockdb-core/tests/test_gpu_executor_misc.rs#L18) | manual | 6 |
 | GPU per-node timing (Rust) | measures, asserts nothing: one `.benchmark.txt` per case, same list as the two GPU tiers ([`gpu_cases.inc`](../peacockdb-core/tests/common/gpu_cases.inc)) | [run_gpu_benchmark](../peacockdb-core/tests/peacock_gpu_benchmarks.rs) | manual | 127 |
 | Cost-model goldens (Rust) | `.cost.txt` derivation from `.cpu.txt` × `cost_model.conf` | [cost_goldens_match_and_total_is_byte_identical](../peacockdb-core/tests/test_cost_model.rs#L36) | cost-report | 2 |
+| Plan goldens, bp-tp1-single (Rust) | 1 lane, one batch per chunk — the mode every other is read against; plan tree + `--- memory ---` per query, one file per bench | [tpch_bp_tp1_single](../peacockdb-core/tests/test_batch_partitioned_plans.rs) | cpp-cpu | 2 |
+| Plan goldens, bp-tp1-rowgroup (Rust) | 1 lane, one batch per row group: the finest the mapping expresses, and no budget; plan tree + `--- memory ---` per query, one file per bench | [tpch_bp_tp1_rowgroup](../peacockdb-core/tests/test_batch_partitioned_plans.rs) | cpp-cpu | 2 |
+| Plan goldens, bp-tp4-single (Rust) | 4 lanes, one batch per chunk — the shuffle shapes with batching inert; plan tree + `--- memory ---` per query, one file per bench | [tpch_bp_tp4_single](../peacockdb-core/tests/test_batch_partitioned_plans.rs) | cpp-cpu | 2 |
+| Plan goldens, bp-tp4-rowgroup (Rust) | 4 lanes at row-group granularity: lanes and many batches at once; plan tree + `--- memory ---` per query, one file per bench | [tpch_bp_tp4_rowgroup](../peacockdb-core/tests/test_batch_partitioned_plans.rs) | cpp-cpu | 2 |
+| Plan goldens, bp-tp4-sized (Rust) | 4 lanes, the estimator's target — **the only mode a budget tier moves**, recorded in-band; plan tree + `--- memory ---` per query, one file per bench | [tpch_bp_tp4_sized](../peacockdb-core/tests/test_batch_partitioned_plans.rs) | cpp-cpu | 2 |
+| Plan goldens ↔ registry (Rust) | every `cost-registry.csv` cell says what its golden section says, and every section has a row | [the_registry_matches_the_goldens_in_both_directions](../peacockdb-core/tests/test_batch_partitioned_plans.rs) | cpp-cpu | 1 |
 | Registry ↔ CSV (Rust) | each `cost-registry.csv` mode column matches the tests that exist, both directions | [full_table_columns](../peacockdb-core/tests/test_cpu_full_table.rs#L313), [partitioned_gpu_column](../peacockdb-core/tests/test_gpu_partitioned.rs#L46) | cpp-cpu ×4, shad-gpu ×2 | 6 |
 | CI wiring guard (Rust) | every Rust target must be named by a CI step — CI does not glob | [every_rust_test_target_is_named_by_ci](../peacockdb-core/tests/test_ci_coverage.rs#L284) | cost-report | 2 |
 | tp8 flip diagnostic (Rust) | prints would-be flips; a printer, no assertions | [diag_flip_audit](../peacockdb-core/tests/diag_flip_audit.rs#L135) | manual | 1 |
-| Lib unit (Rust) | config tiers, batch-size rule, resident model, and the batch-partitioned layout and static-dispatch types | [tiers_are_strictly_increasing](../peacockdb-core/src/config.rs#L119), [nested_join_build_sides_stack](../peacockdb-core/src/resident.rs#L165) | cpp-cpu | 94 |
+| Lib unit (Rust) | config tiers, batch-size rule, resident model, and the batch-partitioned layout and static-dispatch types | [tiers_are_strictly_increasing](../peacockdb-core/src/config.rs#L119), [nested_join_build_sides_stack](../peacockdb-core/src/resident.rs#L165) | cpp-cpu | 104 |
 | Doctest (Rust) | the `CpuExecutor` rustdoc example still compiles | [CpuExecutor example](../peacockdb-core/src/lib.rs#L166) | manual — unlisted, see [#128](tickets.md) | 1 |
 | FFI smoke (Rust) | the crate links; executor lifecycle | [test_executor_lifecycle](../peacockdb-ffi/tests/test_ffi.rs#L17) | cpp-cpu | 2 |
 | Cost-report renderer (Rust) | glyphs, links, ratio bucket, regression gate, history | [bucket_threshold_is_1_4](../cost-report/src/main.rs#L1552), [regression_count_drives_exit_decision](../cost-report/src/main.rs#L1623) | cost-report | 23 |
@@ -123,8 +129,8 @@ sha256 matches local). Notes on the rows above:
 
 ## Golden files
 
-All goldens are committed, under `testdata/goldens/`: `tpch.sf1` (266 files), `tpcds.sf1`
-(620), `tpch.sf40` (16), plus the single-file `plan_bytes.sha256` (140 digests). The
+All goldens are committed, under `testdata/goldens/`: `tpch.sf1` (270 files), `tpcds.sf1`
+(624), `tpch.sf40` (16), plus the single-file `plan_bytes.sha256` (140 digests). The
 committed DuckDB profile inputs live beside them in `testdata/duckdb-profiles/{tpch,tpcds}`
 (22 + 99) and `testdata/duckdb-dynfilters/{tpch,tpcds}` (22 + 99).
 

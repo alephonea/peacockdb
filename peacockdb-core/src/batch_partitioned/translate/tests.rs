@@ -43,14 +43,14 @@ async fn translated(sql: &str) -> Box<dyn GpuNode> {
 }
 
 /// tp4 with batching on, which is what makes the small-table threshold bite.
-async fn translated_at_tp4(sql: &str, small_table_rows: u64) -> Box<dyn GpuNode> {
+async fn translated_at_tp4(sql: &str, small_table_bytes: u64) -> Box<dyn GpuNode> {
     Translator::new(
         4,
-        Batching::On {
+        Batching::Sized {
             target_batch_bytes: 1 << 20,
         },
     )
-    .with_small_table_rows(small_table_rows)
+    .with_small_table_bytes(small_table_bytes)
     .translate(&plan_at(sql, 4).await)
     .expect("translate the plan")
 }
@@ -101,6 +101,19 @@ fn descend(root: &dyn GpuNode, depth: usize) -> &dyn GpuNode {
         node = node.children()[0];
     }
     node
+}
+
+/// The topmost node the predicate accepts, parents before children.
+fn find<'a>(
+    root: &'a dyn GpuNode,
+    accept: &dyn Fn(&dyn GpuNode) -> bool,
+) -> Option<&'a dyn GpuNode> {
+    if accept(root) {
+        return Some(root);
+    }
+    root.children()
+        .into_iter()
+        .find_map(|child| find(child, accept))
 }
 
 fn validate_all(node: &dyn GpuNode) {
@@ -503,17 +516,18 @@ async fn a_union_forwards_its_branches_into_one_lane_numbering() {
 async fn a_small_source_plans_one_lane_and_the_shuffle_around_it_disappears() {
     let query =
         |table: &str, key: &str| format!("SELECT {key}, count(*) FROM {table} GROUP BY {key}");
-    // nation is 25 rows, under the threshold: one lane, so nothing to merge back and
-    // no shuffle to re-land rows the lane never split.
-    let small = translated_at_tp4(&query("nation", "n_regionkey"), 1_000).await;
+    // nation reads a couple of KB, under the threshold: one lane, so nothing to merge back
+    // and no shuffle to re-land rows the lane never split.
+    let small = translated_at_tp4(&query("nation", "n_regionkey"), 64 * 1024).await;
     assert_eq!(
         shape(small.as_ref()),
         "Unload(AggregateBatches(Aggregate(LoadParquet)))"
     );
     assert_eq!(descend(small.as_ref(), 2).kind().layout().unwrap().n, 1);
 
-    // customer is 150k rows at the same threshold, and gets the whole sequence.
-    let large = translated_at_tp4(&query("customer", "c_nationkey"), 1_000).await;
+    // customer's key column reads several hundred KB at the same threshold, and gets the
+    // whole sequence.
+    let large = translated_at_tp4(&query("customer", "c_nationkey"), 64 * 1024).await;
     assert_eq!(
         shape(large.as_ref()),
         "Unload(AggregateBatches(EmitPartitions(CoalesceAllBatches(MergePartitions(\
@@ -543,7 +557,7 @@ async fn the_threshold_is_inert_while_batching_is_off() {
     // With one batch per lane there is nothing for a batch-size threshold to size, so
     // the rule that drops a source to one lane has nothing to act on either.
     let tree = Translator::new(4, Batching::Off)
-        .with_small_table_rows(1_000)
+        .with_small_table_bytes(64 * 1024)
         .translate(
             &plan_at(
                 "SELECT n_regionkey, count(*) FROM nation GROUP BY n_regionkey",
@@ -553,6 +567,62 @@ async fn the_threshold_is_inert_while_batching_is_off() {
         )
         .expect("translate the plan");
     assert_eq!(descend(tree.as_ref(), 5).kind().layout().unwrap().n, 4);
+}
+
+#[tokio::test]
+async fn a_nested_loop_join_with_no_predicate_is_a_cross_join() {
+    // DataFusion emits one where the product itself is what the query asked for — pairing
+    // one-row aggregates, as tpcds q9 does — and there is nothing to evaluate per pair.
+    let tree = translated(
+        "SELECT * FROM (SELECT count(*) AS a FROM nation WHERE n_regionkey > 1) x, \
+         (SELECT count(*) AS b FROM region WHERE r_regionkey > 1) y",
+    )
+    .await;
+    assert!(
+        shape(tree.as_ref()).contains("CrossJoin("),
+        "{}",
+        shape(tree.as_ref())
+    );
+    validate_all(tree.as_ref());
+}
+
+#[tokio::test]
+async fn grouping_sets_expand_at_the_init_and_group_on_the_id_above_it() {
+    // No special operator: the init emits __grouping_id as an ordinary column, and every
+    // node above groups on the keys plus that column. #65 is about the id's ENCODING, which
+    // is execution-side and does not touch the shape pinned here.
+    let tree = translated_at_tp4(
+        "SELECT c_nationkey, c_mktsegment, count(*) FROM customer \
+         GROUP BY ROLLUP(c_nationkey, c_mktsegment)",
+        0,
+    )
+    .await;
+    let init = find(tree.as_ref(), &|node| {
+        matches!(as_node_ref(node), NodeRef::Aggregate(_))
+    })
+    .unwrap_or_else(|| panic!("no init aggregate in {}", shape(tree.as_ref())));
+    let NodeRef::Aggregate(init) = as_node_ref(init) else {
+        unreachable!()
+    };
+    // One mask per set: everything, the first key, neither.
+    assert_eq!(init.body.grouping_sets.len(), 3);
+    assert_eq!(init.body.group_by.len(), 2);
+    assert_eq!(init.body.null_exprs.len(), 2);
+
+    let merging = find(tree.as_ref(), &|node| {
+        matches!(as_node_ref(node), NodeRef::AggregateBatches(_))
+    })
+    .unwrap_or_else(|| panic!("no merging aggregate in {}", shape(tree.as_ref())));
+    let NodeRef::AggregateBatches(merge) = as_node_ref(merging) else {
+        unreachable!()
+    };
+    // Keys plus the id, so a rollup row is merged with its own set and not another's.
+    assert_eq!(merge.body.group_by.len(), 3);
+    assert!(matches!(
+        &merge.body.group_by[2],
+        Expr::Column(reference) if reference.name == "__grouping_id"
+    ));
+    validate_all(tree.as_ref());
 }
 
 #[tokio::test]

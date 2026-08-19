@@ -177,12 +177,27 @@ against the other.
    partition. Even when off, the loader's declared layout is `MultipleBatches` — no
    downstream phase may assume one batch per partition. Only when on does the planner take
    the memory budget (micro/mini/standard/full) and size batches, and only then does the
-   threshold above bite. So **only two of the four planning modes take a budget at all**:
-   `bp-tp1-single` and `bp-tp4-single` plan the same tree at any budget, while the two
-   batched modes are pinned to the tier they were planned at — their `partition_groups` and
-   every estimate move if it changes. The tier is not in the mode label, so a batched plan
-   golden records it in-band on its `--- memory ---` summary line, and regenerating at a
-   different tier is a deliberate act rather than a diff nobody can explain.
+   threshold above bite.
+
+   Batching has three forms, and they are an enum rather than a target value that means
+   something special at one end of its range: `Off` gives one batch per chunk, `PerRowGroup`
+   gives one batch per row group, and `Sized { target_batch_bytes }` takes the estimator's
+   number. **Five planning modes cover them**, each label naming its form:
+
+   | Mode | Lanes | Batching | Budget |
+   |---|---|---|---|
+   | `bp-tp1-single` | 1 | `Off` | no |
+   | `bp-tp1-rowgroup` | 1 | `PerRowGroup` | no |
+   | `bp-tp4-single` | 4 | `Off` | no |
+   | `bp-tp4-rowgroup` | 4 | `PerRowGroup` | no |
+   | `bp-tp4-sized` | 4 | `Sized` | **yes** |
+
+   There is no `bp-tp1-sized`: at one lane a source takes essentially the whole budget, so the
+   sized form collapses to `Off` on anything smaller than the budget and the mode carries no
+   signal. So **one mode takes a budget**, `bp-tp4-sized`, whose `partition_groups` and
+   estimates move with the tier; it records the tier in-band on its `--- memory ---` summary
+   line, since the label does not carry it. The other four are budget-independent and
+   reproduce from the data alone.
 
    The threshold's effect: a source reading fewer bytes than it drops to one lane even at
    tp4, and the nodes a one-lane region does not need are then not emitted at all — the
@@ -218,7 +233,9 @@ reached, which overshoots by a whole group; within a chunk, consecutive row grou
 greedily into batches while bytes stay under target; a single row group over target still
 becomes its own batch — minimum granularity is one row group, and the planner always
 produces a plan (the enforcer owns the runtime consequence; recourse for oversized batches
-is [#142](../tickets.md#t142)). Batching off means one batch per chunk. Contiguity is a
+is [#142](../tickets.md#t142)). Batching off means one batch per chunk, and `PerRowGroup` means one batch per row group —
+the floor the paragraph above already sets, named rather than reached by passing a target of
+one byte. Contiguity is a
 policy choice, not a cuDF requirement — changing it later is a golden-regenerating change
 and is treated as one.
 
@@ -1723,8 +1740,11 @@ bare-`LIMIT` queries (TPC-DS q28, q32, q38, q97) limit an already-single-row agg
 
 ## Goldens, registry, widget
 
-**Device labels**: `bp-<tp1|tp4>-<single|batched>`, with the budget tier suffixed for
-execution goldens as in legacy (`q1.bp-tp4-batched-mini.cpu.txt`). The
+**Device labels**: `bp-<tp1|tp4>-<single|rowgroup|sized>`, minus `bp-tp1-sized` which does
+not exist, with the budget tier suffixed for execution goldens as in legacy
+(`q1.bp-tp4-sized-mini.cpu.txt`). The label names the batching form rather than a
+single/batched pair, because `batched` meant `PerRowGroup` at tp1 and `Sized` at tp4 — one
+word for two behaviours, which is the shape coding-style.md warns about. The
 `partition_mode`-style label lookups stay explicit parameters at call sites, per the
 coding-style case.
 
@@ -1784,7 +1804,8 @@ What deliberately does not change: the indentation-as-tree shape, `output_rows` 
 `output_bytes` (they are the CPU/GPU cross-check, and their meaning is unchanged), and
 `batches_to_sorted_str` result comparison.
 
-**Plan goldens** (4 modes: bp-tp1-single, bp-tp1-batched, bp-tp4-single, bp-tp4-batched):
+**Plan goldens** (5 modes: bp-tp1-single, bp-tp1-rowgroup, bp-tp4-single, bp-tp4-rowgroup,
+bp-tp4-sized):
 one file per mode holding all queries — `goldens/<bench>/<mode>.plans.txt` — because the
 per-query files would be small and numerous. Every node renders its `PartitionLayout`:
 count, batch layout, key distribution, sort order.
@@ -1818,11 +1839,11 @@ enablement, with inventory tests in both directions like the existing six; new t
 targets named in `pipeline.yml` steps (the `test_ci_coverage` guard enforces this
 automatically).
 
-**Widget**: two new tables (TPC-H, TPC-DS) repeating the existing structure — plan (four
-cells, one per mode), CPU (four), GPU (four) — fed from the new CSV columns. Window
+**Widget**: two new tables (TPC-H, TPC-DS) repeating the existing structure — plan (five
+cells, one per mode), CPU (five), GPU (five) — fed from the new CSV columns. Window
 queries render plan ✗ (#143). Peacock cost, DuckDB cost and ratio columns mirror the
-legacy ones; when not all four modes are enabled, cost uses the last mode in the sequence
-of four where CPU execution is enabled.
+legacy ones; when not all five modes are enabled, cost uses the last mode in the sequence
+of five where CPU execution is enabled.
 
 # Implementation plan
 

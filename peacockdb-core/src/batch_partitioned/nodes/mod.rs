@@ -492,6 +492,8 @@ mod tests {
         ])));
         let body = AggregateBody {
             group_by: vec![Expr::column(0, "k")],
+            grouping_sets: Vec::new(),
+            null_exprs: Vec::new(),
             aggs: vec![AggCall {
                 func: PlanAgg::Sum,
                 args: vec![Expr::column(2, "n")],
