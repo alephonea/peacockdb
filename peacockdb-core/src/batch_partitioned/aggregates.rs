@@ -74,7 +74,7 @@ pub fn resolve(name: &str) -> Result<AggSpec, PlanError> {
         "stddev_pop" => (AggFunc::Stddev, 0),
         "var" | "var_samp" | "variance" => (AggFunc::Var, 1),
         "var_pop" => (AggFunc::Var, 0),
-        other => return Err(PlanError::Unsupported(format!("aggregate {other}"))),
+        other => return Err(PlanError::Unsupported(format!("aggregate {other}: no decomposition (#161)"))),
     };
     Ok(AggSpec { func, ddof })
 }

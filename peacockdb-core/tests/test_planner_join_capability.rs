@@ -1,21 +1,23 @@
 //! The join capability matrix, at plan time, over parquet this test writes itself.
 //!
 //! No goldens: a golden says a file moved, and what is under test here is which rule
-//! decided what. The fixture writes its own files because the analysis reads parquet
-//! statistics — a column is nullable when a row group holds a NULL, never because it was
-//! declared so, and `tpch.minimal` holds none.
+//! decided what. Two lists, both positive: the hand-built matrix of every join type
+//! crossed with a residual filter, and the sql that reaches each type. The shapes that are
+//! REFUSED live in `test_planner_join_refusals.rs`, since what plans and what does not
+//! read differently — except the three refusals no query reaches, which are at the end of
+//! this file because a constructor is the only way to build them.
+//!
+//! The fixture is `common::join_fixture`, shared with that file.
 
 mod common;
 
-use std::path::PathBuf;
+use common::join_fixture::{Fixture, LANES, join_types_in, planned};
+
 use std::sync::Arc;
 
-use datafusion::arrow::array::{ArrayRef, Int64Array, RecordBatch, StringArray};
 use datafusion::arrow::datatypes::{DataType, Field, Schema as ArrowSchema};
 use datafusion::common::JoinType;
-use datafusion::execution::context::SessionContext;
 use datafusion::logical_expr::Operator;
-use datafusion::parquet::arrow::ArrowWriter;
 use datafusion::physical_expr::expressions::{BinaryExpr, Column};
 use datafusion::physical_plan::joins::utils::{ColumnIndex, JoinFilter};
 use datafusion::physical_plan::joins::{
@@ -23,167 +25,11 @@ use datafusion::physical_plan::joins::{
 };
 use datafusion::physical_plan::repartition::RepartitionExec;
 use datafusion::physical_plan::{ExecutionPlan, Partitioning, PhysicalExpr};
-use datafusion::prelude::ParquetReadOptions;
 
 use peacockdb_core::batch_partitioned::error::PlanError;
 use peacockdb_core::batch_partitioned::layout::KeyDistribution;
 use peacockdb_core::batch_partitioned::node::GpuNode;
 use peacockdb_core::batch_partitioned::nodes::{NodeRef, as_node_ref};
-use peacockdb_core::batch_partitioned::plan::{BatchSizing, PlanKnobs, plan_batch_partitioned};
-
-/// Lanes for the co-partitioned cases.
-const LANES: usize = 4;
-
-/// Between `tiny` and `big` below, so the small-source rule is reachable without writing a
-/// five-megabyte fixture.
-const SMALL_SOURCE_BYTES: u64 = 4 * 1024;
-
-fn knobs(sizing: BatchSizing) -> PlanKnobs {
-    PlanKnobs {
-        target_partitions: LANES,
-        sizing,
-        budget: 2 * 1024 * 1024 * 1024,
-        small_table_bytes: SMALL_SOURCE_BYTES,
-    }
-}
-
-/// Three tables. `tiny` and `nulls` differ only in what the null analysis reads off them —
-/// ten rows each, one with NULL keys — and `big` is a thousand rows.
-///
-/// The ROW COUNTS are load-bearing twice over. DataFusion's join-order swap reads the
-/// parquet footer's own statistics and puts the smaller side on the build, which is what
-/// turns a LeftSemi into a RightSemi and a LeftAnti into a RightAnti; it is a comparison
-/// and not a threshold, so a thousand against ten is as decisive as a million against a
-/// hundred and both files stay tiny. And `big` sits above the small-source byte threshold
-/// while the other two sit below it. Changing either count silently changes which join
-/// types the SQL below plans as.
-struct Fixture {
-    dir: PathBuf,
-    ctx: SessionContext,
-}
-
-impl Fixture {
-    async fn new(name: &str) -> Self {
-        let dir = std::env::temp_dir().join(format!(
-            "peacockdb-join-capability-{}-{name}",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("a fixture directory");
-
-        write(&dir, "tiny", &(1..=10).map(Some).collect::<Vec<_>>(), 0);
-        write(
-            &dir,
-            "nulls",
-            &[
-                Some(1),
-                None,
-                Some(3),
-                None,
-                Some(5),
-                Some(6),
-                Some(7),
-                Some(8),
-                None,
-                Some(10),
-            ],
-            0,
-        );
-        // Padded so it also sits above the byte threshold; the rows are never read.
-        write(&dir, "big", &(1..=1000).map(Some).collect::<Vec<_>>(), 64);
-
-        let ctx =
-            SessionContext::new_with_state(peacockdb_core::build_session_state(LANES).state());
-        for table in ["tiny", "nulls", "big"] {
-            ctx.register_parquet(
-                table,
-                dir.join(format!("{table}.parquet")).to_str().unwrap(),
-                ParquetReadOptions::default(),
-            )
-            .await
-            .expect("register the fixture");
-        }
-        Self { dir, ctx }
-    }
-
-    /// A whole query, planned by DataFusion — which is what decides the join type.
-    async fn plan(&self, sql: &str) -> Arc<dyn ExecutionPlan> {
-        self.ctx
-            .sql(sql)
-            .await
-            .unwrap_or_else(|e| panic!("{sql}: {e}"))
-            .create_physical_plan()
-            .await
-            .unwrap_or_else(|e| panic!("{sql}: {e}"))
-    }
-
-    /// The planner's refusal for a query, which must be a PlanError rather than a panic.
-    async fn refused(&self, sql: &str) -> PlanError {
-        let plan = self.plan(sql).await;
-        plan_batch_partitioned(&plan, knobs(BatchSizing::OneBatchPerRowGroup))
-            .map(|_| ())
-            .expect_err(sql)
-    }
-
-    async fn scan(&self, table: &str) -> Arc<dyn ExecutionPlan> {
-        self.ctx
-            .sql(&format!("SELECT k, v FROM {table}"))
-            .await
-            .expect("plan the scan")
-            .create_physical_plan()
-            .await
-            .expect("physical plan")
-    }
-
-    /// The same scan, hash-partitioned on its key — what a shuffle would have left, and
-    /// what a co-partitioned join needs on both sides.
-    async fn scattered(&self, table: &str) -> Arc<dyn ExecutionPlan> {
-        let scan = self.scan(table).await;
-        Arc::new(
-            RepartitionExec::try_new(
-                scan,
-                Partitioning::Hash(vec![Arc::new(Column::new("k", 0))], LANES),
-            )
-            .expect("a hash repartition"),
-        )
-    }
-}
-
-impl Drop for Fixture {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.dir);
-    }
-}
-
-/// One parquet file: a key column carrying exactly the NULLs asked for, a value, and
-/// `padding` bytes per row to move the file across the size threshold.
-fn write(dir: &std::path::Path, name: &str, keys: &[Option<i64>], padding: usize) {
-    let mut fields = vec![
-        Field::new("k", DataType::Int64, true),
-        Field::new("v", DataType::Int64, true),
-    ];
-    if padding > 0 {
-        fields.push(Field::new("pad", DataType::Utf8, true));
-    }
-    let schema = Arc::new(ArrowSchema::new(fields));
-    let mut columns: Vec<ArrayRef> = vec![
-        Arc::new(keys.iter().copied().collect::<Int64Array>()),
-        Arc::new((0..keys.len() as i64).map(Some).collect::<Int64Array>()),
-    ];
-    if padding > 0 {
-        let filler = "x".repeat(padding);
-        columns.push(Arc::new(
-            keys.iter()
-                .map(|_| Some(filler.as_str()))
-                .collect::<StringArray>(),
-        ));
-    }
-    let batch = RecordBatch::try_new(schema.clone(), columns).expect("a batch");
-    let file = std::fs::File::create(dir.join(format!("{name}.parquet"))).expect("create");
-    let mut writer = ArrowWriter::try_new(file, schema, None).expect("a writer");
-    writer.write(&batch).expect("write");
-    writer.close().expect("close");
-}
 
 fn equi(left: usize, right: usize) -> (Arc<dyn PhysicalExpr>, Arc<dyn PhysicalExpr>) {
     (
@@ -241,10 +87,6 @@ fn hash_join(
         )
         .expect("a hash join"),
     )
-}
-
-fn planned(plan: &Arc<dyn ExecutionPlan>) -> Result<Box<dyn GpuNode>, PlanError> {
-    plan_batch_partitioned(plan, knobs(BatchSizing::OneBatchPerRowGroup)).map(|(tree, _)| tree)
 }
 
 fn find<'a>(
@@ -682,164 +524,6 @@ async fn every_join_type_is_reached_by_a_query() {
             sql_for(join_type)
         );
     }
-}
-
-/// Every hash join in a plan, in tree order.
-fn join_types_in(plan: &Arc<dyn ExecutionPlan>) -> Vec<JoinType> {
-    let mut found = Vec::new();
-    fn walk(plan: &Arc<dyn ExecutionPlan>, found: &mut Vec<JoinType>) {
-        if let Some(join) = plan.as_any().downcast_ref::<HashJoinExec>() {
-            found.push(*join.join_type());
-        }
-        for child in plan.children() {
-            walk(&child.clone(), found);
-        }
-    }
-    walk(plan, &mut found);
-    found
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-// Refusals, one per shape
-// ════════════════════════════════════════════════════════════════════════════
-
-#[tokio::test]
-async fn an_outer_join_with_a_residual_filter_is_refused_naming_153() {
-    let fixture = Fixture::new("refuse-outer-residual").await;
-    // The executor applies the residual after the outer gather, so a padded row's NULLs
-    // make the predicate NULL and the row is dropped: a LEFT JOIN answering as an inner.
-    let err = fixture
-        .refused("SELECT t.v FROM tiny t LEFT JOIN big b ON t.k = b.k AND b.v > t.v")
-        .await;
-    assert!(
-        matches!(&err, PlanError::Unsupported(what) if what.contains("#153")),
-        "{err}"
-    );
-}
-
-#[tokio::test]
-async fn a_right_semi_join_with_a_residual_filter_is_refused_naming_the_missing_variant() {
-    let fixture = Fixture::new("refuse-rightsemi-residual").await;
-    // DataFusion does swap a FILTERED semi join, so this shape is a query's to produce and
-    // not only a constructor's: big outside, tiny inside, and a predicate on both.
-    let err = fixture
-        .refused(
-            "SELECT b.v FROM big b WHERE EXISTS \
-             (SELECT 1 FROM tiny t WHERE t.k = b.k AND t.v < b.v)",
-        )
-        .await;
-    assert!(
-        matches!(&err, PlanError::Unsupported(what) if what.contains("mixed_*")),
-        "{err}"
-    );
-}
-
-#[tokio::test]
-async fn an_anti_join_whose_key_is_null_on_both_sides_is_refused_naming_59_and_80() {
-    let fixture = Fixture::new("refuse-anti-nulls").await;
-    let err = fixture
-        .refused("SELECT n.v FROM nulls n WHERE NOT EXISTS (SELECT 1 FROM nulls m WHERE m.k = n.k)")
-        .await;
-    assert!(
-        matches!(&err, PlanError::Unsupported(what) if what.contains("#59") && what.contains("#80")),
-        "{err}"
-    );
-}
-
-#[tokio::test]
-async fn a_mark_join_whose_key_is_null_on_both_sides_is_refused_naming_59_and_80() {
-    let fixture = Fixture::new("refuse-mark-nulls").await;
-    let err = fixture
-        .refused("SELECT n.v FROM nulls n WHERE n.k IN (SELECT k FROM nulls m) OR n.v > 5")
-        .await;
-    assert!(
-        matches!(&err, PlanError::Unsupported(what) if what.contains("#59")),
-        "{err}"
-    );
-}
-
-#[tokio::test]
-async fn a_nested_loop_join_beyond_inner_and_left_is_refused_from_sql() {
-    let fixture = Fixture::new("refuse-nlj-full").await;
-    // A non-equi predicate on a FULL OUTER join: the executor rejects anything but Inner
-    // and Left outright, and DataFusion does not swap this one away.
-    let err = fixture
-        .refused("SELECT t.v FROM tiny t FULL OUTER JOIN big b ON t.v > b.v")
-        .await;
-    assert!(
-        matches!(&err, PlanError::Unsupported(what) if what.contains("Inner and Left")),
-        "{err}"
-    );
-}
-
-#[tokio::test]
-async fn a_window_function_is_refused_naming_143() {
-    let fixture = Fixture::new("refuse-window").await;
-    let err = fixture
-        .refused("SELECT row_number() OVER (PARTITION BY k) FROM tiny")
-        .await;
-    assert!(
-        matches!(&err, PlanError::Unsupported(what) if what.contains("#143")),
-        "{err}"
-    );
-}
-
-#[tokio::test]
-async fn a_distinct_beside_a_companion_datafusion_cannot_rewrite_is_refused_naming_62() {
-    let fixture = Fixture::new("refuse-distinct").await;
-    // DataFusion's SingleDistinctToGroupBy re-applies the same function at the outer
-    // level, so it only fires where f(f(x)) is f(x) — avg and count are not, which is
-    // tpcds q28's shape and why the flag survives to us.
-    let err = fixture
-        .refused("SELECT avg(v), count(v), count(DISTINCT v) FROM tiny")
-        .await;
-    assert!(
-        matches!(&err, PlanError::Unsupported(what) if what.contains("#62")),
-        "{err}"
-    );
-}
-
-#[tokio::test]
-async fn a_statistics_answered_count_is_refused_by_name() {
-    let fixture = Fixture::new("refuse-placeholder").await;
-    // DataFusion answers it from the parquet metadata and leaves a PlaceholderRowExec, so
-    // there is no aggregate to translate. #158 is what makes it executable at T10.
-    let err = fixture.refused("SELECT count(*) FROM tiny").await;
-    assert!(
-        matches!(&err, PlanError::Unsupported(what) if what.contains("PlaceholderRowExec")),
-        "{err}"
-    );
-}
-
-#[tokio::test]
-async fn unsupported_expression_forms_are_refused_naming_the_form() {
-    let fixture = Fixture::new("refuse-exprs").await;
-    // Each of these survives DataFusion's simplifier, which is the part that makes them
-    // reachable: `~ '^1'` becomes a LIKE and an Int64->Int32 TRY_CAST is proven away, so
-    // the queries below are deliberately the forms that do not simplify.
-    for (sql, named) in [
-        (
-            "SELECT v FROM tiny WHERE arrow_cast(k, 'Utf8') ~ '1|2'",
-            "binary operator ~",
-        ),
-        (
-            "SELECT v FROM tiny WHERE arrow_cast(k, 'Utf8') !~ '[0-9]+x'",
-            "binary operator !~",
-        ),
-        (
-            "SELECT v FROM tiny WHERE TRY_CAST(arrow_cast(k, 'Utf8') AS INT) > 1",
-            "TRY_CAST",
-        ),
-    ] {
-        let err = fixture.refused(sql).await;
-        assert!(
-            matches!(&err, PlanError::Unsupported(what) if what.contains(named)),
-            "{sql}: {err}"
-        );
-    }
-    // The fifth form, an empty IN list, has no query: `k IN ()` does not parse, so the
-    // refusal for it can only be reached by a constructor and is covered as an expression
-    // unit test in expr_translate.rs rather than here.
 }
 
 // ════════════════════════════════════════════════════════════════════════════

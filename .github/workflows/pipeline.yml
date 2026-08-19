@@ -658,6 +658,12 @@ jobs:
       - name: Planner join capability (Rust)
         run: cargo test --features rust-only -p peacockdb-core --test test_planner_join_capability
 
+      # Every shape the planner refuses, reached from the SQL that provokes it: each
+      # asserts its ticket number is in the message a user sees, so a refusal that stops
+      # naming its ticket fails. Same self-written parquet as the step above.
+      - name: Planner join refusals (Rust)
+        run: cargo test --features rust-only -p peacockdb-core --test test_planner_join_refusals
+
       # Every peacockdb-core integration test target must be NAMED by some workflow
       # step above. CI does not sweep them as a set, so a new tests/test_*.rs is
       # invisible here until someone remembers to add it — which is exactly how

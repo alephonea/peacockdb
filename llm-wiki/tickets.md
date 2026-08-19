@@ -672,11 +672,12 @@ true rather than discovering it at run time.
 Two refusals in the aggregate arm. A `FILTER (WHERE …)` clause has no lowering, and an
 aggregate function outside the decomposition registry is refused by name.
 
-`SELECT sum(v) FILTER (WHERE v > 0) FROM tiny` is the first; the second is whatever DataFusion
-plans that `aggregates.rs` does not list. The FILTER form lowers to a CASE inside the
-aggregate argument and needs no new node, so it is cheap; the registry gap is per function and
-each one wants its merge aggregator stated. Both are pinned by refusal tests. Neither shape
-appears in either benchmark, which is why they are refusals rather than work.
+Only the second is reachable: `SELECT median(v) FROM tiny` is refused by name, while
+`sum(v) FILTER (WHERE v > 0)` does not parse in DataFusion 45 at all, so that refusal is
+constructor-only until the parser gains the clause. The FILTER form would lower to a CASE
+inside the aggregate argument and needs no new node; the registry gap is per function and each
+wants its merge aggregator stated. Neither shape appears in either benchmark, which is why
+they are refusals rather than work.
 
 <a id="t162"></a>
 ### #162 — expression forms the planner refuses

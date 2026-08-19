@@ -1862,7 +1862,7 @@ Legacy tests stay green throughout — every task that touches shared code runs 
 affected legacy subsets (one query per mode/tier per binary plus the rust-only tier, per
 build-test.md).
 
-**T0 — Python prototype of the whole execution model** (done). All node types and both drivers
+~~**T0 — Python prototype of the whole execution model**~~ (done). All node types and both drivers
 in Python, operators built with pandas, plans hand-built (no DataFusion, no planner) — an
 emulation of tree execution whose purpose is to settle the push model before any Rust
 exists. Lives in [`scripts/exec_model/`](../../scripts/exec_model/README.md); its tests run
@@ -1910,7 +1910,7 @@ The prototype models scratch per executor and never derived batch sizes from a b
 and T6 derives both in Rust directly — a prototype estimator would be a second model to
 keep true against the one that ships. The corpus is what T6 will calibrate against.
 
-**T1 — flatbuffer operation-name refactor** (done). Nine of the fifteen legacy node-kind names
+~~**T1 — flatbuffer operation-name refactor**~~ (done). Nine of the fifteen legacy node-kind names
 (`GpuFilter`, `GpuProject`, `GpuSort`, `GpuAggregate`, `GpuCrossJoin`,
 `GpuNestedLoopJoin`, `GpuUnion`, `GpuLimit`, `GpuCoalesceBatches`) collide with the new
 mode's node names. Rename the fbs tables and `PlanNodeKind` variants to a `Cudf` prefix
@@ -1924,14 +1924,14 @@ regeneration, plus green legacy subsets. The same commit sweeps the llm-wiki ref
 Landed on master as PR #120, with `plan_bytes.sha256` byte-identical and no golden
 regenerated, which is the proof the rename asked for.
 
-**T2 — ParquetBatchPartitioner.** The pure policy class and its unit tests: fewer
+~~**T2 — ParquetBatchPartitioner.**~~ The pure policy class and its unit tests: fewer
 survivors than N; N=3; single row group over target; batching off ⇒ one batch per chunk;
 empty survivors (explicit error — the fbs "empty map means legacy single partition"
 convention must not leak in); the balance bound on uniform row groups (max−min partition
 rows ≤ one row group);
 fixed-output determinism case. No planner integration yet.
 
-**T3 — node and trait skeleton.** `GpuNode`, `PartitionLayout` (with the two-valued
+~~**T3 — node and trait skeleton.**~~ `GpuNode`, `PartitionLayout` (with the two-valued
 `SortOrder`), `Schema` with semantics annotations, `Batch`/`CpuBatch`/`GpuBatch` shells
 with the move/`!Clone`/`Drop` rules, executor trait definitions with `CallStats`,
 `Backend`. Traits in their own files per coding-style. Compiles under rust-only
@@ -1943,7 +1943,7 @@ compiles with no `dyn` anywhere (verified), and it is what pins the static-dispa
 property the GPU path depends on — the mock backend the driver tests need is then a third
 impl, not a special case.
 
-**T4 — translation layer, single-partition shapes.** DataFusion physical plan (tp1) →
+~~**T4 — translation layer, single-partition shapes.**~~ DataFusion physical plan (tp1) →
 `GpuNode` tree for chains: load, filter, project, sort (+fetch), limit (root-adjacent ⇒
 no node, `skip`/`fetch` set on `GpuUnload`; otherwise a `GpuLimit` node over a
 planner-inserted `GpuMergePartitions` — never a coalesce), coalesce-all,
@@ -1951,14 +1951,14 @@ single/final aggregates, cross/nested-loop joins. Per-node-kind conscious mappin
 unrecognized node ⇒ plan-time error naming it; window ⇒ the #143 refusal. Unit tests
 assert emitted constructs for simple queries.
 
-**T5 — translation layer, partitioned shapes.** tp4: shuffle points → Merge+Emit, the
+~~**T5 — translation layer, partitioned shapes.**~~ tp4: shuffle points → Merge+Emit, the
 aggregate sequence with its shortcuts and the gid rule, join side normalization (type
 remap + column-order-restoring project) and build-side coalesce insertion per the
 capability matrix, union/interleave with explicit branch-cast projects. The
 `hashKeys ⊆ group columns` structure is produced here (validated in T8). Unit tests per
 construct in tp1 and tp4, including side-swap cases.
 
-**T6 — estimator pass and plan goldens.** `estimated_max_resident_size` per node
+~~**T6 — estimator pass and plan goldens.**~~ `estimated_max_resident_size` per node
 (rows × width vocabulary, N-lane charging), `target_batch_bytes` derivation feeding T2's
 partitioner, integration as `plan_batch_partitioned()`. Canonize all four
 `<mode>.plans.txt`, memory sections included, for TPC-H and TPC-DS (minus #23's four and
@@ -1967,6 +1967,12 @@ window queries, which appear as refusals).
 **T7 — schema registry.** The `Schema` carried in `NodeKind` populated on all nodes, with
 column semantics annotations. Unit tests: hand-crafted plans produce expected types and
 annotations; decimal precision/scale fidelity through project/aggregate/union-cast paths.
+
+Half landed with T3-T6: the type exists, every node carries a populated `Schema` with its
+annotations, and the plan goldens print the declared type per column. What is outstanding is
+the unit tests — the goldens are the net, not the coverage, and decimal fidelity through the
+three paths is where `avg`'s state columns were once typed backwards invisibly. Deliberately
+deferred rather than missed.
 
 **T8 — validation.** `validate_schemas_and_partitions()` on every node type: partition
 topology, key-distribution subset rule, sortedness requirements (merge requires
@@ -2052,11 +2058,8 @@ naming the feature it reaches and the ticket or code path that cares:
 | `LIKE` with a non-prefix pattern | 21 `LIKE`s exist and all are simple; the non-prefix form is a different cuDF path |
 
 Each query lands in `testdata/{tpch,tpcds}-queries/` with registry rows and goldens through
-the existing generators, and each must **plan under the legacy modes too** — a query only
-the new mode can run is a coverage cliff rather than coverage; where a legacy mode cannot
-run it, that is a registry cell with a blocker, as for any other query. Keep the set small:
-every query multiplies across enabled modes and tiers, which is why the corpus grew the way
-it did.
+the existing generators. Keep the set small: every query multiplies across enabled modes and
+tiers, which is why the corpus grew the way it did.
 
 **T16 — rollout.** New macros `cpu_batch_partitioned_result_test` /
 `gpu_batch_partitioned_test`; the node renderer per [Node display](#node-display)
@@ -2067,3 +2070,26 @@ registry columns +
 inventory tests; `pipeline.yml` steps (satisfying `test_ci_coverage`); widget tables with
 the cost-column rule and the #143 plan ✗ cells. Then query-by-query enablement across the
 corpus, tickets filed per newly discovered blocker, as with the legacy rollout.
+
+**T17 — per-node benchmarks for the new mode.** Port `peacock_gpu_benchmarks` to the
+batch-partitioned executor, keeping the protocol that makes its numbers comparable: one
+discarded warm-up, ten measured runs, the **2nd-smallest by `total_us`** reported whole, and
+the floor measured over 200 samples. The run counts stay compile-time constants
+(`tests/common/mod.rs`) so every record in the tree was taken at the same ones.
+
+**A node is called many times here, and that is the port's one real design question.** The
+legacy record carries one `time_us` per node, or one per partition — a node runs once. In
+this mode a node runs once per batch per lane, so a per-node figure is a *sum over calls*
+and the call count belongs beside it; a node at 40 ms over 200 calls and one at 40 ms over
+two are different findings, and a record that cannot tell them apart measures nothing useful.
+`CallStats` is already returned per call and is where the per-call figures come from.
+
+The record gains the mode and the tier — `<query>.<mode>.benchmark.txt` alongside the legacy
+`<query>.<mode>-<tp>-<tier>` — and keeps `build_profile`, `sync_floor_us`,
+`nodes_at_or_below_floor` and the rest, since they mean the same thing. It also carries which
+allocator measured the run: the pool lands with [#151](../tickets.md#t151) and
+[#148](../tickets.md#t148), and a number taken without one is not comparable with a number
+taken with one — which is the whole reason #151 exists.
+
+Case list as the correctness tiers use, so the measured set cannot drift from the verified
+one, and `test_ci_coverage` exempts the target explicitly because it asserts nothing.

@@ -121,7 +121,7 @@ pub fn translate_expr(
         });
     }
 
-    Err(PlanError::Unsupported(format!("expression {expr}")))
+    Err(PlanError::Unsupported(format!("expression {expr} (#162)")))
 }
 
 /// `x IN (a, b)` becomes `(x = a) OR (x = b)`, and `NOT IN` its negation: cuDF's AST has
@@ -176,7 +176,7 @@ fn translate_operator(op: &Operator) -> Result<BinaryOp, PlanError> {
         Operator::StringConcat => BinaryOp::StringConcat,
         Operator::IsDistinctFrom => BinaryOp::IsDistinctFrom,
         Operator::IsNotDistinctFrom => BinaryOp::IsNotDistinctFrom,
-        other => return Err(PlanError::Unsupported(format!("binary operator {other}"))),
+        other => return Err(PlanError::Unsupported(format!("binary operator {other} (#162)"))),
     })
 }
 

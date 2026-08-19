@@ -20,6 +20,7 @@ use datafusion::physical_plan::filter::FilterExec;
 use datafusion::physical_plan::joins::utils::JoinFilter;
 use datafusion::physical_plan::joins::{CrossJoinExec, HashJoinExec, NestedLoopJoinExec};
 use datafusion::physical_plan::limit::{GlobalLimitExec, LocalLimitExec};
+use datafusion::physical_plan::placeholder_row::PlaceholderRowExec;
 use datafusion::physical_plan::projection::ProjectionExec;
 use datafusion::physical_plan::repartition::RepartitionExec;
 use datafusion::physical_plan::sorts::sort::SortExec;
@@ -211,6 +212,14 @@ impl Translator {
         if any.is::<WindowAggExec>() || any.is::<BoundedWindowAggExec>() {
             return Err(PlanError::Unsupported(format!(
                 "{}: window functions do not plan in batch-partitioned mode (#143)",
+                plan.name()
+            )));
+        }
+
+        if any.is::<PlaceholderRowExec>() {
+            return Err(PlanError::Unsupported(format!(
+                "{}: an aggregate DataFusion answered from statistics, so there is no \
+                 aggregate left to translate (#158)",
                 plan.name()
             )));
         }
@@ -513,7 +522,7 @@ impl Translator {
             other => {
                 return Err(PlanError::Unsupported(format!(
                     "nested-loop join type {other:?} — the executor rejects anything but \
-                     Inner and Left"
+                     Inner and Left (#160)"
                 )));
             }
         };

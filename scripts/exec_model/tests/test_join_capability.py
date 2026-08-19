@@ -562,6 +562,8 @@ def labels(frame):
 
 
 def test_null_keys_follow_the_c_side_asymmetry_on_both_backends():
+    # Every expected value below is a wrong answer on purpose: it pins the engine's
+    # divergence from SQL so that changing it fails, and neither backend here is an oracle.
     # join.cpp's most deliberate choice, and the one with two tickets behind it: semi takes
     # the plan's null_equals_null, while anti and mark are hardcoded EQUAL, because
     # `x NOT IN (…, NULL)` is neither EQUAL nor UNEQUAL (#80, #59). Every other fixture in

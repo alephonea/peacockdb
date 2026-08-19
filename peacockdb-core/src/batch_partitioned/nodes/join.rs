@@ -360,7 +360,7 @@ pub fn capability(join_type: JoinType, has_filter: bool) -> Result<JoinCapabilit
         JoinType::RightSemi | JoinType::RightAnti if has_filter => {
             Err(PlanError::Unsupported(format!(
                 "{join_type:?} join with a residual filter: no swapped mixed_* variant exists — \
-                 keeping the emitted side as the build turns it into a Left form"
+                 keeping the emitted side as the build turns it into a Left form (#159)"
             )))
         }
         JoinType::RightSemi | JoinType::RightAnti => streaming(false),
