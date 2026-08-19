@@ -132,14 +132,47 @@ all (the interval goes on `GpuUnload`) or a `GpuLimit` over an inserted
 node kind by node kind, and an unrecognized DataFusion node is a plan-time error naming
 it — never a silent pass-through.
 
+**Targeted unit tests are the coverage; the corpus plan goldens are not.** One test per node
+kind, per expression kind, and per planner rule — the shuffle insertion, the limit lowering,
+the aggregate split, the partitioner's mapping, the small-table drop to one lane — each
+built from the smallest plan that exercises it and asserting the tree it produces. A golden
+over a whole TPC-DS query cannot do that job: it goes red when anything upstream moves, it
+names a file rather than a rule, and a query that happens not to carry a shape leaves that
+shape untested with nothing to show it. The goldens are the regression net over
+whole plans and the readable record of what the mode emits, which is a different question
+from whether each rule is right.
+
+**Expressions are translated the same way**, and the layer is not done when the node kinds
+map. Every node that carries one — a filter's predicate, a project's list, join keys and a
+residual, sort and hash keys, an aggregate's arguments and its `final` list — holds a
+`PhysicalExpr` tree that has to become the mode's own expression IR, one conscious decision
+per expression kind, with an unrecognized kind a plan-time error naming it. What is reused
+is DataFusion's *planning* of those trees: the coercions it already resolved and the
+precision and scale it already derived. What is not reused is the shape, because a column
+reference is an ordinal into a child whose column order this mode decides.
+
+Two consequences worth stating before the work starts. Ordinals are rebased at every node
+the layer inserts, so a per-branch cast project or an inserted merge shifts every reference
+above it — this is where [#135](../tickets.md#t135)'s ordinal class becomes a plan-time
+concern rather than a runtime one. And an aggregate's argument expression is evaluated
+against a different table in each phase, which is the whole of #55/#56/#63: the init sees
+input columns, the merge sees state columns, and an expression written for one is not valid
+against the other.
+
 ### Knobs
 
-1. **Partition count**: tp1 and tp4 in tests. Small tables get 1 partition even at tp4;
-   the row-count threshold is a stated planner input, not folklore.
+1. **Partition count**: tp1 and tp4 in tests. The row-count threshold below which a source
+   drops to one lane is a stated planner input, not folklore.
 2. **Batched loading off|on**: whether the loader emits more than one batch per
    partition. Even when off, the loader's declared layout is `MultipleBatches` — no
-   downstream phase may assume one batch per partition. Only when on does the planner
-   take the memory budget (micro/mini/standard/full) and size batches.
+   downstream phase may assume one batch per partition. Only when on does the planner take
+   the memory budget (micro/mini/standard/full) and size batches, and only then does the
+   threshold above bite: a source under it drops to one lane even at tp4, and the nodes a
+   one-lane region does not need are then not emitted at all — the `GpuMergePartitions` +
+   `GpuEmitPartitions` pair above it, and the per-lane half of an aggregate sequence that
+   would have merged what one lane never split. So the two batching modes differ in plan
+   shape, not only in the loader's mapping, and a small dimension table is where to look
+   for the difference.
 
 ### ParquetBatchPartitioner
 
@@ -606,8 +639,20 @@ All seven are invisible in today's goldens, so a wrong coercion presents as a wr
 rather than a wrong plan, and the two engines can disagree about a cast neither plan states.
 In the new mode each is a `CastExprNode` the planner emits — the aggregate ones inside the
 `final` expressions above, the union ones as the per-branch `GpuProject` casts the node set
-already calls for, the expression ones at the point of use — so every type change appears in
-the plan golden.
+already calls for, the expression ones at the point of use.
+
+**The rule is general, and the table is only the audit that produced it: every cast is
+explicit.** No executor may change a type the plan did not ask it to. A type appearing at a
+node's output that its input and its expressions do not account for is a defect whichever
+side of the boundary invented it, and it is one a reader can now see, because the plan
+golden prints the declared schema per node beside the expressions. Nine were found by
+reading `cpp/src`; the count is a property of today's operator set, not a budget, and an
+operator added later inherits the rule rather than extending the table.
+
+The two rows that stay in C++ are exceptions with a reason, not omissions. The loader's
+decimal width is the source honouring the output schema it already declares, so the plan
+does state it. Hash key normalization feeds the hash alone and never reaches a returned
+value — a cast that cannot change an answer is not one the plan needs to carry.
 
 ### DISTINCT lowers to grouping
 
@@ -878,6 +923,19 @@ impl PartitionLayout {
     }
 }
 
+These types live in `peacockdb-core/src/batch_partitioned/` as of T3; the sketch here is
+the argument for their shape, and the code is what they are. Four the sketch left implicit
+are settled there: `PlanError` is `Unsupported` (a shape refused at plan time) or `Invalid`
+(a node's requirement on its children); `RowInterval` is `{skip, fetch}`; `Forwarder` is a
+three-variant enum over the mappings; and a `Schema`'s column types are an arrow
+`SchemaRef`, so decimal precision and scale stay the planner's own rather than a copy.
+
+`UniqueKeys` / `UniqueScope` are deliberately not here, though `scripts/exec_model/layout.py`
+declares them. Nothing reads them, by the prototype's own account — they are for later work
+— and a field declared everywhere and read nowhere is the [#130](../tickets.md#t130) shape
+this spec exists to avoid. The aggregate sequence knows each scope for free, so the
+declaration costs nothing to add on the day something consumes it.
+
 trait GpuNode {
     fn kind(&self) -> &NodeKind;   // layout and schema live inside it
     fn children(&self) -> Vec<&dyn GpuNode>;
@@ -1071,9 +1129,11 @@ enum NodeExecutors<B: Backend> {
     BatchForwarder(Forwarder),
 }
 // Backend::executors_for(ctx: &Self::Context, node: &dyn GpuNode, lane: usize)
-//   -> NodeExecutors<B>. A fresh instance set per call, so the driver instantiates per
-//   lane; `lane` is needed because a loader's lane picks its own row groups out of the
-//   partitioner's mapping.
+//   -> Result<NodeExecutors<B>, PlanError>. A fresh instance set per call, so the driver
+//   instantiates per lane; `lane` is needed because a loader's lane picks its own row
+//   groups out of the partitioner's mapping. It returns a Result because this match is
+//   where "does this backend implement this node" is answered, and that question has a
+//   no — a GPU window (#32) is the standing case.
 
 // Routes whole batches into a new lane numbering; never touches rows, never buffers.
 // No CPU/GPU backends and no CallStats — routing is driver work, and a batch's bytes
@@ -1664,8 +1724,15 @@ What deliberately does not change: the indentation-as-tree shape, `output_rows` 
 **Plan goldens** (4 modes: bp-tp1-single, bp-tp1-batched, bp-tp4-single, bp-tp4-batched):
 one file per mode holding all queries — `goldens/<bench>/<mode>.plans.txt` — because the
 per-query files would be small and numerous. Every node renders its `PartitionLayout`
-(count, batch layout, key distribution, sort order); the loader renders
-`partition_groups=[...]`; `estimated_max_resident_size` is attached per node. The memory
+(count, batch layout, key distribution, sort order) and `estimated_max_resident_size`.
+
+A parquet source renders its whole mapping as one nested structure on one line —
+`partition_groups=[[[0,1],[2,3]],[[4],[5,6,7]]]`, partitions outermost, batches within
+them, row groups innermost — which is verbatim the `Vec<Vec<Vec<u32>>>` the partitioner
+returned. Not a partition count beside a batch count: the two are not independent, and
+every property worth reading off a source line is about which batch sits in which
+partition — the balance bound, an oversized row group standing alone, a partition whose
+batches all came from one file region. The memory
 sections for all queries are pulled into a sibling `<mode>.plan.mem.txt`, in a layout
 matching the new estimator's fields.
 
@@ -1763,7 +1830,7 @@ empty survivors (explicit error — the fbs "empty map means legacy single parti
 convention must not leak in); balance bound (max−min partition rows ≤ one row group);
 fixed-output determinism case. No planner integration yet.
 
-**T3 — node and trait skeleton.** `GpuNode`, `PartitionLayout` (with the three-valued
+**T3 — node and trait skeleton.** `GpuNode`, `PartitionLayout` (with the two-valued
 `SortOrder`), `Schema` with semantics annotations, `Batch`/`CpuBatch`/`GpuBatch` shells
 with the move/`!Clone`/`Drop` rules, executor trait definitions with `CallStats`,
 `Backend`. Traits in their own files per coding-style. Compiles under rust-only
