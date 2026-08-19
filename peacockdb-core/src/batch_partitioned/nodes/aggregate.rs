@@ -186,6 +186,9 @@ impl GpuNode for GpuAggregateBatches {
 /// exactly what the co-location rule above exists to refuse. A grouping set drops it the
 /// same way — it substitutes NULL for the keys it excludes, so the rolled-up rows are no
 /// longer where the hash put them even though the column is still in the group list.
+///
+/// A mask is one per set in key order and so is as long as the group list, but a short one
+/// reads as excluding: over-claiming co-location is what this function exists to avoid.
 fn regrouped_key_distribution(layout: &PartitionLayout, body: &AggregateBody) -> KeyDistribution {
     let KeyDistribution::ByHash { hash_keys } = &layout.key_distribution else {
         return KeyDistribution::NotSpecified;
@@ -200,7 +203,7 @@ fn regrouped_key_distribution(layout: &PartitionLayout, body: &AggregateBody) ->
                     !body
                         .grouping_sets
                         .iter()
-                        .any(|mask| mask.get(*position).copied().unwrap_or(false))
+                        .any(|mask| mask.get(*position).copied().unwrap_or(true))
                 })
                 .map(|position| position as u32)
         })
@@ -251,6 +254,16 @@ mod tests {
         // of them.
         let sets = vec![vec![false, false], vec![true, false]];
         let claim = regrouped_key_distribution(&hashed_on(vec![7]), &body(vec![7, 3], sets));
+        assert_eq!(claim, KeyDistribution::NotSpecified);
+    }
+
+    #[test]
+    fn a_mask_shorter_than_the_group_list_drops_the_hash_rather_than_keeping_it() {
+        // Masks are as long as the group list by construction, so this is the default and
+        // not a shape: a missing entry has to read as excluding, or a malformed body would
+        // buy a co-location claim the rows do not have.
+        let claim =
+            regrouped_key_distribution(&hashed_on(vec![3]), &body(vec![7, 3], vec![vec![false]]));
         assert_eq!(claim, KeyDistribution::NotSpecified);
     }
 

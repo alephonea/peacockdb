@@ -256,9 +256,16 @@ fn agg_call_text(call: &AggCall) -> String {
         .map(|field| field.name().as_str())
         .collect();
     let produced = if outputs.len() == 1 {
-        outputs[0].to_string()
+        quoted(outputs[0])
     } else {
-        format!("[{}]", outputs.join(", "))
+        format!(
+            "[{}]",
+            outputs
+                .iter()
+                .map(|name| quoted(name))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
     };
     format!(
         "{}({}) as {produced}",
@@ -323,7 +330,7 @@ fn schema_text(schema: &Schema) -> String {
         .fields
         .fields()
         .iter()
-        .map(|field| format!("{}:{}", field.name(), type_text(field.data_type())))
+        .map(|field| format!("{}:{}", quoted(field.name()), type_text(field.data_type())))
         .collect();
     format!("schema=[{}]", columns.join(", "))
 }
@@ -363,11 +370,34 @@ fn named_exprs(exprs: &[NamedExpr]) -> String {
             let rendered = expr_text(&named.expr);
             match &named.expr {
                 Expr::Column(reference) if reference.name == named.name => rendered,
-                _ => format!("{rendered} as {}", named.name),
+                _ => format!("{rendered} as {}", quoted(&named.name)),
             }
         })
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+/// A column name as a single token: printed bare where it already is one, and in backticks
+/// where it holds a character this rendering punctuates with — whitespace, a comma, a
+/// bracket, an `@`, or a backtick, which doubles. Nothing else is quoted, so an ordinary
+/// column stays as it was.
+///
+/// A name is not always an identifier: DataFusion names an aggregate output by its own
+/// expression text, and tpcds aliases like `order count`. Unquoted, `order count@0 as
+/// order count` gives a reader no way to see where the name ends, and a golden that cannot
+/// be tokenized without already knowing the schema is not the readable record it is for.
+/// Backticks rather than double quotes because a name can hold a rendered literal —
+/// `Utf8("PROMO%")` — and doubling those quotes is the unreadable half of the problem.
+fn quoted(name: &str) -> String {
+    let plain = !name.is_empty()
+        && !name
+            .chars()
+            .any(|c| c.is_whitespace() || matches!(c, ',' | '[' | ']' | '@' | '`'));
+    if plain {
+        name.to_string()
+    } else {
+        format!("`{}`", name.replace('`', "``"))
+    }
 }
 
 /// The name a schema declares at that position. An empty name is what a reference past
@@ -375,7 +405,7 @@ fn named_exprs(exprs: &[NamedExpr]) -> String {
 fn name_at(schema: Option<&Schema>, index: u32) -> String {
     schema
         .and_then(|schema| schema.fields.fields().get(index as usize))
-        .map(|field| field.name().clone())
+        .map(|field| quoted(field.name()))
         .unwrap_or_else(|| "?".to_string())
 }
 
@@ -405,7 +435,7 @@ fn nested(groups: &[Vec<Vec<u32>>]) -> String {
 pub fn expr_text(expr: &Expr) -> String {
     // An ordinary reference indexes the node's input, which is the line below it.
     expr_text_resolved(expr, &|reference| {
-        format!("{}@{}", reference.name, reference.index)
+        format!("{}@{}", quoted(&reference.name), reference.index)
     })
 }
 
@@ -496,7 +526,7 @@ fn join_filter_text(
                 };
                 format!("{}@{side}:{}", name_at(schema, mapped.index), mapped.index)
             }
-            None => format!("{}@{}", reference.name, reference.index),
+            None => format!("{}@{}", quoted(&reference.name), reference.index),
         },
     )
 }
@@ -758,6 +788,35 @@ mod tests {
             line_with(&text, "GpuLimit").contains("skip=0, fetch=3"),
             "{text}"
         );
+    }
+
+    #[test]
+    fn a_name_that_is_not_a_token_is_backquoted_and_an_ordinary_one_is_not() {
+        assert_eq!(quoted("c_name"), "c_name");
+        assert_eq!(
+            quoted("sum(lineitem.l_quantity)"),
+            "sum(lineitem.l_quantity)"
+        );
+        assert_eq!(quoted("order count"), "`order count`");
+        assert_eq!(quoted("a,b"), "`a,b`");
+        assert_eq!(quoted("x@1"), "`x@1`");
+        assert_eq!(quoted("a`b"), "`a``b`");
+        assert_eq!(quoted(""), "``");
+    }
+
+    #[tokio::test]
+    async fn a_spaced_column_name_prints_as_one_token_everywhere_it_appears() {
+        // Both halves of `… as name` and the schema entry, which is where a reader
+        // resolves an ordinal: unquoted, the name's own space reads as the separator.
+        let text = rendered(
+            "SELECT \"nat key\", count(*) FROM \
+             (SELECT c_nationkey AS \"nat key\" FROM customer) t GROUP BY \"nat key\"",
+            1,
+        )
+        .await;
+        assert!(text.contains("as `nat key`"), "{text}");
+        assert!(text.contains("schema=[`nat key`:"), "{text}");
+        assert!(text.contains("group_by=[`nat key`@0]"), "{text}");
     }
 
     #[tokio::test]
