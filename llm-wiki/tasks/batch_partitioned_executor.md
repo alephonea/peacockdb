@@ -834,6 +834,12 @@ keys — a scan partitioned that way, or the output of an earlier join on the sa
 needs neither node. Cross and nested-loop joins are the exception, and it is the join
 itself asking: with no key to co-locate on, both inputs must be one lane.
 
+**An interleave needs its branches to agree on lane count**, and they may not. `can_interleave`
+takes output lane p from lane p of each input, so a union whose branches carry different lane
+counts has no such correspondence and becomes a `GpuUnion` instead — interleaving would
+preserve a distribution the branches no longer share. tpcds q77 is the case: DataFusion hashes
+three branches into four lanes each, and the small-source rule puts the middle one on one lane.
+
 **Equal lane counts are not co-partitioning**, which is what the column's `no` hides.
 DataFusion picks `CollectLeft` for two small tables and emits no repartition at all, while
 both loaders still produce N lanes — so lane p of one side holds nothing that must match

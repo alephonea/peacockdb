@@ -19,8 +19,8 @@ use super::node::GpuNode;
 use super::nodes::{NodeRef, as_node_ref};
 use crate::memory::logical_size_from_schema;
 
-/// What the `.plan.mem.txt` golden renders: a figure per node in canonical post-order, and
-/// the batch size each source was given.
+/// What a golden's `--- memory ---` section renders: a figure per node in canonical
+/// post-order, and the batch size each source was given.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MemoryModel {
     pub budget: u64,

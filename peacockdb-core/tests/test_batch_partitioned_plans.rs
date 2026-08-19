@@ -25,14 +25,12 @@ const BUDGET: u64 = MemoryLimit::Mini.bytes() as u64;
 /// A scan reading less than this stops being worth splitting: it has nothing to gain from
 /// lanes and would pay a shuffle for them.
 ///
-/// Chosen from the sf1 measurement, full projection: the largest table that must stay on
-/// one lane is tpcds date_dim at 4,006,445 bytes and the smallest that must not is tpcds
-/// web_returns at 8,041,397 — a 2.0x gap, and every other table an order of magnitude clear
-/// of one side. 5 MiB sits in it, nearer the lower end, so date_dim would have to grow 31%
-/// to cross and web_returns shrink 35%. The floor is tpch supplier at 1,532,237, which must
-/// stay below. Since the threshold reads the projected bytes of the surviving row groups, a
-/// narrow scan of a big table is below it — at sf1 that is most fact-table scans, and it is
-/// the rule working rather than a value to retune.
+/// From the sf1 measurement at full projection: the largest table that must stay on one lane
+/// is tpcds date_dim at 4,006,445 bytes, the smallest that must not is tpcds web_returns at
+/// 8,041,397, and tpch supplier at 1,532,237 sets the floor. 5 MiB sits in that gap nearer
+/// the lower end, so date_dim would have to grow 31% to cross it and web_returns shrink 35%.
+/// It reads the projected bytes of the surviving row groups, so a narrow scan of a big table
+/// falls below it — the rule working, not a value to retune.
 const SMALL_TABLE_BYTES: u64 = 5 * 1024 * 1024;
 
 struct Mode {
@@ -79,12 +77,16 @@ async fn render_bench(dataset: &str, sf: &str, mode: &Mode) -> String {
     for (name, path) in queries(dataset) {
         let sql = std::fs::read_to_string(&path).expect("the query text");
         text.push_str(&format!("== {name}\n"));
-        text.push_str(&render_query(&ctx, &sql).await);
+        text.push_str(&render_query(&ctx, &sql, mode.knobs).await);
     }
     text
 }
 
-async fn render_query(ctx: &datafusion::execution::context::SessionContext, sql: &str) -> String {
+async fn render_query(
+    ctx: &datafusion::execution::context::SessionContext,
+    sql: &str,
+    knobs: PlanKnobs,
+) -> String {
     let planned = match ctx.sql(sql).await {
         Ok(frame) => frame.create_physical_plan().await,
         Err(e) => Err(e),
@@ -94,7 +96,7 @@ async fn render_query(ctx: &datafusion::execution::context::SessionContext, sql:
         // A query DataFusion itself declines never reaches this mode's planner.
         Err(e) => return format!("refused by datafusion: {e}\n"),
     };
-    match plan_batch_partitioned(&plan, mode_knobs()) {
+    match plan_batch_partitioned(&plan, knobs) {
         Ok((tree, model)) => format!(
             "{}--- memory ---\n{}",
             render_plan(tree.as_ref()),
@@ -102,23 +104,6 @@ async fn render_query(ctx: &datafusion::execution::context::SessionContext, sql:
         ),
         Err(e) => format!("refused: {e}\n"),
     }
-}
-
-// The knobs of the mode currently rendering; set per test so `render_query` stays a
-// function of the plan rather than of the harness's shape.
-thread_local! {
-    static KNOBS: std::cell::Cell<PlanKnobs> = const {
-        std::cell::Cell::new(PlanKnobs {
-            target_partitions: 1,
-            sizing: BatchSizing::OneBatchPerLane,
-            budget: 0,
-            small_table_bytes: 0,
-        })
-    };
-}
-
-fn mode_knobs() -> PlanKnobs {
-    KNOBS.with(|knobs| knobs.get())
 }
 
 fn golden(dataset: &str, sf: &str, mode: &Mode) -> PathBuf {
@@ -142,7 +127,6 @@ fn assert_or_update(path: &Path, actual: &str) {
 }
 
 async fn check(dataset: &str, sf: &str, mode: Mode) {
-    KNOBS.with(|knobs| knobs.set(mode.knobs));
     let actual = render_bench(dataset, sf, &mode).await;
     assert_or_update(&golden(dataset, sf, &mode), &actual);
 }
@@ -250,7 +234,7 @@ async fn tpcds_bp_tp4_sized() {
     check("tpcds", "1", mode("bp-tp4-sized", 4, BatchSizing::Budgeted)).await;
 }
 
-/// The registry's four `bp_` columns against the goldens, in both directions: every cell
+/// The registry's five `bp_` columns against the goldens, in both directions: every cell
 /// says what its query's section says, and every section has a cell. Nothing registers
 /// these at link time — one golden holds every query — so the golden is what declares
 /// them and this is where the two are held to each other.
@@ -295,6 +279,63 @@ fn the_registry_matches_the_goldens_in_both_directions() {
                     known.contains(query.as_str()),
                     "{column}: {query} has a section and no registry row"
                 );
+            }
+        }
+    }
+}
+
+/// Every mode has a golden and every golden has a mode. The per-mode test functions spell
+/// their knobs out one by one, so a mode added to `MODES` and to no test function would
+/// otherwise be checked by nobody — and its file would silently not exist.
+#[test]
+fn every_mode_has_a_golden_and_every_golden_has_a_mode() {
+    for (dataset, sf) in [("tpch", "1"), ("tpcds", "1")] {
+        let mut expected: Vec<String> = MODES
+            .iter()
+            .map(|(name, ..)| format!("{name}.plans.txt"))
+            .collect();
+        expected.sort();
+        let mut found: Vec<String> = std::fs::read_dir(golden_dir_for(dataset, sf))
+            .expect("the golden directory")
+            .filter_map(|entry| {
+                let name = entry.ok()?.file_name().to_str()?.to_string();
+                (name.starts_with("bp-") && name.ends_with(".plans.txt")).then_some(name)
+            })
+            .collect();
+        found.sort();
+        assert_eq!(found, expected, "{dataset}: goldens and modes disagree");
+    }
+}
+
+/// A refusal names a blocker, and that blocker exists. The reason a query does not plan is
+/// the content of these files, and a ticket number that has been renumbered or never
+/// existed reads as an explanation while pointing at nothing.
+#[test]
+fn every_refusal_names_a_ticket_that_exists() {
+    let tickets = std::fs::read_to_string(
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../llm-wiki/tickets.md"),
+    )
+    .expect("the ticket list");
+    for (dataset, sf) in [("tpch", "1"), ("tpcds", "1")] {
+        for (name, ..) in MODES {
+            let text = std::fs::read_to_string(
+                golden_dir_for(dataset, sf).join(format!("{name}.plans.txt")),
+            )
+            .expect("a golden");
+            for line in text.lines().filter(|line| line.starts_with("refused")) {
+                let cited: Vec<&str> = line
+                    .match_indices('#')
+                    .filter_map(|(at, _)| {
+                        line[at + 1..].split(|c: char| !c.is_ascii_digit()).next()
+                    })
+                    .filter(|number| !number.is_empty())
+                    .collect();
+                for number in cited {
+                    assert!(
+                        tickets.contains(&format!("### #{number} ")),
+                        "{dataset}/{name}: a refusal names #{number}, which tickets.md does not have:\n{line}"
+                    );
+                }
             }
         }
     }

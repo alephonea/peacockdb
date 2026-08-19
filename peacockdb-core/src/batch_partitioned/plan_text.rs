@@ -14,9 +14,10 @@ use datafusion::common::ScalarValue;
 
 use super::aggregates::{AggCall, PlanAgg};
 use super::estimator::MemoryModel;
-use super::expr::{BinaryOp, Expr, NamedExpr, UnaryOp};
+use super::expr::{BinaryOp, ColumnRef, Expr, NamedExpr, UnaryOp};
 use super::layout::{BatchLayout, ColumnOrder, KeyDistribution, PartitionLayout, SortOrder};
 use super::node::{GpuNode, RowInterval};
+use super::nodes::join::{JoinFilterColumn, JoinSide};
 use super::nodes::{NodeRef, as_node_ref};
 use super::schema::Schema;
 
@@ -161,8 +162,13 @@ fn node_fields(node: &dyn GpuNode) -> Vec<String> {
                 .collect();
             fields.push(format!("on=[{}]", on.join(", ")));
             if let Some(filter) = &join.filter {
-                fields.push(format!("filter={}", expr_text(filter)));
+                fields.push(format!(
+                    "filter={}",
+                    join_filter_text(filter, &join.filter_columns, build, probe)
+                ));
             }
+            // Only the non-default prints: the SQL default is false, which is what nearly
+            // every join carries, and a line saying so on each of them would say nothing.
             if join.null_equals_null {
                 fields.push("null_equals_null=true".to_string());
             }
@@ -187,7 +193,15 @@ fn node_fields(node: &dyn GpuNode) -> Vec<String> {
         }
         NodeRef::NestedLoopJoin(join) => {
             fields.push(format!("join_type={:?}", join.join_type));
-            fields.push(format!("filter={}", expr_text(&join.filter)));
+            fields.push(format!(
+                "filter={}",
+                join_filter_text(
+                    &join.filter,
+                    &join.filter_columns,
+                    schema_of(node.children()[0]),
+                    schema_of(node.children()[1]),
+                )
+            ));
         }
         NodeRef::EmitPartitions(emit) => {
             let keys: Vec<String> = emit
@@ -389,26 +403,32 @@ fn nested(groups: &[Vec<Vec<u32>>]) -> String {
 }
 
 pub fn expr_text(expr: &Expr) -> String {
+    // An ordinary reference indexes the node's input, which is the line below it.
+    expr_text_resolved(expr, &|reference| {
+        format!("{}@{}", reference.name, reference.index)
+    })
+}
+
+/// The same rendering with the column form supplied, because a join filter's ordinals
+/// index a table of the filter's own that appears on no line.
+fn expr_text_resolved(expr: &Expr, column: &dyn Fn(&ColumnRef) -> String) -> String {
+    let nested = |expr: &Expr| nested_expr_resolved(expr, column);
+    let plain = |expr: &Expr| expr_text_resolved(expr, column);
     match expr {
-        Expr::Column(reference) => format!("{}@{}", reference.name, reference.index),
+        Expr::Column(reference) => column(reference),
         Expr::Literal(value) => literal_text(value),
         Expr::Binary {
             left, op, right, ..
-        } => format!(
-            "{} {} {}",
-            nested_expr(left),
-            binary_op_text(*op),
-            nested_expr(right)
-        ),
+        } => format!("{} {} {}", nested(left), binary_op_text(*op), nested(right)),
         Expr::Unary { op, arg } => match op {
-            UnaryOp::Not => format!("NOT {}", nested_expr(arg)),
-            UnaryOp::IsNull => format!("{} IS NULL", nested_expr(arg)),
-            UnaryOp::IsNotNull => format!("{} IS NOT NULL", nested_expr(arg)),
-            UnaryOp::Negative => format!("-{}", nested_expr(arg)),
-            UnaryOp::Sqrt => format!("sqrt({})", expr_text(arg)),
+            UnaryOp::Not => format!("NOT {}", nested(arg)),
+            UnaryOp::IsNull => format!("{} IS NULL", nested(arg)),
+            UnaryOp::IsNotNull => format!("{} IS NOT NULL", nested(arg)),
+            UnaryOp::Negative => format!("-{}", nested(arg)),
+            UnaryOp::Sqrt => format!("sqrt({})", plain(arg)),
         },
         Expr::Cast { expr, target } => {
-            format!("CAST({} AS {})", expr_text(expr), type_text(target))
+            format!("CAST({} AS {})", plain(expr), type_text(target))
         }
         Expr::Like {
             expr,
@@ -417,10 +437,10 @@ pub fn expr_text(expr: &Expr) -> String {
             case_insensitive,
         } => format!(
             "{} {}{} {}",
-            nested_expr(expr),
+            nested(expr),
             if *negated { "NOT " } else { "" },
             if *case_insensitive { "ILIKE" } else { "LIKE" },
-            nested_expr(pattern)
+            nested(pattern)
         ),
         Expr::Case {
             comparand,
@@ -429,30 +449,56 @@ pub fn expr_text(expr: &Expr) -> String {
         } => {
             let mut text = "CASE".to_string();
             if let Some(comparand) = comparand {
-                let _ = write!(text, " {}", expr_text(comparand));
+                let _ = write!(text, " {}", plain(comparand));
             }
             for (when, then) in when_then {
-                let _ = write!(text, " WHEN {} THEN {}", expr_text(when), expr_text(then));
+                let _ = write!(text, " WHEN {} THEN {}", plain(when), plain(then));
             }
             if let Some(otherwise) = else_expr {
-                let _ = write!(text, " ELSE {}", expr_text(otherwise));
+                let _ = write!(text, " ELSE {}", plain(otherwise));
             }
             text + " END"
         }
         Expr::ScalarFunction { name, args, .. } => format!(
             "{name}({})",
-            args.iter().map(expr_text).collect::<Vec<_>>().join(", ")
+            args.iter().map(plain).collect::<Vec<_>>().join(", ")
         ),
     }
 }
 
 /// A sub-expression that is itself an operator is parenthesized, so precedence is read off
 /// the line rather than assumed.
-fn nested_expr(expr: &Expr) -> String {
+fn nested_expr_resolved(expr: &Expr, column: &dyn Fn(&ColumnRef) -> String) -> String {
     match expr {
-        Expr::Binary { .. } | Expr::Case { .. } => format!("({})", expr_text(expr)),
-        other => expr_text(other),
+        Expr::Binary { .. } | Expr::Case { .. } => {
+            format!("({})", expr_text_resolved(expr, column))
+        }
+        other => expr_text_resolved(other, column),
     }
+}
+
+/// A join filter's reference, resolved onto the side it came from and that side's own
+/// ordinal — `k@build:0` is column 0 of the build child, whose schema is on its own line.
+/// Left as its filter-schema ordinal only where the map is short, which validation refuses.
+fn join_filter_text(
+    filter: &Expr,
+    columns: &[JoinFilterColumn],
+    build: Option<&Schema>,
+    probe: Option<&Schema>,
+) -> String {
+    expr_text_resolved(
+        filter,
+        &|reference| match columns.get(reference.index as usize) {
+            Some(mapped) => {
+                let (side, schema) = match mapped.side {
+                    JoinSide::Build => ("build", build),
+                    JoinSide::Probe => ("probe", probe),
+                };
+                format!("{}@{side}:{}", name_at(schema, mapped.index), mapped.index)
+            }
+            None => format!("{}@{}", reference.name, reference.index),
+        },
+    )
 }
 
 /// A decimal scalar prints as its value, not as the triple its `Display` gives: a plan
@@ -464,7 +510,34 @@ fn literal_text(value: &ScalarValue) -> String {
             unscaled.to_string().parse::<i128>().unwrap_or_default(),
             *scale,
         ),
+        ScalarValue::IntervalYearMonth(Some(months)) => interval_text(*months, 0, 0),
+        ScalarValue::IntervalDayTime(Some(interval)) => {
+            interval_text(0, interval.days, interval.milliseconds as i64 * 1_000_000)
+        }
+        ScalarValue::IntervalMonthDayNano(Some(interval)) => {
+            interval_text(interval.months, interval.days, interval.nanoseconds)
+        }
         other => other.to_string(),
+    }
+}
+
+/// The parts that are not zero, in the units they are declared in — `90 days` where the
+/// struct form spends sixty characters saying the same thing. All-zero prints as `0 days`,
+/// since an interval of nothing is still an interval.
+fn interval_text(months: i32, days: i32, nanoseconds: i64) -> String {
+    let parts: Vec<String> = [
+        (months as i64, "mons"),
+        (days as i64, "days"),
+        (nanoseconds, "nanos"),
+    ]
+    .into_iter()
+    .filter(|(value, _)| *value != 0)
+    .map(|(value, unit)| format!("{value} {unit}"))
+    .collect();
+    if parts.is_empty() {
+        "0 days".to_string()
+    } else {
+        parts.join(" ")
     }
 }
 
@@ -765,6 +838,43 @@ mod tests {
         // A projection is ordinals into the joined table, so it is named from both sides
         // rather than printed as bare positions.
         assert!(join.contains("projection=[s_name@0, c_name@2]"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn a_join_filter_resolves_each_reference_onto_the_side_it_came_from() {
+        // The filter's ordinals index a table of its own, which appears on no line. Both
+        // sides carry their key at ordinal 0 here, so a side mix-up changes the text — the
+        // case that caught the same slip when the validator went red at T4.
+        let text = rendered(
+            "SELECT * FROM nation n, region r WHERE n.n_nationkey < r.r_regionkey",
+            1,
+        )
+        .await;
+        let join = line_with(&text, "GpuNestedLoopJoin");
+        // region is the build side — DataFusion put the smaller table there and flipped
+        // the predicate — and both sides' ordinal 0 is a different column, which is what
+        // makes a mix-up visible.
+        assert!(
+            join.contains("filter=r_regionkey@build:0 > n_nationkey@probe:0"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn an_interval_literal_prints_the_parts_that_are_not_zero() {
+        use datafusion::arrow::datatypes::IntervalMonthDayNano;
+        let ninety_days = Expr::Literal(ScalarValue::IntervalMonthDayNano(Some(
+            IntervalMonthDayNano::new(0, 90, 0),
+        )));
+        assert_eq!(expr_text(&ninety_days), "90 days");
+        let mixed = Expr::Literal(ScalarValue::IntervalMonthDayNano(Some(
+            IntervalMonthDayNano::new(2, 1, 500),
+        )));
+        assert_eq!(expr_text(&mixed), "2 mons 1 days 500 nanos");
+        let nothing = Expr::Literal(ScalarValue::IntervalMonthDayNano(Some(
+            IntervalMonthDayNano::new(0, 0, 0),
+        )));
+        assert_eq!(expr_text(&nothing), "0 days");
     }
 
     #[test]

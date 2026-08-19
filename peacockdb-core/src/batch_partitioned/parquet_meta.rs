@@ -61,11 +61,18 @@ pub fn survivor_metadata(parquet: &ParquetExec) -> Result<Vec<RowGroupMeta>, Pla
         {
             continue;
         }
-        let bytes: i64 = projected
-            .iter()
-            .filter_map(|column| group.columns().get(*column))
-            .map(|chunk| chunk.uncompressed_size())
-            .sum();
+        // A projection index with no column chunk would silently make the source look
+        // smaller, and bytes decide both the batch size and the lane count.
+        let mut bytes: i64 = 0;
+        for column in &projected {
+            let chunk = group.columns().get(*column).ok_or_else(|| {
+                PlanError::Invalid(format!(
+                    "{path}: projected column {column} has no chunk in row group {index}, so \
+                     the schema is not flat and a projection index is not a chunk position"
+                ))
+            })?;
+            bytes += chunk.uncompressed_size();
+        }
         metadata.push(RowGroupMeta {
             index,
             rows: group.num_rows() as u64,
@@ -194,7 +201,11 @@ mod tests {
     async fn a_scan_over_several_files_is_refused_rather_than_measured_from_one() {
         // The mapping addresses one file's row groups, so a second file would be sized
         // from the first's — a wrong answer where an error belongs.
-        let dir = std::env::temp_dir().join("peacockdb-batch-partitioned-multifile");
+        let dir = std::env::temp_dir().join(format!(
+            "peacockdb-batch-partitioned-multifile-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         for name in ["nation-a.parquet", "nation-b.parquet"] {
             std::fs::copy(minimal().join("nation.parquet"), dir.join(name)).unwrap();
@@ -221,5 +232,6 @@ mod tests {
             matches!(&err, PlanError::Unsupported(what) if what.contains("2 files")),
             "{err}"
         );
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

@@ -22,11 +22,14 @@ pub struct GpuUnion {
 impl GpuUnion {
     pub fn new(branches: Vec<Box<dyn GpuNode>>, schema: Schema) -> Self {
         let n = branches.iter().map(|b| input_layout(b.as_ref()).n).sum();
+        // Output lane k is one branch's lane, forwarded batch for batch, so an order and a
+        // one-batch lane survive wherever every branch has them. The hash does not: lane k
+        // means something different in each branch's numbering.
         let layout = PartitionLayout {
             n,
             key_distribution: KeyDistribution::NotSpecified,
-            sort_order: SortOrder::NotSpecified,
-            batch_layout: BatchLayout::MultipleBatches,
+            sort_order: agreed_sort_order(&branches),
+            batch_layout: agreed_batch_layout(&branches),
         };
         Self {
             kind: NodeKind::Intermediate { layout, schema },
@@ -65,11 +68,18 @@ pub struct GpuInterleave {
 impl GpuInterleave {
     pub fn new(branches: Vec<Box<dyn GpuNode>>, schema: Schema) -> Self {
         let first = input_layout(branches.first().expect("interleave has branches").as_ref());
+        // Lane p holds every branch's lane p, so each batch is still whatever it was — an
+        // order within a batch survives — but k branches make k batches out of one lane.
+        let batch_layout = if branches.len() == 1 {
+            agreed_batch_layout(&branches)
+        } else {
+            BatchLayout::MultipleBatches
+        };
         let layout = PartitionLayout {
             n: first.n,
             key_distribution: first.key_distribution.clone(),
-            sort_order: SortOrder::NotSpecified,
-            batch_layout: BatchLayout::MultipleBatches,
+            sort_order: agreed_sort_order(&branches),
+            batch_layout,
         };
         Self {
             kind: NodeKind::Intermediate { layout, schema },
@@ -105,6 +115,31 @@ impl GpuNode for GpuInterleave {
 
     fn as_any(&self) -> &dyn Any {
         self
+    }
+}
+
+/// The order every branch agrees on, or none. Routing does not touch a batch, so an order
+/// that holds within each branch's batches holds within the output's.
+fn agreed_sort_order(branches: &[Box<dyn GpuNode>]) -> SortOrder {
+    let first = input_layout(branches[0].as_ref()).sort_order;
+    let agreed = branches
+        .iter()
+        .all(|branch| input_layout(branch.as_ref()).sort_order == first);
+    if agreed {
+        first
+    } else {
+        SortOrder::NotSpecified
+    }
+}
+
+fn agreed_batch_layout(branches: &[Box<dyn GpuNode>]) -> BatchLayout {
+    if branches
+        .iter()
+        .all(|branch| input_layout(branch.as_ref()).batch_layout == BatchLayout::SingleBatch)
+    {
+        BatchLayout::SingleBatch
+    } else {
+        BatchLayout::MultipleBatches
     }
 }
 

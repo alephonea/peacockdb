@@ -69,11 +69,14 @@ impl GpuLoadParquet {
     /// budgeted size are three different answers to this, which is why the model reads it
     /// off the mapping rather than off the budget.
     pub fn largest_batch_bytes(&self) -> u64 {
+        // Every entry in the mapping came from these survivors, so a miss would be a
+        // mapping addressing a row group this scan does not read.
         let bytes_of = |index: &u32| {
             self.survivors
                 .iter()
                 .find(|group| group.index == *index)
-                .map_or(0, |group| group.bytes)
+                .expect("the mapping addresses a surviving row group")
+                .bytes
         };
         self.partition_groups
             .iter()

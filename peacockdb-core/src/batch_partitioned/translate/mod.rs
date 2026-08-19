@@ -157,7 +157,9 @@ impl Translator {
         }
         if let Some(cross) = any.downcast_ref::<CrossJoinExec>() {
             let build = self.build_side(cross.left())?;
-            let probe = self.node(cross.right())?;
+            // With no key to co-locate on, both sides are one lane — the probe as much as
+            // the build, though only the build is also one batch.
+            let probe = self.merged(self.node(cross.right())?);
             return Ok(Box::new(GpuCrossJoin::new(
                 build,
                 probe,
@@ -189,10 +191,22 @@ impl Translator {
         }
         if let Some(interleave) = any.downcast_ref::<InterleaveExec>() {
             let branches = self.branches(interleave.inputs().iter(), &interleave.schema())?;
-            return Ok(Box::new(GpuInterleave::new(
-                branches,
-                Schema::new(interleave.schema()),
-            )));
+            // DataFusion interleaves where its branches share a hash, which is what makes
+            // lane p of one belong beside lane p of the next. This mode decides its own
+            // lane counts — the small-source rule can put one branch on a single lane —
+            // and once the branches no longer agree, interleaving is not available and not
+            // worth anything: what it buys is a distribution they no longer share.
+            let first = branches[0].kind().layout().expect("a branch is not a sink");
+            let agreed = branches.iter().all(|branch| {
+                let layout = branch.kind().layout().expect("a branch is not a sink");
+                layout.n == first.n && layout.key_distribution == first.key_distribution
+            });
+            let schema = Schema::new(interleave.schema());
+            return Ok(if agreed {
+                Box::new(GpuInterleave::new(branches, schema))
+            } else {
+                Box::new(GpuUnion::new(branches, schema))
+            });
         }
         if any.is::<WindowAggExec>() || any.is::<BoundedWindowAggExec>() {
             return Err(PlanError::Unsupported(format!(
@@ -214,7 +228,13 @@ impl Translator {
                 let keys = hash_key_ordinals(exprs, &repartition.input().schema())?;
                 Ok(self.shuffled(input, keys, *n))
             }
-            _ => Ok(input),
+            // Round-robin carries no key, so it says nothing this mode acts on; an unknown
+            // partitioning is a claim we cannot read, and guessing at it would be a lane
+            // assignment nobody chose.
+            Partitioning::RoundRobinBatch(_) => Ok(input),
+            Partitioning::UnknownPartitioning(n) => Err(PlanError::Unsupported(format!(
+                "a repartition into {n} lanes by an unstated rule"
+            ))),
         }
     }
 
@@ -270,9 +290,11 @@ impl Translator {
 
         let mut keys = Vec::with_capacity(join.on().len());
         for (left, right) in join.on() {
+            // Each side's key is an ordinal into that side, so each is read against that
+            // side's schema.
             keys.push((
-                column_ordinal(left, "join key")?,
-                column_ordinal(right, "join key")?,
+                column_ordinal_of(left, &join.left().schema(), "join key")?,
+                column_ordinal_of(right, &join.right().schema(), "join key")?,
             ));
         }
 
@@ -297,7 +319,7 @@ impl Translator {
         let (filter, filter_columns) = match join.filter() {
             Some(filter) => (
                 Some(translate_expr(filter.expression(), filter.schema())?),
-                filter_column_map(filter),
+                filter_column_map(filter)?,
             ),
             None => (None, Vec::new()),
         };
@@ -476,10 +498,7 @@ impl Translator {
 
     /// A join's build side is always one batch, and the planner is what makes it one.
     fn build_side(&self, plan: &Arc<dyn ExecutionPlan>) -> Result<Box<dyn GpuNode>, PlanError> {
-        let mut build = self.node(plan)?;
-        if lanes(build.as_ref()) > 1 {
-            build = Box::new(GpuMergePartitions::new(build));
-        }
+        let mut build = self.merged(self.node(plan)?);
         if batches(build.as_ref()) != BatchLayout::SingleBatch {
             build = Box::new(GpuCoalesceAllBatches::new(build));
         }
@@ -511,7 +530,7 @@ impl Translator {
             )));
         };
         let build = self.build_side(join.left())?;
-        let mut probe = self.node(join.right())?;
+        let mut probe = self.merged(self.node(join.right())?);
         // A Left form emits its unmatched build rows in the same pass, so it cannot
         // stream: #136's finish trick accumulates keys and a predicate join has none.
         if join_type == NestedLoopJoinType::Left
@@ -522,7 +541,7 @@ impl Translator {
         // The filter is written against a table of its own, so its ordinals travel with
         // the map that says which side each of them came from.
         let predicate = translate_expr(filter.expression(), filter.schema())?;
-        let filter_columns = filter_column_map(filter);
+        let filter_columns = filter_column_map(filter)?;
         Ok(Box::new(GpuNestedLoopJoin::new(
             build,
             probe,
@@ -534,9 +553,6 @@ impl Translator {
     }
 }
 
-/// Lane p of one side holds what can match lane p of the other only if both were scattered
-/// on their own join keys, in key order — equal lane counts are not the same fact, and two
-/// four-lane scans agree on nothing.
 /// A sort's per-batch half, before the parent decides which accumulator goes above it.
 struct PerBatchSort {
     node: Box<dyn GpuNode>,
@@ -544,6 +560,9 @@ struct PerBatchSort {
     fetch: Option<usize>,
 }
 
+/// Lane p of one side holds what can match lane p of the other only if both were scattered
+/// on their own join keys, in key order — equal lane counts are not the same fact, and two
+/// four-lane scans agree on nothing.
 pub(crate) fn co_partitioned(
     build: &dyn GpuNode,
     probe: &dyn GpuNode,
@@ -599,30 +618,29 @@ pub(crate) fn column_ordinal_of(
     }
 }
 
-pub(crate) fn column_ordinal(expr: &Arc<dyn PhysicalExpr>, site: &str) -> Result<u32, PlanError> {
-    expr.as_any()
-        .downcast_ref::<datafusion::physical_expr::expressions::Column>()
-        .map(|column| column.index() as u32)
-        .ok_or_else(|| {
-            PlanError::Unsupported(format!(
-                "{site} {expr} is an expression rather than a column"
-            ))
-        })
-}
-
-/// Which side each column of a join filter's own table came from.
-pub(crate) fn filter_column_map(filter: &JoinFilter) -> Vec<JoinFilterColumn> {
-    filter
-        .column_indices()
-        .iter()
-        .map(|column| JoinFilterColumn {
-            side: match column.side {
-                datafusion::common::JoinSide::Left => JoinSide::Build,
-                _ => JoinSide::Probe,
-            },
+/// Which side each column of a join filter's own table came from. Exhaustive: DataFusion
+/// has a third side for a mark join's synthesized column, and a filter reading it would
+/// otherwise be silently rebased onto the probe.
+pub(crate) fn filter_column_map(filter: &JoinFilter) -> Result<Vec<JoinFilterColumn>, PlanError> {
+    let mut columns = Vec::with_capacity(filter.column_indices().len());
+    for column in filter.column_indices() {
+        let side = match column.side {
+            datafusion::common::JoinSide::Left => JoinSide::Build,
+            datafusion::common::JoinSide::Right => JoinSide::Probe,
+            datafusion::common::JoinSide::None => {
+                return Err(PlanError::Unsupported(
+                    "a join filter reading the mark column: it belongs to neither side, so \
+                     this mode has no ordinal to rebase it onto"
+                        .to_string(),
+                ));
+            }
+        };
+        columns.push(JoinFilterColumn {
+            side,
             index: column.index as u32,
-        })
-        .collect()
+        });
+    }
+    Ok(columns)
 }
 
 /// A limit's interval, whichever node carries it. `LocalLimitExec` has no skip.

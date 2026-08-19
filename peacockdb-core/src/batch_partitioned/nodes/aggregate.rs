@@ -8,7 +8,7 @@ use std::any::Any;
 use super::super::aggregates::AggCall;
 use super::super::error::PlanError;
 use super::super::expr::{Expr, NamedExpr};
-use super::super::layout::{BatchLayout, KeyDistribution, NodeKind, SortOrder};
+use super::super::layout::{BatchLayout, KeyDistribution, NodeKind, PartitionLayout, SortOrder};
 use super::super::node::GpuNode;
 use super::super::schema::Schema;
 use super::{check_column_refs, input_layout, input_schema};
@@ -69,10 +69,11 @@ impl GpuAggregate {
         schema: Schema,
     ) -> Self {
         let mut layout = input_layout(input.as_ref());
-        // Grouping re-keys the rows: no input order survives, and a hash the input
-        // carried is about columns this node does not re-emit unchanged.
+        // Grouping re-keys the rows, so no input order survives — but a hash on columns the
+        // group list re-emits does: those rows are still where the hash put them, at the
+        // ordinals the keys now occupy.
         layout.sort_order = SortOrder::NotSpecified;
-        layout.key_distribution = KeyDistribution::NotSpecified;
+        layout.key_distribution = regrouped_key_distribution(&layout, &body.group_by);
         Self {
             kind: NodeKind::Intermediate { layout, schema },
             body,
@@ -121,7 +122,7 @@ impl GpuAggregateBatches {
     ) -> Self {
         let mut layout = input_layout(input.as_ref());
         layout.sort_order = SortOrder::NotSpecified;
-        layout.key_distribution = KeyDistribution::NotSpecified;
+        layout.key_distribution = regrouped_key_distribution(&layout, &body.group_by);
         // It emits everything it merged, once, at done.
         layout.batch_layout = BatchLayout::SingleBatch;
         Self {
@@ -177,5 +178,27 @@ impl GpuNode for GpuAggregateBatches {
 
     fn as_any(&self) -> &dyn Any {
         self
+    }
+}
+
+/// The input's hash as the group list re-numbers it. A hashed column that is not grouped on
+/// takes the claim with it: rows of one group would then be spread across lanes, which is
+/// exactly what the co-location rule above exists to refuse.
+fn regrouped_key_distribution(layout: &PartitionLayout, group_by: &[Expr]) -> KeyDistribution {
+    let KeyDistribution::ByHash { hash_keys } = &layout.key_distribution else {
+        return KeyDistribution::NotSpecified;
+    };
+    let regrouped: Option<Vec<u32>> = hash_keys
+        .iter()
+        .map(|key| {
+            group_by
+                .iter()
+                .position(|expr| matches!(expr, Expr::Column(reference) if reference.index == *key))
+                .map(|position| position as u32)
+        })
+        .collect();
+    match regrouped {
+        Some(hash_keys) => KeyDistribution::ByHash { hash_keys },
+        None => KeyDistribution::NotSpecified,
     }
 }

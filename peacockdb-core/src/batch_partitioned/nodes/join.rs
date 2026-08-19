@@ -150,8 +150,58 @@ impl GpuNode for GpuNestedLoopJoin {
     }
 }
 
-/// One lane, many batches, no order and no key: a join emits rows in the order its probe
-/// batches arrive, and nothing about the inputs' layout survives it.
+/// The join keys as the output numbers them, where it still carries them. Read by name and
+/// only where the name is unambiguous, because which side's columns an output holds depends
+/// on the join type and on a projection this node may carry — and a wrong ordinal here is a
+/// co-location claim, which is the one claim nothing downstream re-checks.
+fn joined_key_distribution(
+    schema: &Schema,
+    build: &Schema,
+    probe: &Schema,
+    keys: &[(u32, u32)],
+) -> KeyDistribution {
+    let position_of = |name: &str| -> Option<u32> {
+        let mut found = schema
+            .fields
+            .fields()
+            .iter()
+            .enumerate()
+            .filter(|(_, field)| field.name() == name);
+        match (found.next(), found.next()) {
+            (Some((index, _)), None) => Some(index as u32),
+            _ => None,
+        }
+    };
+    let named = |side: &Schema, ordinal: u32| -> Option<String> {
+        side.fields
+            .fields()
+            .get(ordinal as usize)
+            .map(|field| field.name().clone())
+    };
+    for side in [
+        keys.iter()
+            .map(|(b, _)| named(build, *b))
+            .collect::<Option<Vec<_>>>(),
+        keys.iter()
+            .map(|(_, p)| named(probe, *p))
+            .collect::<Option<Vec<_>>>(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if let Some(hash_keys) = side
+            .iter()
+            .map(|name| position_of(name))
+            .collect::<Option<Vec<_>>>()
+        {
+            return KeyDistribution::ByHash { hash_keys };
+        }
+    }
+    KeyDistribution::NotSpecified
+}
+
+/// One lane, many batches, no order and no key: cross and nested-loop joins have no key to
+/// co-locate on, so nothing about the inputs' layout survives them.
 fn joined_layout() -> PartitionLayout {
     PartitionLayout {
         n: 1,
@@ -350,9 +400,16 @@ impl GpuJoin {
         schema: Schema,
     ) -> Self {
         let mut layout = input_layout(probe.as_ref());
-        // Co-partitioned, so the lane count survives; nothing else about either input
-        // does — the output is the join's own rows in the order its probe batches arrive.
-        layout.key_distribution = KeyDistribution::NotSpecified;
+        // The lane count survives, and so does the hash wherever the output still carries
+        // the columns it co-located on: a join does not move a row between lanes. Dropping
+        // that is what makes a correct plan fail the co-location guard above an aggregate.
+        layout.key_distribution = joined_key_distribution(
+            &schema,
+            &input_schema(build.as_ref()),
+            &input_schema(probe.as_ref()),
+            &keys,
+        );
+        // The output is the join's own rows in the order its probe batches arrive.
         layout.sort_order = SortOrder::NotSpecified;
         layout.batch_layout = BatchLayout::MultipleBatches;
         Self {

@@ -245,14 +245,15 @@ mod tests {
         }
     }
 
+    /// The mapping for a known input, pinned. A pure function called twice cannot show
+    /// determinism, so what this asserts is the mapping itself: a policy change moves it.
     #[test]
-    fn the_mapping_is_a_fixed_function_of_its_inputs() {
+    fn the_mapping_for_a_known_input_is_pinned() {
         let survivors = pruned(&[(90, 900), (10, 100), (50, 500), (50, 500), (30, 300)]);
         let batching = Batching::Sized {
             target_batch_bytes: 600,
         };
         let expected = vec![vec![vec![1], vec![2]], vec![vec![4], vec![5], vec![6]]];
-        assert_eq!(partition(&survivors, 2, batching).unwrap(), expected);
         assert_eq!(partition(&survivors, 2, batching).unwrap(), expected);
     }
 }

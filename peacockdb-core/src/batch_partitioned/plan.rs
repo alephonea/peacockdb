@@ -52,6 +52,7 @@ pub fn plan_batch_partitioned(
     let first = translator(Vec::new()).translate(root)?;
     if knobs.sizing != BatchSizing::Budgeted {
         let model = estimate(first.as_ref(), knobs.budget)?;
+        validate(first.as_ref())?;
         return Ok((first, model));
     }
 
@@ -65,7 +66,18 @@ pub fn plan_batch_partitioned(
         .collect();
     let tree = translator(targets).translate(root)?;
     let model = estimate(tree.as_ref(), knobs.budget)?;
+    validate(tree.as_ref())?;
     Ok((tree, model))
+}
+
+/// Every node against what it requires of its children, post-order so a child's complaint
+/// comes before its parent's. Nothing else calls this: a guard that only ever sees inputs
+/// written by hand cannot fail on a plan, and a plan is what it exists to judge.
+fn validate(root: &dyn GpuNode) -> Result<(), PlanError> {
+    for child in root.children() {
+        validate(child)?;
+    }
+    root.validate_schemas_and_partitions()
 }
 
 /// What the first pass assumes. Two of the three forms are the plan already; only the
