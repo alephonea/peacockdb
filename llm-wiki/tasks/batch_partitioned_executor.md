@@ -195,13 +195,23 @@ fn partition(
 ```
 
 Policy: survivors (after pruning, same source as legacy) split into `n_partitions`
-contiguous chunks balanced by row count; within a chunk, consecutive row groups are packed
+contiguous chunks balanced by row count — a chunk ends where taking the next group would
+land further from its share than stopping does, rather than where the share is first
+reached, which overshoots by a whole group; within a chunk, consecutive row groups are packed
 greedily into batches while bytes stay under target; a single row group over target still
 becomes its own batch — minimum granularity is one row group, and the planner always
 produces a plan (the enforcer owns the runtime consequence; recourse for oversized batches
 is [#142](../tickets.md#t142)). Batching off means one batch per chunk. Contiguity is a
 policy choice, not a cuDF requirement — changing it later is a golden-regenerating change
 and is treated as one.
+
+**The balance bound holds for uniform row groups, and contiguity is why it is not
+universal.** Max−min partition rows ≤ one row group is true of what a parquet writer emits —
+one group size per file, a short last group — and it is tight there rather than loose,
+checked over 200k generated shapes. Row groups differing by orders of magnitude within one
+file beat it, because a contiguous chunk cannot step over a large group to balance around
+it. Contiguity is the stronger rule and stays; the bound is the property it buys on real
+files, so it is asserted with that qualifier rather than unconditionally.
 
 `bytes` is the parquet column-chunk total over the columns the scan projects, not rows ×
 a width derived from types. A varchar's width is a property of the data and the file
@@ -1827,7 +1837,8 @@ regenerated, which is the proof the rename asked for.
 **T2 — ParquetBatchPartitioner.** The pure policy class and its unit tests: fewer
 survivors than N; N=3; single row group over target; batching off ⇒ one batch per chunk;
 empty survivors (explicit error — the fbs "empty map means legacy single partition"
-convention must not leak in); balance bound (max−min partition rows ≤ one row group);
+convention must not leak in); the balance bound on uniform row groups (max−min partition
+rows ≤ one row group);
 fixed-output determinism case. No planner integration yet.
 
 **T3 — node and trait skeleton.** `GpuNode`, `PartitionLayout` (with the two-valued

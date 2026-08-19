@@ -15,6 +15,7 @@ pub mod executor;
 pub mod forwarder;
 pub mod layout;
 pub mod node;
+pub mod partitioner;
 pub mod schema;
 
 #[cfg(not(feature = "rust-only"))]
@@ -27,6 +28,7 @@ pub use error::PlanError;
 pub use executor::{CallStats, Executor};
 pub use layout::{BatchLayout, KeyDistribution, NodeKind, PartitionLayout, SortOrder};
 pub use node::{GpuNode, RowInterval};
+pub use partitioner::{Batching, RowGroupMeta};
 pub use schema::Schema;
 
 #[cfg(not(feature = "rust-only"))]

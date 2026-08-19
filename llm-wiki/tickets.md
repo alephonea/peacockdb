@@ -17,7 +17,7 @@ reference still resolves there.
 | [Critical correctness](#critical-correctness) | 15 | #153 #103 #80 #59 #46 #47 #60 #121 #122 #123 #118 #119 #120 #117 #41 |
 | [Blockers for disabled coverage](#blockers-for-disabled-coverage) | 15 | #97 #23 #32 #65 #62 #91 #95 #57 #45 #63 #56 #55 #115 #96 #143 |
 | [Performance / architecture](#performance--architecture) | 26 | #155 #154 #152 #151 #150 #149 #148 #147 #146 #145 #19 #16 #20 #71 #101 #73 #110 #75 #136 #137 #138 #139 #140 #141 #144 #142 |
-| [Infrastructure / process](#infrastructure--process) | 19 | #113 #114 #116 #126 #135 #134 #133 #132 #131 #130 #129 #128 #127 #124 #125 #13 #94 #69 #49 |
+| [Infrastructure / process](#infrastructure--process) | 20 | #156 #113 #114 #116 #126 #135 #134 #133 #132 #131 #130 #129 #128 #127 #124 #125 #13 #94 #69 #49 |
 
 ## Critical correctness
 
@@ -616,6 +616,23 @@ execution: a split operator (needs a C++ slice-to-handles entry point), or adapt
 replanning on trip (re-plan with more partitions or smaller batches). Related: #91.
 
 ## Infrastructure / process
+
+<a id="t156"></a>
+### #156 — the prototype's row-group chunking overshoots a lane's share by a whole group
+`source.py::partition_row_groups` takes groups until the running count reaches a lane's
+share, so a lane can end a whole group past it — three 122,880-row groups over two lanes
+gives 245,760 and 7,431.
+
+That breaks the balance bound the batch-partitioned spec states, max−min ≤ one row group,
+and it is the ordinary shape of a small file rather than a corner case. The Rust
+`ParquetBatchPartitioner` (T2) instead ends a chunk where taking the next group would land
+further from the share than stopping does, which holds the bound tightly on uniform groups.
+So the two models now disagree on chunk boundaries wherever a share falls mid-group, and the
+prototype's `tpch.plans.txt` / `tpcds.plans.txt` disagree with the Rust goldens there. Not
+urgent — the two golden sets are not compared mechanically, and the prototype's are rows
+where the Rust ones are bytes — but the prototype is the model the spec was written from, so
+leaving it wrong is how the spec drifts back. Fix is the same one line of policy;
+regenerating its plan goldens is the cost.
 
 <a id="t113"></a>
 ### #113 — Provision GPU-host testdata by sweeping git-tracked files
