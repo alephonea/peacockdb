@@ -230,6 +230,11 @@ jobs:
       # byte-identical to the build step — especially RUSTFLAGS.
       - name: Run Rust tests
         run: |
+          # Batch-partitioned first: it is the mode under development, so its failures are
+          # the ones worth seeing soonest, and it plans rather than executes so it finishes
+          # in seconds where the legacy tiers take minutes. It plans real sf1 tables,
+          # reading row-group metadata off the parquet, so it needs this tier's dataset.
+          cargo test -p peacockdb-core --test test_batch_partitioned_plans
           cargo test -p peacockdb-core --test test_plan_serialiser
           cargo test -p peacockdb-core --test test_query_plan
           cargo test -p peacockdb-core --test test_cpu_full_table
@@ -241,9 +246,6 @@ jobs:
           cargo test -p peacockdb-core --test test_node_executor
           cargo test -p peacockdb-core --test test_query_plan_misc
           cargo test -p peacockdb-core --test test_cpu_partitioned
-          # Batch-partitioned plan goldens: it plans real sf1 tables, reading row-group
-          # metadata off the parquet, so it needs the dataset this tier generates.
-          cargo test -p peacockdb-core --test test_batch_partitioned_plans
           cargo test -p peacockdb-ffi --test test_ffi
           # The FlatBuffer wire-format guard lives HERE, not in the golden-only
           # cost-report tier where it was first wired. It NEEDS the sf1 parquet,
@@ -643,16 +645,11 @@ jobs:
           done
           exit "$status"
 
-      - name: cost-report unit tests (Rust)
-        run: cargo test -p cost-report
-
-      # Verify every committed .cost.txt exactly matches regeneration from its
-      # sibling .cpu.txt plan golden (full-file, not just the total), and the
-      # cost-model unit test. Pure text over committed goldens — no executor, no
-      # dataset, no GPU — so it stays in this cheap golden-only tier.
-      - name: Cost goldens match plan-golden regeneration (Rust)
-        run: cargo test --features rust-only -p peacockdb-core --test test_cost_model
-
+      # The three planner targets run first in this tier for the same reason the
+      # batch-partitioned goldens run first in cpp-cpu: it is the mode under development,
+      # and each of these writes its own parquet, so they finish in well under a second
+      # and a break shows before the report machinery starts.
+      #
       # The join capability matrix at plan time: every hash join type crossed with a
       # residual filter, the co-partitioning and lane rules, and the null analysis both
       # ways. It writes its own parquet — nulls included, which tpch.minimal has none of —
@@ -665,6 +662,22 @@ jobs:
       # naming its ticket fails. Same self-written parquet as the step above.
       - name: Planner join refusals (Rust)
         run: cargo test --features rust-only -p peacockdb-core --test test_planner_join_refusals
+
+      # Every rule in the null analysis, on hand-built nodes: a source can declare a
+      # NOT-nullable column here, which no corpus fixture can — every column in both
+      # benchmarks is declared nullable, primary keys included.
+      - name: Null analysis rules (Rust)
+        run: cargo test --features rust-only -p peacockdb-core --test test_null_analysis
+
+      - name: cost-report unit tests (Rust)
+        run: cargo test -p cost-report
+
+      # Verify every committed .cost.txt exactly matches regeneration from its
+      # sibling .cpu.txt plan golden (full-file, not just the total), and the
+      # cost-model unit test. Pure text over committed goldens — no executor, no
+      # dataset, no GPU — so it stays in this cheap golden-only tier.
+      - name: Cost goldens match plan-golden regeneration (Rust)
+        run: cargo test --features rust-only -p peacockdb-core --test test_cost_model
 
       # Every peacockdb-core integration test target must be NAMED by some workflow
       # step above. CI does not sweep them as a set, so a new tests/test_*.rs is
