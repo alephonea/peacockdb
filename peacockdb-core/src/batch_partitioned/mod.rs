@@ -26,6 +26,7 @@ pub mod plan;
 pub mod plan_text;
 pub mod schema;
 pub mod translate;
+mod validate;
 
 #[cfg(not(feature = "rust-only"))]
 pub mod gpu_batch;

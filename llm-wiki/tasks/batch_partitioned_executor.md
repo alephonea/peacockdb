@@ -161,7 +161,7 @@ reference is an ordinal into a child whose column order this mode decides.
 
 Two consequences worth stating before the work starts. Ordinals are rebased at every node
 the layer inserts, so a per-branch cast project or an inserted merge shifts every reference
-above it — this is where [#135](../tickets.md#t135)'s ordinal class becomes a plan-time
+above it — this is where [#135](../archive/archived-tickets.md#t135)'s ordinal class becomes a plan-time
 concern rather than a runtime one. And an aggregate's argument expression is evaluated
 against a different table in each phase, which is the whole of #55/#56/#63: the init sees
 input columns, the merge sees state columns, and an expression written for one is not valid
@@ -461,7 +461,7 @@ finalize can reach a group key or the rollup `__grouping_id` when it needs one. 
 carried in `ColumnRef` beside the index, as it already is throughout the IR, and it is
 checked against the intermediate schema at that position rather than merely displayed: a
 mismatch throws, which is what makes the redundancy worth its bytes
-([#135](../tickets.md#t135) is the general case). The state schema is declared with types,
+([#135](../archive/archived-tickets.md#t135) is the general case). The state schema is declared with types,
 so nothing downstream infers a width.
 
 Shortcuts: a 1-partition single-batch input needs one `GpuAggregate` carrying both `aggs`
@@ -1617,6 +1617,13 @@ And once the interval is satisfied, `is_satisfied` holds the whole plan and pull
 No `GpuMergePartitions` is inserted for this path, and the count is **across lanes** —
 see the determinism note below for what that does and does not decide.
 
+**Intervals nest.** Two on one root-to-leaf path are legal, and each counts the stream it is
+handed rather than the one below it — which is what nesting means, not a defect. DuckDB plans a
+nested pair as two stacked limits, and DataFusion composes rather than refuses: `combine_limit`
+merges them where the child is the immediate input and both bounds are literals, so only the
+non-adjacent form — a limited subquery under a join, a limit at the root — reaches this layer
+as two intervals. Nothing here rejects it.
+
 **Mid-plan** — the limit's output feeds further GPU work — it is a real `GpuLimit` node
 over a **one-partition** input. `GpuMergePartitions` goes beneath it, because an interval
 over N lanes names no rows, and the node checks that itself in
@@ -1802,7 +1809,7 @@ per node — `name:type` per column — is a plan fact, so it belongs beside the
 `<mode>.plans.txt` and is not repeated per query in `.cpu.txt`, which stays a record of what
 execution produced. Printing it there is what makes the explicit casts legible (a
 `Decimal128(38, 6)` in a `final` expression means nothing without the state column's
-declared scale beside it) and it closes the second half of [#135](../tickets.md#t135): a
+declared scale beside it) and it closes the second half of [#135](../archive/archived-tickets.md#t135): a
 node emitting the right column count in the wrong order is today invisible until the root,
 because per-node bytes are derived from the plan's schema on both engines and so agree by
 construction.
@@ -1964,17 +1971,18 @@ partitioner, integration as `plan_batch_partitioned()`. Canonize all four
 `<mode>.plans.txt`, memory sections included, for TPC-H and TPC-DS (minus #23's four and
 window queries, which appear as refusals).
 
-**T7 — schema registry.** The `Schema` carried in `NodeKind` populated on all nodes, with
-column semantics annotations. Unit tests: hand-crafted plans produce expected types and
-annotations; decimal precision/scale fidelity through project/aggregate/union-cast paths.
+~~**T7 — schema registry.**~~ (done). The `Schema` carried in `NodeKind` populated on all
+nodes, with column semantics annotations. Unit tests: hand-crafted plans produce expected
+types and annotations; decimal precision/scale fidelity through project/aggregate/union-cast
+paths.
 
-Half landed with T3-T6: the type exists, every node carries a populated `Schema` with its
-annotations, and the plan goldens print the declared type per column. What is outstanding is
-the unit tests — the goldens are the net, not the coverage, and decimal fidelity through the
-three paths is where `avg`'s state columns were once typed backwards invisibly. Deliberately
-deferred rather than missed.
+The type and the annotations landed with T3-T6; the tests are PR #126. They assert on the tree
+rather than on rendered text, since both engines derive their per-node bytes from the same
+declared schema and a wrong type moves no golden byte — `agg_state` at the init, the per-lane
+merge and the finalizing merge, and `avg`'s state columns typed by what they hold rather than
+by position, which is the case the task existed for.
 
-**T8 — validation.** `validate_schemas_and_partitions()` on every node type: partition
+~~**T8 — validation.**~~ (done). `validate_schemas_and_partitions()` on every node type: partition
 topology, key-distribution subset rule, sortedness requirements (merge requires
 `BatchSorted`; a limit after a sort requires its input to be `is_stream_sorted()`, checked
 on whichever node carries the interval — the `GpuLimit` mid-plan, the `GpuUnload`
@@ -1983,12 +1991,13 @@ expectations (join build, cross/nlj inputs), captured-index checks. Unit tests: 
 constructed wrong combinations error, right ones pass; then run validation over every
 canonized corpus plan from T6.
 
-Node-local validation landed with T4/T5 and is called from `plan_batch_partitioned`, and
-every canonized plan passes it — that half was forced by a review finding, since ten guards
-existed and none ran on the live path. What remains is T8's: the generic structural pass, the
-manually-constructed wrong combinations, and any defect in the checks themselves. Defects
-found in `validate_schemas_and_partitions` are fixed here rather than where they are
-reported, so a review of the planning branch may name them without them moving it.
+Node-local validation landed with T4/T5 and is called from `plan_batch_partitioned`; the
+generic pass is `batch_partitioned/validate.rs`, PR #126. It runs over every canonized plan
+because the planner calls it, so a rejection renders as a `refused:` section and fails both the
+golden compare and the registry cross-check. Three planner defects were found this way and
+fixed there rather than ticketed: `NestedLoopJoinExec`'s dropped projection, `GpuJoin` minting
+a key distribution instead of carrying one, and a non-exhaustive match that dropped the claim a
+mark join earns.
 
 **T9 — additive ABI.** The three approved symbols in `gpu_executor.cpp` + `peacock_gpu.h`,
 signatures as [GPU execution](#gpu-execution-through-the-frozen-ffi) gives them; any

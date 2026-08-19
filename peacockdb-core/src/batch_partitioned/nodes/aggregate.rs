@@ -5,7 +5,7 @@
 
 use std::any::Any;
 
-use super::super::aggregates::AggCall;
+use super::super::aggregates::{AggCall, Merge, decomposition};
 use super::super::error::PlanError;
 use super::super::expr::{Expr, NamedExpr};
 use super::super::layout::{BatchLayout, KeyDistribution, NodeKind, PartitionLayout, SortOrder};
@@ -145,11 +145,10 @@ impl GpuNode for GpuAggregateBatches {
 
     fn validate_schemas_and_partitions(&self) -> Result<(), PlanError> {
         let input = input_layout(self.input.as_ref());
-        self.body.validate(
-            "GpuAggregateBatches",
-            &input_schema(self.input.as_ref()),
-            &self.intermediate,
-        )?;
+        let input_columns = input_schema(self.input.as_ref());
+        self.body
+            .validate("GpuAggregateBatches", &input_columns, &self.intermediate)?;
+        check_merges_the_state_it_was_given(&self.body, &input_columns)?;
         // A finalizing merge answers for whole groups, so every row of a group has to be
         // in this lane: either there is one lane, or the shuffle keyed on a subset of the
         // columns being grouped. Subset, not equality — a grouping-set rollup hashes on
@@ -179,6 +178,91 @@ impl GpuNode for GpuAggregateBatches {
     fn as_any(&self) -> &dyn Any {
         self
     }
+}
+
+/// A merge reads the state annotation rather than re-deriving where the state is: for each
+/// aggregate its input declares, the columns at the declared positions must be merged, and
+/// merged by the aggregators that aggregate's decomposition names — a count merges by sum,
+/// and a Welford triple merges as one call. An annotation nothing checks is a comment.
+///
+/// `ddof` is not checked here because nothing at a merge names it: it separates the sample
+/// forms from the population ones and appears only in the finalize expression, which is
+/// built from the same spec that wrote the annotation. Nor are the state column TYPES,
+/// which no rule anywhere derives from what produces them — [#163](../../../llm-wiki/tickets.md).
+fn check_merges_the_state_it_was_given(
+    body: &AggregateBody,
+    input: &Schema,
+) -> Result<(), PlanError> {
+    let reads = |call: &AggCall| -> Vec<u32> {
+        call.args
+            .iter()
+            .filter_map(|arg| match arg {
+                Expr::Column(reference) => Some(reference.index),
+                _ => None,
+            })
+            .collect()
+    };
+    for state in &input.agg_state {
+        let rule = decomposition(state.func);
+        match rule.merge {
+            Merge::PerColumn(funcs) => {
+                if funcs.len() != state.positions.len() {
+                    return Err(PlanError::Invalid(format!(
+                        "GpuAggregateBatches: {} declares {} state columns and its \
+                         decomposition merges {}",
+                        state.output,
+                        state.positions.len(),
+                        funcs.len()
+                    )));
+                }
+                for (func, position) in funcs.iter().zip(state.positions.iter()) {
+                    let merged = body
+                        .aggs
+                        .iter()
+                        .find(|call| reads(call) == vec![*position])
+                        .ok_or_else(|| {
+                            PlanError::Invalid(format!(
+                                "GpuAggregateBatches: nothing merges @{position}, which its \
+                                 input declares as {} state",
+                                state.output
+                            ))
+                        })?;
+                    if merged.func != *func {
+                        return Err(PlanError::Invalid(format!(
+                            "GpuAggregateBatches: @{position} is {} state and is merged by \
+                             {} rather than {}",
+                            state.output,
+                            merged.func.tag(),
+                            func.tag()
+                        )));
+                    }
+                }
+            }
+            Merge::Combined(func) => {
+                let merged = body
+                    .aggs
+                    .iter()
+                    .find(|call| reads(call) == state.positions)
+                    .ok_or_else(|| {
+                        PlanError::Invalid(format!(
+                            "GpuAggregateBatches: {} merges its {} state columns in one call, \
+                             and no aggregator reads them together",
+                            state.output,
+                            state.positions.len()
+                        ))
+                    })?;
+                if merged.func != func {
+                    return Err(PlanError::Invalid(format!(
+                        "GpuAggregateBatches: {} state is merged by {} rather than {}",
+                        state.output,
+                        merged.func.tag(),
+                        func.tag()
+                    )));
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// The input's hash as the group list re-numbers it. A hashed column that is not grouped on

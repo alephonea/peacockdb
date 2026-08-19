@@ -101,12 +101,35 @@ impl GpuNode for GpuLoadParquet {
         Vec::new()
     }
 
+    /// A lane with no batches is not a defect — four lanes over two row groups leave two
+    /// of them empty, and the mapping says so rather than inventing work.
     fn validate_schemas_and_partitions(&self) -> Result<(), PlanError> {
         if self.partition_groups.is_empty() {
             return Err(PlanError::Invalid(format!(
                 "{}: the partitioner returned no lanes",
                 self.table
             )));
+        }
+        for (lane, batches) in self.partition_groups.iter().enumerate() {
+            for (batch, groups) in batches.iter().enumerate() {
+                if groups.is_empty() {
+                    return Err(PlanError::Invalid(format!(
+                        "{}: lane {lane} batch {batch} reads no row group, so it is a read \
+                         that returns nothing",
+                        self.table
+                    )));
+                }
+                for group in groups {
+                    if !self.survivors.iter().any(|meta| meta.index == *group) {
+                        return Err(PlanError::Invalid(format!(
+                            "{}: lane {lane} reads row group {group}, which pruning left \
+                             out — the mapping and the survivors come from one read of the \
+                             metadata and have to address the same groups",
+                            self.table
+                        )));
+                    }
+                }
+            }
         }
         Ok(())
     }

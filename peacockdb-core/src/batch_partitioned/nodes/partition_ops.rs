@@ -6,7 +6,7 @@ use std::any::Any;
 use super::super::error::PlanError;
 use super::super::layout::{BatchLayout, ColumnOrder, KeyDistribution, NodeKind, SortOrder};
 use super::super::node::GpuNode;
-use super::{input_layout, input_schema};
+use super::{check_merge_keys, input_layout, input_schema};
 
 /// N lanes into 1, forwarding each batch as it is visited, round-robin. It accumulates
 /// nothing and makes no backend call — the driver owns the rotation.
@@ -45,6 +45,9 @@ impl GpuNode for GpuMergePartitions {
         vec![self.input.as_ref()]
     }
 
+    /// Nothing: it forwards each batch it is handed, so every lane count and batch layout
+    /// is one it can take — and what it declares of its own output, the claims it drops,
+    /// is checked by the structural pass.
     fn validate_schemas_and_partitions(&self) -> Result<(), PlanError> {
         Ok(())
     }
@@ -162,17 +165,11 @@ impl GpuNode for GpuMergeSortedPartitions {
     }
 
     fn validate_schemas_and_partitions(&self) -> Result<(), PlanError> {
-        if !input_layout(self.input.as_ref())
-            .sort_order
-            .is_batch_sorted()
-        {
-            return Err(PlanError::Invalid(
-                "GpuMergeSortedPartitions: a merge needs sorted batches — the planner puts a \
-                 GpuSort below it"
-                    .to_string(),
-            ));
-        }
-        Ok(())
+        check_merge_keys(
+            "GpuMergeSortedPartitions",
+            &self.keys,
+            &input_layout(self.input.as_ref()),
+        )
     }
 
     fn as_any(&self) -> &dyn Any {

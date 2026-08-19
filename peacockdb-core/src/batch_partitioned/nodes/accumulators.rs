@@ -4,9 +4,9 @@
 use std::any::Any;
 
 use super::super::error::PlanError;
-use super::super::layout::{BatchLayout, ColumnOrder, NodeKind, SortOrder};
+use super::super::layout::{BatchLayout, ColumnOrder, NodeKind, PartitionLayout, SortOrder};
 use super::super::node::{GpuNode, RowInterval};
-use super::{input_layout, input_schema};
+use super::{check_merge_keys, input_layout, input_schema};
 
 /// Concatenates a lane's batches into one at done.
 #[derive(Debug)]
@@ -38,6 +38,8 @@ impl GpuNode for GpuCoalesceAllBatches {
         vec![self.input.as_ref()]
     }
 
+    /// Nothing: concatenating a lane's batches requires nothing of them — any lane count,
+    /// any batch count, any order — and it carries no parameter of its own to be wrong.
     fn validate_schemas_and_partitions(&self) -> Result<(), PlanError> {
         Ok(())
     }
@@ -85,20 +87,35 @@ impl GpuNode for GpuAccumulateBatchesAndSort {
     }
 
     fn validate_schemas_and_partitions(&self) -> Result<(), PlanError> {
-        let input = input_layout(self.input.as_ref());
-        if !input.sort_order.is_batch_sorted() {
-            return Err(PlanError::Invalid(
-                "GpuAccumulateBatchesAndSort: its input must be batch-sorted — the planner \
-                 puts a GpuSort below it"
-                    .to_string(),
-            ));
-        }
-        Ok(())
+        check_merge_keys(
+            "GpuAccumulateBatchesAndSort",
+            &self.keys,
+            &input_layout(self.input.as_ref()),
+        )
     }
 
     fn as_any(&self) -> &dyn Any {
         self
     }
+}
+
+/// Which rows an interval names depends on the order they arrive in, so a limit under an
+/// order is only the top n where the whole stream carries it. Batches each sorted and not
+/// sorted against each other is the shape that reads as ordered and is not — it names n
+/// rows from wherever the batch boundaries fell.
+///
+/// No plan reaches it today: every `SortExec` lowers to a per-batch sort under an
+/// accumulator, so an ordered stream is the only ordered thing there is. It is a backstop
+/// against a lowering that emits ranges before the accumulator has them all (#138).
+pub(crate) fn check_ordered_prefix(node: &str, input: &PartitionLayout) -> Result<(), PlanError> {
+    if input.sort_order.is_batch_sorted() && !input.is_stream_sorted() {
+        return Err(PlanError::Invalid(format!(
+            "{node}: its input's batches are each sorted and not sorted against each other, \
+             so a prefix of it is not the top rows — the planner puts a \
+             GpuAccumulateBatchesAndSort or a GpuMergeSortedPartitions below it"
+        )));
+    }
+    Ok(())
 }
 
 /// A mid-plan limit: `skip..skip+fetch` over a one-lane stream of any number of batches.
@@ -145,7 +162,7 @@ impl GpuNode for GpuLimit {
                 input.n
             )));
         }
-        Ok(())
+        check_ordered_prefix("GpuLimit", &input)
     }
 
     fn row_interval(&self) -> Option<RowInterval> {
