@@ -94,7 +94,12 @@ async fn render_query(
     let plan = match planned {
         Ok(plan) => plan,
         // A query DataFusion itself declines never reaches this mode's planner.
-        Err(e) => return format!("refused by datafusion: {e}\n"),
+        Err(e) => {
+            return format!(
+                "refused by datafusion: {}\n",
+                relative_to_testdata(&e.to_string())
+            );
+        }
     };
     match plan_batch_partitioned(&plan, knobs) {
         Ok((tree, model)) => format!(
@@ -102,8 +107,23 @@ async fn render_query(
             render_plan(tree.as_ref()),
             render_plan_memory(tree.as_ref(), &model)
         ),
-        Err(e) => format!("refused: {e}\n"),
+        Err(e) => format!("refused: {}\n", relative_to_testdata(&e.to_string())),
     }
+}
+
+/// A refusal renders the error it was given, and DataFusion's own error text can carry a
+/// plan dump — which names every file by absolute path. Canonized as-is, the golden matches
+/// only a checkout at the same path: ours passed here and had never passed in CI, on any
+/// machine. So the testdata root renders as `testdata`, in both the leading-slash form and
+/// the object-store form that drops it. Nothing else in the message changes: what
+/// DataFusion said is the content, and only where it lives on this disk is not.
+fn relative_to_testdata(text: &str) -> String {
+    let root = std::fs::canonicalize(common::testdata_root())
+        .unwrap_or_else(|_| common::testdata_root())
+        .to_string_lossy()
+        .into_owned();
+    text.replace(&root, "testdata")
+        .replace(root.trim_start_matches('/'), "testdata")
 }
 
 fn golden(dataset: &str, sf: &str, mode: &Mode) -> PathBuf {
@@ -123,7 +143,172 @@ fn assert_or_update(path: &Path, actual: &str) {
             path.display()
         )
     });
-    assert_eq!(actual, canonical, "plans differ from {}", path.display());
+    if actual == canonical {
+        return;
+    }
+    let said = section_differences(&canonical, actual);
+    panic!(
+        "{}: {} of {} queries differ\n{}",
+        path.display(),
+        said.len(),
+        ordered_sections(&canonical).len(),
+        said.join("\n")
+    );
+}
+
+/// Every query whose section moved, one short line each. One file holds every query, so a
+/// whole-file `assert_eq!` says only that a two-megabyte golden differs — and a plan line
+/// runs past a thousand characters, which the CI log drops, so even the dump it prints
+/// arrives unreadable. One line per query, each naming the column that moved, is what
+/// survives the log and what a person can scan.
+fn section_differences(canonical: &str, actual: &str) -> Vec<String> {
+    let expected = ordered_sections(canonical);
+    let produced = ordered_sections(actual);
+    let mut said = Vec::new();
+    for (position, (name, body)) in expected.iter().enumerate() {
+        let Some((produced_name, produced_body)) = produced.get(position) else {
+            said.push(format!(
+                "{name}: in the golden, and the run produced no section there"
+            ));
+            continue;
+        };
+        if produced_name != name {
+            said.push(format!(
+                "section {position}: `{name}` in the golden and `{produced_name}` in the run"
+            ));
+            continue;
+        }
+        if produced_body != body {
+            said.push(format!("{name}: {}", line_difference(body, produced_body)));
+        }
+    }
+    for (name, _) in produced.iter().skip(expected.len()) {
+        said.push(format!(
+            "{name}: produced by the run, and the golden has no such section"
+        ));
+    }
+    if said.is_empty() && canonical != actual {
+        said.push("every section matches — a header or a trailing byte moved".to_string());
+    }
+    said
+}
+
+/// The first line of a section that differs, as the column it differs at and a window
+/// either side. A plan line is long enough that printing two of them whole says less than
+/// pointing at the character, and a long line is the one the log drops.
+fn line_difference(expected: &str, actual: &str) -> String {
+    for (number, (want, got)) in expected.lines().zip(actual.lines()).enumerate() {
+        if want == got {
+            continue;
+        }
+        let at = want
+            .char_indices()
+            .zip(got.char_indices())
+            .find(|((_, a), (_, b))| a != b)
+            .map(|((index, _), _)| index)
+            .unwrap_or_else(|| want.len().min(got.len()));
+        let rest = expected
+            .lines()
+            .zip(actual.lines())
+            .skip(number + 1)
+            .filter(|(want, got)| want != got)
+            .count();
+        return format!(
+            "line {}, column {at} — expected `{}` — actual `{}`{}",
+            number + 1,
+            window(want, at),
+            window(got, at),
+            if rest > 0 {
+                format!(" (+{rest} more lines)")
+            } else {
+                String::new()
+            }
+        );
+    }
+    format!(
+        "{} lines in the golden and {} in the run",
+        expected.lines().count(),
+        actual.lines().count()
+    )
+}
+
+/// 40 characters either side of `at`, elided at both ends — narrow enough that a run of
+/// them stays inside what a CI log carries per line.
+fn window(line: &str, at: usize) -> String {
+    let start = at.saturating_sub(40);
+    let end = (at + 40).min(line.len());
+    let start = (start..=at)
+        .find(|i| line.is_char_boundary(*i))
+        .unwrap_or(at);
+    let end = (at..=end)
+        .rev()
+        .find(|i| line.is_char_boundary(*i))
+        .unwrap_or(at);
+    format!(
+        "{}{}{}",
+        if start > 0 { "…" } else { "" },
+        &line[start..end],
+        if end < line.len() { "…" } else { "" }
+    )
+}
+
+/// Sections in file order: `(query, body)` at each `== ` header, names as the file writes
+/// them. `sections_of` below reads the same shape into a map for the registry check, which
+/// wants lookup rather than order.
+fn ordered_sections(text: &str) -> Vec<(String, String)> {
+    let mut sections: Vec<(String, String)> = Vec::new();
+    for line in text.lines() {
+        match line.strip_prefix("== ") {
+            Some(header) => sections.push((header.to_string(), String::new())),
+            None => {
+                if let Some((_, body)) = sections.last_mut() {
+                    body.push_str(line);
+                    body.push('\n');
+                }
+            }
+        }
+    }
+    sections
+}
+
+#[test]
+fn a_section_that_moved_is_named_with_the_column_that_moved() {
+    let golden = "== q1\nGpuUnload\n  GpuSort: lanes=1\n== q2\nGpuUnload\n";
+    let run = "== q1\nGpuUnload\n  GpuSort: lanes=4\n== q2\nGpuUnload\n";
+    let said = section_differences(golden, run);
+    assert_eq!(said.len(), 1, "{said:?}");
+    assert!(said[0].starts_with("q1: line 2, column "), "{said:?}");
+    assert!(
+        said[0].contains("lanes=1") && said[0].contains("lanes=4"),
+        "{said:?}"
+    );
+}
+
+#[test]
+fn a_section_missing_from_one_side_says_which_side() {
+    let both = "== q1\nGpuUnload\n== q2\nGpuUnload\n";
+    let short = "== q1\nGpuUnload\n";
+    assert!(
+        section_differences(both, short)[0].starts_with("q2: in the golden"),
+        "{:?}",
+        section_differences(both, short)
+    );
+    assert!(
+        section_differences(short, both)[0].starts_with("q2: produced by the run"),
+        "{:?}",
+        section_differences(short, both)
+    );
+}
+
+#[test]
+fn sections_out_of_order_are_named_by_position() {
+    let golden = "== q1\nGpuUnload\n== q2\nGpuUnload\n";
+    let run = "== q2\nGpuUnload\n== q1\nGpuUnload\n";
+    let said = section_differences(golden, run);
+    assert!(
+        said[0].starts_with("section 0: `q1` in the golden"),
+        "{said:?}"
+    );
 }
 
 async fn check(dataset: &str, sf: &str, mode: Mode) {
@@ -305,6 +490,50 @@ fn every_mode_has_a_golden_and_every_golden_has_a_mode() {
         found.sort();
         assert_eq!(found, expected, "{dataset}: goldens and modes disagree");
     }
+}
+
+/// No refusal carries a path from the machine that wrote it. This class did not come from
+/// our renderer — it arrived inside a third-party error we embed verbatim, where the
+/// name@ordinal discipline the rest of the file keeps could not see it — so the check is on
+/// the rendered text rather than on any one producer of it.
+#[test]
+fn no_refusal_in_a_golden_carries_a_host_path() {
+    for (dataset, sf) in [("tpch", "1"), ("tpcds", "1")] {
+        for (name, ..) in MODES {
+            let path = golden_dir_for(dataset, sf).join(format!("{name}.plans.txt"));
+            let text = std::fs::read_to_string(&path).expect("a golden");
+            // Every line, not only those opening with `refused`: the error text carries
+            // its own newlines, so the path sits on a continuation line.
+            for line in text.lines() {
+                if let Some(at) = absolute_path_in(line) {
+                    panic!(
+                        "{dataset}/{name}: a refusal carries a host path, so this golden \
+                         matches only a checkout at that path:\n  {}",
+                        &line[at..(at + 90).min(line.len())]
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Where a line first names a file by machine rather than by repository: a `/testdata/`
+/// with something before it, or a token opening with a slash. Division has spaces or a
+/// closing paren before it, so it is not one.
+fn absolute_path_in(line: &str) -> Option<usize> {
+    if let Some(at) = line.find("/testdata/") {
+        return Some(
+            line[..at]
+                .rfind(['[', ' ', '"'])
+                .map_or(0, |start| start + 1),
+        );
+    }
+    let bytes = line.as_bytes();
+    (1..bytes.len().saturating_sub(1)).find(|&at| {
+        bytes[at] == b'/'
+            && matches!(bytes[at - 1], b'[' | b' ' | b'"' | b'(' | b',')
+            && bytes[at + 1].is_ascii_alphabetic()
+    })
 }
 
 /// A refusal names a blocker, and that blocker exists. The reason a query does not plan is
