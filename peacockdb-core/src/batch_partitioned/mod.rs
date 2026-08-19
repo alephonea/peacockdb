@@ -12,11 +12,16 @@ pub mod batch;
 pub mod cpu_batch;
 pub mod error;
 pub mod executor;
+pub mod expr;
+pub mod expr_translate;
 pub mod forwarder;
 pub mod layout;
 pub mod node;
+pub mod nodes;
+pub mod parquet_meta;
 pub mod partitioner;
 pub mod schema;
+pub mod translate;
 
 #[cfg(not(feature = "rust-only"))]
 pub mod gpu_batch;
@@ -26,6 +31,7 @@ pub use batch::Batch;
 pub use cpu_batch::CpuBatch;
 pub use error::PlanError;
 pub use executor::{CallStats, Executor};
+pub use expr::{BinaryOp, ColumnRef, Expr, UnaryOp};
 pub use layout::{BatchLayout, KeyDistribution, NodeKind, PartitionLayout, SortOrder};
 pub use node::{GpuNode, RowInterval};
 pub use partitioner::{Batching, RowGroupMeta};

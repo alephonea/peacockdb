@@ -21,6 +21,23 @@ pub enum NodeKind {
     Sink,
 }
 
+impl NodeKind {
+    /// `None` for a sink, which structurally has neither.
+    pub fn layout(&self) -> Option<&PartitionLayout> {
+        match self {
+            Self::Source { layout, .. } | Self::Intermediate { layout, .. } => Some(layout),
+            Self::Sink => None,
+        }
+    }
+
+    pub fn schema(&self) -> Option<&Schema> {
+        match self {
+            Self::Source { schema, .. } | Self::Intermediate { schema, .. } => Some(schema),
+            Self::Sink => None,
+        }
+    }
+}
+
 /// One sort key: a column ordinal into the declaring node's schema, and its direction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ColumnOrder {

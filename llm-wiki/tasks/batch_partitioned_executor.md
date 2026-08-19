@@ -122,7 +122,9 @@ reimplementing what DataFusion does well:
 The translation layer makes a conscious decision per DataFusion node kind — nothing is
 carried over implicitly. Baseline mapping: hash `RepartitionExec` → `GpuMergePartitions` +
 `GpuEmitPartitions` (the same shape the legacy budget rule lowers shuffles into);
-round-robin `RepartitionExec` → dropped; `CoalesceBatchesExec` → dropped;
+round-robin `RepartitionExec` → dropped; `CoalesceBatchesExec` → its target dropped, but
+its `fetch` lowered as a limit — DataFusion's limit pushdown parks a limit there, so
+dropping the node whole answers the wrong question (`SELECT count(*) FROM (… LIMIT 3)`);
 `SortExec` → [the sort decomposition](#the-sort-decomposition); aggregate pairs → the aggregate sequence
 below; join nodes → `GpuJoin` with side normalization; `UnionExec`/`InterleaveExec` →
 driver-level relabeling plus explicit per-branch cast projects;
@@ -659,6 +661,14 @@ golden prints the declared schema per node beside the expressions. Nine were fou
 reading `cpp/src`; the count is a property of today's operator set, not a budget, and an
 operator added later inherits the rule rather than extending the table.
 
+One of the seven is usually a no-op, and it is worth knowing which. DataFusion's coercion
+equalizes a union's branch types at planning, so a `UnionExec`'s branches already match its
+declared output in the plans this corpus produces — the divergence [#41](../tickets.md#t41)
+was filed for is cuDF's parquet reader narrowing decimals, which stays in C++. The planner
+inserts the per-branch casts anyway, because the rule is the rule and a branch that does
+differ must not reach `concatenate`; what goes red on a mismatch is the union node's own
+guard.
+
 The two rows that stay in C++ are exceptions with a reason, not omissions. The loader's
 decimal width is the source honouring the output schema it already declares, so the plan
 does state it. Hash key normalization feeds the hash alone and never reaches a returned
@@ -784,6 +794,15 @@ side puts a `GpuMergePartitions` under the emitter. A side already co-located on
 keys — a scan partitioned that way, or the output of an earlier join on the same key —
 needs neither node. Cross and nested-loop joins are the exception, and it is the join
 itself asking: with no key to co-locate on, both inputs must be one lane.
+
+**Equal lane counts are not co-partitioning**, which is what the column's `no` hides.
+DataFusion picks `CollectLeft` for two small tables and emits no repartition at all, while
+both loaders still produce N lanes — so lane p of one side holds nothing that must match
+lane p of the other, and joining lane-wise would silently drop matches. The translation
+therefore checks the hash and not the count: unless both sides are scattered on their own
+join keys, in key order, both merge to one lane. That is the broadcast shape
+[#140](../tickets.md#t140) removes. Until then read the column as "no merge beyond the one
+the shuffle already did", not "no merge".
 
 **What crosses the wire, and what cuDF runs.**
 
@@ -1929,7 +1948,10 @@ queue bounds and batch release rather than returned rows. Plus the accounting fo
 pre/post checks, enforcer trip ⇒ clean query failure, and FFI-error ⇒ query-fatal
 semantics.
 
-**T14 — recipe-plan serialization and GPU integration.** The GpuNode → fb-seq mapping
+**T14 — recipe-plan serialization and GPU integration.** Re-check `avg`'s finalize casts
+here against a real GPU result: the denominator goes to `Decimal128(p, 0)` and the numerator
+to the declared type so cuDF's own divide scale lands where DataFusion declared it, and no
+CPU-side test can prove that arithmetic. The GpuNode → fb-seq mapping
 table implemented and unit-tested (expected seq sets and call patterns per node kind);
 driver-side stats folding across calls into `NodeMemoryStats`; first end-to-end queries
 on shad-gpu (scan → filter → aggregate; a join; a sort+limit), GPU vs CPU.

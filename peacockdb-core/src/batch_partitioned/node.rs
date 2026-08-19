@@ -3,6 +3,8 @@
 //! The tree is heterogeneous and planning is not hot, so this is the one place trait
 //! objects are used; everything on the per-batch path is static (see `backend.rs`).
 
+use std::any::Any;
+
 use super::error::PlanError;
 use super::layout::NodeKind;
 
@@ -14,7 +16,7 @@ pub struct RowInterval {
     pub fetch: Option<u64>,
 }
 
-pub trait GpuNode {
+pub trait GpuNode: std::fmt::Debug {
     /// Layout and schema live inside the kind.
     fn kind(&self) -> &NodeKind;
 
@@ -30,4 +32,9 @@ pub trait GpuNode {
     fn row_interval(&self) -> Option<RowInterval> {
         None
     }
+
+    /// The one downcast point. Consumers that need a node's own parameters — the
+    /// renderer, a backend's executor match, the serializer — go through
+    /// [`nodes::as_node_ref`](super::nodes::as_node_ref) rather than downcasting here.
+    fn as_any(&self) -> &dyn Any;
 }

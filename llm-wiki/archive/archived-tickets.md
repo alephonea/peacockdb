@@ -74,6 +74,19 @@ becomes a problem again.
 
 ## Stale
 
+<a id="t156"></a>
+### #156 — the prototype's row-group chunking overshoots a lane's share by a whole group
+`source.py::partition_row_groups` takes groups until the running count reaches a lane's
+share, so a lane can end a whole group past it. The Rust `ParquetBatchPartitioner` ends a
+chunk where taking the next group would land further from the share than stopping does,
+which holds the balance bound; the two therefore disagree on chunk boundaries wherever a
+share falls mid-group.
+
+**Withdrawn 2026-08-19, filed the same day.** Not a defect to fix: the prototype is a model,
+not a specification, and diverging from it where it is wrong is the correct outcome rather
+than a drift to reconcile. The Rust policy is the one that holds the bound and the one that
+ships. Recorded here because the number is named by commit 4c89d91.
+
 <a id="t53"></a>
 ### #53 — Deterministic multi-partition CPU node-by-node execution
 Largely superseded: `partitioned_cpu` produces deterministic tp8-standard `.cpu.txt`

@@ -8,7 +8,7 @@
 
 use std::fmt;
 
-use peacockdb_ffi::raw::{peacock_handle_release, PeacockExecutor};
+use peacockdb_ffi::raw::{PeacockExecutor, peacock_handle_release};
 
 use super::batch::Batch;
 
