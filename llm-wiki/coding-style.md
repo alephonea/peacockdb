@@ -18,7 +18,8 @@
   already reading this function is one nobody reads — move it to `llm-wiki/` and leave
   the line that points there.
 - **Match surrounding idiom** (naming, comment density, error handling). Trust rustfmt;
-  don't hand-format.
+  don't hand-format — and run it over the files you touched, never the crate, which
+  predates the installed rustfmt and reformats 49 of them.
 - **C++ formatting** is defined by `.clang-format` at the repo root. Apply it to the
   lines you changed — `git clang-format` — never to whole files: the tree was never
   machine-formatted, so reformatting one file to fix one function buries a three-line

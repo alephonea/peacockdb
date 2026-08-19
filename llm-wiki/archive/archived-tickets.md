@@ -19,6 +19,25 @@ link.
 
 ## Done
 
+<a id="t135"></a>
+### #135 — Column ordinals are enforced only by cuDF's `at()` and the final result
+Every column reference in the IR is an ordinal into the child's output table, and almost nothing
+checks them. Two concrete gaps.
+
+(a) `TableResult` is a `cudf::table` plus a name vector with no invariant that the two have the
+same length, and the six sites indexing names use `operator[]` — so a short vector is undefined
+behaviour, not an exception. `filter.cpp` ~L42 reads `fv.column(idx)` and
+`input.column_names[idx]` in one iteration and only the first is checked; it happens to run
+first. Assert `num_columns() == column_names.size()` where `TableResult` is built. (b) Nothing
+checks a child produced its columns in the order the plan assumed. Per-node bytes come from the
+plan's schema on both engines by design (`logical_size_from_schema`, single-sourced so they
+cannot drift), so a node emitting the right count in the wrong order yields identical numbers
+everywhere and surfaces only at the root; a per-node type check in the GPU tiers closes it. Also
+there: `expr.cpp` ~L349 returns `type_id::EMPTY` for an out-of-range ColumnRef instead of
+throwing, turning a bad ordinal into a confusing type error further along.
+
+Closed 2026-08-19. The batch-partitioned planner now checks every column reference's name against the field at its position, so the class is caught at plan time for that mode; the C++ items above are carried by [#164](../tickets.md#t164).
+
 <a id="t115"></a>
 ### #115 — q38/q76/q87 set-op & union-count divergences — retriage
 q38 (INTERSECT ×3), q76 (UNION ALL + IS NULL filters + grouped `count(*)`) and q87 (EXCEPT ×2)
