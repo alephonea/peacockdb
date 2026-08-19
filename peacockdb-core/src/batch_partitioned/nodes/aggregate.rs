@@ -73,7 +73,7 @@ impl GpuAggregate {
         // group list re-emits does: those rows are still where the hash put them, at the
         // ordinals the keys now occupy.
         layout.sort_order = SortOrder::NotSpecified;
-        layout.key_distribution = regrouped_key_distribution(&layout, &body.group_by);
+        layout.key_distribution = regrouped_key_distribution(&layout, &body);
         Self {
             kind: NodeKind::Intermediate { layout, schema },
             body,
@@ -122,7 +122,7 @@ impl GpuAggregateBatches {
     ) -> Self {
         let mut layout = input_layout(input.as_ref());
         layout.sort_order = SortOrder::NotSpecified;
-        layout.key_distribution = regrouped_key_distribution(&layout, &body.group_by);
+        layout.key_distribution = regrouped_key_distribution(&layout, &body);
         // It emits everything it merged, once, at done.
         layout.batch_layout = BatchLayout::SingleBatch;
         Self {
@@ -183,22 +183,81 @@ impl GpuNode for GpuAggregateBatches {
 
 /// The input's hash as the group list re-numbers it. A hashed column that is not grouped on
 /// takes the claim with it: rows of one group would then be spread across lanes, which is
-/// exactly what the co-location rule above exists to refuse.
-fn regrouped_key_distribution(layout: &PartitionLayout, group_by: &[Expr]) -> KeyDistribution {
+/// exactly what the co-location rule above exists to refuse. A grouping set drops it the
+/// same way — it substitutes NULL for the keys it excludes, so the rolled-up rows are no
+/// longer where the hash put them even though the column is still in the group list.
+fn regrouped_key_distribution(layout: &PartitionLayout, body: &AggregateBody) -> KeyDistribution {
     let KeyDistribution::ByHash { hash_keys } = &layout.key_distribution else {
         return KeyDistribution::NotSpecified;
     };
     let regrouped: Option<Vec<u32>> = hash_keys
         .iter()
         .map(|key| {
-            group_by
+            body.group_by
                 .iter()
                 .position(|expr| matches!(expr, Expr::Column(reference) if reference.index == *key))
+                .filter(|position| {
+                    !body
+                        .grouping_sets
+                        .iter()
+                        .any(|mask| mask.get(*position).copied().unwrap_or(false))
+                })
                 .map(|position| position as u32)
         })
         .collect();
     match regrouped {
         Some(hash_keys) => KeyDistribution::ByHash { hash_keys },
         None => KeyDistribution::NotSpecified,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn body(group_by: Vec<u32>, grouping_sets: Vec<Vec<bool>>) -> AggregateBody {
+        AggregateBody {
+            group_by: group_by
+                .into_iter()
+                .map(|index| Expr::column(index, "k"))
+                .collect(),
+            grouping_sets,
+            null_exprs: Vec::new(),
+            aggs: Vec::new(),
+            finalize: None,
+        }
+    }
+
+    fn hashed_on(keys: Vec<u32>) -> PartitionLayout {
+        PartitionLayout {
+            n: 4,
+            key_distribution: KeyDistribution::ByHash { hash_keys: keys },
+            sort_order: SortOrder::NotSpecified,
+            batch_layout: BatchLayout::MultipleBatches,
+        }
+    }
+
+    #[test]
+    fn a_hash_on_a_regrouped_key_survives_at_its_new_ordinal() {
+        let claim = regrouped_key_distribution(&hashed_on(vec![3]), &body(vec![7, 3], Vec::new()));
+        assert_eq!(claim, KeyDistribution::ByHash { hash_keys: vec![1] });
+    }
+
+    #[test]
+    fn a_hash_on_a_key_a_grouping_set_drops_does_not_survive() {
+        // The rollup's second set substitutes NULL for key 0, so the rows it produces are
+        // no longer in the lane the hash on that column put them in — and a finalizing
+        // merge that believed the claim would answer per lane for a group spread over all
+        // of them.
+        let sets = vec![vec![false, false], vec![true, false]];
+        let claim = regrouped_key_distribution(&hashed_on(vec![7]), &body(vec![7, 3], sets));
+        assert_eq!(claim, KeyDistribution::NotSpecified);
+    }
+
+    #[test]
+    fn a_grouping_set_that_drops_some_other_key_leaves_the_hash_alone() {
+        let sets = vec![vec![false, false], vec![false, true]];
+        let claim = regrouped_key_distribution(&hashed_on(vec![7]), &body(vec![7, 3], sets));
+        assert_eq!(claim, KeyDistribution::ByHash { hash_keys: vec![0] });
     }
 }

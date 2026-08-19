@@ -121,7 +121,7 @@ impl GpuNode for GpuInterleave {
 /// The order every branch agrees on, or none. Routing does not touch a batch, so an order
 /// that holds within each branch's batches holds within the output's.
 fn agreed_sort_order(branches: &[Box<dyn GpuNode>]) -> SortOrder {
-    let first = input_layout(branches[0].as_ref()).sort_order;
+    let first = input_layout(branches.first().expect("union has branches").as_ref()).sort_order;
     let agreed = branches
         .iter()
         .all(|branch| input_layout(branch.as_ref()).sort_order == first);

@@ -65,7 +65,9 @@ impl Translator {
         let input_schema = partial.input().schema();
         let group = partial.group_expr();
         if partial.filter_expr().iter().any(Option::is_some) {
-            return Err(PlanError::Unsupported("a filtered aggregate (#161)".to_string()));
+            return Err(PlanError::Unsupported(
+                "a filtered aggregate (#161)".to_string(),
+            ));
         }
 
         let mut group_by = Vec::with_capacity(group.expr().len());

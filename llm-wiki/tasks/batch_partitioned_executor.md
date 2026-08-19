@@ -1983,6 +1983,13 @@ expectations (join build, cross/nlj inputs), captured-index checks. Unit tests: 
 constructed wrong combinations error, right ones pass; then run validation over every
 canonized corpus plan from T6.
 
+Node-local validation landed with T4/T5 and is called from `plan_batch_partitioned`, and
+every canonized plan passes it — that half was forced by a review finding, since ten guards
+existed and none ran on the live path. What remains is T8's: the generic structural pass, the
+manually-constructed wrong combinations, and any defect in the checks themselves. Defects
+found in `validate_schemas_and_partitions` are fixed here rather than where they are
+reported, so a review of the planning branch may name them without them moving it.
+
 **T9 — additive ABI.** The three approved symbols in `gpu_executor.cpp` + `peacock_gpu.h`,
 signatures as [GPU execution](#gpu-execution-through-the-frozen-ffi) gives them; any
 *further* surface change goes through a proposal to the human, per the constraint section.

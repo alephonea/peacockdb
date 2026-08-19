@@ -207,7 +207,8 @@ jobs:
           # DataFusion/Arrow graph, so the extra compile is small.
           #
           # --lib rides HERE rather than on the default-feature line: the lib unit
-          # tests (config, gpu_rule, resident) touch no FFI, so under rust-only their
+          # tests touch no FFI — config, gpu_rule, resident, and the batch_partitioned
+          # planner, which is most of them now — so under rust-only their
           # binary does not link libpeacock_gpu — a smaller link in the tier that has
           # already hit tmpfs/SIGBUS at link time. It shares this line's already-built
           # rust-only fingerprint, so it costs no extra dependency compile.
@@ -255,9 +256,10 @@ jobs:
           # shift that only went red locally would reach master green.
           # See tests/test_plan_bytes.rs and goldens/plan_bytes.sha256.
           cargo test --features rust-only -p peacockdb-core --test test_plan_bytes
-          # The inline #[cfg(test)] modules (config, gpu_rule, resident). Every other
-          # cargo invocation in this file passes --test, which selects integration
-          # targets ONLY — so before this line the 9 lib unit tests ran locally and
+          # The inline #[cfg(test)] modules: config, gpu_rule, resident, and the
+          # batch_partitioned planner, which is 101 of the 110. Every other cargo
+          # invocation in this file passes --test, which selects integration targets
+          # ONLY — so before this line the lib unit tests ran locally and
           # never in CI. test_ci_coverage asserts this line exists.
           cargo test --features rust-only -p peacockdb-core --lib
         env:

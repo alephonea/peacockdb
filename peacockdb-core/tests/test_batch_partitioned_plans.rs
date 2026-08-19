@@ -310,12 +310,17 @@ fn every_mode_has_a_golden_and_every_golden_has_a_mode() {
 /// A refusal names a blocker, and that blocker exists. The reason a query does not plan is
 /// the content of these files, and a ticket number that has been renumbered or never
 /// existed reads as an explanation while pointing at nothing.
+///
+/// Both lists: a ticket keeps its number when it closes and moves to the archive, so
+/// reading only the open one would turn this red for a refusal whose blocker was fixed
+/// somewhere else — which is a stale refusal to delete, not a broken reference.
 #[test]
 fn every_refusal_names_a_ticket_that_exists() {
-    let tickets = std::fs::read_to_string(
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../llm-wiki/tickets.md"),
-    )
-    .expect("the ticket list");
+    let wiki = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../llm-wiki");
+    let tickets = ["tickets.md", "archive/archived-tickets.md"]
+        .iter()
+        .map(|name| std::fs::read_to_string(wiki.join(name)).expect("the ticket list"))
+        .collect::<String>();
     for (dataset, sf) in [("tpch", "1"), ("tpcds", "1")] {
         for (name, ..) in MODES {
             let text = std::fs::read_to_string(

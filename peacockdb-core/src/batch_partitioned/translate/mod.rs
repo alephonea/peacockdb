@@ -192,11 +192,10 @@ impl Translator {
         }
         if let Some(interleave) = any.downcast_ref::<InterleaveExec>() {
             let branches = self.branches(interleave.inputs().iter(), &interleave.schema())?;
-            // DataFusion interleaves where its branches share a hash, which is what makes
-            // lane p of one belong beside lane p of the next. This mode decides its own
-            // lane counts — the small-source rule can put one branch on a single lane —
-            // and once the branches no longer agree, interleaving is not available and not
-            // worth anything: what it buys is a distribution they no longer share.
+            // DataFusion interleaves where its branches share a hash, so lane p of one
+            // belongs beside lane p of the next. This mode decides its own lane counts —
+            // the small-source rule can put one branch on a single lane — and branches
+            // that no longer agree have no shared distribution left to interleave on.
             let first = branches[0].kind().layout().expect("a branch is not a sink");
             let agreed = branches.iter().all(|branch| {
                 let layout = branch.kind().layout().expect("a branch is not a sink");
