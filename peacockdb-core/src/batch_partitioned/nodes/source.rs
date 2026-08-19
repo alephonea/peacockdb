@@ -3,6 +3,7 @@
 use super::super::error::PlanError;
 use super::super::layout::{BatchLayout, KeyDistribution, NodeKind, PartitionLayout, SortOrder};
 use super::super::node::GpuNode;
+use super::super::parquet_meta::ScanMetadata;
 use super::super::partitioner::RowGroupMeta;
 use super::super::schema::Schema;
 use std::any::Any;
@@ -22,6 +23,9 @@ pub struct GpuLoadParquet {
     /// the estimator price the batches this mapping actually produces rather than the ones
     /// a budget would have afforded.
     pub survivors: Vec<RowGroupMeta>,
+    /// Per projected column: whether the surviving row groups hold a NULL in it. The leaf
+    /// of the null analysis, and a statistic rather than a declaration.
+    pub can_be_null: Vec<bool>,
     /// A limit pushed into the scan by DataFusion, not one this mode derived.
     pub limit: Option<usize>,
 }
@@ -32,7 +36,7 @@ impl GpuLoadParquet {
         files: Vec<String>,
         projection: Vec<u32>,
         partition_groups: Vec<Vec<Vec<u32>>>,
-        survivors: &[RowGroupMeta],
+        scan: &ScanMetadata,
         limit: Option<usize>,
         schema: Schema,
     ) -> Self {
@@ -50,7 +54,8 @@ impl GpuLoadParquet {
             files,
             projection,
             partition_groups,
-            survivors: survivors.to_vec(),
+            survivors: scan.groups.clone(),
+            can_be_null: scan.can_be_null.clone(),
             limit,
         }
     }

@@ -430,9 +430,9 @@ impl Translator {
 
     fn source(&self, parquet: &ParquetExec) -> Result<Box<dyn GpuNode>, PlanError> {
         let config = parquet.base_config();
-        let survivors = survivor_metadata(parquet)?;
-        let lanes = self.lanes_for(&survivors, config.limit);
-        let partition_groups = partition(&survivors, lanes, self.batching_for_source())?;
+        let scan = survivor_metadata(parquet)?;
+        let lanes = self.lanes_for(&scan.groups, config.limit);
+        let partition_groups = partition(&scan.groups, lanes, self.batching_for_source())?;
 
         let files = config
             .file_groups
@@ -449,7 +449,7 @@ impl Translator {
             files,
             projection,
             partition_groups,
-            &survivors,
+            &scan,
             config.limit,
             Schema::new(parquet.schema()),
         )))

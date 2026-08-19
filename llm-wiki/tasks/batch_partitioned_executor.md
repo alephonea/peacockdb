@@ -69,7 +69,11 @@ tables ([#143](../tickets.md#t143)). The four TPC-DS queries that do not physica
 on DataFusion 45 stay out until [#23](../tickets.md#t23). Unsupported shapes inside
 supported features (mixed distinct + non-distinct #62, value-form CASE #57) fail at plan
 time where the planner can see them, instead of throwing at run time; per-query
-enablement stays in the registry as for legacy modes.
+enablement stays in the registry as for legacy modes. The corpus this mode covers is
+therefore slightly larger than legacy's rather than a subset: tpcds q38, q76 and q87 plan in
+all five modes and were each measured to run correctly on the shared GPU operators, while the
+legacy tiers leave them disabled by choice
+([#115](../archive/archived-tickets.md#t115), closed).
 
 **Frozen-surface preference.** Keeping the C++ code paths, the FlatBuffers schema
 (`flatbuffers/gpu_plan.fbs`) and the existing symbols in `peacock_gpu.h` unchanged is a
@@ -726,7 +730,7 @@ need no new machinery at all:
 
 | Shape | Corpus carriers | What arrives from DataFusion | What the mode emits |
 |---|---|---|---|
-| `SELECT DISTINCT`, and the set ops that lower to dedup | q6, q41, q54, plus q38/q87's INTERSECT/EXCEPT ([#115](../tickets.md#t115)) | an aggregate with group keys and **no** aggregators — `group_by=[c_customer_sk, c_current_addr_sk], aggr=[]` in q54's golden | the ordinary sequence with an empty `aggs` list: dedup per batch, dedup per lane, shuffle on the keys, dedup again. Correct because dedup is idempotent and associative, so no `final` list is needed either |
+| `SELECT DISTINCT`, and the set ops that lower to dedup | q6, q41, q54, plus q38/q87's INTERSECT/EXCEPT ([#115](../archive/archived-tickets.md#t115)) | an aggregate with group keys and **no** aggregators — `group_by=[c_customer_sk, c_current_addr_sk], aggr=[]` in q54's golden | the ordinary sequence with an empty `aggs` list: dedup per batch, dedup per lane, shuffle on the keys, dedup again. Correct because dedup is idempotent and associative, so no `final` list is needed either |
 | one distinct argument, companions limited to `sum`/`min`/`max` | q16, q94, q95 | already two aggregates: DataFusion's `SingleDistinctToGroupBy` fired at the logical level, so no flag survives. q16's golden shows the pair — inner `group_by=[alias1], aggr=[alias2, alias3]`, outer `aggr=[count(alias1), sum(alias2), sum(alias3)]` | two ordinary sequences, each decomposing as any other aggregate. This is why q16/q94/q95 are green today |
 | one distinct argument, any other companion | **q28 only** — `aggr=[avg(ss_list_price), count(ss_list_price), count(DISTINCT ss_list_price)]` | the rule refuses and `distinct: true` reaches the executor, where a guard throws ([#62](../tickets.md#t62)) | v1 refuses at plan time, per [Scope](#scope-and-constraints). The lowering below is the fix, and it needs no new node |
 

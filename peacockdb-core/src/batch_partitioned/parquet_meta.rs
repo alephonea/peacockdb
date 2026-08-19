@@ -14,7 +14,18 @@ use super::error::PlanError;
 use super::partitioner::RowGroupMeta;
 use crate::gpu_rowgroup_prune::surviving_row_groups;
 
-pub fn survivor_metadata(parquet: &ParquetExec) -> Result<Vec<RowGroupMeta>, PlanError> {
+/// What one read of a scan's metadata tells the planner: the row groups it will read, and
+/// whether each projected column has a NULL in any of them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScanMetadata {
+    pub groups: Vec<RowGroupMeta>,
+    /// Per projected column, in projection order. Declared nullability says nothing — every
+    /// column in both benchmarks is declared nullable, primary keys included — so this is
+    /// the statistic instead, and an absent count reads as "yes" rather than "no".
+    pub can_be_null: Vec<bool>,
+}
+
+pub fn survivor_metadata(parquet: &ParquetExec) -> Result<ScanMetadata, PlanError> {
     let config = parquet.base_config();
     // At tp>1 DataFusion splits ONE file into several byte-range entries, all with the same
     // path, so entries are not files. Genuinely several files would each have their own row
@@ -53,6 +64,7 @@ pub fn survivor_metadata(parquet: &ParquetExec) -> Result<Vec<RowGroupMeta>, Pla
     let survivors = surviving_row_groups(parquet);
 
     let mut metadata = Vec::new();
+    let mut can_be_null = vec![false; projected.len()];
     for (index, group) in reader.metadata().row_groups().iter().enumerate() {
         let index = index as u32;
         if survivors
@@ -73,13 +85,20 @@ pub fn survivor_metadata(parquet: &ParquetExec) -> Result<Vec<RowGroupMeta>, Pla
             })?;
             bytes += chunk.uncompressed_size();
         }
+        for (position, column) in projected.iter().enumerate() {
+            let nulls = group.columns()[*column]
+                .statistics()
+                .and_then(|statistics| statistics.null_count_opt());
+            // No statistic is not a promise of no nulls.
+            can_be_null[position] |= nulls.is_none_or(|count| count > 0);
+        }
         metadata.push(RowGroupMeta {
             index,
             rows: group.num_rows() as u64,
             bytes: bytes as u64,
         });
     }
-    Ok(metadata)
+    Ok(ScanMetadata { groups: metadata, can_be_null })
 }
 
 #[cfg(test)]
@@ -120,10 +139,14 @@ mod tests {
             .find_map(|child| find_scan(&child.clone()))
     }
 
-    async fn survivors(sql: &str) -> Vec<RowGroupMeta> {
+    async fn read(sql: &str) -> ScanMetadata {
         let scan = scan_of(sql).await;
         survivor_metadata(scan.as_any().downcast_ref::<ParquetExec>().unwrap())
             .expect("read the metadata")
+    }
+
+    async fn survivors(sql: &str) -> Vec<RowGroupMeta> {
+        read(sql).await.groups
     }
 
     /// The file's own numbers, read independently of the code under test.
@@ -195,6 +218,22 @@ mod tests {
         let file = std::fs::File::open(minimal().join("customer.parquet")).unwrap();
         let reader = SerializedFileReader::new(file).unwrap();
         reader.metadata().row_group(0).column(0).uncompressed_size() as u64
+    }
+
+    #[tokio::test]
+    async fn a_column_can_be_null_only_where_a_surviving_row_group_holds_one() {
+        // tpch.minimal has no NULLs anywhere, so every column reads as not-nullable here
+        // however it is declared — which is the point: the declaration says nothing.
+        let scan = read("SELECT n_name, n_regionkey FROM nation").await;
+        assert_eq!(scan.can_be_null, vec![false, false]);
+        assert!(
+            scan_of("SELECT n_name FROM nation")
+                .await
+                .schema()
+                .field(0)
+                .is_nullable(),
+            "the column is declared nullable, which is exactly what cannot be trusted"
+        );
     }
 
     #[tokio::test]

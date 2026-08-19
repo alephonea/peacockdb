@@ -19,6 +19,7 @@ pub mod forwarder;
 pub mod layout;
 pub mod node;
 pub mod nodes;
+pub mod nulls;
 pub mod parquet_meta;
 pub mod partitioner;
 pub mod plan;

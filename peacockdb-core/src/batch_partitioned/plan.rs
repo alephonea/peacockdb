@@ -14,6 +14,7 @@ use datafusion::physical_plan::ExecutionPlan;
 use super::error::PlanError;
 use super::estimator::{MemoryModel, estimate};
 use super::node::GpuNode;
+use super::nulls::refuse_null_unsafe_joins;
 use super::partitioner::Batching;
 use super::translate::Translator;
 
@@ -53,6 +54,7 @@ pub fn plan_batch_partitioned(
     if knobs.sizing != BatchSizing::Budgeted {
         let model = estimate(first.as_ref(), knobs.budget)?;
         validate(first.as_ref())?;
+        refuse_null_unsafe_joins(first.as_ref())?;
         return Ok((first, model));
     }
 
@@ -67,6 +69,7 @@ pub fn plan_batch_partitioned(
     let tree = translator(targets).translate(root)?;
     let model = estimate(tree.as_ref(), knobs.budget)?;
     validate(tree.as_ref())?;
+    refuse_null_unsafe_joins(tree.as_ref())?;
     Ok((tree, model))
 }
 
