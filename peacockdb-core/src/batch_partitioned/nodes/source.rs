@@ -3,6 +3,7 @@
 use super::super::error::PlanError;
 use super::super::layout::{BatchLayout, KeyDistribution, NodeKind, PartitionLayout, SortOrder};
 use super::super::node::GpuNode;
+use super::super::partitioner::RowGroupMeta;
 use super::super::schema::Schema;
 use std::any::Any;
 
@@ -16,6 +17,10 @@ pub struct GpuLoadParquet {
     pub files: Vec<String>,
     pub projection: Vec<u32>,
     pub partition_groups: Vec<Vec<Vec<u32>>>,
+    /// Surviving rows and their parquet bytes over the projected columns — what the
+    /// estimator divides a budget among, and the only real numbers in a plan-time model.
+    pub rows: u64,
+    pub bytes: u64,
     /// A limit pushed into the scan by DataFusion, not one this mode derived.
     pub limit: Option<usize>,
 }
@@ -26,6 +31,7 @@ impl GpuLoadParquet {
         files: Vec<String>,
         projection: Vec<u32>,
         partition_groups: Vec<Vec<Vec<u32>>>,
+        survivors: &[RowGroupMeta],
         limit: Option<usize>,
         schema: Schema,
     ) -> Self {
@@ -43,6 +49,8 @@ impl GpuLoadParquet {
             files,
             projection,
             partition_groups,
+            rows: survivors.iter().map(|group| group.rows).sum(),
+            bytes: survivors.iter().map(|group| group.bytes).sum(),
             limit,
         }
     }

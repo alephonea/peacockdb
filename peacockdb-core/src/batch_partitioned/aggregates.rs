@@ -79,6 +79,22 @@ pub fn resolve(name: &str) -> Result<AggSpec, PlanError> {
     Ok(AggSpec { func, ddof })
 }
 
+impl PlanAgg {
+    /// The name the aggregator goes by, in a plan line and in DataFusion's own state
+    /// field names (`avg(x)[count]`), which is how our state columns find their types.
+    pub fn tag(self) -> &'static str {
+        match self {
+            Self::Sum => "sum",
+            Self::Min => "min",
+            Self::Max => "max",
+            Self::Count => "count",
+            Self::Mean => "mean",
+            Self::M2 => "m2",
+            Self::MergeM2 => "merge_m2",
+        }
+    }
+}
+
 pub fn decomposition(func: AggFunc) -> Decomposition {
     const WELFORD: Decomposition = Decomposition {
         state: &[

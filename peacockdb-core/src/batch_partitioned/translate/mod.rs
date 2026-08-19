@@ -93,7 +93,15 @@ impl Translator {
         if let Some(filter) = any.downcast_ref::<FilterExec>() {
             let input = self.node(filter.input())?;
             let predicate = translate_expr(filter.predicate(), &filter.input().schema())?;
-            return Ok(Box::new(GpuFilter::new(input, predicate)));
+            let projection = filter
+                .projection()
+                .map(|columns| columns.iter().map(|c| *c as u32).collect());
+            return Ok(Box::new(GpuFilter::new(
+                input,
+                predicate,
+                projection,
+                Schema::new(filter.schema()),
+            )));
         }
         if let Some(project) = any.downcast_ref::<ProjectionExec>() {
             let input = self.node(project.input())?;
@@ -352,7 +360,14 @@ impl Translator {
     /// The small-table rule: a source under the threshold plans one lane whatever the
     /// target, and the nodes a one-lane region does not need are then never emitted. It
     /// bites only while batching is on, which is what makes the threshold mean anything.
-    fn lanes_for(&self, survivors: &[RowGroupMeta]) -> usize {
+    fn lanes_for(&self, survivors: &[RowGroupMeta], limit: Option<usize>) -> usize {
+        // A limit DataFusion pushed into the scan is the whole answer wherever it erased
+        // the limit node above it — `SELECT * FROM nation LIMIT 3` at tp4 plans as a bare
+        // scan carrying limit=3. Every lane would honour it, so N lanes would return N
+        // times the rows; one lane is what makes the loader's own limit the answer.
+        if limit.is_some() {
+            return 1;
+        }
         let rows: u64 = survivors.iter().map(|group| group.rows).sum();
         match self.batching {
             Batching::On { .. } if rows < self.small_table_rows => 1,
@@ -363,7 +378,8 @@ impl Translator {
     fn source(&self, parquet: &ParquetExec) -> Result<Box<dyn GpuNode>, PlanError> {
         let config = parquet.base_config();
         let survivors = survivor_metadata(parquet)?;
-        let partition_groups = partition(&survivors, self.lanes_for(&survivors), self.batching)?;
+        let lanes = self.lanes_for(&survivors, config.limit);
+        let partition_groups = partition(&survivors, lanes, self.batching)?;
 
         let files = config
             .file_groups
@@ -380,6 +396,7 @@ impl Translator {
             files,
             projection,
             partition_groups,
+            &survivors,
             config.limit,
             Schema::new(parquet.schema()),
         )))
@@ -591,6 +608,10 @@ pub(crate) fn limit_interval(
             },
         ));
     }
+    // Not reachable from today's planner: where a limit is root-adjacent DataFusion leaves
+    // a GlobalLimitExec there and uses a coalesce's fetch only as the bound pushed below
+    // it. The arm is here so both paths agree if that ever changes — one query must not
+    // have two plan shapes depending on where the fetch was parked.
     if let Some(coalesce) = any.downcast_ref::<CoalesceBatchesExec>() {
         return coalesce.fetch().map(|fetch| {
             (

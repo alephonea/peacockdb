@@ -14,29 +14,12 @@ reference still resolves there.
 
 | Section | Open | Tickets |
 |---|--:|---|
-| [Critical correctness](#critical-correctness) | 16 | #157 #153 #103 #80 #59 #46 #47 #60 #121 #122 #123 #118 #119 #120 #117 #41 |
+| [Critical correctness](#critical-correctness) | 15 | #153 #103 #80 #59 #46 #47 #60 #121 #122 #123 #118 #119 #120 #117 #41 |
 | [Blockers for disabled coverage](#blockers-for-disabled-coverage) | 16 | #158 #97 #23 #32 #65 #62 #91 #95 #57 #45 #63 #56 #55 #115 #96 #143 |
 | [Performance / architecture](#performance--architecture) | 26 | #155 #154 #152 #151 #150 #149 #148 #147 #146 #145 #19 #16 #20 #71 #101 #73 #110 #75 #136 #137 #138 #139 #140 #141 #144 #142 |
-| [Infrastructure / process](#infrastructure--process) | 19 | #113 #114 #116 #126 #135 #134 #133 #132 #131 #130 #129 #128 #127 #124 #125 #13 #94 #69 #49 |
+| [Infrastructure / process](#infrastructure--process) | 20 | #157 #113 #114 #116 #126 #135 #134 #133 #132 #131 #130 #129 #128 #127 #124 #125 #13 #94 #69 #49 |
 
 ## Critical correctness
-
-<a id="t157"></a>
-### #157 — the budget rule drops a CoalesceBatchesExec's fetch, and the wire cannot carry one
-**Priority: high**
-
-`gpu_rule.rs` ~L611 rebuilds the node as `CoalesceBatchesExec::new(input, batch_size)`, which
-sets `fetch: None`. Any limit DataFusion pushed onto that node is gone.
-
-DataFusion's limit pushdown does park one there: `SELECT count(*) FROM (SELECT * FROM nation
-WHERE n_regionkey > 1 LIMIT 3)` plans as an aggregate over a `CoalesceBatchesExec{target,
-fetch: 3}`. Losing the fetch counts every row instead of three. The GPU half cannot carry it
-regardless — `CudfCoalesceBatches` has only `target_batch_size` ([fbs](../flatbuffers/gpu_plan.fbs#L469)),
-and the node is `execute_passthrough` — so a fetch surviving the rule would still die at the
-wire. Nor would the plan text show it: the node's display prints estimates and never a
-`fetch`, so no golden can be checked for this and corpus reachability is unknown rather than
-ruled out. Fix: preserve `fetch` through the rebuild, carry it in the fbs, read it, and print
-it. Found building the batch-partitioned layer, whose spec had the same "drop it" mapping.
 
 <a id="t103"></a>
 ### #103 — GPU SIGSEGV: shuffle_stddev tp8-standard (Welford N-way merge)
@@ -171,19 +154,21 @@ concatenate succeeds with the declared type. Cheap, and independent of any corpu
 ## Blockers for disabled coverage
 
 <a id="t158"></a>
-### #158 — an aggregate DataFusion answers from statistics does not plan batch-partitioned
+### #158 — an aggregate DataFusion answers from statistics reaches no executor
 `SELECT count(*) FROM nation` never reaches an `AggregateExec`: DataFusion's
 `AggregateStatistics` rule answers it from parquet metadata and emits `PlaceholderRowExec`
-plus a projection.
+holding the result.
 
-The batch-partitioned translation layer refuses that node by name, which is the right v1
-behaviour — inventing a one-row source is a node-set change, not a mapping. But it is a
-coverage cliff rather than a curiosity: any corpus query of that shape simply has no plan in
-the new mode, and it will present at T16 as a query that cannot be enabled. Two ways out
-when it matters: a `GpuLiteralRows` source node holding the constant rows, or disabling the
-rule for this planner so the aggregate survives to be lowered normally. The second keeps the
-node set closed and costs a scan the first avoids. Audit the corpus for the shape before
-T16 so the count is known rather than discovered.
+No engine here runs it. Legacy fails at serialization ("unsupported plan node"), so the GPU
+path dies before any device work while the CPU path passes it to DataFusion and answers
+correctly; the batch-partitioned mode refuses it at plan time. A standing GPU gap, then,
+not a new-mode regression — and no corpus query reaches it, since all 31 using `count(*)`
+carry a WHERE, GROUP BY or JOIN and the rule cannot fire.
+
+The fix is small and belongs to the new mode: the node is a **source that emits its constant
+rows**, so the executor has only to produce what the plan already holds — one lane, one
+batch. Scheduled into T10. Legacy would need the same node in the fbs to close its half,
+not worth doing for a shape neither benchmark has.
 
 <a id="t97"></a>
 ### #97 — Semi/anti/outer joins at real-8-way
@@ -648,6 +633,23 @@ execution: a split operator (needs a C++ slice-to-handles entry point), or adapt
 replanning on trip (re-plan with more partitions or smaller batches). Related: #91.
 
 ## Infrastructure / process
+
+<a id="t157"></a>
+### #157 — legacy: the budget rule drops a CoalesceBatchesExec's fetch, and the wire cannot carry one
+**Priority: low** — legacy planning only; the batch-partitioned model plans from scratch and
+has no such node.
+
+`gpu_rule.rs` ~L611 rebuilds the node as `CoalesceBatchesExec::new(input, batch_size)`, which
+sets `fetch: None`, so a limit DataFusion pushed onto it is gone.
+
+DataFusion's limit pushdown does park one there and removes the limit node once it has:
+`SELECT count(*) FROM (SELECT * FROM nation WHERE n_regionkey > 1 LIMIT 3)` plans as an
+aggregate over `CoalesceBatchesExec{target, fetch: 3}`. The GPU half could not carry it
+regardless — `CudfCoalesceBatches` has only `target_batch_size` and the node is
+`execute_passthrough`. No golden can show it either: the node's display prints estimates and
+never a `fetch`, so corpus reachability is unknown rather than ruled out, and the corpus
+limits that were checked survive as their own nodes. Fix is three parts — `with_fetch`
+through the rebuild, an fbs field the C++ reads, and the fetch in the node display.
 
 <a id="t113"></a>
 ### #113 — Provision GPU-host testdata by sweeping git-tracked files

@@ -525,6 +525,20 @@ async fn a_small_source_plans_one_lane_and_the_shuffle_around_it_disappears() {
 }
 
 #[tokio::test]
+async fn a_scan_carrying_a_pushed_down_limit_plans_one_lane() {
+    // DataFusion erases the limit node when it can push the bound into the scan, so at tp4
+    // `SELECT * FROM nation LIMIT 3` is a bare scan with limit=3 above nothing. Four lanes
+    // each honouring it would answer with twelve rows.
+    let tree = translated_at_tp4("SELECT * FROM nation LIMIT 3", 0).await;
+    assert_eq!(shape(tree.as_ref()), "Unload(LoadParquet)");
+    let NodeRef::LoadParquet(load) = as_node_ref(descend(tree.as_ref(), 1)) else {
+        panic!("expected a loader");
+    };
+    assert_eq!(load.limit, Some(3));
+    assert_eq!(load.partition_groups.len(), 1);
+}
+
+#[tokio::test]
 async fn the_threshold_is_inert_while_batching_is_off() {
     // With one batch per lane there is nothing for a batch-size threshold to size, so
     // the rule that drops a source to one lane has nothing to act on either.

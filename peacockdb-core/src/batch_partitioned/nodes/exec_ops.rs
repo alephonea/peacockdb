@@ -13,20 +13,33 @@ use super::{check_column_refs, input_layout, input_schema, rebase_through_projec
 pub struct GpuFilter {
     kind: NodeKind,
     pub predicate: Expr,
+    /// DataFusion's filter projects as well as filtering, and the wire format carries the
+    /// same pair. Dropping it would leave this node declaring its child's columns while
+    /// emitting fewer, and every ordinal above it reading the wrong one.
+    pub projection: Option<Vec<u32>>,
     input: Box<dyn GpuNode>,
 }
 
 impl GpuFilter {
-    pub fn new(input: Box<dyn GpuNode>, predicate: Expr) -> Self {
-        // Dropping rows leaves every declared property standing: the lanes, the order
-        // within a batch, and the key each lane holds.
-        let kind = NodeKind::Intermediate {
-            layout: input_layout(input.as_ref()),
-            schema: input_schema(input.as_ref()),
+    pub fn new(
+        input: Box<dyn GpuNode>,
+        predicate: Expr,
+        projection: Option<Vec<u32>>,
+        schema: Schema,
+    ) -> Self {
+        // Dropping rows leaves every declared property standing — the lanes, the order
+        // within a batch, the key each lane holds — but dropping columns rebases them.
+        let layout = match &projection {
+            Some(columns) => {
+                let kept: Vec<Expr> = columns.iter().map(|c| Expr::column(*c, "")).collect();
+                rebase_through_projection(&input_layout(input.as_ref()), &kept)
+            }
+            None => input_layout(input.as_ref()),
         };
         Self {
-            kind,
+            kind: NodeKind::Intermediate { layout, schema },
             predicate,
+            projection,
             input,
         }
     }

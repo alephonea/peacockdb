@@ -198,7 +198,8 @@ jobs:
           # that reason -- they compiled inside the "pure run" step.
           cargo test --no-run -p peacockdb-core --test test_plan_serialiser --test test_query_plan --test test_cpu_full_table \
             --test test_cpu_executor_misc --test test_cpu_oom --test test_node_executor \
-            --test test_query_plan_misc --test test_cpu_partitioned
+            --test test_query_plan_misc --test test_cpu_partitioned \
+            --test test_batch_partitioned_plans
           cargo test --no-run -p peacockdb-ffi --test test_ffi
           # Separate line because of --features rust-only: cargo's fingerprint
           # includes the feature set, so this cannot share the invocation above.
@@ -239,6 +240,9 @@ jobs:
           cargo test -p peacockdb-core --test test_node_executor
           cargo test -p peacockdb-core --test test_query_plan_misc
           cargo test -p peacockdb-core --test test_cpu_partitioned
+          # Batch-partitioned plan goldens: it plans real sf1 tables, reading row-group
+          # metadata off the parquet, so it needs the dataset this tier generates.
+          cargo test -p peacockdb-core --test test_batch_partitioned_plans
           cargo test -p peacockdb-ffi --test test_ffi
           # The FlatBuffer wire-format guard lives HERE, not in the golden-only
           # cost-report tier where it was first wired. It NEEDS the sf1 parquet,

@@ -303,7 +303,12 @@ mod tests {
     #[test]
     fn a_reference_past_its_inputs_columns_is_caught_at_plan_time() {
         let input = Given::input(one_lane(BatchLayout::MultipleBatches), &["a", "b"]);
-        let filter = GpuFilter::new(input, Expr::column(5, "a"));
+        let schema = Schema::new(Arc::new(ArrowSchema::new(vec![Field::new(
+            "a",
+            DataType::Int64,
+            true,
+        )])));
+        let filter = GpuFilter::new(input, Expr::column(5, "a"), None, schema);
         invalid(
             filter.validate_schemas_and_partitions(),
             "past the 2 columns",

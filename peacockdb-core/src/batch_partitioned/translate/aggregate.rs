@@ -13,7 +13,7 @@ use datafusion::physical_plan::coalesce_partitions::CoalescePartitionsExec;
 use datafusion::physical_plan::repartition::RepartitionExec;
 use datafusion::physical_plan::{ExecutionPlan, Partitioning};
 
-use super::super::aggregates::{AggCall, Merge, decomposition, finalize, resolve};
+use super::super::aggregates::{AggCall, Merge, PlanAgg, decomposition, finalize, resolve};
 use super::super::error::PlanError;
 use super::super::expr::{Expr, NamedExpr};
 use super::super::expr_translate::translate_expr;
@@ -225,6 +225,29 @@ fn shuffle_below(plan: &Arc<dyn ExecutionPlan>) -> (Arc<dyn ExecutionPlan>, Shuf
     }
 }
 
+/// The state field DataFusion declared for one of our aggregators. With a single state
+/// column there is nothing to mismatch; beyond that the aggregator's tag is what names it
+/// (`avg(x)[count]`), and a tag with no field is a drift this must not paper over.
+fn declared_state<'a>(
+    declared: &'a [Field],
+    func: PlanAgg,
+    aggregate: &str,
+) -> Result<&'a Field, PlanError> {
+    if declared.len() == 1 {
+        return Ok(&declared[0]);
+    }
+    let tag = format!("[{}]", func.tag());
+    declared
+        .iter()
+        .find(|field| field.name().ends_with(&tag))
+        .ok_or_else(|| {
+            PlanError::Invalid(format!(
+                "{aggregate}: DataFusion declares no {tag} state column, so this mode's \
+                 decomposition of it has drifted"
+            ))
+        })
+}
+
 /// What one aggregate node's aggregates become in each position.
 struct Decomposed {
     init: Vec<AggCall>,
@@ -272,20 +295,19 @@ fn decompose(
         }
 
         // The state names are ours — the golden and every later reference read them —
-        // and the types are DataFusion's, so the split cannot drift from its own.
+        // and the types are DataFusion's. Paired by the aggregator's tag rather than by
+        // position: DataFusion declares avg as [count, sum] and this table reads
+        // [sum, count], so a positional pairing types both of them wrongly.
         let state_at = n_keys + decomposed.state.len();
-        let state: Vec<Field> = rule
-            .state
-            .iter()
-            .zip(declared.iter())
-            .map(|((suffix, _), field)| {
-                Field::new(
-                    format!("{}{suffix}", aggregate.name()),
-                    field.data_type().clone(),
-                    field.is_nullable(),
-                )
-            })
-            .collect();
+        let mut state = Vec::with_capacity(rule.state.len());
+        for (suffix, func) in rule.state {
+            let field = declared_state(&declared, *func, aggregate.name())?;
+            state.push(Field::new(
+                format!("{}{suffix}", aggregate.name()),
+                field.data_type().clone(),
+                field.is_nullable(),
+            ));
+        }
 
         for ((_, func), field) in rule.state.iter().zip(state.iter()) {
             decomposed.init.push(AggCall {
