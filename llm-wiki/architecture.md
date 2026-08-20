@@ -1253,7 +1253,7 @@ a subtree bug pinned nowhere else in the tree.
 That is the honest state: the ordinal contract is enforced by cuDF's `at()` for gross violations
 and by the result comparison for subtle ones, with nothing in between. Adding
 `num_columns() == column_names.size()` to `TableResult`'s construction, and a per-node type
-check in the GPU tiers, are the two obvious closures (#135).
+check in the GPU tiers, are the two obvious closures (#164).
 
 ## cuDF options
 
