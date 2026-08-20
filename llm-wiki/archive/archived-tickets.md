@@ -125,6 +125,29 @@ becomes a problem again.
 
 ## Stale
 
+<a id="t157"></a>
+### #157 — legacy: the budget rule drops a CoalesceBatchesExec's fetch, and the wire cannot carry one
+**Priority: low** — legacy planning only; the batch-partitioned model plans from scratch and
+has no such node.
+
+`gpu_rule.rs` ~L611 rebuilds the node as `CoalesceBatchesExec::new(input, batch_size)`, which
+sets `fetch: None`, so a limit DataFusion pushed onto it is gone.
+
+DataFusion's limit pushdown does park one there and removes the limit node once it has:
+`SELECT count(*) FROM (SELECT * FROM nation WHERE n_regionkey > 1 LIMIT 3)` plans as an
+aggregate over `CoalesceBatchesExec{target, fetch: 3}`. The GPU half could not carry it
+regardless — `CudfCoalesceBatches` has only `target_batch_size` and the node is
+`execute_passthrough`. No golden can show it either: the node's display prints estimates and
+never a `fetch`, so corpus reachability is unknown rather than ruled out, and the corpus
+limits that were checked survive as their own nodes. Fix is three parts — `with_fetch`
+through the rebuild, an fbs field the C++ reads, and the fetch in the node display.
+
+**Stale 2026-08-20.** Legacy planning only, and the legacy modes are not being fixed. The
+three-part fix — `with_fetch` through the rebuild, an fbs field the C++ reads, and the fetch
+in the node display — would extend the wire format for a planner the batch-partitioned mode
+replaces, which plans from scratch and emits no such node. Whether the corpus reaches it was
+never established either way.
+
 <a id="t53"></a>
 ### #53 — Deterministic multi-partition CPU node-by-node execution
 Largely superseded: `partitioned_cpu` produces deterministic tp8-standard `.cpu.txt`

@@ -6,7 +6,7 @@ anchor that the cost widget links to. Device labels are `tp<N>-<tier>` (micro=10
 mini=2GiB, standard=12GiB).
 
 A ticket carries a **Priority** line only when it is not medium; medium is the default.
-New tickets take the next free number (currently 167). Finished and lapsed tickets move to
+New tickets take the next free number (currently 168). Finished and lapsed tickets move to
 `llm-wiki/archive/archived-tickets.md` (Done / Stale) — numbers are never reused, so an old
 reference still resolves there.
 
@@ -17,7 +17,7 @@ reference still resolves there.
 | [Critical correctness](#critical-correctness) | 16 | #166 #153 #103 #80 #59 #46 #47 #60 #121 #122 #123 #118 #119 #120 #117 #41 |
 | [Blockers for disabled coverage](#blockers-for-disabled-coverage) | 15 | #158 #97 #23 #32 #65 #62 #91 #95 #57 #45 #63 #56 #55 #96 #143 |
 | [Performance / architecture](#performance--architecture) | 26 | #155 #154 #152 #151 #150 #149 #148 #147 #146 #145 #19 #16 #20 #71 #101 #73 #110 #75 #136 #137 #138 #139 #140 #141 #144 #142 |
-| [Infrastructure / process](#infrastructure--process) | 25 | #164 #163 #157 #159 #160 #161 #162 #113 #114 #116 #126 #134 #133 #132 #131 #130 #129 #128 #127 #124 #125 #13 #94 #69 #49 |
+| [Infrastructure / process](#infrastructure--process) | 25 | #167 #164 #163 #159 #160 #161 #162 #113 #114 #116 #126 #134 #133 #132 #131 #130 #129 #128 #127 #124 #125 #13 #94 #69 #49 |
 
 ## Critical correctness
 
@@ -340,7 +340,7 @@ for filtered and non-inner-NLJ joins. The finish pass (#136) is unaffected eithe
 Whether the copy is tolerable is answerable from the goldens: each join's two
 `GpuCoalescePartitionsExec` lines carry both sides' `output_bytes`, and B copies cost `B ×
 build_bytes` against one probe stream. Take the ratio on **bytes, not rows** — tpch q3 is 24:1
-by rows and 73:1 by bytes. Decide before T12, under [#155](#t155).
+by rows and 73:1 by bytes. Decide before T16, under [#155](#t155).
 
 <a id="t151"></a>
 ### #151 — the per-node benchmarks measure the engine with no RMM pool
@@ -636,12 +636,37 @@ planner refuses the shape at plan time.
 ### #142 — batch-partitioned: no recourse for oversized batches
 Nothing downstream of the loader can split a batch: minimum load granularity is one row
 group, `GpuCoalesceAllBatches` before a join build side can exceed any budget, and the
-planner deliberately still produces a plan — the enforcer then trips at run time and the
-query dies cleanly. Recourse options, deferred until better estimators and adaptive
-execution: a split operator (needs a C++ slice-to-handles entry point), or adaptive
-replanning on trip (re-plan with more partitions or smaller batches). Related: #91.
+planner deliberately still produces a plan — `driver/accounting.rs` then trips at run time and
+the query dies cleanly, which T13 made real for this mode rather than borrowed from the legacy
+enforcer. Recourse options, deferred until better estimators and adaptive execution: a split
+operator (needs a C++ slice-to-handles entry point), or adaptive replanning on trip (re-plan
+with more partitions or smaller batches) — the second being the only one that would make a trip
+anything other than the end of the query.
+
+Both checks abort today, pre-call and post-call alike, and the pre-call one refuses on an
+estimate rather than on a fact. Recording it and letting the call proceed is the cheaper
+recourse and is deliberately not taken: `RunError::BudgetExceeded` now carries which check
+tripped, so something can branch on it, but there is nowhere to record into — `RunReport` has no
+trip log, and `Underestimate` is the precedent for what one would look like. Related: #91.
 
 ## Infrastructure / process
+
+<a id="t167"></a>
+### #167 — nothing proves a failed query gives its device memory back
+
+A failed `execute_node` resets the session, which frees every resident table by destruction, and
+the handles that outlive it release into a null-guarded no-op. Neither half is tested.
+
+What is unverified is the whole lifecycle after a failure rather than any one call: that
+`peacock_executor_end_plan` on an already-reset session is safe, that the same executor can
+`begin_plan` again and answer a second query, and that device memory is actually back rather
+than merely unreferenced — which today means cuDF's default resource, since the engine installs
+no RMM pool ([#148](tickets.md#t148)). The batch-partitioned drivers make this reachable far
+more often than the legacy modes do: a node runs once per batch per lane, so a query has
+thousands of chances to throw where a legacy one had tens. Their own error path is covered by a
+mock, and a mock frees nothing. Wants a gtest that fails a node mid-walk and asserts the
+executor is reusable, plus one Rust FFI case on shad-gpu. Retry with a smaller batch is
+[#142](tickets.md#t142) and is not this.
 
 <a id="t164"></a>
 ### #164 — a column ordinal reaches cuDF unchecked, and a bad one degrades rather than throws
@@ -676,23 +701,6 @@ the same on each and moves no golden byte — `avg`'s state columns typed backwa
 that shipped, and the T7 schema tests are what catch it today. Fix: derive each expression's
 output type and compare it against the declared field, for the nodes that compute rather than
 carry. Same class as [#135](archive/archived-tickets.md#t135).
-
-<a id="t157"></a>
-### #157 — legacy: the budget rule drops a CoalesceBatchesExec's fetch, and the wire cannot carry one
-**Priority: low** — legacy planning only; the batch-partitioned model plans from scratch and
-has no such node.
-
-`gpu_rule.rs` ~L611 rebuilds the node as `CoalesceBatchesExec::new(input, batch_size)`, which
-sets `fetch: None`, so a limit DataFusion pushed onto it is gone.
-
-DataFusion's limit pushdown does park one there and removes the limit node once it has:
-`SELECT count(*) FROM (SELECT * FROM nation WHERE n_regionkey > 1 LIMIT 3)` plans as an
-aggregate over `CoalesceBatchesExec{target, fetch: 3}`. The GPU half could not carry it
-regardless — `CudfCoalesceBatches` has only `target_batch_size` and the node is
-`execute_passthrough`. No golden can show it either: the node's display prints estimates and
-never a `fetch`, so corpus reachability is unknown rather than ruled out, and the corpus
-limits that were checked survive as their own nodes. Fix is three parts — `with_fetch`
-through the rebuild, an fbs field the C++ reads, and the fetch in the node display.
 
 <a id="t159"></a>
 ### #159 — RightSemi/RightAnti with a residual filter has no cuDF path
