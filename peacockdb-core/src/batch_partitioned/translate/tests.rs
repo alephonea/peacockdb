@@ -247,9 +247,9 @@ async fn a_mid_plan_limit_over_several_lanes_gets_a_merge_beneath_it() {
     use datafusion::physical_plan::coalesce_partitions::CoalescePartitionsExec;
     use datafusion::physical_plan::limit::GlobalLimitExec;
 
-    // Hand-built, because no sql reaches this branch: DataFusion requires a
-    // single-partition input for a GlobalLimitExec, and where its own pushdown puts an
-    // interval below one it lands in the scan, which this mode then plans one-lane (#166).
+    // Hand-built because the sql that reaches this branch also hits #166: a fetch-carrying
+    // CoalesceBatchesExec keeps its input's lanes and lowers here too, but only ever with
+    // skip=0, and the query that pinned that shape was reshaped away. The branch is live.
     let plan = plan_at("SELECT * FROM customer WHERE c_nationkey > 1", 4).await;
     assert!(
         plan.output_partitioning().partition_count() > 1,
