@@ -4,7 +4,8 @@ Specs for tasks whose PR has merged, newest first. Each is the contract the work
 done against, kept verbatim -- including the amendments and corrections made mid-task,
 since those are the part a later reader cannot reconstruct from the diff.
 
-Opened as PR #126 against ENS-bp-plan-skeleton.
+Merged 2026-08-20 as PR #126, opened against ENS-bp-plan-skeleton and retargeted to
+master when that base merged.
 
 
 ---
