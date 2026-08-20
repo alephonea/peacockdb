@@ -38,15 +38,15 @@ DataFusion 45 loses a limit in two shapes, both measured against DuckDB 1.5.4 on
 parquet: the interval is absent from the physical plan, so both engines compute the same wrong answer.
 
 A limit inside a `UNION ALL` branch survives only as an `AggregateExec … lim=[n]` early-stop hint,
-which applies neither the offset nor the truncation: two branch limits holding 18 rows under an
-outer `LIMIT 40 OFFSET 5` answer 40 where DuckDB answers 13, at tp1 and tp4 alike. That hint is
-also why a golden carrying it looks like coverage — it reads as a limit in plan text and is not one.
-Separately, at tp4 only, an outer limit above an aggregate drops the mid-plan limit below it, so the
-aggregate counts its whole input (250 rows where 40 should reach it) and the same query answers
-differently per target-partition count. No corpus query has either shape, so nothing computes a wrong
-result today; `nested-limits.sql` was reshaped rather than canonized against it. Nothing detects it
-either — the interval is gone before we see the plan, so a guard must compare the logical limit set
-against the physical one. Retest under #23's 46+ upgrade before writing one.
+which applies neither the offset nor the truncation: two branch limits holding 18 rows under an outer
+`LIMIT 40 OFFSET 5` answer 40 where DuckDB answers 13, at tp1 and tp4 alike. The hint is why a golden
+carrying it looks like coverage — it reads as a limit in plan text and is not one. Separately, at tp4
+only, an outer limit above an aggregate drops the mid-plan limit below it and the aggregate then counts
+its whole input. No corpus query has either shape, so nothing is wrong today; `nested-limits.sql` was
+reshaped rather than canonized against it. Upstream
+[#14406](https://github.com/apache/datafusion/issues/14406) is the same class — a global limit removed
+above children that keep only a local one — and its fix landed after 45.0.0 and is in 46.0.0, so #23's
+upgrade is the experiment; a residual after it would need the logical limit set compared to the physical.
 
 <a id="t153"></a>
 ### #153 — equi-join residual filter is applied after the outer gather
