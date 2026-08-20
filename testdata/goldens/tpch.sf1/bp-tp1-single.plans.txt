@@ -118,51 +118,21 @@ GpuUnload: estimated_max_resident_size=258052245
         GpuLoadParquet: estimated_max_resident_size=52577862, source_bytes=52577862, target_batch_bytes=52577862, amplification=1.0
 == nested-limits
 GpuUnload: skip=3, fetch=20
-  GpuCrossJoin: lanes=1, batches=multiple, schema=[k:Utf8View, n:Int64]
-    GpuProject: exprs=[k@0, count(*)@1 as n], lanes=1, batches=single, schema=[k:Utf8View, n:Int64]
-      GpuLimit: skip=2, fetch=6, lanes=1, batches=single, schema=[k:Utf8View, count(*):Int64]
-        GpuAggregateBatches: group_by=[k@0], aggs=[sum(count(*)@1) as count(*)], final=[count(*)@1], lanes=1, batches=single, schema=[k:Utf8View, count(*):Int64]
-          GpuAggregate: group_by=[k@0], aggs=[count(1) as count(*)], lanes=1, batches=multiple, schema=[k:Utf8View, count(*):Int64]
-            GpuLimit: skip=5, fetch=40, lanes=1, batches=multiple, schema=[k:Utf8View]
-              GpuCrossJoin: lanes=1, batches=multiple, schema=[k:Utf8View]
-                GpuCoalesceAllBatches: lanes=1, batches=single, schema=[]
-                  GpuLoadParquet: table=region, projections=[], partition_groups=[[[0]]], limit=45, lanes=1, batches=multiple, schema=[]
-                GpuLimit: skip=0, fetch=45, lanes=1, batches=multiple, schema=[k:Utf8View]
-                  GpuMergePartitions: lanes=1, batches=multiple, schema=[k:Utf8View]
-                    GpuUnion: lanes=2, batches=single, schema=[k:Utf8View]
-                      GpuProject: exprs=[p_brand@0 as k], lanes=1, batches=single, schema=[k:Utf8View]
-                        GpuAggregateBatches: group_by=[p_brand@0], aggs=[], final=[], lanes=1, batches=single, schema=[p_brand:Utf8View]
-                          GpuAggregate: group_by=[p_brand@0], aggs=[], lanes=1, batches=multiple, schema=[p_brand:Utf8View]
-                            GpuLoadParquet: table=part, projections=[p_brand@3], partition_groups=[[[0,1]]], lanes=1, batches=multiple, schema=[p_brand:Utf8View]
-                      GpuProject: exprs=[n_name@0 as k], lanes=1, batches=single, schema=[k:Utf8View]
-                        GpuAggregateBatches: group_by=[n_name@0], aggs=[], final=[], lanes=1, batches=single, schema=[n_name:Utf8View]
-                          GpuAggregate: group_by=[n_name@0], aggs=[], lanes=1, batches=multiple, schema=[n_name:Utf8View]
-                            GpuLoadParquet: table=nation, projections=[n_name@1], partition_groups=[[[0]]], lanes=1, batches=multiple, schema=[n_name:Utf8View]
-    GpuLoadParquet: table=nation, projections=[], partition_groups=[[[0]]], limit=23, lanes=1, batches=multiple, schema=[]
+  GpuCrossJoin: lanes=1, batches=multiple, schema=[k:Int64]
+    GpuCoalesceAllBatches: lanes=1, batches=single, schema=[]
+      GpuLoadParquet: table=region, projections=[], partition_groups=[[[0]]], limit=23, lanes=1, batches=multiple, schema=[]
+    GpuProject: exprs=[p_partkey@0 as k], lanes=1, batches=multiple, schema=[k:Int64]
+      GpuLimit: skip=5, fetch=23, lanes=1, batches=multiple, schema=[p_partkey:Int64]
+        GpuLoadParquet: table=part, projections=[p_partkey@0], partition_groups=[[[0,1]]], limit=28, lanes=1, batches=multiple, schema=[p_partkey:Int64]
 --- memory ---
-budget=2147483648, accumulators=1801189, certain=5
-GpuUnload: estimated_max_resident_size=144
-  GpuCrossJoin: estimated_max_resident_size=144
-    GpuProject: estimated_max_resident_size=144
-      GpuLimit: estimated_max_resident_size=144
-        GpuAggregateBatches: estimated_max_resident_size=810
-          GpuAggregate: estimated_max_resident_size=10
-            GpuLimit: estimated_max_resident_size=5
-              GpuCrossJoin: estimated_max_resident_size=410
-                GpuCoalesceAllBatches: estimated_max_resident_size=5
-                  GpuLoadParquet: estimated_max_resident_size=0, source_bytes=0, target_batch_bytes=1, amplification=1.0
-                GpuLimit: estimated_max_resident_size=405
-                  GpuMergePartitions: estimated_max_resident_size=1800225
-                    GpuUnion: estimated_max_resident_size=3600450
-                      GpuProject: estimated_max_resident_size=1800000
-                        GpuAggregateBatches: estimated_max_resident_size=1800000
-                          GpuAggregate: estimated_max_resident_size=126596
-                            GpuLoadParquet: estimated_max_resident_size=126596, source_bytes=126596, target_batch_bytes=126596, amplification=1.0
-                      GpuProject: estimated_max_resident_size=225
-                        GpuAggregateBatches: estimated_max_resident_size=225
-                          GpuAggregate: estimated_max_resident_size=302
-                            GpuLoadParquet: estimated_max_resident_size=302, source_bytes=302, target_batch_bytes=302, amplification=1.0
-    GpuLoadParquet: estimated_max_resident_size=0, source_bytes=0, target_batch_bytes=1, amplification=1.0
+budget=2147483648, accumulators=10, certain=5
+GpuUnload: estimated_max_resident_size=5
+  GpuCrossJoin: estimated_max_resident_size=229
+    GpuCoalesceAllBatches: estimated_max_resident_size=5
+      GpuLoadParquet: estimated_max_resident_size=0, source_bytes=0, target_batch_bytes=1, amplification=1.0
+    GpuProject: estimated_max_resident_size=224
+      GpuLimit: estimated_max_resident_size=224
+        GpuLoadParquet: estimated_max_resident_size=1600062, source_bytes=1600062, target_batch_bytes=1600062, amplification=1.0
 == nested-loop-join
 GpuUnload
   GpuNestedLoopJoin: join_type=Inner, filter=n_regionkey@probe:2 > r_regionkey@build:0, lanes=1, batches=multiple, schema=[r_regionkey:Int32, r_name:Utf8View, r_comment:Utf8View, n_nationkey:Int32, n_name:Utf8View, n_regionkey:Int32, n_comment:Utf8View]

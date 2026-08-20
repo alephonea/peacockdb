@@ -22,18 +22,24 @@ use crate::batch_partitioned::schema::{AggStateColumns, Schema};
 
 /// The committed minimal dataset, whose `p_retailprice` and `c_acctbal` are
 /// `Decimal128(15,2)` — the two columns every decimal assertion below starts from.
-async fn translated(sql: &str, target_partitions: usize) -> Box<dyn GpuNode> {
+async fn physical_plan_for(
+    sql: &str,
+    target_partitions: usize,
+) -> Arc<dyn datafusion::physical_plan::ExecutionPlan> {
     let data = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../testdata/tpch.minimal");
     let ctx = crate::register_tables_for(crate::build_session_state(target_partitions), &data)
         .await
         .expect("register the minimal tables");
-    let plan = ctx
-        .sql(sql)
+    ctx.sql(sql)
         .await
         .expect("plan the query")
         .create_physical_plan()
         .await
-        .expect("physical plan");
+        .expect("physical plan")
+}
+
+async fn translated(sql: &str, target_partitions: usize) -> Box<dyn GpuNode> {
+    let plan = physical_plan_for(sql, target_partitions).await;
     Translator::new(
         target_partitions,
         Batching::Sized {
@@ -323,17 +329,7 @@ async fn planned(
     sql: &str,
     target_partitions: usize,
 ) -> Result<(), crate::batch_partitioned::PlanError> {
-    let data = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../testdata/tpch.minimal");
-    let ctx = crate::register_tables_for(crate::build_session_state(target_partitions), &data)
-        .await
-        .expect("register the minimal tables");
-    let plan = ctx
-        .sql(sql)
-        .await
-        .expect("plan the query")
-        .create_physical_plan()
-        .await
-        .expect("physical plan");
+    let plan = physical_plan_for(sql, target_partitions).await;
     plan_batch_partitioned(&plan, knobs(target_partitions)).map(|_| ())
 }
 
@@ -375,17 +371,7 @@ async fn the_planner_refuses_a_tree_its_validation_rejects() {
     use datafusion::physical_plan::expressions::Column;
     use datafusion::physical_plan::sorts::sort_preserving_merge::SortPreservingMergeExec;
 
-    let data = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../testdata/tpch.minimal");
-    let ctx = crate::register_tables_for(crate::build_session_state(1), &data)
-        .await
-        .expect("register the minimal tables");
-    let scan = ctx
-        .sql("SELECT p_partkey FROM part")
-        .await
-        .expect("plan the query")
-        .create_physical_plan()
-        .await
-        .expect("physical plan");
+    let scan = physical_plan_for("SELECT p_partkey FROM part", 1).await;
     let unsorted_merge: Arc<dyn datafusion::physical_plan::ExecutionPlan> =
         Arc::new(SortPreservingMergeExec::new(
             LexOrdering::new(vec![PhysicalSortExpr::new_default(Arc::new(Column::new(
@@ -407,12 +393,9 @@ async fn the_planner_refuses_a_tree_its_validation_rejects() {
 #[tokio::test]
 async fn the_planner_refuses_a_root_that_does_not_emit_what_the_query_asked_for() {
     // A bare Partial aggregate as the root. DataFusion declares `avg`'s state as
-    // [count, sum] and this mode's decomposition reads [sum, count] — a deliberate
-    // reordering (see `decompose`), so a root that stops at the partial emits its state
-    // columns the other way round from the schema its own plan node declares. That is the
-    // one shape where the two schemas differ without translation being wrong, which is
-    // what makes it the staging for the root check. If the order ever stops being ours,
-    // this test moves with it.
+    // [count, sum] and this mode's decomposition reads [sum, count] (see `decompose`), so
+    // a root stopping at the partial emits its state columns the other way round from the
+    // schema its own node declares — the one shape where the two differ legitimately.
     use datafusion::physical_plan::ExecutionPlan;
     use datafusion::physical_plan::aggregates::{AggregateExec, AggregateMode};
 
@@ -424,22 +407,14 @@ async fn the_planner_refuses_a_root_that_does_not_emit_what_the_query_asked_for(
         if is_partial {
             return Some(plan.clone());
         }
-        plan.children()
-            .into_iter()
-            .find_map(|child| partial_of(&child.clone()))
+        plan.children().into_iter().find_map(partial_of)
     }
 
-    let data = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../testdata/tpch.minimal");
-    let ctx = crate::register_tables_for(crate::build_session_state(4), &data)
-        .await
-        .expect("register the minimal tables");
-    let plan = ctx
-        .sql("SELECT p_brand, avg(p_retailprice) FROM part GROUP BY p_brand")
-        .await
-        .expect("plan the query")
-        .create_physical_plan()
-        .await
-        .expect("physical plan");
+    let plan = physical_plan_for(
+        "SELECT p_brand, avg(p_retailprice) FROM part GROUP BY p_brand",
+        4,
+    )
+    .await;
     let partial = partial_of(&plan).expect("a partial aggregate to root at");
 
     match plan_batch_partitioned(&partial, knobs(4)) {

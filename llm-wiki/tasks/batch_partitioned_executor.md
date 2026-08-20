@@ -382,8 +382,12 @@ therefore a node property in this mode, printed by the golden on every node that
 one.
 
 One coverage note falls out of the same audit: no benchmark query has an `OFFSET`, so every
-`GpuGlobalLimitExec` in the corpus has `skip=0` and the offset half of both limit lowerings
-runs only in synthetic tests — the reason T15 adds a query for it.
+`GpuGlobalLimitExec` in the corpus has `skip=0`. `nested-limits.sql` is the query that reaches
+the offset half of both lowerings, at tp1 and tp4 alike. What it cannot reach is a mid-plan
+`GpuLimit` over more than one lane: a join between the two limits lets DataFusion push the
+interval into the scan, and this mode plans a limit-carrying source single-lane, while an
+aggregate between them loses the interval outright at tp4 ([#166](../tickets.md#t166)). So a
+multi-lane mid-plan limit is a case T11 constructs rather than canonizes.
 
 ### The aggregate sequence
 
