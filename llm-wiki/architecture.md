@@ -146,7 +146,7 @@ GPU's memory shape comes from the scan map alone.
 `tp` is DataFusion's `target_partitions`, set per session from
 [`TargetPartitions`](../peacockdb-core/src/config.rs#L21) — `Single` = 1, `Multi` =
 [`TARGET_PARTITIONS`](../peacockdb-core/src/config.rs#L10) = 8. It is a planning input, not
-an execution switch, and it is orthogonal to the partition MODE: which executor runs is
+an execution switch, and it is orthogonal to the partition *mode*: which executor runs is
 decided by the mode, and `tp` decides the shape of the plan handed to it.
 
 **What tp8 changes, all of it DataFusion's own doing.**
@@ -1241,7 +1241,7 @@ behaviour rather than an exception — for example
 `fv.column(idx)` (checked) and `input.column_names[idx]` (unchecked). Today the checked read
 happens first and throws, which is luck, not design.
 
-**Nothing checks that a child's column ORDER matches what the plan assumed.** The per-node
+**Nothing checks that a child's column *order* matches what the plan assumed.** The per-node
 golden records the node name, partition count, output rows and output bytes — not the column
 list, not the types. And the bytes cannot help: both engines compute them from the *plan's*
 schema via `logical_size_from_schema`, deliberately, so that CPU and GPU cannot drift. The same
