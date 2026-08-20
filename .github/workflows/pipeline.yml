@@ -199,7 +199,7 @@ jobs:
           cargo test --no-run -p peacockdb-core --test test_plan_serialiser --test test_query_plan --test test_cpu_full_table \
             --test test_cpu_executor_misc --test test_cpu_oom --test test_node_executor \
             --test test_query_plan_misc --test test_cpu_partitioned \
-            --test test_batch_partitioned_plans
+            --test test_batch_partitioned_plans --test test_gpu_batch
           cargo test --no-run -p peacockdb-ffi --test test_ffi
           # Separate line because of --features rust-only: cargo's fingerprint
           # includes the feature set, so this cannot share the invocation above.
@@ -246,6 +246,11 @@ jobs:
           cargo test -p peacockdb-core --test test_node_executor
           cargo test -p peacockdb-core --test test_query_plan_misc
           cargo test -p peacockdb-core --test test_cpu_partitioned
+          # GpuBatch's own surface, and it belongs in a CPU tier deliberately: the batch
+          # is a handle plus a Drop, and the release it calls is null-guarded on the
+          # executor, so nothing here needs a device. The GPU half of the ABI is
+          # test_gpu_abi, staged for the gpu-tests job.
+          cargo test -p peacockdb-core --test test_gpu_batch
           cargo test -p peacockdb-ffi --test test_ffi
           # The FlatBuffer wire-format guard lives HERE, not in the golden-only
           # cost-report tier where it was first wired. It NEEDS the sf1 parquet,
@@ -336,7 +341,11 @@ jobs:
           # whole execution mode.
           # test_inc2_conformance = the live GPU↔CPU Spark-murmur3 partition-id gate
           # (peacock FFI path vs comet, bit-exact) — the standing Inc2 hash gate.
-          for t in test_gpu_full_table test_gpu_partitioned test_inc2_conformance; do
+          # test_gpu_abi = the batch-partitioned ABI's three per-call symbols against a
+          # real device: the row-group override, the export range and the slice, plus the
+          # release skipped exactly where a call consumed the handle. Its companion
+          # test_gpu_batch needs no device and runs in the cpp-cpu tier instead.
+          for t in test_gpu_full_table test_gpu_partitioned test_inc2_conformance test_gpu_abi; do
             exec_path=$(cargo test --no-run -p peacockdb-core --test "$t" \
                 --message-format=json \
               | python3 -c '

@@ -83,9 +83,44 @@ pub mod raw {
             out_stats: *mut PeacockNodeStats,
         ) -> i32;
 
+        /// Execute the `CudfScan` at post-order `seq` reading exactly
+        /// `row_groups[0..n)` rather than the list the node carries, storing its one
+        /// output as a new resident handle — the batch-partitioned loader's one call
+        /// per batch. `n == 0` is refused rather than read as "every group", and a
+        /// `seq` naming any other kind of node fails saying which.
+        pub fn peacock_executor_execute_scan_rowgroups(
+            executor: *mut PeacockExecutor,
+            seq: u64,
+            row_groups: *const u32,
+            n: u64,
+            out_handle: *mut u64,
+            out_stats: *mut PeacockNodeStats,
+        ) -> i32;
+
+        /// Copy rows `[offset, offset+length)` of `handle` into a new resident handle,
+        /// CONSUMING `handle`: C++ erases it, so the caller must not release it
+        /// afterwards. Ranges clamp as on [`peacock_result_from_handle`]. Serves a
+        /// mid-plan limit, whose kept rows feed further GPU work and so must stay
+        /// resident rather than become a result.
+        pub fn peacock_executor_slice_handle(
+            executor: *mut PeacockExecutor,
+            handle: u64,
+            offset: u64,
+            length: u64,
+            out_handle: *mut u64,
+        ) -> i32;
+
+        /// Materialize rows `[offset, offset+length)` of a resident handle as an Arrow
+        /// IPC stream; `length == u64::MAX` means to the end, which is what a caller
+        /// wanting the whole table passes. A range naming no rows of a non-empty table
+        /// exports nothing (`*out_ipc_len == 0`, nothing to free) and one running past
+        /// the end clamps, because a limit's fetch legitimately overruns the batch it
+        /// straddles. Does NOT release the handle.
         pub fn peacock_result_from_handle(
             executor: *mut PeacockExecutor,
             handle: u64,
+            offset: u64,
+            length: u64,
             out_ipc: *mut *mut u8,
             out_ipc_len: *mut u64,
         ) -> i32;

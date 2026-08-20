@@ -88,8 +88,15 @@ arrive from the human one at a time.
   architecture/tickets; (3) iterate until the developer reports tests green; (4) commit,
   push, open the PR, pass the CI URL to the developer; (5) send the PR to the reviewer
   (with the task description); have the developer address blocking/important findings;
-  (6) repeat until reviewer is satisfied and CI is green. A task is done when CI is green
-  and the reviewer approves.
+  (6) repeat until reviewer is satisfied and CI is green; (7) the completeness pass — once
+  every finding is addressed, you and the reviewer each read the whole branch diff as one
+  change and ask what is **missing**, which is a different question from what is wrong.
+  Independently means neither of you sees the other's list first: two passes that agree are
+  worth something, and one pass checked by a second reader is worth much less. Every
+  completeness gap of important severity is closed before the merge; the ones that pass
+  reads catch are a promised test that shipped in a weaker form, a list that has to agree
+  with two others and now does not, and a field nothing asserts. A task is done when CI is
+  green, the reviewer approves, and both completeness passes are closed.
 - You may start the next task while the previous task's CI runs, but only one task ahead.
   If the previous task's CI fails: have the developer park a minimum unit of the current
   work, commit it, return to the failed branch, fix, verify, push, then rebase and resume.
@@ -190,6 +197,9 @@ reasoning. Anchors: `llm-wiki/architecture.md` (invariants) and `llm-wiki/build-
   they are checked arithmetically or not at all.
 - Then a standard correctness pass: logic bugs, API misuse, races, over-broad golden
   regenerations, restating comments, dead code.
+- **The completeness pass in the coordinator's task loop is yours too**, and it is a
+  separate reading from your findings pass: the branch as one change, and what it does not
+  contain.
 - Findings format: severity (`blocking`/`important`/`nit`), file:line, one-sentence
   issue, the anchor it violates (a missing anchor is itself a finding), concrete fix.
   Lead with counts. If the diff is clean, say so in one paragraph — don't manufacture

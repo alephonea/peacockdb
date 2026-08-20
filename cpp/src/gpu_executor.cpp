@@ -2,6 +2,7 @@
 #include "peacock/partitioning.hpp"
 #include "plan_executor.h"
 
+#include <cudf/copying.hpp>
 #include <cudf/interop.hpp>
 #include <cudf/null_mask.hpp>
 #include <cudf/unary.hpp>
@@ -32,6 +33,16 @@ struct peacock_executor {
   // execution; null when no plan is loaded.
   std::unique_ptr<peacock::NodeSession> session;
 };
+
+// The stats entry points hand C++'s NodeStats back as the C struct by cast, which is
+// sound only while the two are laid out identically. Adding a member to one and not
+// the other, or reordering either, fails here rather than silently handing Rust fields
+// from the wrong offsets.
+static_assert(sizeof(PeacockNodeStats) == sizeof(peacock::NodeStats));
+static_assert(offsetof(PeacockNodeStats, rows) == offsetof(peacock::NodeStats, rows));
+static_assert(offsetof(PeacockNodeStats, varlen_content_bytes) ==
+              offsetof(peacock::NodeStats, varlen_content_bytes));
+static_assert(offsetof(PeacockNodeStats, time_us) == offsetof(peacock::NodeStats, time_us));
 
 // Export a cuDF table to an Arrow IPC stream buffer (malloc'd; free with
 // peacock_result_free). Shared by peacock_execute (fast path) and
@@ -200,15 +211,7 @@ int peacock_executor_execute_node(peacock_executor_t* executor, uint64_t seq,
   }
   try {
     // out_stats is a caller array of out_cap, filled per partition (parallel to
-    // out_handles). The cast is sound only while the two structs are laid out
-    // identically, so the compiler checks it: adding a member to one and not the
-    // other, or reordering either, fails here rather than silently handing Rust
-    // fields from the wrong offsets.
-    static_assert(sizeof(PeacockNodeStats) == sizeof(peacock::NodeStats));
-    static_assert(offsetof(PeacockNodeStats, rows) == offsetof(peacock::NodeStats, rows));
-    static_assert(offsetof(PeacockNodeStats, varlen_content_bytes) ==
-                  offsetof(peacock::NodeStats, varlen_content_bytes));
-    static_assert(offsetof(PeacockNodeStats, time_us) == offsetof(peacock::NodeStats, time_us));
+    // out_handles); the layout the cast relies on is checked at the top of this file.
     size_t n_out = 0;
     executor->session->execute_node(
         seq, input_handles, input_child_counts, static_cast<size_t>(n_children),
@@ -228,8 +231,59 @@ int peacock_executor_execute_node(peacock_executor_t* executor, uint64_t seq,
   }
 }
 
-int peacock_result_from_handle(peacock_executor_t* executor, uint64_t handle,
-                               uint8_t** out_ipc, uint64_t* out_ipc_len) {
+int peacock_executor_execute_scan_rowgroups(peacock_executor_t* executor, uint64_t seq,
+                                            const uint32_t* row_groups, uint64_t n,
+                                            uint64_t* out_handle, PeacockNodeStats* out_stats) {
+  if (!executor || !row_groups || !out_handle) return 1;
+  if (!executor->session) {
+    executor->last_error = "no plan loaded (call peacock_executor_begin_plan first)";
+    return 1;
+  }
+  if (n == 0) {
+    // Refused rather than read as "every group": the flat buffers' convention, where an
+    // empty row-group map means legacy single-partition, must not leak into this call.
+    executor->last_error = "peacock_executor_execute_scan_rowgroups: empty row-group list";
+    return 1;
+  }
+  try {
+    *out_handle =
+        executor->session->execute_scan_rowgroups(seq, {row_groups, static_cast<std::size_t>(n)},
+                                                  reinterpret_cast<peacock::NodeStats*>(out_stats));
+    return 0;
+  } catch (const std::exception& e) {
+    executor->last_error = e.what();
+    executor->session.reset();
+    return 1;
+  } catch (...) {
+    executor->last_error = "unknown exception";
+    executor->session.reset();
+    return 1;
+  }
+}
+
+int peacock_executor_slice_handle(peacock_executor_t* executor, uint64_t handle, uint64_t offset,
+                                  uint64_t length, uint64_t* out_handle) {
+  if (!executor || !out_handle) return 1;
+  if (!executor->session) {
+    executor->last_error = "no plan loaded";
+    return 1;
+  }
+  try {
+    *out_handle = executor->session->slice_handle(handle, offset, length);
+    return 0;
+  } catch (const std::exception& e) {
+    executor->last_error = e.what();
+    executor->session.reset();
+    return 1;
+  } catch (...) {
+    executor->last_error = "unknown exception";
+    executor->session.reset();
+    return 1;
+  }
+}
+
+int peacock_result_from_handle(peacock_executor_t* executor, uint64_t handle, uint64_t offset,
+                               uint64_t length, uint8_t** out_ipc, uint64_t* out_ipc_len) {
   if (!executor || !out_ipc || !out_ipc_len) return 1;
   if (!executor->session) {
     executor->last_error = "no plan loaded";
@@ -237,7 +291,18 @@ int peacock_result_from_handle(peacock_executor_t* executor, uint64_t handle,
   }
   try {
     const auto& result = executor->session->table_for(handle);
-    export_table_to_ipc(result.table->view(), result.column_names, out_ipc, out_ipc_len);
+    auto view = result.table->view();
+    auto [begin, end] = peacock::clamp_row_range(offset, length, view.num_rows());
+    // A range naming no rows of a non-empty table ships nothing. An empty table takes
+    // the whole-table arm instead, so a caller asking for all of one keeps getting the
+    // schema-only stream it has always had.
+    if (begin == end && view.num_rows() > 0) {
+      *out_ipc = nullptr;  // so "nothing to free" is a pointer the caller can act on
+      *out_ipc_len = 0;
+      return 0;
+    }
+    if (begin != 0 || end != view.num_rows()) view = cudf::slice(view, {begin, end}).front();
+    export_table_to_ipc(view, result.column_names, out_ipc, out_ipc_len);
     return 0;
   } catch (const std::exception& e) {
     executor->last_error = e.what();

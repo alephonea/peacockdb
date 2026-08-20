@@ -212,8 +212,12 @@ void NodeSession::execute_node(uint64_t seq, const uint64_t* input_handles,
         throw std::runtime_error("NodeSession::execute_node: out_handles buffer too small");
       for (size_t p = 0; p < n; ++p) {
         const fb::ScanBatch* b = scan->batches()->Get(static_cast<flatbuffers::uoffset_t>(p));
+        const auto* map_groups = b->row_groups();
         ScopedNodeTimer timer;
-        TableResult result = execute_scan(scan, b->row_groups());
+        TableResult result = execute_scan(
+            scan, map_groups
+                      ? cudf::host_span<const uint32_t>{map_groups->data(), map_groups->size()}
+                      : cudf::host_span<const uint32_t>{});
         const uint64_t us = timer.stop_us();
         auto tv = result.table->view();
         if (out_stats)
@@ -437,6 +441,74 @@ void NodeSession::execute_node(uint64_t seq, const uint64_t* input_handles,
     out_handles[p] = handle;
   }
   *out_count = n_out;
+}
+
+uint64_t NodeSession::execute_scan_rowgroups(uint64_t seq,
+                                             cudf::host_span<const uint32_t> row_groups,
+                                             NodeStats* out_stats) {
+  if (seq >= impl_->post_order.size())
+    throw std::runtime_error("NodeSession::execute_scan_rowgroups: seq out of range");
+  // Refused here rather than only at the C wrapper: `execute_scan` reads an empty
+  // override as "no override" and falls back to the node's own list, so a caller that
+  // named a set would silently get a whole-table read.
+  if (row_groups.empty())
+    throw std::runtime_error(
+        "NodeSession::execute_scan_rowgroups: empty row-group list — name at least one");
+  const fb::PlanNode* node = impl_->post_order[seq];
+  if (node->node_type() != fb::PlanNodeKind_CudfScan)
+    throw std::runtime_error(std::string("NodeSession::execute_scan_rowgroups: seq ") +
+                             std::to_string(seq) + " is a " +
+                             fb::EnumNamePlanNodeKind(node->node_type()) + ", not a CudfScan");
+
+  ScopedNodeTimer timer;
+  TableResult result;
+  try {
+    result = execute_scan(node->node_as_CudfScan(), row_groups);
+  } catch (const std::exception& e) {
+    // cuDF names neither the node nor the list it was handed, and the caller here is a
+    // partitioner's mapping — an index it cannot read is a planner defect, so the
+    // message has to carry where the request came from.
+    std::string groups;
+    for (auto rg : row_groups) groups += (groups.empty() ? "" : ", ") + std::to_string(rg);
+    throw std::runtime_error("NodeSession::execute_scan_rowgroups: seq " + std::to_string(seq) +
+                             " reading row groups [" + groups + "]: " + e.what());
+  }
+  const uint64_t us = timer.stop_us();
+  auto tv = result.table->view();
+  if (out_stats)
+    *out_stats = NodeStats{static_cast<uint64_t>(tv.num_rows()), varlen_content_bytes(tv), us};
+  uint64_t handle = impl_->next_handle++;
+  impl_->registry.emplace(handle, std::move(result));
+  return handle;
+}
+
+std::pair<cudf::size_type, cudf::size_type> clamp_row_range(uint64_t offset, uint64_t length,
+                                                            cudf::size_type num_rows) {
+  const uint64_t rows = static_cast<uint64_t>(num_rows);
+  const uint64_t begin = std::min(offset, rows);
+  // Against `rows - begin` rather than `begin + length`, which overflows at the
+  // to-the-end sentinel.
+  const uint64_t take = std::min(length, rows - begin);
+  return {static_cast<cudf::size_type>(begin), static_cast<cudf::size_type>(begin + take)};
+}
+
+uint64_t NodeSession::slice_handle(uint64_t handle, uint64_t offset, uint64_t length) {
+  auto it = impl_->registry.find(handle);
+  if (it == impl_->registry.end())
+    throw std::runtime_error("NodeSession::slice_handle: unknown input handle");
+  TableResult input = std::move(it->second);
+  impl_->registry.erase(it);
+
+  auto [begin, end] = clamp_row_range(offset, length, input.table->view().num_rows());
+  TableResult result;
+  result.column_names = input.column_names;
+  // An owning copy of the kept rows, so the input table can go: a view would keep the
+  // whole batch resident, which is the cost the mid-plan limit exists to avoid.
+  result.table =
+      std::make_unique<cudf::table>(cudf::slice(input.table->view(), {begin, end}).front());
+  uint64_t out = impl_->next_handle++;
+  impl_->registry.emplace(out, std::move(result));
+  return out;
 }
 
 const TableResult& NodeSession::table_for(uint64_t handle) const {

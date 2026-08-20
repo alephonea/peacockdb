@@ -45,6 +45,32 @@
   guarantees. No fallbacks or feature flags the task didn't ask for.
 - **No scope-creep refactors**: a bug fix doesn't need surrounding cleanup.
 
+## Names
+
+Kernighan's rules, written down after the fact rather than followed from the start:
+`test_inc2_conformance` is named after an increment, which the second bullet forbids, and
+renaming it would move the staging array, the exemption list and two pages — so it stands as
+the exception rather than as the example.
+
+- **Length is proportional to scope** (K&R §2.1). A loop index is `i`; a name crossing a
+  module, a trait or the FFI earns words. Both halves bite: a paragraph-long name in a
+  three-line body is noise, and a terse one in an exported signature is a puzzle.
+- **A name says what a thing is, never how it came to be.** No `new` in the sense of the
+  newer one — `ExecutorNew`, `process_v2` — no `additive`, no ticket number, no task id.
+  Rust's `Type::new` is a constructor, not a version marker. The manner of a change is the
+  shortest-lived fact about it, git holds it already, and the reader who greps a year later
+  is looking for behaviour. The case: T9's gtest suite shipped as `AdditiveAbi` — a suite
+  about per-call scan reads and row ranges, named after the fact that it was added without
+  breaking anything.
+- **Functions get active names, and an inaccurate name is worse than a vague one**
+  (Kernighan and Pike, *The Practice of Programming*). A `check_` that also repairs has
+  misled every reader who trusted it.
+- **The same thing carries the same name everywhere, and one name means one thing** —
+  across the FFI most of all, where two names for one value is how the two sides drift
+  without either being wrong. The inverse costs as much: `ScanBatch` in the flat buffers
+  means partitions while `CudfCoalesceBatches.target_batch_size` in the same buffers means
+  Arrow batches, which architecture.md has to carry a naming trap for.
+
 ## Length limits
 
 - **A ticket is at most 15 lines**: one header, at most two stating the problem, the rest
