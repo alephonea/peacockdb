@@ -10,6 +10,34 @@
 use super::backend::Backend;
 use super::cpu_batch::CpuBatch;
 
+/// Why a call failed: a message and no kind, because there is one response to all of them.
+/// The driver adds the node and the lane and fails the query — a retry with a smaller batch
+/// is #142's adaptive future and not this design.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BackendError {
+    pub message: String,
+}
+
+impl BackendError {
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+}
+
+impl std::fmt::Display for BackendError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for BackendError {}
+
+/// What a call gives back. Every one can fail, and a failure ends the query: the C++ side
+/// resets the session and every resident table with it, so there is nothing to resume from.
+pub type CallResult<T> = Result<(T, CallStats), BackendError>;
+
 /// `scratch_bytes` is the measured transient; `None` when the run is not instrumented.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct CallStats {
@@ -27,12 +55,12 @@ pub trait Executor {
 }
 
 pub trait ExecExecutor<B: Backend>: Executor {
-    fn exec(&mut self, batch: B::Batch) -> (B::Batch, CallStats);
+    fn exec(&mut self, batch: B::Batch) -> CallResult<B::Batch>;
 }
 
 pub trait BatchAccumulatorExecutor<B: Backend>: Executor {
-    fn accumulate_and_fetch(&mut self, batch: B::Batch) -> (Vec<B::Batch>, CallStats);
-    fn mark_done_and_fetch(self) -> (Vec<B::Batch>, CallStats);
+    fn accumulate_and_fetch(&mut self, batch: B::Batch) -> CallResult<Vec<B::Batch>>;
+    fn mark_done_and_fetch(self) -> CallResult<Vec<B::Batch>>;
 }
 
 pub enum LaneEvent<B: Backend> {
@@ -47,24 +75,24 @@ pub trait PartitionAccumulatorExecutor<B: Backend>: Executor {
         &mut self,
         partition: usize,
         event: LaneEvent<B>,
-    ) -> (Vec<B::Batch>, CallStats);
+    ) -> CallResult<Vec<B::Batch>>;
 }
 
 pub trait PartitionEmitterExecutor<B: Backend>: Executor {
     /// Exactly N outputs, some of them empty; N is a plan value, so the count is checked
     /// once inside the returned type rather than at each call site.
-    fn emit(&mut self, batch: B::Batch) -> (Vec<B::Batch>, CallStats);
+    fn emit(&mut self, batch: B::Batch) -> CallResult<Vec<B::Batch>>;
 }
 
 /// A typestate: build -> probe -> done, each transition consuming the last state.
 pub trait JoinExecutor<B: Backend>: Executor {
     type Probing: ProbingJoin<B>;
-    fn set_build(self, batch: B::Batch) -> (Self::Probing, CallStats);
+    fn set_build(self, batch: B::Batch) -> CallResult<Self::Probing>;
 }
 
 pub trait ProbingJoin<B: Backend>: Executor {
-    fn probe_and_fetch(&mut self, batch: B::Batch) -> (Vec<B::Batch>, CallStats);
-    fn finish_and_fetch(self) -> (Vec<B::Batch>, CallStats);
+    fn probe_and_fetch(&mut self, batch: B::Batch) -> CallResult<Vec<B::Batch>>;
+    fn finish_and_fetch(self) -> CallResult<Vec<B::Batch>>;
 }
 
 /// Exhaustion consumes the source, so the driver's slot IS its liveness.
@@ -78,7 +106,7 @@ pub enum SourceStep<B: Backend> {
 }
 
 pub trait SourceExecutor<B: Backend>: Executor {
-    fn next_batch(self) -> SourceStep<B>;
+    fn next_batch(self) -> Result<SourceStep<B>, BackendError>;
 }
 
 /// `length: u64::MAX` means to the end. Straight through to the fetch's row range.
@@ -88,10 +116,24 @@ pub struct RowRange {
     pub length: u64,
 }
 
+impl RowRange {
+    /// Every row, which is what a node with no interval above it asks for.
+    pub const WHOLE: Self = Self {
+        offset: 0,
+        length: u64::MAX,
+    };
+
+    /// Whether this names the whole of a batch that size — in which case the call needs no
+    /// range at all, and the trace should not read as a trimmed one.
+    pub fn covers(&self, n_rows: u64) -> bool {
+        self.offset == 0 && self.length >= n_rows
+    }
+}
+
 /// Unload is its own category because it is the one operator whose output is not
 /// `B::Batch`: this is where data leaves the device, and the type says so. The row range
 /// is a call argument because the count a root-adjacent limit derives from is cross-lane,
 /// and an unload instance is per lane — only the driver holds that count.
 pub trait UnloadExecutor<B: Backend>: Executor {
-    fn unload(&mut self, batch: B::Batch, rows: RowRange) -> (CpuBatch, CallStats);
+    fn unload(&mut self, batch: B::Batch, rows: RowRange) -> CallResult<CpuBatch>;
 }

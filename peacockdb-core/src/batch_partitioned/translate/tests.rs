@@ -243,8 +243,9 @@ async fn a_mid_plan_limit_is_a_node_over_a_one_lane_stream() {
 
 #[tokio::test]
 async fn a_mid_plan_limit_over_several_lanes_gets_a_merge_beneath_it() {
+    use datafusion::physical_expr::PhysicalExpr;
     use datafusion::physical_plan::ExecutionPlanProperties;
-    use datafusion::physical_plan::coalesce_partitions::CoalescePartitionsExec;
+    use datafusion::physical_plan::filter::FilterExec;
     use datafusion::physical_plan::limit::GlobalLimitExec;
 
     // Hand-built because the sql that reaches this branch also hits #166: a fetch-carrying
@@ -255,27 +256,40 @@ async fn a_mid_plan_limit_over_several_lanes_gets_a_merge_beneath_it() {
         plan.output_partitioning().partition_count() > 1,
         "the input has to be the multi-lane one, or the branch under test is not reached"
     );
+    // Its own predicate, so the filter above the limit reads the same schema the limit
+    // hands it. DataFusion parks a CoalesceBatchesExec above the filter at tp4, so the
+    // node is found rather than assumed.
+    fn predicate_of(plan: &Arc<dyn ExecutionPlan>) -> Option<Arc<dyn PhysicalExpr>> {
+        if let Some(filter) = plan.as_any().downcast_ref::<FilterExec>() {
+            return Some(filter.predicate().clone());
+        }
+        plan.children().into_iter().find_map(predicate_of)
+    }
+    let predicate = predicate_of(&plan).expect("the tp4 plan filters");
     let over_four_lanes: Arc<dyn ExecutionPlan> = Arc::new(GlobalLimitExec::new(plan, 2, Some(5)));
-    // A parent, or the interval would be root-adjacent and land on the unload instead.
-    let root: Arc<dyn ExecutionPlan> = Arc::new(CoalescePartitionsExec::new(over_four_lanes));
+    // A real consumer above it, and not one that vanishes: the interval is mid-plan only
+    // when something above it goes on reading, and this is also what makes the tree
+    // canonical — the planner refuses a limit whose only parent is the sink.
+    let root: Arc<dyn ExecutionPlan> =
+        Arc::new(FilterExec::try_new(predicate, over_four_lanes).expect("a filter over the limit"));
 
     let tree = translate_at_tp4(&root, 0);
     assert_eq!(
         shape(tree.as_ref()),
-        "Unload(Limit(MergePartitions(Filter(LoadParquet))))"
+        "Unload(Filter(Limit(MergePartitions(Filter(LoadParquet)))))"
     );
     assert_eq!(
-        descend(tree.as_ref(), 2).kind().layout().unwrap().n,
+        descend(tree.as_ref(), 3).kind().layout().unwrap().n,
         1,
         "the merge is what makes the interval name rows at all"
     );
     assert_eq!(
-        descend(tree.as_ref(), 3).kind().layout().unwrap().n,
+        descend(tree.as_ref(), 4).kind().layout().unwrap().n,
         4,
         "and it merges four lanes, not one"
     );
     assert_eq!(
-        descend(tree.as_ref(), 1).row_interval(),
+        descend(tree.as_ref(), 2).row_interval(),
         Some(RowInterval {
             skip: 2,
             fetch: Some(5)

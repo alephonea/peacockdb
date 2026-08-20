@@ -25,7 +25,33 @@ pub(super) fn validate(root: &dyn GpuNode) -> Result<(), PlanError> {
             root.name()
         )));
     }
+    check_canonical_form(root)?;
     walk(root)
+}
+
+/// Which lowering a limit got is a question about position, and a node cannot see what is
+/// above it: root-adjacent means the interval belongs to `GpuUnload`, so a limit node whose
+/// only consumer is the sink is a tree the planner does not emit.
+fn limit_positions(node: &dyn GpuNode, parent_is_sink: bool) -> Result<(), PlanError> {
+    if node.row_interval().is_some() && parent_is_sink {
+        return Err(PlanError::Invalid(format!(
+            "{}: a limit feeding only the sink is not a node — the planner puts its \
+             skip/fetch on GpuUnload, so the driver can release the batches it does not want \
+             instead of unloading them and throwing the rows away",
+            node.name()
+        )));
+    }
+    let is_sink = matches!(node.kind(), NodeKind::Sink);
+    for child in node.children() {
+        limit_positions(child, is_sink)?;
+    }
+    Ok(())
+}
+
+/// The canonical-form rules a driver needs to have been applied before it runs, so a mock
+/// plan meets the same refusal a planned one would.
+pub(crate) fn check_canonical_form(root: &dyn GpuNode) -> Result<(), PlanError> {
+    limit_positions(root, false)
 }
 
 fn walk(node: &dyn GpuNode) -> Result<(), PlanError> {
@@ -361,7 +387,10 @@ mod tests {
     use crate::batch_partitioned::aggregates::AggFunc;
     use crate::batch_partitioned::expr::{Expr, NamedExpr};
     use crate::batch_partitioned::layout::{BatchLayout, ColumnOrder, PartitionLayout, SortOrder};
-    use crate::batch_partitioned::nodes::{GpuFilter, GpuMergePartitions, GpuProject, GpuUnload};
+    use crate::batch_partitioned::node::RowInterval;
+    use crate::batch_partitioned::nodes::{
+        GpuFilter, GpuLimit, GpuMergePartitions, GpuProject, GpuUnload,
+    };
     use crate::batch_partitioned::schema::AggStateColumns;
     use datafusion::arrow::datatypes::{DataType, Field, Schema as ArrowSchema};
     use std::any::Any;
@@ -438,6 +467,53 @@ mod tests {
     fn a_tree_the_planner_shapes_passes_both_halves() {
         let tree = rooted(Box::new(GpuMergePartitions::new(plain_source())));
         assert_eq!(validate(tree.as_ref()), Ok(()));
+    }
+
+    #[test]
+    fn a_limit_whose_only_consumer_is_the_sink_is_refused() {
+        // Root-adjacent is the other lowering: the interval belongs to the unload, which is
+        // what lets the driver release a batch it wants none of rather than move it and
+        // throw the rows away.
+        let tree = rooted(Box::new(GpuLimit::new(
+            plain_source(),
+            RowInterval {
+                skip: 0,
+                fetch: Some(5),
+            },
+        )));
+        invalid(
+            validate(tree.as_ref()),
+            "a limit feeding only the sink is not a node",
+        );
+        invalid(
+            check_canonical_form(tree.as_ref()),
+            "a limit feeding only the sink is not a node",
+        );
+    }
+
+    #[test]
+    fn a_limit_with_a_real_consumer_above_it_is_the_shape_that_passes() {
+        let tree = rooted(Box::new(GpuMergePartitions::new(Box::new(GpuLimit::new(
+            plain_source(),
+            RowInterval {
+                skip: 2,
+                fetch: Some(5),
+            },
+        )))));
+        assert_eq!(check_canonical_form(tree.as_ref()), Ok(()));
+        assert_eq!(validate(tree.as_ref()), Ok(()));
+    }
+
+    #[test]
+    fn the_unloads_own_interval_is_the_root_adjacent_lowering_and_not_a_finding() {
+        let tree: Box<dyn GpuNode> = Box::new(GpuUnload::new(
+            plain_source(),
+            Some(RowInterval {
+                skip: 3,
+                fetch: Some(20),
+            }),
+        ));
+        assert_eq!(check_canonical_form(tree.as_ref()), Ok(()));
     }
 
     #[test]

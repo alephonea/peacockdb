@@ -203,8 +203,8 @@ impl Translator {
             let branches = self.branches(interleave.inputs().iter(), &interleave.schema())?;
             // DataFusion interleaves where its branches share a hash, so lane p of one
             // belongs beside lane p of the next. This mode decides its own lane counts —
-            // the small-source rule can put one branch on a single lane — and branches
-            // that no longer agree have no shared distribution left to interleave on.
+            // a cross join or a small source can put one branch on a single lane — and
+            // branches that no longer agree have no shared distribution to interleave on.
             let first = branches[0].kind().layout().expect("a branch is not a sink");
             let agreed = branches.iter().all(|branch| {
                 let layout = branch.kind().layout().expect("a branch is not a sink");

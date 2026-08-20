@@ -105,6 +105,55 @@ fn try_node_ref_of(any: &dyn std::any::Any) -> Option<NodeRef<'_>> {
     }
 }
 
+/// Which executor trait drives a node. Read before an executor exists, since runnability
+/// asks for it, so it is derived from the node rather than from what a backend returned.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExecutorCategory {
+    Source,
+    Exec,
+    BatchAccumulator,
+    PartitionAccumulator,
+    PartitionEmitter,
+    Join,
+    BatchForwarder,
+    Unload,
+}
+
+impl ExecutorCategory {
+    /// One instance per (node, lane); the rest are one per node, being the cross-lane
+    /// points. A forwarder has no executor at all — the driver owns its rotation.
+    pub fn is_lane_scoped(&self) -> bool {
+        matches!(
+            self,
+            Self::Source | Self::Exec | Self::BatchAccumulator | Self::Join | Self::Unload
+        )
+    }
+}
+
+/// Off the registry rather than beside it: the node set and the category set are one
+/// mapping, and a second source of truth for it is a second thing to keep true.
+pub fn category_of(node: &dyn GpuNode) -> ExecutorCategory {
+    match as_node_ref(node) {
+        NodeRef::LoadParquet(_) => ExecutorCategory::Source,
+        NodeRef::Filter(_) | NodeRef::Project(_) | NodeRef::Sort(_) | NodeRef::Aggregate(_) => {
+            ExecutorCategory::Exec
+        }
+        NodeRef::CoalesceAllBatches(_)
+        | NodeRef::AccumulateBatchesAndSort(_)
+        | NodeRef::AggregateBatches(_)
+        | NodeRef::Limit(_) => ExecutorCategory::BatchAccumulator,
+        NodeRef::MergeSortedPartitions(_) => ExecutorCategory::PartitionAccumulator,
+        NodeRef::EmitPartitions(_) => ExecutorCategory::PartitionEmitter,
+        NodeRef::Join(_) | NodeRef::CrossJoin(_) | NodeRef::NestedLoopJoin(_) => {
+            ExecutorCategory::Join
+        }
+        NodeRef::MergePartitions(_) | NodeRef::Union(_) | NodeRef::Interleave(_) => {
+            ExecutorCategory::BatchForwarder
+        }
+        NodeRef::Unload(_) => ExecutorCategory::Unload,
+    }
+}
+
 /// What a node is called, in a plan line and in the validation message that names it.
 /// No `Exec` suffix: these are not DataFusion nodes, and after the wire-format rename a
 /// line from either family says which mode produced it without a caption.

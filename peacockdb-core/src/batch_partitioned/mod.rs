@@ -10,6 +10,7 @@ pub mod aggregates;
 pub mod backend;
 pub mod batch;
 pub mod cpu_batch;
+pub mod driver;
 pub mod error;
 pub mod estimator;
 pub mod executor;
@@ -26,7 +27,7 @@ pub mod plan;
 pub mod plan_text;
 pub mod schema;
 pub mod translate;
-mod validate;
+pub(crate) mod validate;
 
 #[cfg(not(feature = "rust-only"))]
 pub mod gpu_batch;
@@ -34,11 +35,12 @@ pub mod gpu_batch;
 pub use backend::{Backend, NodeExecutors};
 pub use batch::Batch;
 pub use cpu_batch::CpuBatch;
-pub use error::PlanError;
+pub use error::{PlanError, RunError, When};
 pub use executor::{CallStats, Executor};
 pub use expr::{BinaryOp, ColumnRef, Expr, UnaryOp};
 pub use layout::{BatchLayout, KeyDistribution, NodeKind, PartitionLayout, SortOrder};
 pub use node::{GpuNode, RowInterval};
+pub use nodes::{ExecutorCategory, category_of};
 pub use partitioner::{Batching, RowGroupMeta};
 pub use schema::Schema;
 
