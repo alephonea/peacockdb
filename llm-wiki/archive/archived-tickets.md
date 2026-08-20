@@ -8,19 +8,18 @@ reused, so a commit message or comment naming an old ticket still resolves — h
 recorded here and nowhere else, so the counter never walks back over it:
 
 - **#165** — filed and withdrawn 2026-08-20. It reported a dead widget link — `cost-registry.csv`
-  naming #115 after #115 was archived. The widget's output is documentation like any page, and a
-  documentation defect is fixed where it is found rather than tracked (`coding-style.md`). Named
-  by commit 7b98a99.
-
+  naming #115 after #115 was archived — and there was no such link: the widget already follows a
+  number to the file holding its anchor, with #115 as that test's own case. What was wrong was
+  the note below, which predated that code and now says what holds. Named by commit 7b98a99.
 - **#156** — filed and withdrawn 2026-08-19. It called the exec-model prototype's row-group
   chunking a defect against the engine; the prototype is a model, not a specification, so
   diverging from it where it is wrong is the outcome rather than a drift to reconcile
   (`scripts/exec_model/README.md`). Named by commit 4c89d91.
 
-One caveat before archiving anything else: the cost widget links tickets as
-`llm-wiki/tickets.md#tNN` (`cost-report/src/main.rs`), so a ticket named in the `tickets`
-column of `testdata/cost-registry.csv` must not be moved here without also updating that
-link.
+Archiving a ticket the registry names is safe: the cost widget resolves a number to
+whichever of the two files holds its `<a id="tNN">` anchor (`TicketIndex::path_for` in
+`cost-report/src/main.rs`), and refuses to render a link for a number in neither, failing
+the report rather than emitting one that goes nowhere.
 
 ## Done
 
