@@ -6,7 +6,7 @@ anchor that the cost widget links to. Device labels are `tp<N>-<tier>` (micro=10
 mini=2GiB, standard=12GiB).
 
 A ticket carries a **Priority** line only when it is not medium; medium is the default.
-New tickets take the next free number (currently 166). Finished and lapsed tickets move to
+New tickets take the next free number (currently 167). Finished and lapsed tickets move to
 `llm-wiki/archive/archived-tickets.md` (Done / Stale) — numbers are never reused, so an old
 reference still resolves there.
 
@@ -14,7 +14,7 @@ reference still resolves there.
 
 | Section | Open | Tickets |
 |---|--:|---|
-| [Critical correctness](#critical-correctness) | 15 | #153 #103 #80 #59 #46 #47 #60 #121 #122 #123 #118 #119 #120 #117 #41 |
+| [Critical correctness](#critical-correctness) | 16 | #166 #153 #103 #80 #59 #46 #47 #60 #121 #122 #123 #118 #119 #120 #117 #41 |
 | [Blockers for disabled coverage](#blockers-for-disabled-coverage) | 15 | #158 #97 #23 #32 #65 #62 #91 #95 #57 #45 #63 #56 #55 #96 #143 |
 | [Performance / architecture](#performance--architecture) | 26 | #155 #154 #152 #151 #150 #149 #148 #147 #146 #145 #19 #16 #20 #71 #101 #73 #110 #75 #136 #137 #138 #139 #140 #141 #144 #142 |
 | [Infrastructure / process](#infrastructure--process) | 25 | #164 #163 #157 #159 #160 #161 #162 #113 #114 #116 #126 #134 #133 #132 #131 #130 #129 #128 #127 #124 #125 #13 #94 #69 #49 |
@@ -30,6 +30,23 @@ crashes. Suspect the 8-way Welford M2 merge (`cpp/src/operators/aggregate.cpp`).
 **Test quarantined** 2026-07-31 (commented out in `test_gpu_partitioned.rs`) — it was the only
 coverage of the 8-way M2 merge; tp8 goldens kept. Has already caused one wrongly
 diagnosed "regression" + rollback: check this ticket before blaming your change.
+
+<a id="t166"></a>
+### #166 — physical planning drops a LIMIT interval, and the answer changes
+
+DataFusion 45 loses a limit in two shapes, both verified against DuckDB 1.5.4 over the same sf1
+parquet: the interval is absent from the physical plan, so both engines compute the same wrong answer.
+
+A limit inside a `UNION ALL` branch survives only as an `AggregateExec … lim=[n]` early-stop hint,
+which applies neither the offset nor the truncation — a union of two branch-limited scalars holding
+18 rows under an outer `LIMIT 40 OFFSET 5` answers 40 where DuckDB answers 13, at tp1 and tp4 alike.
+Separately, at tp4 only, an outer limit above an aggregate above a mid-plan limit drops the inner
+interval: the aggregate then counts the whole input (250 rows reaching it where 40 should), so the
+same query answers differently at one target-partition count than at another. No corpus query has
+either shape — every TPC-DS union carries one root LIMIT after an ORDER BY — so nothing computes a
+wrong result today, and `nested-limits.sql` was reshaped rather than canonized against it. Nothing
+detects it either: the interval is gone before we see the plan, so a guard has to compare the
+logical limit set against the physical one. Retest under #23's 46+ upgrade before writing one.
 
 <a id="t153"></a>
 ### #153 — equi-join residual filter is applied after the outer gather
