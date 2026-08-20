@@ -363,6 +363,15 @@ F12. **Modelling the wire found a defect in the shipping engine, not in the mode
    worth more than implementing it correctly — a correct model would have hidden this.
    `test_an_outer_join_with_a_residual_filter_is_refused_not_answered_wrongly`.
 
+## The prototype is a model, not a specification
+
+Where the Rust implementation and this prototype disagree and the prototype is the one that
+is wrong, the Rust is right and the divergence is the outcome, not a drift to reconcile.
+This happened first with row-group chunking: the prototype takes groups until a lane's share
+is reached and overshoots by a whole group, while `ParquetBatchPartitioner` stops where
+stopping is closer, which is what holds the balance bound. Do not file that class as a
+defect against the engine, and do not change the engine to match a model it has outgrown.
+
 ## Not in this cut
 
 The plan-time `estimated_max_resident_size` estimator, which T6 derives in Rust directly

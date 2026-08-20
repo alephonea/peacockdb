@@ -69,7 +69,11 @@ tables ([#143](../tickets.md#t143)). The four TPC-DS queries that do not physica
 on DataFusion 45 stay out until [#23](../tickets.md#t23). Unsupported shapes inside
 supported features (mixed distinct + non-distinct #62, value-form CASE #57) fail at plan
 time where the planner can see them, instead of throwing at run time; per-query
-enablement stays in the registry as for legacy modes.
+enablement stays in the registry as for legacy modes. The corpus this mode covers is
+therefore slightly larger than legacy's rather than a subset: tpcds q38, q76 and q87 plan in
+all five modes and were each measured to run correctly on the shared GPU operators, while the
+legacy tiers leave them disabled by choice
+([#115](../archive/archived-tickets.md#t115), closed).
 
 **Frozen-surface preference.** Keeping the C++ code paths, the FlatBuffers schema
 (`flatbuffers/gpu_plan.fbs`) and the existing symbols in `peacock_gpu.h` unchanged is a
@@ -122,7 +126,11 @@ reimplementing what DataFusion does well:
 The translation layer makes a conscious decision per DataFusion node kind — nothing is
 carried over implicitly. Baseline mapping: hash `RepartitionExec` → `GpuMergePartitions` +
 `GpuEmitPartitions` (the same shape the legacy budget rule lowers shuffles into);
-round-robin `RepartitionExec` → dropped; `CoalesceBatchesExec` → dropped;
+round-robin `RepartitionExec` → dropped; `CoalesceBatchesExec` → no node, since this model
+has none (`GpuCoalesceBatches(target)` was dropped from the node set — [#139](../tickets.md#t139)),
+**except** its `fetch`, which lowers through the limit rule: DataFusion's limit pushdown parks
+a limit on that node and removes the limit node, so consuming it without its fetch answers a
+different question (`SELECT count(*) FROM (… LIMIT 3)` counts every row);
 `SortExec` → [the sort decomposition](#the-sort-decomposition); aggregate pairs → the aggregate sequence
 below; join nodes → `GpuJoin` with side normalization; `UnionExec`/`InterleaveExec` →
 driver-level relabeling plus explicit per-branch cast projects;
@@ -132,14 +140,75 @@ all (the interval goes on `GpuUnload`) or a `GpuLimit` over an inserted
 node kind by node kind, and an unrecognized DataFusion node is a plan-time error naming
 it — never a silent pass-through.
 
+**Targeted unit tests are the coverage; the corpus plan goldens are not.** One test per node
+kind, per expression kind, and per planner rule — the shuffle insertion, the limit lowering,
+the aggregate split, the partitioner's mapping, the small-table drop to one lane — each
+built from the smallest plan that exercises it and asserting the tree it produces. A golden
+over a whole TPC-DS query cannot do that job: it goes red when anything upstream moves, it
+names a file rather than a rule, and a query that happens not to carry a shape leaves that
+shape untested with nothing to show it. The goldens are the regression net over
+whole plans and the readable record of what the mode emits, which is a different question
+from whether each rule is right.
+
+**Expressions are translated the same way**, and the layer is not done when the node kinds
+map. Every node that carries one — a filter's predicate, a project's list, join keys and a
+residual, sort and hash keys, an aggregate's arguments and its `final` list — holds a
+`PhysicalExpr` tree that has to become the mode's own expression IR, one conscious decision
+per expression kind, with an unrecognized kind a plan-time error naming it. What is reused
+is DataFusion's *planning* of those trees: the coercions it already resolved and the
+precision and scale it already derived. What is not reused is the shape, because a column
+reference is an ordinal into a child whose column order this mode decides.
+
+Two consequences worth stating before the work starts. Ordinals are rebased at every node
+the layer inserts, so a per-branch cast project or an inserted merge shifts every reference
+above it — this is where [#135](../tickets.md#t135)'s ordinal class becomes a plan-time
+concern rather than a runtime one. And an aggregate's argument expression is evaluated
+against a different table in each phase, which is the whole of #55/#56/#63: the init sees
+input columns, the merge sees state columns, and an expression written for one is not valid
+against the other.
+
 ### Knobs
 
-1. **Partition count**: tp1 and tp4 in tests. Small tables get 1 partition even at tp4;
-   the row-count threshold is a stated planner input, not folklore.
+1. **Partition count**: tp1 and tp4 in tests. The threshold below which a source drops to one
+   lane is a stated planner input, not folklore, and it is measured in **bytes actually read**
+   — the parquet column-chunk total over the projected columns of the surviving row groups,
+   which is the `bytes` the partitioner already carries. Rows would misjudge both directions:
+   a narrow table of many rows reads less than a wide table of few, and a query projecting two
+   columns of a large table reads a fraction of one projecting twenty. So the threshold is a
+   property of the scan and not of the table, and the same table can be above it in one query
+   and below it in another.
 2. **Batched loading off|on**: whether the loader emits more than one batch per
    partition. Even when off, the loader's declared layout is `MultipleBatches` — no
-   downstream phase may assume one batch per partition. Only when on does the planner
-   take the memory budget (micro/mini/standard/full) and size batches.
+   downstream phase may assume one batch per partition. Only when on does the planner take
+   the memory budget (micro/mini/standard/full) and size batches, and only then does the
+   threshold above bite.
+
+   Batching has three forms, and they are an enum rather than a target value that means
+   something special at one end of its range: `Off` gives one batch per chunk, `PerRowGroup`
+   gives one batch per row group, and `Sized { target_batch_bytes }` takes the estimator's
+   number. **Five planning modes cover them**, each label naming its form:
+
+   | Mode | Lanes | Batching | Budget |
+   |---|---|---|---|
+   | `bp-tp1-single` | 1 | `Off` | no |
+   | `bp-tp1-rowgroup` | 1 | `PerRowGroup` | no |
+   | `bp-tp4-single` | 4 | `Off` | no |
+   | `bp-tp4-rowgroup` | 4 | `PerRowGroup` | no |
+   | `bp-tp4-sized` | 4 | `Sized` | **yes** |
+
+   There is no `bp-tp1-sized`: at one lane a source takes essentially the whole budget, so the
+   sized form collapses to `Off` on anything smaller than the budget and the mode carries no
+   signal. So **one mode takes a budget**, `bp-tp4-sized`, whose `partition_groups` and
+   estimates move with the tier; it records the tier in-band on its `--- memory ---` summary
+   line, since the label does not carry it. The other four are budget-independent and
+   reproduce from the data alone.
+
+   The threshold's effect: a source reading fewer bytes than it drops to one lane even at
+   tp4, and the nodes a one-lane region does not need are then not emitted at all — the
+   `GpuMergePartitions` + `GpuEmitPartitions` pair above it, and the per-lane half of an
+   aggregate sequence that would have merged what one lane never split. So the two batching
+   modes differ in plan shape, not only in the loader's mapping, and a small dimension table
+   is where to look for the difference.
 
 ### ParquetBatchPartitioner
 
@@ -162,13 +231,25 @@ fn partition(
 ```
 
 Policy: survivors (after pruning, same source as legacy) split into `n_partitions`
-contiguous chunks balanced by row count; within a chunk, consecutive row groups are packed
+contiguous chunks balanced by row count — a chunk ends where taking the next group would
+land further from its share than stopping does, rather than where the share is first
+reached, which overshoots by a whole group; within a chunk, consecutive row groups are packed
 greedily into batches while bytes stay under target; a single row group over target still
 becomes its own batch — minimum granularity is one row group, and the planner always
 produces a plan (the enforcer owns the runtime consequence; recourse for oversized batches
-is [#142](../tickets.md#t142)). Batching off means one batch per chunk. Contiguity is a
+is [#142](../tickets.md#t142)). Batching off means one batch per chunk, and `PerRowGroup` means one batch per row group —
+the floor the paragraph above already sets, named rather than reached by passing a target of
+one byte. Contiguity is a
 policy choice, not a cuDF requirement — changing it later is a golden-regenerating change
 and is treated as one.
+
+**The balance bound holds for uniform row groups, and contiguity is why it is not
+universal.** Max−min partition rows ≤ one row group is true of what a parquet writer emits —
+one group size per file, a short last group — and it is tight there rather than loose,
+checked over 200k generated shapes. Row groups differing by orders of magnitude within one
+file beat it, because a contiguous chunk cannot step over a large group to balance around
+it. Contiguity is the stronger rule and stays; the bound is the property it buys on real
+files, so it is asserted with that qualifier rather than unconditionally.
 
 `bytes` is the parquet column-chunk total over the columns the scan projects, not rows ×
 a width derived from types. A varchar's width is a property of the data and the file
@@ -206,9 +287,16 @@ The sum over sources is an upper bound rather than a peak. The driver runs one n
 time, so two sources are rarely at their widest in the same instant; enumerating the
 reachable states would be tighter and is not worth what it costs.
 
-If the constants alone exceed the budget no batch size helps, and the planner says so
-rather than emitting a plan that cannot run. This is the common shape of a build side
-larger than vram, not an edge case.
+If the constants alone exceed the budget no batch size helps — but the planner refuses only
+where the constant **cannot be an overestimate**. A build side is its input's rows and that
+argument was written for it; an aggregate's state rests on the cardinality estimate, and with
+today's trivial estimators (#19) that is one row per input row. tpch q1 groups 6M lineitem
+rows into four, so its state is modelled at 3.8 GB against a 2 GiB budget and the plan is
+refused — wrong by six orders of magnitude, and everything above the aggregate inherits it.
+Refusing there turns "we do not know" into "you cannot run this". Until an estimate is a
+floor rather than a guess, the number goes in the `--- memory ---` section as the worst case
+it is and the enforcer decides at run time. That is the page's own division: prevention at
+plan time, detection at run time.
 
 The output is a target and not a bound. The mapping is quantized to whole row groups and
 an oversized row group is still its own batch, so what the planner guarantees is that it
@@ -606,8 +694,28 @@ All seven are invisible in today's goldens, so a wrong coercion presents as a wr
 rather than a wrong plan, and the two engines can disagree about a cast neither plan states.
 In the new mode each is a `CastExprNode` the planner emits — the aggregate ones inside the
 `final` expressions above, the union ones as the per-branch `GpuProject` casts the node set
-already calls for, the expression ones at the point of use — so every type change appears in
-the plan golden.
+already calls for, the expression ones at the point of use.
+
+**The rule is general, and the table is only the audit that produced it: every cast is
+explicit.** No executor may change a type the plan did not ask it to. A type appearing at a
+node's output that its input and its expressions do not account for is a defect whichever
+side of the boundary invented it, and it is one a reader can now see, because the plan
+golden prints the declared schema per node beside the expressions. Nine were found by
+reading `cpp/src`; the count is a property of today's operator set, not a budget, and an
+operator added later inherits the rule rather than extending the table.
+
+One of the seven is usually a no-op, and it is worth knowing which. DataFusion's coercion
+equalizes a union's branch types at planning, so a `UnionExec`'s branches already match its
+declared output in the plans this corpus produces — the divergence [#41](../tickets.md#t41)
+was filed for is cuDF's parquet reader narrowing decimals, which stays in C++. The planner
+inserts the per-branch casts anyway, because the rule is the rule and a branch that does
+differ must not reach `concatenate`; what goes red on a mismatch is the union node's own
+guard.
+
+The two rows that stay in C++ are exceptions with a reason, not omissions. The loader's
+decimal width is the source honouring the output schema it already declares, so the plan
+does state it. Hash key normalization feeds the hash alone and never reaches a returned
+value — a cast that cannot change an answer is not one the plan needs to carry.
 
 ### DISTINCT lowers to grouping
 
@@ -622,7 +730,7 @@ need no new machinery at all:
 
 | Shape | Corpus carriers | What arrives from DataFusion | What the mode emits |
 |---|---|---|---|
-| `SELECT DISTINCT`, and the set ops that lower to dedup | q6, q41, q54, plus q38/q87's INTERSECT/EXCEPT ([#115](../tickets.md#t115)) | an aggregate with group keys and **no** aggregators — `group_by=[c_customer_sk, c_current_addr_sk], aggr=[]` in q54's golden | the ordinary sequence with an empty `aggs` list: dedup per batch, dedup per lane, shuffle on the keys, dedup again. Correct because dedup is idempotent and associative, so no `final` list is needed either |
+| `SELECT DISTINCT`, and the set ops that lower to dedup | q6, q41, q54, plus q38/q87's INTERSECT/EXCEPT ([#115](../archive/archived-tickets.md#t115)) | an aggregate with group keys and **no** aggregators — `group_by=[c_customer_sk, c_current_addr_sk], aggr=[]` in q54's golden | the ordinary sequence with an empty `aggs` list: dedup per batch, dedup per lane, shuffle on the keys, dedup again. Correct because dedup is idempotent and associative, so no `final` list is needed either |
 | one distinct argument, companions limited to `sum`/`min`/`max` | q16, q94, q95 | already two aggregates: DataFusion's `SingleDistinctToGroupBy` fired at the logical level, so no flag survives. q16's golden shows the pair — inner `group_by=[alias1], aggr=[alias2, alias3]`, outer `aggr=[count(alias1), sum(alias2), sum(alias3)]` | two ordinary sequences, each decomposing as any other aggregate. This is why q16/q94/q95 are green today |
 | one distinct argument, any other companion | **q28 only** — `aggr=[avg(ss_list_price), count(ss_list_price), count(DISTINCT ss_list_price)]` | the rule refuses and `distinct: true` reaches the executor, where a guard throws ([#62](../tickets.md#t62)) | v1 refuses at plan time, per [Scope](#scope-and-constraints). The lowering below is the fix, and it needs no new node |
 
@@ -729,6 +837,21 @@ side puts a `GpuMergePartitions` under the emitter. A side already co-located on
 keys — a scan partitioned that way, or the output of an earlier join on the same key —
 needs neither node. Cross and nested-loop joins are the exception, and it is the join
 itself asking: with no key to co-locate on, both inputs must be one lane.
+
+**An interleave needs its branches to agree on lane count**, and they may not. `can_interleave`
+takes output lane p from lane p of each input, so a union whose branches carry different lane
+counts has no such correspondence and becomes a `GpuUnion` instead — interleaving would
+preserve a distribution the branches no longer share. tpcds q77 is the case: DataFusion hashes
+three branches into four lanes each, and the small-source rule puts the middle one on one lane.
+
+**Equal lane counts are not co-partitioning**, which is what the column's `no` hides.
+DataFusion picks `CollectLeft` for two small tables and emits no repartition at all, while
+both loaders still produce N lanes — so lane p of one side holds nothing that must match
+lane p of the other, and joining lane-wise would silently drop matches. The translation
+therefore checks the hash and not the count: unless both sides are scattered on their own
+join keys, in key order, both merge to one lane. That is the broadcast shape
+[#140](../tickets.md#t140) removes. Until then read the column as "no merge beyond the one
+the shuffle already did", not "no merge".
 
 **What crosses the wire, and what cuDF runs.**
 
@@ -877,6 +1000,19 @@ impl PartitionLayout {
             && matches!(self.batch_layout, BatchLayout::SingleBatch)
     }
 }
+
+These types live in `peacockdb-core/src/batch_partitioned/` as of T3; the sketch here is
+the argument for their shape, and the code is what they are. Four the sketch left implicit
+are settled there: `PlanError` is `Unsupported` (a shape refused at plan time) or `Invalid`
+(a node's requirement on its children); `RowInterval` is `{skip, fetch}`; `Forwarder` is a
+three-variant enum over the mappings; and a `Schema`'s column types are an arrow
+`SchemaRef`, so decimal precision and scale stay the planner's own rather than a copy.
+
+`UniqueKeys` / `UniqueScope` are deliberately not here, though `scripts/exec_model/layout.py`
+declares them. Nothing reads them, by the prototype's own account — they are for later work
+— and a field declared everywhere and read nowhere is the [#130](../tickets.md#t130) shape
+this spec exists to avoid. The aggregate sequence knows each scope for free, so the
+declaration costs nothing to add on the day something consumes it.
 
 trait GpuNode {
     fn kind(&self) -> &NodeKind;   // layout and schema live inside it
@@ -1071,9 +1207,11 @@ enum NodeExecutors<B: Backend> {
     BatchForwarder(Forwarder),
 }
 // Backend::executors_for(ctx: &Self::Context, node: &dyn GpuNode, lane: usize)
-//   -> NodeExecutors<B>. A fresh instance set per call, so the driver instantiates per
-//   lane; `lane` is needed because a loader's lane picks its own row groups out of the
-//   partitioner's mapping.
+//   -> Result<NodeExecutors<B>, PlanError>. A fresh instance set per call, so the driver
+//   instantiates per lane; `lane` is needed because a loader's lane picks its own row
+//   groups out of the partitioner's mapping. It returns a Result because this match is
+//   where "does this backend implement this node" is answered, and that question has a
+//   no — a GPU window (#32) is the standing case.
 
 // Routes whole batches into a new lane numbering; never touches rows, never buffers.
 // No CPU/GPU backends and no CallStats — routing is driver work, and a batch's bytes
@@ -1312,8 +1450,8 @@ with smaller batches (that is #142's adaptive future).
 Prevention lives at plan time; detection at run time.
 
 **Plan time.** An estimator pass computes `estimated_max_resident_size` per node in
-rows × row-width vocabulary (the `subtree_max_row_bytes` family), rendered in the
-`.plan.mem.txt` goldens. Because `GpuMergePartitions` polls round-robin, all N lanes are
+rows × row-width vocabulary (the `subtree_max_row_bytes` family), rendered in each plan
+golden's `--- memory ---` section. Because `GpuMergePartitions` polls round-robin, all N lanes are
 live at once, and the estimator charges the full multi-lane section — N × (per-lane
 executor state + one in-flight batch) between loader/emit and the merge point. This also
 makes today's estimates valid for a future parallel driver, which costs exactly that.
@@ -1455,6 +1593,13 @@ the rename bought.
 skip/fetch are frozen per seq, so every batch would be truncated to the same bounds
 (two batches → 2× the limit), and the right bound for the last batch is a runtime value
 no frozen node can carry. Legacy never sees this because a legacy partition is one batch.
+
+**A scan carrying a pushed-down limit plans one lane.** Where DataFusion can push the bound
+all the way into the source it erases the limit node — `SELECT * FROM nation LIMIT 3` is a
+`ParquetExec{limit: 3}` and nothing above it. DataFusion is safe because its scan is one
+partition; our lane count is our own decision, so four lanes each honouring `limit=3` answer
+with twelve rows. One lane makes the loader's own limit the whole answer. Same shape as the
+small-table rule, and no new node.
 
 **Root-adjacent** (feeding only `GpuUnload` — the common case) **there is no limit node**.
 `skip`/`fetch` become properties of `GpuUnload`, which is where they belong: a limit over a
@@ -1605,8 +1750,11 @@ bare-`LIMIT` queries (TPC-DS q28, q32, q38, q97) limit an already-single-row agg
 
 ## Goldens, registry, widget
 
-**Device labels**: `bp-<tp1|tp4>-<single|batched>`, with the budget tier suffixed for
-execution goldens as in legacy (`q1.bp-tp4-batched-mini.cpu.txt`). The
+**Device labels**: `bp-<tp1|tp4>-<single|rowgroup|sized>`, minus `bp-tp1-sized` which does
+not exist, with the budget tier suffixed for execution goldens as in legacy
+(`q1.bp-tp4-sized-mini.cpu.txt`). The label names the batching form rather than a
+single/batched pair, because `batched` meant `PerRowGroup` at tp1 and `Sized` at tp4 — one
+word for two behaviours, which is the shape coding-style.md warns about. The
 `partition_mode`-style label lookups stay explicit parameters at call sites, per the
 coding-style case.
 
@@ -1616,6 +1764,11 @@ The legacy per-node line is `<Name>: <node fields>, partitions=N, output_rows=R,
 output_bytes=B`, with a `pK: in_rows=… out_rows=… out_bytes=…` sub-line per partition. That
 skeleton is kept — it is what makes the two mode families comparable by eye — and four
 things change inside it.
+
+**A `FilterExec` projects as well as filters**, and its `projection` is part of the node —
+`GpuFilter` carries it, rebases its layout through it, and prints it, exactly as the fbs's
+`CudfFilter` already does. Dropping it declares the child's columns while emitting fewer, so
+every ordinal above the node is off by one.
 
 **Every column reference renders `name@ordinal`.** Three conventions coexist today, all
 three ours — each wrapper's `extra_display_info` composes its own text, so none of it is
@@ -1661,13 +1814,27 @@ What deliberately does not change: the indentation-as-tree shape, `output_rows` 
 `output_bytes` (they are the CPU/GPU cross-check, and their meaning is unchanged), and
 `batches_to_sorted_str` result comparison.
 
-**Plan goldens** (4 modes: bp-tp1-single, bp-tp1-batched, bp-tp4-single, bp-tp4-batched):
+**Plan goldens** (5 modes: bp-tp1-single, bp-tp1-rowgroup, bp-tp4-single, bp-tp4-rowgroup,
+bp-tp4-sized):
 one file per mode holding all queries — `goldens/<bench>/<mode>.plans.txt` — because the
-per-query files would be small and numerous. Every node renders its `PartitionLayout`
-(count, batch layout, key distribution, sort order); the loader renders
-`partition_groups=[...]`; `estimated_max_resident_size` is attached per node. The memory
-sections for all queries are pulled into a sibling `<mode>.plan.mem.txt`, in a layout
-matching the new estimator's fields.
+per-query files would be small and numerous. Every node renders its `PartitionLayout`:
+count, batch layout, key distribution, sort order.
+
+A parquet source renders its whole mapping as one nested structure on one line —
+`partition_groups=[[[0,1],[2,3]],[[4],[5,6,7]]]`, partitions outermost, batches within
+them, row groups innermost — which is verbatim the `Vec<Vec<Vec<u32>>>` the partitioner
+returned. Not a partition count beside a batch count: the two are not independent, and
+every property worth reading off a source line is about which batch sits in which
+partition — the balance bound, an oversized row group standing alone, a partition whose
+batches all came from one file region.
+
+**Estimates go in a `--- memory ---` section per query, not on the node line**, as the legacy
+`.plan.txt` already does. They churn where plan shapes do not — an estimator change, then
+#19's statistics, then #147's refinement in flight — so on the node line every such change
+rewrites every line and a reader cannot tell a shape change from a number. In their own
+section the tree stays byte-identical and the diff says which it was. A section rather than a
+sibling file because nothing consumes the memory data on its own, and cross-referencing two
+files to ask whether a node's estimate suits its layout is worse than scrolling.
 
 **Execution goldens** follow the legacy flow exactly: the CPU executor authors
 `.cpu.txt`/`.result.txt` under `UPDATE_CANONICAL=1`, `.cost.txt` derives from `.cpu.txt`
@@ -1682,11 +1849,11 @@ enablement, with inventory tests in both directions like the existing six; new t
 targets named in `pipeline.yml` steps (the `test_ci_coverage` guard enforces this
 automatically).
 
-**Widget**: two new tables (TPC-H, TPC-DS) repeating the existing structure — plan (four
-cells, one per mode), CPU (four), GPU (four) — fed from the new CSV columns. Window
+**Widget**: two new tables (TPC-H, TPC-DS) repeating the existing structure — plan (five
+cells, one per mode), CPU (five), GPU (five) — fed from the new CSV columns. Window
 queries render plan ✗ (#143). Peacock cost, DuckDB cost and ratio columns mirror the
-legacy ones; when not all four modes are enabled, cost uses the last mode in the sequence
-of four where CPU execution is enabled.
+legacy ones; when not all five modes are enabled, cost uses the last mode in the sequence
+of five where CPU execution is enabled.
 
 # Implementation plan
 
@@ -1695,7 +1862,7 @@ Legacy tests stay green throughout — every task that touches shared code runs 
 affected legacy subsets (one query per mode/tier per binary plus the rust-only tier, per
 build-test.md).
 
-**T0 — Python prototype of the whole execution model** (done). All node types and both drivers
+~~**T0 — Python prototype of the whole execution model**~~ (done). All node types and both drivers
 in Python, operators built with pandas, plans hand-built (no DataFusion, no planner) — an
 emulation of tree execution whose purpose is to settle the push model before any Rust
 exists. Lives in [`scripts/exec_model/`](../../scripts/exec_model/README.md); its tests run
@@ -1743,7 +1910,7 @@ The prototype models scratch per executor and never derived batch sizes from a b
 and T6 derives both in Rust directly — a prototype estimator would be a second model to
 keep true against the one that ships. The corpus is what T6 will calibrate against.
 
-**T1 — flatbuffer operation-name refactor** (done). Nine of the fifteen legacy node-kind names
+~~**T1 — flatbuffer operation-name refactor**~~ (done). Nine of the fifteen legacy node-kind names
 (`GpuFilter`, `GpuProject`, `GpuSort`, `GpuAggregate`, `GpuCrossJoin`,
 `GpuNestedLoopJoin`, `GpuUnion`, `GpuLimit`, `GpuCoalesceBatches`) collide with the new
 mode's node names. Rename the fbs tables and `PlanNodeKind` variants to a `Cudf` prefix
@@ -1757,13 +1924,14 @@ regeneration, plus green legacy subsets. The same commit sweeps the llm-wiki ref
 Landed on master as PR #120, with `plan_bytes.sha256` byte-identical and no golden
 regenerated, which is the proof the rename asked for.
 
-**T2 — ParquetBatchPartitioner.** The pure policy class and its unit tests: fewer
+~~**T2 — ParquetBatchPartitioner.**~~ The pure policy class and its unit tests: fewer
 survivors than N; N=3; single row group over target; batching off ⇒ one batch per chunk;
 empty survivors (explicit error — the fbs "empty map means legacy single partition"
-convention must not leak in); balance bound (max−min partition rows ≤ one row group);
+convention must not leak in); the balance bound on uniform row groups (max−min partition
+rows ≤ one row group);
 fixed-output determinism case. No planner integration yet.
 
-**T3 — node and trait skeleton.** `GpuNode`, `PartitionLayout` (with the three-valued
+~~**T3 — node and trait skeleton.**~~ `GpuNode`, `PartitionLayout` (with the two-valued
 `SortOrder`), `Schema` with semantics annotations, `Batch`/`CpuBatch`/`GpuBatch` shells
 with the move/`!Clone`/`Drop` rules, executor trait definitions with `CallStats`,
 `Backend`. Traits in their own files per coding-style. Compiles under rust-only
@@ -1775,7 +1943,7 @@ compiles with no `dyn` anywhere (verified), and it is what pins the static-dispa
 property the GPU path depends on — the mock backend the driver tests need is then a third
 impl, not a special case.
 
-**T4 — translation layer, single-partition shapes.** DataFusion physical plan (tp1) →
+~~**T4 — translation layer, single-partition shapes.**~~ DataFusion physical plan (tp1) →
 `GpuNode` tree for chains: load, filter, project, sort (+fetch), limit (root-adjacent ⇒
 no node, `skip`/`fetch` set on `GpuUnload`; otherwise a `GpuLimit` node over a
 planner-inserted `GpuMergePartitions` — never a coalesce), coalesce-all,
@@ -1783,22 +1951,28 @@ single/final aggregates, cross/nested-loop joins. Per-node-kind conscious mappin
 unrecognized node ⇒ plan-time error naming it; window ⇒ the #143 refusal. Unit tests
 assert emitted constructs for simple queries.
 
-**T5 — translation layer, partitioned shapes.** tp4: shuffle points → Merge+Emit, the
+~~**T5 — translation layer, partitioned shapes.**~~ tp4: shuffle points → Merge+Emit, the
 aggregate sequence with its shortcuts and the gid rule, join side normalization (type
 remap + column-order-restoring project) and build-side coalesce insertion per the
 capability matrix, union/interleave with explicit branch-cast projects. The
 `hashKeys ⊆ group columns` structure is produced here (validated in T8). Unit tests per
 construct in tp1 and tp4, including side-swap cases.
 
-**T6 — estimator pass and plan goldens.** `estimated_max_resident_size` per node
+~~**T6 — estimator pass and plan goldens.**~~ `estimated_max_resident_size` per node
 (rows × width vocabulary, N-lane charging), `target_batch_bytes` derivation feeding T2's
 partitioner, integration as `plan_batch_partitioned()`. Canonize all four
-`<mode>.plans.txt` + `<mode>.plan.mem.txt` for TPC-H and TPC-DS (minus #23's four and
+`<mode>.plans.txt`, memory sections included, for TPC-H and TPC-DS (minus #23's four and
 window queries, which appear as refusals).
 
 **T7 — schema registry.** The `Schema` carried in `NodeKind` populated on all nodes, with
 column semantics annotations. Unit tests: hand-crafted plans produce expected types and
 annotations; decimal precision/scale fidelity through project/aggregate/union-cast paths.
+
+Half landed with T3-T6: the type exists, every node carries a populated `Schema` with its
+annotations, and the plan goldens print the declared type per column. What is outstanding is
+the unit tests — the goldens are the net, not the coverage, and decimal fidelity through the
+three paths is where `avg`'s state columns were once typed backwards invisibly. Deliberately
+deferred rather than missed.
 
 **T8 — validation.** `validate_schemas_and_partitions()` on every node type: partition
 topology, key-distribution subset rule, sortedness requirements (merge requires
@@ -1808,6 +1982,13 @@ root-adjacent), `SingleBatch`
 expectations (join build, cross/nlj inputs), captured-index checks. Unit tests: manually
 constructed wrong combinations error, right ones pass; then run validation over every
 canonized corpus plan from T6.
+
+Node-local validation landed with T4/T5 and is called from `plan_batch_partitioned`, and
+every canonized plan passes it — that half was forced by a review finding, since ten guards
+existed and none ran on the live path. What remains is T8's: the generic structural pass, the
+manually-constructed wrong combinations, and any defect in the checks themselves. Defects
+found in `validate_schemas_and_partitions` are fixed here rather than where they are
+reported, so a review of the planning branch may name them without them moving it.
 
 **T9 — additive ABI.** The three approved symbols in `gpu_executor.cpp` + `peacock_gpu.h`,
 signatures as [GPU execution](#gpu-execution-through-the-frozen-ffi) gives them; any
@@ -1826,6 +2007,13 @@ than in T10.
 helpers — never by calling into strip/wrapper machinery. Per executor: CPU vs
 hand-crafted oracle, GPU vs CPU, empty-batch cases, `CallStats` model ≥ measured on CPU.
 CPU and GPU tests in separate targets so CI hosts split them.
+
+Also here: **`PlaceholderRowExec` is a source that emits its constant rows**, not a shape to
+refuse ([#158](../tickets.md#t158)). DataFusion's `AggregateStatistics` rule answers an
+unfiltered `count(*)` from parquet metadata and leaves this node holding the result, so the
+plan carries the answer and the executor has only to produce it — one lane, one batch, the
+rows the node already holds. The translation layer maps it like any other source; the work
+is the executor, which is why it lands in this task rather than in T4.
 
 **T11 — accumulators.** `GpuCoalesceAllBatches`, `GpuAggregateBatches` (merge-only and
 finalizing),
@@ -1851,7 +2039,10 @@ queue bounds and batch release rather than returned rows. Plus the accounting fo
 pre/post checks, enforcer trip ⇒ clean query failure, and FFI-error ⇒ query-fatal
 semantics.
 
-**T14 — recipe-plan serialization and GPU integration.** The GpuNode → fb-seq mapping
+**T14 — recipe-plan serialization and GPU integration.** Re-check `avg`'s finalize casts
+here against a real GPU result: the denominator goes to `Decimal128(p, 0)` and the numerator
+to the declared type so cuDF's own divide scale lands where DataFusion declared it, and no
+CPU-side test can prove that arithmetic. The GpuNode → fb-seq mapping
 table implemented and unit-tested (expected seq sets and call patterns per node kind);
 driver-side stats folding across calls into `NodeMemoryStats`; first end-to-end queries
 on shad-gpu (scan → filter → aggregate; a join; a sort+limit), GPU vs CPU.
@@ -1874,11 +2065,8 @@ naming the feature it reaches and the ticket or code path that cares:
 | `LIKE` with a non-prefix pattern | 21 `LIKE`s exist and all are simple; the non-prefix form is a different cuDF path |
 
 Each query lands in `testdata/{tpch,tpcds}-queries/` with registry rows and goldens through
-the existing generators, and each must **plan under the legacy modes too** — a query only
-the new mode can run is a coverage cliff rather than coverage; where a legacy mode cannot
-run it, that is a registry cell with a blocker, as for any other query. Keep the set small:
-every query multiplies across enabled modes and tiers, which is why the corpus grew the way
-it did.
+the existing generators. Keep the set small: every query multiplies across enabled modes and
+tiers, which is why the corpus grew the way it did.
 
 **T16 — rollout.** New macros `cpu_batch_partitioned_result_test` /
 `gpu_batch_partitioned_test`; the node renderer per [Node display](#node-display)
@@ -1889,3 +2077,26 @@ registry columns +
 inventory tests; `pipeline.yml` steps (satisfying `test_ci_coverage`); widget tables with
 the cost-column rule and the #143 plan ✗ cells. Then query-by-query enablement across the
 corpus, tickets filed per newly discovered blocker, as with the legacy rollout.
+
+**T17 — per-node benchmarks for the new mode.** Port `peacock_gpu_benchmarks` to the
+batch-partitioned executor, keeping the protocol that makes its numbers comparable: one
+discarded warm-up, ten measured runs, the **2nd-smallest by `total_us`** reported whole, and
+the floor measured over 200 samples. The run counts stay compile-time constants
+(`tests/common/mod.rs`) so every record in the tree was taken at the same ones.
+
+**A node is called many times here, and that is the port's one real design question.** The
+legacy record carries one `time_us` per node, or one per partition — a node runs once. In
+this mode a node runs once per batch per lane, so a per-node figure is a *sum over calls*
+and the call count belongs beside it; a node at 40 ms over 200 calls and one at 40 ms over
+two are different findings, and a record that cannot tell them apart measures nothing useful.
+`CallStats` is already returned per call and is where the per-call figures come from.
+
+The record gains the mode and the tier — `<query>.<mode>.benchmark.txt` alongside the legacy
+`<query>.<mode>-<tp>-<tier>` — and keeps `build_profile`, `sync_floor_us`,
+`nodes_at_or_below_floor` and the rest, since they mean the same thing. It also carries which
+allocator measured the run: the pool lands with [#151](../tickets.md#t151) and
+[#148](../tickets.md#t148), and a number taken without one is not comparable with a number
+taken with one — which is the whole reason #151 exists.
+
+Case list as the correctness tiers use, so the measured set cannot drift from the verified
+one, and `test_ci_coverage` exempts the target explicitly because it asserts nothing.

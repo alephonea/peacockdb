@@ -6,7 +6,7 @@ anchor that the cost widget links to. Device labels are `tp<N>-<tier>` (micro=10
 mini=2GiB, standard=12GiB).
 
 A ticket carries a **Priority** line only when it is not medium; medium is the default.
-New tickets take the next free number (currently 156). Finished and lapsed tickets move to
+New tickets take the next free number (currently 163). Finished and lapsed tickets move to
 `llm-wiki/archive/archived-tickets.md` (Done / Stale) — numbers are never reused, so an old
 reference still resolves there.
 
@@ -15,9 +15,9 @@ reference still resolves there.
 | Section | Open | Tickets |
 |---|--:|---|
 | [Critical correctness](#critical-correctness) | 15 | #153 #103 #80 #59 #46 #47 #60 #121 #122 #123 #118 #119 #120 #117 #41 |
-| [Blockers for disabled coverage](#blockers-for-disabled-coverage) | 15 | #97 #23 #32 #65 #62 #91 #95 #57 #45 #63 #56 #55 #115 #96 #143 |
+| [Blockers for disabled coverage](#blockers-for-disabled-coverage) | 15 | #158 #97 #23 #32 #65 #62 #91 #95 #57 #45 #63 #56 #55 #96 #143 |
 | [Performance / architecture](#performance--architecture) | 26 | #155 #154 #152 #151 #150 #149 #148 #147 #146 #145 #19 #16 #20 #71 #101 #73 #110 #75 #136 #137 #138 #139 #140 #141 #144 #142 |
-| [Infrastructure / process](#infrastructure--process) | 19 | #113 #114 #116 #126 #135 #134 #133 #132 #131 #130 #129 #128 #127 #124 #125 #13 #94 #69 #49 |
+| [Infrastructure / process](#infrastructure--process) | 24 | #157 #159 #160 #161 #162 #113 #114 #116 #126 #135 #134 #133 #132 #131 #130 #129 #128 #127 #124 #125 #13 #94 #69 #49 |
 
 ## Critical correctness
 
@@ -153,6 +153,23 @@ concatenate succeeds with the declared type. Cheap, and independent of any corpu
 
 ## Blockers for disabled coverage
 
+<a id="t158"></a>
+### #158 — an aggregate DataFusion answers from statistics reaches no executor
+`SELECT count(*) FROM nation` never reaches an `AggregateExec`: DataFusion's
+`AggregateStatistics` rule answers it from parquet metadata and emits `PlaceholderRowExec`
+holding the result.
+
+No engine here runs it. Legacy fails at serialization ("unsupported plan node"), so the GPU
+path dies before any device work while the CPU path passes it to DataFusion and answers
+correctly; the batch-partitioned mode refuses it at plan time. A standing GPU gap, then,
+not a new-mode regression — and no corpus query reaches it, since all 31 using `count(*)`
+carry a WHERE, GROUP BY or JOIN and the rule cannot fire.
+
+The fix is small and belongs to the new mode: the node is a **source that emits its constant
+rows**, so the executor has only to produce what the plan already holds — one lane, one
+batch. Scheduled into T10. Legacy would need the same node in the fbs to close its half,
+not worth doing for a shape neither benchmark has.
+
 <a id="t97"></a>
 ### #97 — Semi/anti/outer joins at real-8-way
 The widest tp8 blocker (~25 registry rows). Per-partition semi/anti/outer landed
@@ -237,14 +254,6 @@ or lower it before the aggregate (`cpp/src/operators/aggregate.cpp`).
 DataFusion evaluates `sum(decimal/int)`'s division (divisor cast to Decimal128) only in
 the Partial phase; GpuAggregate re-evaluates against Final-phase inputs → cast failure.
 Honor the partial-phase operand cast / state schema.
-
-<a id="t115"></a>
-### #115 — q38/q76/q87 set-op & union-count divergences — retriage
-The remainder of the old bucket-I set: q38 (INTERSECT ×3), q87 (EXCEPT ×2 — DISTINCT
-sets lowered to semi/anti joins with `null_equals_null=true` feeding count(*)), q76
-(UNION ALL + IS NULL filters + grouped count(*)). Diverged historically; the fourth
-member (q75) now passes and semi joins now honor per-join null-equality — so first rerun
-on H200, enable what passes, root-cause the rest. Anti/EXCEPT null handling overlaps #80.
 
 <a id="t96"></a>
 ### #96 — GPU real-8-way per-partition JOIN execution
@@ -616,6 +625,70 @@ execution: a split operator (needs a C++ slice-to-handles entry point), or adapt
 replanning on trip (re-plan with more partitions or smaller batches). Related: #91.
 
 ## Infrastructure / process
+
+<a id="t157"></a>
+### #157 — legacy: the budget rule drops a CoalesceBatchesExec's fetch, and the wire cannot carry one
+**Priority: low** — legacy planning only; the batch-partitioned model plans from scratch and
+has no such node.
+
+`gpu_rule.rs` ~L611 rebuilds the node as `CoalesceBatchesExec::new(input, batch_size)`, which
+sets `fetch: None`, so a limit DataFusion pushed onto it is gone.
+
+DataFusion's limit pushdown does park one there and removes the limit node once it has:
+`SELECT count(*) FROM (SELECT * FROM nation WHERE n_regionkey > 1 LIMIT 3)` plans as an
+aggregate over `CoalesceBatchesExec{target, fetch: 3}`. The GPU half could not carry it
+regardless — `CudfCoalesceBatches` has only `target_batch_size` and the node is
+`execute_passthrough`. No golden can show it either: the node's display prints estimates and
+never a `fetch`, so corpus reachability is unknown rather than ruled out, and the corpus
+limits that were checked survive as their own nodes. Fix is three parts — `with_fetch`
+through the rebuild, an fbs field the C++ reads, and the fetch in the node display.
+
+<a id="t159"></a>
+### #159 — RightSemi/RightAnti with a residual filter has no cuDF path
+The mixed_* family evaluates a residual during the join, and no swapped variant exists — so a
+right-semi form carrying one cannot be expressed and the planner refuses it.
+
+Reachable: `SELECT b.v FROM big b WHERE EXISTS (SELECT 1 FROM tiny t WHERE t.k = b.k AND
+t.v < b.v)` plans as RightSemi with a residual once statistics make DataFusion swap the sides,
+so this is not a shape only a constructor produces. Pinned by the refusal test in
+`test_planner_join_capability.rs`. Two ways out: keep the emitted side as the build so the
+join stays a Left form and the existing `mixed_left_*` applies, which is a planner change; or
+a swapped `mixed_*` in cuDF, which is not ours. The first is cheap and has not been costed.
+
+<a id="t160"></a>
+### #160 — nested-loop join supports Inner and Left only
+`execute_nested_loop_join` handles Inner and Left; every other type is refused at plan time
+rather than throwing in the executor.
+
+`SELECT * FROM tiny t FULL JOIN big b ON t.v > b.v` is the reachable case. The C++ builds the
+full cartesian and applies a mask, and a mask cannot re-emit the unmatched rows an outer form
+owes — the same argument [#153](#t153) makes for the equi path, which `join.cpp` already
+states in a comment beside the guard. Semi and anti forms would need the mask plus a
+distinct-on-the-preserved-side pass. No corpus query has one; the refusal is what keeps that
+true rather than discovering it at run time.
+
+<a id="t161"></a>
+### #161 — aggregate shapes the planner refuses: FILTER, and functions with no decomposition
+Two refusals in the aggregate arm. A `FILTER (WHERE …)` clause has no lowering, and an
+aggregate function outside the decomposition registry is refused by name.
+
+Only the second is reachable: `SELECT median(v) FROM tiny` is refused by name, while
+`sum(v) FILTER (WHERE v > 0)` does not parse in DataFusion 45 at all, so that refusal is
+constructor-only until the parser gains the clause. The FILTER form would lower to a CASE
+inside the aggregate argument and needs no new node; the registry gap is per function and each
+wants its merge aggregator stated. Neither shape appears in either benchmark, which is why
+they are refusals rather than work.
+
+<a id="t162"></a>
+### #162 — expression forms the planner refuses
+`TRY_CAST`, the regex match operator, an unrecognized binary operator, and an unrecognized
+expression kind are each refused by name at translation.
+
+Every one is a gap in `expr_translate.rs` rather than a limit of the surface: the C++ has
+`build_expr` cases for most of them, and what is missing is our mapping. They are refusals
+because no corpus query carries one, so the cost of each is one arm and its test. `IN ()`
+belongs to this family but does not parse, so it is reachable only from a constructor and is
+covered as a unit test rather than by a query.
 
 <a id="t113"></a>
 ### #113 — Provision GPU-host testdata by sweeping git-tracked files

@@ -23,9 +23,7 @@
 //!               [--generated-at TS] [--published]
 //!               [--cost-diff --base REF|DIR]
 
-use std::collections::BTreeMap;
-#[cfg(test)]
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
@@ -296,6 +294,53 @@ impl Dataset {
 struct Links {
     repo: String,
     sha: Option<String>,
+    tickets: TicketIndex,
+}
+
+/// Which wiki file each ticket number's anchor lives in. `tickets.md` holds open work and
+/// `archive/archived-tickets.md` the rest, and a closed ticket keeps its registry cell —
+/// a `na` should say which decision it rests on — so the link has to follow the number
+/// rather than assume the file.
+#[derive(Debug, Default, Clone)]
+struct TicketIndex {
+    open: BTreeSet<String>,
+    archived: BTreeSet<String>,
+}
+
+impl TicketIndex {
+    /// Both files, by their anchors: every ticket carries `<a id="tNN">` wherever it
+    /// lives, which is the same thing the links point at.
+    fn load(wiki: &Path) -> Self {
+        let numbers = |path: PathBuf| -> BTreeSet<String> {
+            let text = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+                eprintln!("cost-report: cannot read {}: {e}", path.display());
+                std::process::exit(1);
+            });
+            text.match_indices("<a id=\"t")
+                .filter_map(|(at, marker)| {
+                    let rest = &text[at + marker.len()..];
+                    let number: String = rest.chars().take_while(char::is_ascii_digit).collect();
+                    (!number.is_empty()).then_some(number)
+                })
+                .collect()
+        };
+        Self {
+            open: numbers(wiki.join("tickets.md")),
+            archived: numbers(wiki.join("archive/archived-tickets.md")),
+        }
+    }
+
+    /// The repo-relative file a number resolves to, or `None` where it is in neither —
+    /// which is a link to nowhere and is refused rather than rendered.
+    fn path_for(&self, ticket: &str) -> Option<&'static str> {
+        if self.open.contains(ticket) {
+            Some("llm-wiki/tickets.md")
+        } else if self.archived.contains(ticket) {
+            Some("llm-wiki/archive/archived-tickets.md")
+        } else {
+            None
+        }
+    }
 }
 
 impl Links {
@@ -351,7 +396,16 @@ fn main() {
         env("GITHUB_SHA")
     };
     let repo = opt("--repo", &env("GITHUB_REPOSITORY").unwrap_or_else(|| DEFAULT_REPO.to_string()));
-    let links = Links { repo, sha };
+    // The wiki sits beside the testdata tree, so an out-of-tree run finds both or neither.
+    let wiki = testdata
+        .parent()
+        .unwrap_or(std::path::Path::new("."))
+        .join("llm-wiki");
+    let links = Links {
+        repo,
+        sha,
+        tickets: TicketIndex::load(&wiki),
+    };
 
     // Cost-regression gate (separate mode): diff this tree's .cost.txt totals
     // against a base, render a per-query change widget, and exit non-zero on any
@@ -379,6 +433,24 @@ fn main() {
     // Coverage comes from the committed registry CSV, verified against the test
     // suite's link-time inventory by peacockdb-core's registry tests.
     let registry = Registry::load(&registry_csv);
+    // A ticket a row names must resolve to a file that has its anchor. Rendering a link
+    // to nowhere is the silent half of the failure the archive's own header warns about,
+    // so it is checked once here rather than discovered by a reader clicking it.
+    let unresolved: BTreeSet<&String> = registry
+        .rows
+        .iter()
+        .flat_map(|row| row.tickets.iter())
+        .filter(|ticket| links.tickets.path_for(ticket).is_none())
+        .collect();
+    if !unresolved.is_empty() {
+        eprintln!(
+            "cost-report: {} ticket(s) named in the registry are in neither \
+             llm-wiki/tickets.md nor llm-wiki/archive/archived-tickets.md: {}",
+            unresolved.len(),
+            unresolved.into_iter().cloned().collect::<Vec<_>>().join(", ")
+        );
+        std::process::exit(1);
+    }
 
     let tpch = build_dataset("TPC-H", "testdata/goldens/tpch.sf1", "testdata/tpch-queries", &testdata.join("goldens/tpch.sf1"), &registry, "tpch");
     let tpcds = build_dataset("TPC-DS", "testdata/goldens/tpcds.sf1", "testdata/tpcds-queries", &testdata.join("goldens/tpcds.sf1"), &registry, "tpcds");
@@ -671,26 +743,36 @@ fn features_html(features: &[String]) -> String {
         .join(" ")
 }
 
-/// Ticket links into `llm-wiki/tickets.md` (GitHub issues are retired; the wiki is the
-/// registry). Each ticket carries an `<a id="tNN">` anchor there, so `#tNN` is stable
-/// even when a title is reworded. Bare numbers in the CSV; `--repo` keeps forks linking
-/// to their own copy.
-fn ticket_link(t: &str, repo: &str) -> String {
-    format!("<a href=\"https://github.com/{repo}/blob/master/llm-wiki/tickets.md#t{t}\">#{t}</a>")
+/// Ticket links into the wiki (GitHub issues are retired; the wiki is the registry). Each
+/// ticket carries an `<a id="tNN">` anchor wherever it lives, so `#tNN` is stable even when
+/// a title is reworded — and which file it lives in comes from [`TicketIndex`], since a
+/// closed ticket keeps its registry cell and moves to the archive. Bare numbers in the CSV;
+/// `--repo` keeps forks linking to their own copy.
+fn ticket_link(t: &str, links: &Links) -> String {
+    let path = links.tickets.path_for(t).unwrap_or_else(|| {
+        // Unreachable after the startup gate; if it ever is reached, a dead link is the
+        // one outcome worse than no report.
+        eprintln!("cost-report: ticket #{t} is in neither tickets.md nor the archive");
+        std::process::exit(1);
+    });
+    format!(
+        "<a href=\"https://github.com/{}/blob/master/{path}#t{t}\">#{t}</a>",
+        links.repo
+    )
 }
 
-fn tickets_html(tickets: &[String], repo: &str) -> String {
+fn tickets_html(tickets: &[String], links: &Links) -> String {
     if tickets.is_empty() {
         return "—".to_string();
     }
-    tickets.iter().map(|t| ticket_link(t, repo)).collect::<Vec<_>>().join(" ")
+    tickets.iter().map(|t| ticket_link(t, links)).collect::<Vec<_>>().join(" ")
 }
 
-fn tickets_md(tickets: &[String], repo: &str) -> String {
+fn tickets_md(tickets: &[String], links: &Links) -> String {
     if tickets.is_empty() {
         return "—".to_string();
     }
-    tickets.iter().map(|t| ticket_link(t, repo)).collect::<Vec<_>>().join(" ")
+    tickets.iter().map(|t| ticket_link(t, links)).collect::<Vec<_>>().join(" ")
 }
 
 /// Markdown counterpart of [`mode_cells_html`]. The PR comment's table is raw HTML
@@ -869,7 +951,7 @@ fn render_html(
                 cost_cell_html(r.duckdb, dk_url),
                 ratio_or_dash(r.ratio()),
                 features_html(&r.features),
-                tickets_html(&r.tickets, &links.repo),
+                tickets_html(&r.tickets, links),
             );
         }
         s.push_str("</table>");
@@ -963,7 +1045,7 @@ fn render_markdown(datasets: &[Dataset], pages_url: &str, published: bool, links
                 cost_cell_md(r.duckdb, dk_url),
                 ratio_cell,
                 if r.features.is_empty() { "—".to_string() } else { r.features.join(" ") },
-                tickets_md(&r.tickets, &links.repo),
+                tickets_md(&r.tickets, links),
             );
         }
         s.push_str("</table>\n</details>\n\n");
@@ -1305,12 +1387,12 @@ mod tests {
     /// report is generated without a commit: `golden_url` yields None, so glyphs and
     /// costs render as plain text. Tests that assert bare glyph output use this.
     fn dry_links() -> Links {
-        Links { repo: "o/r".to_string(), sha: None }
+        Links { repo: "o/r".to_string(), sha: None, tickets: TicketIndex::default() }
     }
 
     /// A `Links` WITH a sha, so link-emitting paths are exercised.
     fn sha_links() -> Links {
-        Links { repo: "o/r".to_string(), sha: Some("abc123".to_string()) }
+        Links { repo: "o/r".to_string(), sha: Some("abc123".to_string()) , tickets: TicketIndex::default() }
     }
 
     /// Build a Row for tests. `modes` maps each mode column to its state; anything
@@ -1357,12 +1439,56 @@ mod tests {
 
     #[test]
     fn ticket_and_feature_cells_render_links_and_dashes() {
-        assert_eq!(tickets_html(&[], "o/r"), "—");
+        let links = links_with_tickets(&["103"], &[]);
+        assert_eq!(tickets_html(&[], &links), "—");
         assert_eq!(features_html(&[]), "—");
-        let t = tickets_html(&["103".to_string()], "asymptote-tech/peacockdb");
+        let t = tickets_html(&["103".to_string()], &links);
         assert!(t.contains("llm-wiki/tickets.md#t103"), "{t}");
         assert!(t.contains(">#103<"), "{t}");
         assert!(features_html(&["stddev_var".to_string()]).contains("stddev_var"));
+    }
+
+    fn links_with_tickets(open: &[&str], archived: &[&str]) -> Links {
+        Links {
+            repo: "asymptote-tech/peacockdb".into(),
+            sha: None,
+            tickets: TicketIndex {
+                open: open.iter().map(|t| t.to_string()).collect(),
+                archived: archived.iter().map(|t| t.to_string()).collect(),
+            },
+        }
+    }
+
+    /// A closed ticket keeps its registry cell and moves file, so the link has to follow
+    /// it. The two files are told apart by which one holds the anchor, never by the
+    /// number — an archived number links into the archive and an open one does not.
+    #[test]
+    fn an_archived_ticket_links_into_the_archive() {
+        let links = links_with_tickets(&["103"], &["115"]);
+        let archived = tickets_html(&["115".to_string()], &links);
+        assert!(
+            archived.contains("llm-wiki/archive/archived-tickets.md#t115"),
+            "{archived}"
+        );
+        assert!(archived.contains(">#115<"), "{archived}");
+        // The open one is unmoved by the archive existing.
+        let open = tickets_html(&["103".to_string()], &links);
+        assert!(open.contains("llm-wiki/tickets.md#t103"), "{open}");
+    }
+
+    /// The index is read off the anchors, which is what the links point at — so a ticket
+    /// that has one resolves and a number that has none anywhere does not.
+    #[test]
+    fn the_index_reads_the_anchors_of_both_wiki_files() {
+        let wiki = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../llm-wiki");
+        let index = TicketIndex::load(&wiki);
+        assert_eq!(index.path_for("103"), Some("llm-wiki/tickets.md"));
+        assert_eq!(
+            index.path_for("115"),
+            Some("llm-wiki/archive/archived-tickets.md")
+        );
+        // A number nothing has ever used is a link to nowhere, and says so.
+        assert_eq!(index.path_for("99999"), None);
     }
 
     /// The three row shapes, and the merge. PlanOnly is covered here deliberately:
@@ -1635,7 +1761,7 @@ mod tests {
     /// A sha-less `Links` (dry run): every URL helper returns `None`, so labels /
     /// cells render plain — keeps the label-substring assertions below unambiguous.
     fn no_links() -> Links {
-        Links { repo: "o/r".into(), sha: None }
+        Links { repo: "o/r".into(), sha: None, tickets: TicketIndex::default() }
     }
 
     #[test]
@@ -1662,7 +1788,11 @@ mod tests {
 
     #[test]
     fn query_url_links_only_with_sha() {
-        let links = Links { repo: "o/r".into(), sha: Some("abc123".into()) };
+        let links = Links {
+            repo: "o/r".into(),
+            sha: Some("abc123".into()),
+            tickets: TicketIndex::default(),
+        };
         assert_eq!(
             links.query_url("testdata/tpch-queries", "q6"),
             Some("https://github.com/o/r/blob/abc123/testdata/tpch-queries/q6.sql".to_string())
@@ -1692,7 +1822,7 @@ mod tests {
 
     #[test]
     fn query_cell_linked_with_sha_plain_without() {
-        let linked = Links { repo: "o/r".into(), sha: Some("deadbeef".into()) };
+        let linked = Links { repo: "o/r".into(), sha: Some("deadbeef".into()) , tickets: TicketIndex::default() };
         let url = "https://github.com/o/r/blob/deadbeef/testdata/tpch-queries/q1.sql";
 
         let html = render_html(&[one_row_dataset()], "https://p/", &linked, None, None);
@@ -1709,7 +1839,7 @@ mod tests {
 
     #[test]
     fn diff_query_url_parses_dataset_and_qn() {
-        let links = Links { repo: "o/r".into(), sha: Some("cafe".into()) };
+        let links = Links { repo: "o/r".into(), sha: Some("cafe".into()) , tickets: TicketIndex::default() };
         assert_eq!(
             diff_query_url(&links, "tpch.sf1/q1"),
             Some("https://github.com/o/r/blob/cafe/testdata/tpch-queries/q1.sql".to_string())
@@ -1726,7 +1856,7 @@ mod tests {
 
     #[test]
     fn diff_widget_links_labels_when_sha_present() {
-        let links = Links { repo: "o/r".into(), sha: Some("cafe".into()) };
+        let links = Links { repo: "o/r".into(), sha: Some("cafe".into()) , tickets: TicketIndex::default() };
         let rows = cost_diff(&map(&[("tpch.sf1/q1", 100)]), &map(&[("tpch.sf1/q1", 120)]));
         let url = "https://github.com/o/r/blob/cafe/testdata/tpch-queries/q1.sql";
 

@@ -10,6 +10,7 @@
 pub mod benchmark;
 pub mod cost_model;
 pub mod exec_mode;
+pub mod join_fixture;
 pub mod registry;
 
 use std::path::{Path, PathBuf};

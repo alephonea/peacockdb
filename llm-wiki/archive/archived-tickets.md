@@ -4,12 +4,40 @@ Tickets that are finished or that the tree outgrew. Numbers stay permanent and a
 reused, so a commit message or comment naming an old ticket still resolves — here.
 `llm-wiki/tickets.md` holds only open work.
 
+**Numbers spent without a ticket.** A number withdrawn before it described anything real is
+recorded here and nowhere else, so the counter never walks back over it:
+
+- **#156** — filed and withdrawn 2026-08-19. It called the exec-model prototype's row-group
+  chunking a defect against the engine; the prototype is a model, not a specification, so
+  diverging from it where it is wrong is the outcome rather than a drift to reconcile
+  (`scripts/exec_model/README.md`). Named by commit 4c89d91.
+
 One caveat before archiving anything else: the cost widget links tickets as
 `llm-wiki/tickets.md#tNN` (`cost-report/src/main.rs`), so a ticket named in the `tickets`
 column of `testdata/cost-registry.csv` must not be moved here without also updating that
 link.
 
 ## Done
+
+<a id="t115"></a>
+### #115 — q38/q76/q87 set-op & union-count divergences — retriage
+q38 (INTERSECT ×3), q76 (UNION ALL + IS NULL filters + grouped `count(*)`) and q87 (EXCEPT ×2)
+diverged on the GPU historically, and the ticket's instruction was to rerun on an H200, enable
+what passes, and root-cause the rest.
+
+**Done 2026-08-19.** All three rerun on shad-gpu in `golden_exact` — per-node rows and cost
+against a freshly generated `.cpu.txt`, plus the whole result. None diverges in any way: not a
+row count, not a value, not a per-node mismatch. q38 answers 107, q87 47298, and q76 matches
+its 103-line grouped output exactly. Whatever the bucket-I triage saw was fixed somewhere
+between it and today; q87's named suspect — anti/EXCEPT null handling overlapping
+[#80](../tickets.md#t80) — was never the cause, since `EXCEPT` wants the `EQUAL` that anti
+hardcodes.
+
+**The three stay disabled in the legacy modes deliberately**, which is why this is closed
+rather than acted on: they are `full_table_gpu=na` by choice now, not by defect, and the
+registry keeps `115` in their `tickets` column so the widget still says which decision the
+cells rest on. The batch-partitioned mode plans all three; q87 is recorded in
+`llm-wiki/tasks/batch_partitioned_executor.md` as a query whose corpus is larger than legacy's.
 
 <a id="t77"></a>
 ### #77 — Cost report: publish per-SHA history on master

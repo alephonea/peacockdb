@@ -4,7 +4,7 @@ Code and tests are authoritative; this page maps them.
 
 ## Test categories
 
-**Grand total: 1139 test cases — Rust 733, C++ 37, Python 369.** The Python figure includes the 93 corpus queries, which only a manual dispatch runs.
+**Grand total: 1289 test cases — Rust 883, C++ 37, Python 369.** The Python figure includes the 93 corpus queries, which only a manual dispatch runs.
 
 **Runs** — `cpp-cpu` = pipeline.yml's cpp-cpu job, both cuDF legs · `cost-report` = the
 cost-report job · `shad-gpu` = CI GPU job on the remote host, `--test-threads=1` ·
@@ -31,13 +31,22 @@ and `2gpu` rows also runs locally; large CPU batches go to verda.
 | GPU all-at-once smoke (Rust) | whole-plan `peacock_execute` FFI; retires with [#110](tickets.md) | [scan_nation](../peacockdb-core/tests/test_gpu_executor_misc.rs#L18) | manual | 6 |
 | GPU per-node timing (Rust) | measures, asserts nothing: one `.benchmark.txt` per case, same list as the two GPU tiers ([`gpu_cases.inc`](../peacockdb-core/tests/common/gpu_cases.inc)) | [run_gpu_benchmark](../peacockdb-core/tests/peacock_gpu_benchmarks.rs) | manual | 127 |
 | Cost-model goldens (Rust) | `.cost.txt` derivation from `.cpu.txt` × `cost_model.conf` | [cost_goldens_match_and_total_is_byte_identical](../peacockdb-core/tests/test_cost_model.rs#L36) | cost-report | 2 |
+| Planner join capability (Rust) | every hash join type crossed with a residual filter, the co-partitioning and lane rules, and the null analysis both ways; writes its own parquet, so no dataset | [test_planner_join_capability](../peacockdb-core/tests/test_planner_join_capability.rs) | cost-report | 13 |
+| Null analysis rules (Rust) | every rule in the can-this-column-be-NULL pass, on hand-built nodes — a source declares a not-nullable column here, which no corpus fixture can | [a_scalar_function_can_be_null_even_over_operands_that_cannot](../peacockdb-core/tests/test_null_analysis.rs) | cost-report | 8 |
+| Planner join refusals (Rust) | every shape the planner refuses, from the SQL that provokes it; each asserts its ticket is in the message a user sees | [test_planner_join_refusals](../peacockdb-core/tests/test_planner_join_refusals.rs) | cost-report | 10 |
+| Plan goldens, bp-tp1-single (Rust) | 1 lane, one batch per chunk — the mode every other is read against; plan tree + `--- memory ---` per query, one file per bench | [tpch_bp_tp1_single](../peacockdb-core/tests/test_batch_partitioned_plans.rs) | cpp-cpu | 2 |
+| Plan goldens, bp-tp1-rowgroup (Rust) | 1 lane, one batch per row group: the finest the mapping expresses, and no budget; plan tree + `--- memory ---` per query, one file per bench | [tpch_bp_tp1_rowgroup](../peacockdb-core/tests/test_batch_partitioned_plans.rs) | cpp-cpu | 2 |
+| Plan goldens, bp-tp4-single (Rust) | 4 lanes, one batch per chunk — the shuffle shapes with batching inert; plan tree + `--- memory ---` per query, one file per bench | [tpch_bp_tp4_single](../peacockdb-core/tests/test_batch_partitioned_plans.rs) | cpp-cpu | 2 |
+| Plan goldens, bp-tp4-rowgroup (Rust) | 4 lanes at row-group granularity: lanes and many batches at once; plan tree + `--- memory ---` per query, one file per bench | [tpch_bp_tp4_rowgroup](../peacockdb-core/tests/test_batch_partitioned_plans.rs) | cpp-cpu | 2 |
+| Plan goldens, bp-tp4-sized (Rust) | 4 lanes, the estimator's target — **the only mode a budget tier moves**, recorded in-band; plan tree + `--- memory ---` per query, one file per bench | [tpch_bp_tp4_sized](../peacockdb-core/tests/test_batch_partitioned_plans.rs) | cpp-cpu | 2 |
+| Plan goldens, meta (Rust) | the registry and the goldens agree both ways; every mode has a golden and every golden a mode; every refusal in a golden names a ticket that exists | [the_registry_matches_the_goldens_in_both_directions](../peacockdb-core/tests/test_batch_partitioned_plans.rs) | cpp-cpu | 3 |
 | Registry ↔ CSV (Rust) | each `cost-registry.csv` mode column matches the tests that exist, both directions | [full_table_columns](../peacockdb-core/tests/test_cpu_full_table.rs#L313), [partitioned_gpu_column](../peacockdb-core/tests/test_gpu_partitioned.rs#L46) | cpp-cpu ×4, shad-gpu ×2 | 6 |
 | CI wiring guard (Rust) | every Rust target must be named by a CI step — CI does not glob | [every_rust_test_target_is_named_by_ci](../peacockdb-core/tests/test_ci_coverage.rs#L284) | cost-report | 2 |
 | tp8 flip diagnostic (Rust) | prints would-be flips; a printer, no assertions | [diag_flip_audit](../peacockdb-core/tests/diag_flip_audit.rs#L135) | manual | 1 |
-| Lib unit (Rust) | config tiers, batch-size rule, resident model | [tiers_are_strictly_increasing](../peacockdb-core/src/config.rs#L119), [nested_join_build_sides_stack](../peacockdb-core/src/resident.rs#L165) | cpp-cpu | 9 |
+| Lib unit (Rust) | config tiers, batch-size rule, resident model, and the batch-partitioned layout and static-dispatch types | [tiers_are_strictly_increasing](../peacockdb-core/src/config.rs#L119), [nested_join_build_sides_stack](../peacockdb-core/src/resident.rs#L165) | cpp-cpu | 113 |
 | Doctest (Rust) | the `CpuExecutor` rustdoc example still compiles | [CpuExecutor example](../peacockdb-core/src/lib.rs#L166) | manual — unlisted, see [#128](tickets.md) | 1 |
 | FFI smoke (Rust) | the crate links; executor lifecycle | [test_executor_lifecycle](../peacockdb-ffi/tests/test_ffi.rs#L17) | cpp-cpu | 2 |
-| Cost-report renderer (Rust) | glyphs, links, ratio bucket, regression gate, history | [bucket_threshold_is_1_4](../cost-report/src/main.rs#L1552), [regression_count_drives_exit_decision](../cost-report/src/main.rs#L1623) | cost-report | 23 |
+| Cost-report renderer (Rust) | glyphs, links, ratio bucket, regression gate, history | [bucket_threshold_is_1_4](../cost-report/src/main.rs#L1552), [regression_count_drives_exit_decision](../cost-report/src/main.rs#L1623) | cost-report | 25 |
 | DuckDB cost extraction (Python) | classifier / pruning / dynamic-filter logic — fails CI before generation | [scan_count_mismatch_fails_loud](../testdata/test_duckdb_cost.py#L280), [compute_pruning_from_rowgroups](../testdata/test_duckdb_cost.py#L226) | cost-report | 41 |
 | Exec-model prototype (Python) | the batch-partitioned scheduler over mock traits, plus pandas-backed operators checked against a single-shot oracle at five partitioning configs, both limit lowerings, the scalar expressions pinned to what `expr.cpp` does rather than what pandas defaults to, and every join mode run on two backends — one pandas, one emitting FlatBuffers nodes and interpreting them as the C++ does — no project code | [test_a_join_in_its_build_phase_holds_back_its_probe_subtree](../scripts/exec_model/tests/test_scheduling.py), [test_every_join_type_matches_the_oracle_on_both_backends](../scripts/exec_model/tests/test_join_capability.py) | cost-report | 216 |
 | Exec-model prototype, TPC-H plan shapes (Python) | the same drivers over real sf1 tables under a live resident budget, each plan re-run at every layout `LayoutInjector` can produce; needs the generated dataset, so it rides cpp-cpu rather than cost-report | [test_the_accumulator_is_what_makes_the_budget_bind](../scripts/exec_model/tests/test_tpch.py), [test_every_layout_gives_the_same_shuffled_join](../scripts/exec_model/tests/test_tpch.py) | cpp-cpu (25.02 leg) | 19 |
@@ -123,8 +132,8 @@ sha256 matches local). Notes on the rows above:
 
 ## Golden files
 
-All goldens are committed, under `testdata/goldens/`: `tpch.sf1` (266 files), `tpcds.sf1`
-(620), `tpch.sf40` (16), plus the single-file `plan_bytes.sha256` (140 digests). The
+All goldens are committed, under `testdata/goldens/`: `tpch.sf1` (271 files), `tpcds.sf1`
+(625), `tpch.sf40` (16), plus the single-file `plan_bytes.sha256` (140 digests). The
 committed DuckDB profile inputs live beside them in `testdata/duckdb-profiles/{tpch,tpcds}`
 (22 + 99) and `testdata/duckdb-dynfilters/{tpch,tpcds}` (22 + 99).
 
@@ -134,6 +143,7 @@ live in `testdata/`.
 | Golden | Produced by | Depends on | Asserted by |
 |---|---|---|---|
 | `<q>.<device>.plan.txt` | plan tier with `UPDATE_CANONICAL=1` | sf1 parquet (schemas + row-group stats reach the plan) | plan goldens tier |
+| `<mode>.plans.txt` | `test_batch_partitioned_plans` with `UPDATE_CANONICAL=1` | sf1 parquet — row-group counts and per-column bytes decide `partition_groups` and the lane rules | the batch-partitioned plan tiers, section by section |
 | `plan_bytes.sha256` | `test_plan_bytes` with `UPDATE_CANONICAL=1`<br>**and** `PEACOCK_REWRITE_PLAN_BYTES=1` | the same physical plans, serialized | <sub>serialized_plan_<br>bytes_are_stable</sub> |
 | `….cpu.txt` | the CPU executor under `UPDATE_CANONICAL=1` — never the GPU | sf1 parquet | CPU exec tiers; the GPU tiers assert against it read-only |
 | `….cost.txt` | derived from the sibling `.cpu.txt` text × `cost_model.conf` | `.cpu.txt`, `cost_model.conf` | CPU exec tiers + `test_cost_model` (re-derives and compares) |
@@ -220,8 +230,8 @@ cost-report ──► deploy-pages (master push only)          s3-datasets
   releases and would move every plan golden), then the CPU rust tiers:
   `test_plan_serialiser`, `test_query_plan`, `test_cpu_full_table`,
   `test_cpu_executor_misc`, `test_cpu_oom`, `test_node_executor`, `test_query_plan_misc`,
-  `test_cpu_partitioned`, `peacockdb-ffi --test test_ffi`, plus rust-only
-  `test_plan_bytes` and `--lib`. Build and run are separate steps whose env blocks must
+  `test_cpu_partitioned`, `test_batch_partitioned_plans`, `peacockdb-ffi --test test_ffi`,
+  plus rust-only `test_plan_bytes` and `--lib`. Build and run are separate steps whose env blocks must
   stay byte-identical, or the run step recompiles.
 - **cpp-build-2502** — builds the 25.02 C++ side, bundles the Arrow/Parquet runtime libs,
   and stages `test_gpu_full_table`, `test_gpu_partitioned`, `test_inc2_conformance` as the
@@ -239,8 +249,9 @@ cost-report ──► deploy-pages (master push only)          s3-datasets
   and `REMOTE_DIR` is removed on `always()`.
 - **cost-report** — the golden/meta tier lives here, not in cpp-cpu: python
   `testdata/test_duckdb_cost.py`, the `scripts/exec_model/tests/test_*.py` prototype set,
-  `cargo test -p cost-report`, and rust-only
-  `test_cost_model` + `test_ci_coverage`. Then report generation, a PR-comment upsert, and
+  `cargo test -p cost-report`, and rust-only `test_planner_join_capability`,
+  `test_planner_join_refusals`, `test_null_analysis`, `test_cost_model` and `test_ci_coverage` — the two planner
+  targets write their own parquet, so they need no generated dataset and belong in this tier. Then report generation, a PR-comment upsert, and
   the cost-regression gate against the base SHA, which fails the job on a regression. On a
   master push it uploads the Pages artifact.
 - **deploy-pages** (needs cost-report; master pushes only) — publishes that artifact.
