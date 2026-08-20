@@ -19,7 +19,9 @@
   the line that points there.
 - **Match surrounding idiom** (naming, comment density, error handling). Trust rustfmt;
   don't hand-format — and run it over the files you touched, never the crate, which
-  predates the installed rustfmt and reformats 49 of them.
+  predates the installed rustfmt and reformats 49 of them. A `mod.rs` is not one file for
+  this purpose: rustfmt follows `mod` declarations, so formatting one reformats every file
+  below it. Name the leaves instead.
 - **C++ formatting** is defined by `.clang-format` at the repo root. Apply it to the
   lines you changed — `git clang-format` — never to whole files: the tree was never
   machine-formatted, so reformatting one file to fix one function buries a three-line
@@ -116,6 +118,22 @@ instead of planning single-partition by default.
 The same shape appears as a bool that means two unrelated things, a trailing `Option`
 whose `None` selects a different algorithm, and an argument order that is not type-checked
 because both parameters are the same type.
+
+### A doc comment reassigned by an insertion
+
+A doc block belongs to whatever declaration follows it, so inserting a type above an existing
+one moves that block onto the new type. Nothing is missing afterwards: the file is shorter,
+every block is inside its cap, and the orphaned declaration simply has none. A length check
+cannot see it, which is why it survives review.
+
+Found when `When` was inserted above `RunError`: `RunError` lost its documentation, and `When`'s
+block opened with two sentences about `RunError` — one of them stating an enforcement contract
+that a finding in the same task had just disproved. The wrong claim was now the only one in the
+code, attached to the wrong type.
+
+The check is narrow and worth doing at one moment rather than everywhere: when a declaration has
+been inserted above an existing one, read the first sentence of each doc block and ask whether it
+is about the thing beneath it.
 
 ### A thread-local as an output or side-channel argument
 

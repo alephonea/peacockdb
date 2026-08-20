@@ -645,15 +645,8 @@ jobs:
           done
           exit "$status"
 
-      # The three planner targets run first in this tier for the same reason the
-      # batch-partitioned goldens run first in cpp-cpu: it is the mode under development,
-      # and each of these writes its own parquet, so they finish in well under a second
-      # and a break shows before the report machinery starts.
-      #
-      # The join capability matrix at plan time: every hash join type crossed with a
-      # residual filter, the co-partitioning and lane rules, and the null analysis both
-      # ways. It writes its own parquet — nulls included, which tpch.minimal has none of —
-      # so it needs no generated dataset and belongs in this tier rather than cpp-cpu.
+      # The three planner targets run first: each writes its own parquet, so none needs the
+      # generated dataset, and a break in the mode under development shows in under a second.
       - name: Planner join capability (Rust)
         run: cargo test --features rust-only -p peacockdb-core --test test_planner_join_capability
 
