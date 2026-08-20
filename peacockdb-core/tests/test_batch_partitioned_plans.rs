@@ -1,8 +1,9 @@
 //! Plan goldens for the batch-partitioned mode: one file per (bench, mode), holding every
 //! query the bench has.
 //!
-//! A section per query — the tree, then `--- memory ---` and the estimator's figures, the
-//! same two-part shape the legacy `.plan.txt` goldens carry. Refusals are content: a query
+//! A section per query — the tree, then `--- recipes ---` and what each node asks of the
+//! device, then `--- memory ---` and the estimator's figures. The legacy `.plan.txt`
+//! goldens carry the first and the last of those. Refusals are content: a query
 //! this mode declines renders its reason where its tree would be, so the file says what
 //! the mode does and does not run.
 
@@ -11,7 +12,10 @@ mod common;
 use std::path::{Path, PathBuf};
 
 use peacockdb_core::batch_partitioned::plan::{BatchSizing, PlanKnobs, plan_batch_partitioned};
-use peacockdb_core::batch_partitioned::plan_text::{render_plan, render_plan_memory};
+use peacockdb_core::batch_partitioned::plan_text::{
+    render_plan, render_plan_memory, render_plan_recipes,
+};
+use peacockdb_core::batch_partitioned::recipe::attach_recipes;
 use peacockdb_core::config::MemoryLimit;
 
 use common::{data_dir_for, golden_dir_for, queries_dir_for};
@@ -103,8 +107,9 @@ async fn render_query(
     };
     match plan_batch_partitioned(&plan, knobs) {
         Ok((tree, model)) => format!(
-            "{}--- memory ---\n{}",
+            "{}--- recipes ---\n{}--- memory ---\n{}",
             render_plan(tree.as_ref()),
+            render_plan_recipes(tree.as_ref(), &attach_recipes(tree.as_ref())),
             render_plan_memory(tree.as_ref(), &model)
         ),
         Err(e) => format!("refused: {}\n", relative_to_testdata(&e.to_string())),

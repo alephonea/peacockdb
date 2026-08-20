@@ -9,10 +9,12 @@
 
 mod expr_text;
 mod memory;
+mod recipes;
 
 pub use expr_text::expr_text;
 use expr_text::join_filter_text;
 pub use memory::render_plan_memory;
+pub use recipes::render_plan_recipes;
 
 use std::fmt::Write as _;
 
