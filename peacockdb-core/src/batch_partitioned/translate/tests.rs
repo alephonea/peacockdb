@@ -44,6 +44,11 @@ async fn translated(sql: &str) -> Box<dyn GpuNode> {
 
 /// tp4 with batching on, which is what makes the small-table threshold bite.
 async fn translated_at_tp4(sql: &str, small_table_bytes: u64) -> Box<dyn GpuNode> {
+    translate_at_tp4(&plan_at(sql, 4).await, small_table_bytes)
+}
+
+/// The same knobs over a plan rather than a query, for the shapes no sql reaches.
+fn translate_at_tp4(plan: &Arc<dyn ExecutionPlan>, small_table_bytes: u64) -> Box<dyn GpuNode> {
     Translator::new(
         4,
         Batching::Sized {
@@ -51,7 +56,7 @@ async fn translated_at_tp4(sql: &str, small_table_bytes: u64) -> Box<dyn GpuNode
         },
     )
     .with_small_table_bytes(small_table_bytes)
-    .translate(&plan_at(sql, 4).await)
+    .translate(plan)
     .expect("translate the plan")
 }
 
@@ -231,6 +236,49 @@ async fn a_mid_plan_limit_is_a_node_over_a_one_lane_stream() {
         Some(RowInterval {
             skip: 0,
             fetch: Some(3)
+        })
+    );
+    validate_all(tree.as_ref());
+}
+
+#[tokio::test]
+async fn a_mid_plan_limit_over_several_lanes_gets_a_merge_beneath_it() {
+    use datafusion::physical_plan::ExecutionPlanProperties;
+    use datafusion::physical_plan::coalesce_partitions::CoalescePartitionsExec;
+    use datafusion::physical_plan::limit::GlobalLimitExec;
+
+    // Hand-built because the sql that reaches this branch also hits #166: a fetch-carrying
+    // CoalesceBatchesExec keeps its input's lanes and lowers here too, but only ever with
+    // skip=0, and the query that pinned that shape was reshaped away. The branch is live.
+    let plan = plan_at("SELECT * FROM customer WHERE c_nationkey > 1", 4).await;
+    assert!(
+        plan.output_partitioning().partition_count() > 1,
+        "the input has to be the multi-lane one, or the branch under test is not reached"
+    );
+    let over_four_lanes: Arc<dyn ExecutionPlan> = Arc::new(GlobalLimitExec::new(plan, 2, Some(5)));
+    // A parent, or the interval would be root-adjacent and land on the unload instead.
+    let root: Arc<dyn ExecutionPlan> = Arc::new(CoalescePartitionsExec::new(over_four_lanes));
+
+    let tree = translate_at_tp4(&root, 0);
+    assert_eq!(
+        shape(tree.as_ref()),
+        "Unload(Limit(MergePartitions(Filter(LoadParquet))))"
+    );
+    assert_eq!(
+        descend(tree.as_ref(), 2).kind().layout().unwrap().n,
+        1,
+        "the merge is what makes the interval name rows at all"
+    );
+    assert_eq!(
+        descend(tree.as_ref(), 3).kind().layout().unwrap().n,
+        4,
+        "and it merges four lanes, not one"
+    );
+    assert_eq!(
+        descend(tree.as_ref(), 1).row_interval(),
+        Some(RowInterval {
+            skip: 2,
+            fetch: Some(5)
         })
     );
     validate_all(tree.as_ref());

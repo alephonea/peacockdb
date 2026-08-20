@@ -7,17 +7,40 @@ reused, so a commit message or comment naming an old ticket still resolves — h
 **Numbers spent without a ticket.** A number withdrawn before it described anything real is
 recorded here and nowhere else, so the counter never walks back over it:
 
+- **#165** — filed and withdrawn 2026-08-20. It reported a dead widget link — `cost-registry.csv`
+  naming #115 after #115 was archived — and there was no such link: the widget already follows a
+  number to the file holding its anchor, with #115 as that test's own case. What was wrong was
+  the note below, which predated that code and now says what holds. Named by commit 7b98a99.
 - **#156** — filed and withdrawn 2026-08-19. It called the exec-model prototype's row-group
   chunking a defect against the engine; the prototype is a model, not a specification, so
   diverging from it where it is wrong is the outcome rather than a drift to reconcile
   (`scripts/exec_model/README.md`). Named by commit 4c89d91.
 
-One caveat before archiving anything else: the cost widget links tickets as
-`llm-wiki/tickets.md#tNN` (`cost-report/src/main.rs`), so a ticket named in the `tickets`
-column of `testdata/cost-registry.csv` must not be moved here without also updating that
-link.
+Archiving a ticket the registry names is safe: the cost widget resolves a number to
+whichever of the two files holds its `<a id="tNN">` anchor (`TicketIndex::path_for` in
+`cost-report/src/main.rs`), and refuses to render a link for a number in neither, failing
+the report rather than emitting one that goes nowhere.
 
 ## Done
+
+<a id="t135"></a>
+### #135 — Column ordinals are enforced only by cuDF's `at()` and the final result
+Every column reference in the IR is an ordinal into the child's output table, and almost nothing
+checks them. Two concrete gaps.
+
+(a) `TableResult` is a `cudf::table` plus a name vector with no invariant that the two have the
+same length, and the six sites indexing names use `operator[]` — so a short vector is undefined
+behaviour, not an exception. `filter.cpp` ~L42 reads `fv.column(idx)` and
+`input.column_names[idx]` in one iteration and only the first is checked; it happens to run
+first. Assert `num_columns() == column_names.size()` where `TableResult` is built. (b) Nothing
+checks a child produced its columns in the order the plan assumed. Per-node bytes come from the
+plan's schema on both engines by design (`logical_size_from_schema`, single-sourced so they
+cannot drift), so a node emitting the right count in the wrong order yields identical numbers
+everywhere and surfaces only at the root; a per-node type check in the GPU tiers closes it. Also
+there: `expr.cpp` ~L349 returns `type_id::EMPTY` for an out-of-range ColumnRef instead of
+throwing, turning a bad ordinal into a confusing type error further along.
+
+Closed 2026-08-19. The batch-partitioned planner now checks every column reference's name against the field at its position, so the class is caught at plan time for that mode; the C++ items above are carried by [#164](../tickets.md#t164).
 
 <a id="t115"></a>
 ### #115 — q38/q76/q87 set-op & union-count divergences — retriage

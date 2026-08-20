@@ -6,7 +6,7 @@ anchor that the cost widget links to. Device labels are `tp<N>-<tier>` (micro=10
 mini=2GiB, standard=12GiB).
 
 A ticket carries a **Priority** line only when it is not medium; medium is the default.
-New tickets take the next free number (currently 163). Finished and lapsed tickets move to
+New tickets take the next free number (currently 167). Finished and lapsed tickets move to
 `llm-wiki/archive/archived-tickets.md` (Done / Stale) — numbers are never reused, so an old
 reference still resolves there.
 
@@ -14,10 +14,10 @@ reference still resolves there.
 
 | Section | Open | Tickets |
 |---|--:|---|
-| [Critical correctness](#critical-correctness) | 15 | #153 #103 #80 #59 #46 #47 #60 #121 #122 #123 #118 #119 #120 #117 #41 |
+| [Critical correctness](#critical-correctness) | 16 | #166 #153 #103 #80 #59 #46 #47 #60 #121 #122 #123 #118 #119 #120 #117 #41 |
 | [Blockers for disabled coverage](#blockers-for-disabled-coverage) | 15 | #158 #97 #23 #32 #65 #62 #91 #95 #57 #45 #63 #56 #55 #96 #143 |
 | [Performance / architecture](#performance--architecture) | 26 | #155 #154 #152 #151 #150 #149 #148 #147 #146 #145 #19 #16 #20 #71 #101 #73 #110 #75 #136 #137 #138 #139 #140 #141 #144 #142 |
-| [Infrastructure / process](#infrastructure--process) | 24 | #157 #159 #160 #161 #162 #113 #114 #116 #126 #135 #134 #133 #132 #131 #130 #129 #128 #127 #124 #125 #13 #94 #69 #49 |
+| [Infrastructure / process](#infrastructure--process) | 25 | #164 #163 #157 #159 #160 #161 #162 #113 #114 #116 #126 #134 #133 #132 #131 #130 #129 #128 #127 #124 #125 #13 #94 #69 #49 |
 
 ## Critical correctness
 
@@ -30,6 +30,23 @@ crashes. Suspect the 8-way Welford M2 merge (`cpp/src/operators/aggregate.cpp`).
 **Test quarantined** 2026-07-31 (commented out in `test_gpu_partitioned.rs`) — it was the only
 coverage of the 8-way M2 merge; tp8 goldens kept. Has already caused one wrongly
 diagnosed "regression" + rollback: check this ticket before blaming your change.
+
+<a id="t166"></a>
+### #166 — physical planning drops a LIMIT interval, and the answer changes
+
+DataFusion 45 loses a limit in two shapes, both measured against DuckDB 1.5.4 on the same sf1
+parquet: the interval is absent from the physical plan, so both engines compute the same wrong answer.
+
+A limit inside a `UNION ALL` branch survives only as an `AggregateExec … lim=[n]` early-stop hint,
+which applies neither the offset nor the truncation: two branch limits holding 18 rows under an outer
+`LIMIT 40 OFFSET 5` answer 40 where DuckDB answers 13, at tp1 and tp4 alike. The hint is why a golden
+carrying it looks like coverage — it reads as a limit in plan text and is not one. Separately, at tp4
+only, an outer limit above an aggregate drops the mid-plan limit below it and the aggregate then counts
+its whole input. No corpus query has either shape, so nothing is wrong today; `nested-limits.sql` was
+reshaped rather than canonized against it. Upstream
+[#14406](https://github.com/apache/datafusion/issues/14406) is the same class — a global limit removed
+above children that keep only a local one — and its fix landed after 45.0.0 and is in 46.0.0, so #23's
+upgrade is the experiment; a residual after it would need the logical limit set compared to the physical.
 
 <a id="t153"></a>
 ### #153 — equi-join residual filter is applied after the outer gather
@@ -626,6 +643,40 @@ replanning on trip (re-plan with more partitions or smaller batches). Related: #
 
 ## Infrastructure / process
 
+<a id="t164"></a>
+### #164 — a column ordinal reaches cuDF unchecked, and a bad one degrades rather than throws
+
+The C++ half of [#135](archive/archived-tickets.md#t135), which the batch-partitioned planner
+closed on the Rust side by checking a reference's name against the field at its position.
+
+`TableResult` is a `cudf::table` plus a name vector with no invariant that the two are the same
+length, and the six sites indexing names use `operator[]`, so a short vector is undefined
+behaviour rather than an exception — `filter.cpp` ~L42 reads `fv.column(idx)` and
+`input.column_names[idx]` in one iteration and only the first is checked. Assert
+`num_columns() == column_names.size()` where `TableResult` is built. Separately `expr.cpp` ~L349
+returns `type_id::EMPTY` for an out-of-range `ColumnRef` instead of throwing, turning a bad
+ordinal into a confusing type error further along. Legacy has no plan-time check of either, so
+for those modes this is still the whole guard. The third closure #135 named is unstarted and
+belongs here too: a per-node type check in the GPU tiers, the only thing that would surface a
+wrong-order subtree before the root.
+
+<a id="t163"></a>
+### #163 — a declared type is never checked against the expression that produces it
+
+Three places compare types — union's branch check, the root against the DataFusion plan, and
+`types_across_the_edge` — and each compares one declared schema against another rather than
+deriving one from an expression.
+
+A `GpuProject` declaring `Decimal128(15,2)` where its expression produces `Decimal128(38,10)`
+therefore validates, and an aggregate's declared state types are checked nowhere —
+`nodes/aggregate.rs` does not mention `DataType`. A reference cannot carry the expectation
+either: `ColumnRef` is `{index, name}`, and only `Binary`, `Cast` and `ScalarFunction` carry a
+type. Both engines take their per-node bytes from the declared schema, so a wrong type costs
+the same on each and moves no golden byte — `avg`'s state columns typed backwards is the case
+that shipped, and the T7 schema tests are what catch it today. Fix: derive each expression's
+output type and compare it against the declared field, for the nodes that compute rather than
+carry. Same class as [#135](archive/archived-tickets.md#t135).
+
 <a id="t157"></a>
 ### #157 — legacy: the budget rule drops a CoalesceBatchesExec's fetch, and the wire cannot carry one
 **Priority: low** — legacy planning only; the batch-partitioned model plans from scratch and
@@ -723,23 +774,6 @@ stale golden is still on disk, and the message cannot distinguish "deleted a sta
 from "there was nothing here". Narrow, but it is a regen path: the operator's next move
 is to trust the log and commit. Same shape as #119. Check the result, and say which of
 the two things happened.
-
-<a id="t135"></a>
-### #135 — Column ordinals are enforced only by cuDF's `at()` and the final result
-Every column reference in the IR is an ordinal into the child's output table, and almost nothing
-checks them. Two concrete gaps.
-
-(a) `TableResult` is a `cudf::table` plus a name vector with no invariant that the two have the
-same length, and the six sites indexing names use `operator[]` — so a short vector is undefined
-behaviour, not an exception. `filter.cpp` ~L42 reads `fv.column(idx)` and
-`input.column_names[idx]` in one iteration and only the first is checked; it happens to run
-first. Assert `num_columns() == column_names.size()` where `TableResult` is built. (b) Nothing
-checks a child produced its columns in the order the plan assumed. Per-node bytes come from the
-plan's schema on both engines by design (`logical_size_from_schema`, single-sourced so they
-cannot drift), so a node emitting the right count in the wrong order yields identical numbers
-everywhere and surfaces only at the root; a per-node type check in the GPU tiers closes it. Also
-there: `expr.cpp` ~L349 returns `type_id::EMPTY` for an out-of-range ColumnRef instead of
-throwing, turning a bad ordinal into a confusing type error further along.
 
 <a id="t134"></a>
 ### #134 — begin_plan's node count is returned and discarded

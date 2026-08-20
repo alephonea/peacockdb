@@ -18,7 +18,8 @@
   already reading this function is one nobody reads — move it to `llm-wiki/` and leave
   the line that points there.
 - **Match surrounding idiom** (naming, comment density, error handling). Trust rustfmt;
-  don't hand-format.
+  don't hand-format — and run it over the files you touched, never the crate, which
+  predates the installed rustfmt and reformats 49 of them.
 - **C++ formatting** is defined by `.clang-format` at the repo root. Apply it to the
   lines you changed — `git clang-format` — never to whole files: the tree was never
   machine-formatted, so reformatting one file to fix one function buries a three-line
@@ -49,6 +50,12 @@
   in `llm-wiki/tasks/` and let the ticket point at it. The cap is also what keeps the list
   usable: a reader triaging 75 tickets reads headers and first lines, so a ticket that
   buries its problem statement on line 20 is not being read at all.
+- **A ticket is about code, never about documentation.** A stale sentence, a dead link, a
+  count that no longer adds up, a widget rendering any of them — fix it in the commit that
+  found it. Documentation is anything whose product is prose for a reader: `llm-wiki/`, code
+  comments, and the rendered cost report. Filing costs a number, a triage pass and a reader's
+  attention, and the page stays wrong for as long as it sits in the list. A ticket asking that
+  a page say more is the same shape — pages grow when a human asks, not when a ticket does.
 - **Architecture pages describe the current state, not the route to it.** No "was X, now
   Y", no account of what an earlier attempt did or why it was abandoned. `architecture.md`
   and `build-test.md` answer what is true today; git holds the sequence, and a decision

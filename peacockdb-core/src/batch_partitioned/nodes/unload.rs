@@ -5,6 +5,8 @@ use std::any::Any;
 use super::super::error::PlanError;
 use super::super::layout::NodeKind;
 use super::super::node::{GpuNode, RowInterval};
+use super::accumulators::check_ordered_prefix;
+use super::input_layout;
 
 /// Carries a root-adjacent limit's `skip`/`fetch`, because the interval belongs to the
 /// crossing: it is a statement about which rows are worth moving over PCIe, and trimming
@@ -35,10 +37,15 @@ impl GpuNode for GpuUnload {
         vec![self.input.as_ref()]
     }
 
-    /// Nothing: an unload takes any lane count and any batch layout, and its interval is
-    /// counted across lanes by the driver rather than requiring a merge below it.
+    /// An unload takes any lane count and any batch layout — its interval is counted
+    /// across lanes by the driver rather than requiring a merge below it — but an interval
+    /// it absorbed names rows in the input's order, so the same prefix rule applies here
+    /// as on a mid-plan limit.
     fn validate_schemas_and_partitions(&self) -> Result<(), PlanError> {
-        Ok(())
+        if self.interval.is_none() {
+            return Ok(());
+        }
+        check_ordered_prefix("GpuUnload", &input_layout(self.input.as_ref()))
     }
 
     fn row_interval(&self) -> Option<RowInterval> {

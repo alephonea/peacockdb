@@ -4,6 +4,60 @@ Specs for tasks whose PR has merged, newest first. Each is the contract the work
 done against, kept verbatim -- including the amendments and corrections made mid-task,
 since those are the part a later reader cannot reconstruct from the diff.
 
+Opened as PR #126 against ENS-bp-plan-skeleton.
+
+
+---
+
+<!-- archived from llm-wiki/tasks/schema_and_validation.md -->
+
+# schema registry and validation (T7/T8 remainder)
+
+**Goal.** Finish the two tasks whose implementations landed early on
+`ENS-bp-plan-skeleton` but whose test surfaces did not: prove the `Schema` carried on every
+node is right, and make `validate_schemas_and_partitions` a check that can go red for the
+reasons it claims rather than only for the ones a real plan happens to hit.
+
+**What already landed, so nobody rebuilds it.** `Schema` exists with `group_keys` and
+`agg_state`, every node carries a populated one, the plan goldens print the declared type per
+column, and node-local validation is called from `plan_batch_partitioned` with all ten
+goldens passing it node by node. That half was pulled forward by a review finding — ten
+guards existed and none ran on the live path.
+
+## T7 — what the schema tests must show
+
+- A hand-built plan carrying a project, an aggregate and a union produces the expected types
+  and the expected semantics annotations, asserted on the tree rather than on rendered text.
+- The annotations survive the aggregate sequence: `agg_state` is right at the init, at the
+  per-lane merge and at the finalizing merge, which are three schemas for one logical
+  aggregate.
+- **Decimal precision and scale through project, aggregate and union-cast.** This is the
+  one that earns the task: `avg`'s state columns were once typed backwards and per-node
+  bytes could not show it, because both engines derive them from the same plan schema — so
+  CPU and GPU agreed on the same wrong number and only a real divide would have diverged.
+
+## T8 — what validation still owes
+
+- The generic structural pass, over and above the per-node checks that exist.
+- Manually constructed wrong combinations: each rule turned red by an input built to break
+  it, per the reviewer's anchor that a guard which cannot go red is not a guard.
+- Validation run over every canonized corpus plan as a standing check, not as a one-off.
+- Defects in the checks themselves, including any the reviewer reported against
+  `ENS-bp-plan-skeleton` and I deferred here.
+
+**Constraints.** Every committed golden plan passes the validation this task adds. A
+rejection is a planner defect until shown otherwise: stop, report it, and fix planning —
+never weaken the check to fit the plan, and never regenerate a golden to silence one. The
+expectation is still that no plan moves, so a golden that does move is a deliberate decision
+taken with the human rather than a side effect of the regen. A test that only passes is worth
+less than one shown to fail on the defect it guards.
+
+**Verification bar.** Every rule in `validate_schemas_and_partitions` has an input that turns
+it red. Decimal fidelity is asserted at each step of project → aggregate → union-cast. Every
+committed golden plan passes validation, and a golden moves only where a planner fix required
+it. `test_ci_coverage` names whatever targets appear.
+
+
 Merged 2026-08-18 as PR #121.
 
 

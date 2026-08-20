@@ -46,6 +46,8 @@ use crate::operators::scan::parquet_table_name;
 
 mod aggregate;
 #[cfg(test)]
+mod schema_tests;
+#[cfg(test)]
 mod tests;
 
 pub struct Translator {
@@ -73,6 +75,12 @@ impl Translator {
             next_source: std::cell::Cell::new(0),
             small_table_bytes: 0,
         }
+    }
+
+    /// How many sources this translator reached, which is what pairs a pass with the one
+    /// that sized it: the two address a source by nothing but that order.
+    pub fn sources_reached(&self) -> usize {
+        self.next_source.get()
     }
 
     /// The second pass: each source gets the batch size the estimator solved for it,
@@ -164,6 +172,7 @@ impl Translator {
             return Ok(Box::new(GpuCrossJoin::new(
                 build,
                 probe,
+                None,
                 Schema::new(cross.schema()),
             )));
         }
@@ -534,6 +543,7 @@ impl Translator {
             return Ok(Box::new(GpuCrossJoin::new(
                 build,
                 probe,
+                projected(join.projection()),
                 Schema::new(join.schema()),
             )));
         };
@@ -556,9 +566,17 @@ impl Translator {
             join_type,
             predicate,
             filter_columns,
+            projected(join.projection()),
             Schema::new(join.schema()),
         )))
     }
+}
+
+/// DataFusion's projection as this layer numbers ordinals. A join whose projection is
+/// dropped declares the projected columns and emits every one it crossed, which shifts
+/// every reference above it.
+fn projected(projection: Option<&Vec<usize>>) -> Option<Vec<u32>> {
+    projection.map(|columns| columns.iter().map(|c| *c as u32).collect())
 }
 
 /// A sort's per-batch half, before the parent decides which accumulator goes above it.

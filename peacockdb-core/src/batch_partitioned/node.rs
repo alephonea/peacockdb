@@ -9,7 +9,9 @@ use super::error::PlanError;
 use super::layout::NodeKind;
 
 /// A limit's `skip`/`fetch`, carried by whichever node owns the interval: a mid-plan
-/// `GpuLimit`, or the `GpuUnload` that absorbed a root-adjacent one.
+/// `GpuLimit`, or the `GpuUnload` that absorbed a root-adjacent one. Intervals nest — each
+/// counts the stream its own node is handed — and the spec's limit lowering rule says why
+/// only the non-adjacent form ever arrives that way.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RowInterval {
     pub skip: u64,
@@ -19,6 +21,13 @@ pub struct RowInterval {
 pub trait GpuNode: std::fmt::Debug {
     /// Layout and schema live inside the kind.
     fn kind(&self) -> &NodeKind;
+
+    /// What a plan line and a validation message call this node. The registry is the
+    /// mapping, so a node kind is named in one place; a node outside it — a hand-built
+    /// one under test — says its own name rather than reaching a registry it is not in.
+    fn name(&self) -> &'static str {
+        super::nodes::node_name(self.as_any())
+    }
 
     fn children(&self) -> Vec<&dyn GpuNode>;
 

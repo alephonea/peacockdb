@@ -20,7 +20,7 @@ use super::super::expr_translate::translate_expr;
 use super::super::layout::BatchLayout;
 use super::super::node::GpuNode;
 use super::super::nodes::{AggregateBody, GpuAggregate, GpuAggregateBatches};
-use super::super::schema::Schema;
+use super::super::schema::{AggStateColumns, Schema};
 use super::{Translator, batches, hash_key_ordinals, lanes};
 
 impl Translator {
@@ -97,7 +97,7 @@ impl Translator {
                 [key_fields.clone(), decomposed.state.clone()].concat(),
             ))),
             group_keys: (0..key_fields.len() as u32).collect(),
-            agg_state: Vec::new(),
+            agg_state: decomposed.annotations.clone(),
         };
         let keys_through: Vec<Expr> = key_fields
             .iter()
@@ -117,7 +117,15 @@ impl Translator {
                     NamedExpr::new(expr.clone(), names.field(key_fields.len() + index).name())
                 })
                 .collect();
-            (finalize, Schema::new(finisher.schema()))
+            // The finalized output holds the keys where the intermediate did and the
+            // finalized columns where the state was, so the keys are still annotated and
+            // the state is gone.
+            let output = Schema {
+                fields: finisher.schema(),
+                group_keys: (0..key_fields.len() as u32).collect(),
+                agg_state: Vec::new(),
+            };
+            (finalize, output)
         });
 
         // One batch in one lane is already the whole of every group, so the init node
@@ -269,6 +277,9 @@ struct Decomposed {
     merge: Vec<AggCall>,
     state: Vec<Field>,
     finalize: Vec<Expr>,
+    /// One per aggregate sql asked for, naming the state columns it decomposed into —
+    /// what a merge checks before trusting the positions it is about to merge.
+    annotations: Vec<AggStateColumns>,
 }
 
 fn decompose(
@@ -281,6 +292,7 @@ fn decompose(
         merge: Vec::new(),
         state: Vec::new(),
         finalize: Vec::new(),
+        annotations: Vec::new(),
     };
 
     for aggregate in aggregates {
@@ -362,6 +374,14 @@ fn decompose(
             state_at as u32,
             aggregate.field().data_type(),
         ));
+        decomposed.annotations.push(AggStateColumns {
+            output: aggregate.name().to_string(),
+            func: spec.func,
+            ddof: spec.ddof,
+            positions: (state_at..state_at + state.len())
+                .map(|position| position as u32)
+                .collect(),
+        });
         decomposed.state.extend(state);
     }
 

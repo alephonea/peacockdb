@@ -17,6 +17,7 @@ use super::node::GpuNode;
 use super::nulls::refuse_null_unsafe_joins;
 use super::partitioner::Batching;
 use super::translate::Translator;
+use super::validate::{check_output_schema, validate};
 
 /// The planner inputs a mode fixes: how many lanes to aim for, whether a lane holds more
 /// than one batch, the budget the estimator divides, and the byte count below which a
@@ -52,35 +53,51 @@ pub fn plan_batch_partitioned(
 
     let first = translator(Vec::new()).translate(root)?;
     if knobs.sizing != BatchSizing::Budgeted {
-        let model = estimate(first.as_ref(), knobs.budget)?;
-        validate(first.as_ref())?;
-        refuse_null_unsafe_joins(first.as_ref())?;
-        return Ok((first, model));
+        checked(first, root, knobs.budget)
+    } else {
+        // Post-order sequence rises left to right across the sources, which is the order
+        // translation reaches them, so sorting by it is the mapping between the two passes.
+        let derived = {
+            validate(first.as_ref())?;
+            estimate(first.as_ref(), knobs.budget)?
+        };
+        let targets: Vec<u64> = derived
+            .sources
+            .iter()
+            .map(|source| source.target_batch_bytes)
+            .collect();
+        let expected = targets.len();
+        let second = translator(targets);
+        let tree = second.translate(root)?;
+        // The two passes map to each other by that order alone, so a second pass reaching
+        // a source the first did not would plan its tail at the seed size — a different
+        // plan from the one the estimator priced, arrived at silently.
+        if second.sources_reached() != expected {
+            return Err(PlanError::Invalid(format!(
+                "the sizing pass reached {} sources and the planning pass {} — the two \
+                 passes address sources by the order they are reached, so they no longer \
+                 describe the same plan",
+                expected,
+                second.sources_reached()
+            )));
+        }
+        checked(tree, root, knobs.budget)
     }
-
-    // Post-order sequence rises left to right across the sources, which is the order
-    // translation reaches them, so sorting by it is the mapping between the two passes.
-    let derived = estimate(first.as_ref(), knobs.budget)?;
-    let targets = derived
-        .sources
-        .iter()
-        .map(|source| source.target_batch_bytes)
-        .collect();
-    let tree = translator(targets).translate(root)?;
-    let model = estimate(tree.as_ref(), knobs.budget)?;
-    validate(tree.as_ref())?;
-    refuse_null_unsafe_joins(tree.as_ref())?;
-    Ok((tree, model))
 }
 
-/// Every node against what it requires of its children, post-order so a child's complaint
-/// comes before its parent's. Nothing else calls this: a guard that only ever sees inputs
-/// written by hand cannot fail on a plan, and a plan is what it exists to judge.
-fn validate(root: &dyn GpuNode) -> Result<(), PlanError> {
-    for child in root.children() {
-        validate(child)?;
-    }
-    root.validate_schemas_and_partitions()
+/// Validation before the model: the estimator walks the same tree and reads a node's
+/// declarations as facts, so a malformed tree meets a message naming the fix rather than
+/// an `expect` inside the walk.
+fn checked(
+    tree: Box<dyn GpuNode>,
+    root: &Arc<dyn ExecutionPlan>,
+    budget: u64,
+) -> Result<(Box<dyn GpuNode>, MemoryModel), PlanError> {
+    validate(tree.as_ref())?;
+    check_output_schema(tree.as_ref(), &root.schema())?;
+    refuse_null_unsafe_joins(tree.as_ref())?;
+    let model = estimate(tree.as_ref(), budget)?;
+    Ok((tree, model))
 }
 
 /// What the first pass assumes. Two of the three forms are the plan already; only the

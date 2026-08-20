@@ -153,12 +153,6 @@ fn check_branch_schemas(
     let declared = declared.expect("a union is not a sink");
     for (index, branch) in branches.iter().enumerate() {
         let schema = branch.kind().schema().expect("a sink cannot be a branch");
-        let mismatched = schema
-            .fields
-            .fields()
-            .iter()
-            .zip(declared.fields.fields().iter())
-            .find(|(branch_field, out)| branch_field.data_type() != out.data_type());
         if schema.fields.fields().len() != declared.fields.fields().len() {
             return Err(PlanError::Invalid(format!(
                 "{node}: branch {index} has {} columns and the output declares {}",
@@ -166,12 +160,24 @@ fn check_branch_schemas(
                 declared.fields.fields().len()
             )));
         }
+        // Names as well as types: the declared names are what every `name@ordinal` check
+        // above this node resolves against, so a branch naming its columns differently
+        // makes one of the two readings wrong wherever they are compared.
+        let mismatched = schema
+            .fields
+            .fields()
+            .iter()
+            .zip(declared.fields.fields().iter())
+            .find(|(branch_field, out)| {
+                branch_field.data_type() != out.data_type() || branch_field.name() != out.name()
+            });
         if let Some((branch_field, out)) = mismatched {
             return Err(PlanError::Invalid(format!(
-                "{node}: branch {index} emits {} as {:?} where the output declares {:?} — the \
-                 planner inserts a casting GpuProject on that branch",
+                "{node}: branch {index} emits {} as {:?} where the output declares {} as \
+                 {:?} — the planner inserts a casting GpuProject on that branch",
                 branch_field.name(),
                 branch_field.data_type(),
+                out.name(),
                 out.data_type()
             )));
         }

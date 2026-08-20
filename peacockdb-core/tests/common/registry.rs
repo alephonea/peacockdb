@@ -105,10 +105,10 @@ pub struct CsvRow {
     pub tickets: Vec<String>,
 }
 
-/// The 14 hand-assigned feature codes. Not derived from SQL and not asserted
+/// The 15 hand-assigned feature codes. Not derived from SQL and not asserted
 /// against it — but the SET is closed, so a typo'd code fails rather than silently
 /// creating a new one-off category that renders as an unknown chip in the widget.
-pub const FEATURE_CODES: [&str; 14] = [
+pub const FEATURE_CODES: [&str; 15] = [
     "window_functions",
     "rollup",
     "grouping_sets",
@@ -123,6 +123,7 @@ pub const FEATURE_CODES: [&str; 14] = [
     "string_like",
     "top_n",
     "outer_join",
+    "limit_offset",
 ];
 
 pub fn registry_csv_path() -> std::path::PathBuf {
