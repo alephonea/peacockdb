@@ -34,19 +34,19 @@ diagnosed "regression" + rollback: check this ticket before blaming your change.
 <a id="t166"></a>
 ### #166 — physical planning drops a LIMIT interval, and the answer changes
 
-DataFusion 45 loses a limit in two shapes, both verified against DuckDB 1.5.4 over the same sf1
+DataFusion 45 loses a limit in two shapes, both measured against DuckDB 1.5.4 on the same sf1
 parquet: the interval is absent from the physical plan, so both engines compute the same wrong answer.
 
 A limit inside a `UNION ALL` branch survives only as an `AggregateExec … lim=[n]` early-stop hint,
-which applies neither the offset nor the truncation — a union of two branch-limited scalars holding
-18 rows under an outer `LIMIT 40 OFFSET 5` answers 40 where DuckDB answers 13, at tp1 and tp4 alike.
-Separately, at tp4 only, an outer limit above an aggregate above a mid-plan limit drops the inner
-interval: the aggregate then counts the whole input (250 rows reaching it where 40 should), so the
-same query answers differently at one target-partition count than at another. No corpus query has
-either shape — every TPC-DS union carries one root LIMIT after an ORDER BY — so nothing computes a
-wrong result today, and `nested-limits.sql` was reshaped rather than canonized against it. Nothing
-detects it either: the interval is gone before we see the plan, so a guard has to compare the
-logical limit set against the physical one. Retest under #23's 46+ upgrade before writing one.
+which applies neither the offset nor the truncation: two branch limits holding 18 rows under an
+outer `LIMIT 40 OFFSET 5` answer 40 where DuckDB answers 13, at tp1 and tp4 alike. That hint is
+also why a golden carrying it looks like coverage — it reads as a limit in plan text and is not one.
+Separately, at tp4 only, an outer limit above an aggregate drops the mid-plan limit below it, so the
+aggregate counts its whole input (250 rows where 40 should reach it) and the same query answers
+differently per target-partition count. No corpus query has either shape, so nothing computes a wrong
+result today; `nested-limits.sql` was reshaped rather than canonized against it. Nothing detects it
+either — the interval is gone before we see the plan, so a guard must compare the logical limit set
+against the physical one. Retest under #23's 46+ upgrade before writing one.
 
 <a id="t153"></a>
 ### #153 — equi-join residual filter is applied after the outer gather
