@@ -7,6 +7,11 @@ reused, so a commit message or comment naming an old ticket still resolves — h
 **Numbers spent without a ticket.** A number withdrawn before it described anything real is
 recorded here and nowhere else, so the counter never walks back over it:
 
+- **#165** — filed and withdrawn 2026-08-20. It reported a dead widget link — `cost-registry.csv`
+  naming #115 after #115 was archived. The widget's output is documentation like any page, and a
+  documentation defect is fixed where it is found rather than tracked (`coding-style.md`). Named
+  by commit 7b98a99.
+
 - **#156** — filed and withdrawn 2026-08-19. It called the exec-model prototype's row-group
   chunking a defect against the engine; the prototype is a model, not a specification, so
   diverging from it where it is wrong is the outcome rather than a drift to reconcile

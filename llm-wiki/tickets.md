@@ -17,7 +17,7 @@ reference still resolves there.
 | [Critical correctness](#critical-correctness) | 15 | #153 #103 #80 #59 #46 #47 #60 #121 #122 #123 #118 #119 #120 #117 #41 |
 | [Blockers for disabled coverage](#blockers-for-disabled-coverage) | 15 | #158 #97 #23 #32 #65 #62 #91 #95 #57 #45 #63 #56 #55 #96 #143 |
 | [Performance / architecture](#performance--architecture) | 26 | #155 #154 #152 #151 #150 #149 #148 #147 #146 #145 #19 #16 #20 #71 #101 #73 #110 #75 #136 #137 #138 #139 #140 #141 #144 #142 |
-| [Infrastructure / process](#infrastructure--process) | 26 | #165 #164 #163 #157 #159 #160 #161 #162 #113 #114 #116 #126 #134 #133 #132 #131 #130 #129 #128 #127 #124 #125 #13 #94 #69 #49 |
+| [Infrastructure / process](#infrastructure--process) | 25 | #164 #163 #157 #159 #160 #161 #162 #113 #114 #116 #126 #134 #133 #132 #131 #130 #129 #128 #127 #124 #125 #13 #94 #69 #49 |
 
 ## Critical correctness
 
@@ -625,20 +625,6 @@ execution: a split operator (needs a C++ slice-to-handles entry point), or adapt
 replanning on trip (re-plan with more partitions or smaller batches). Related: #91.
 
 ## Infrastructure / process
-
-<a id="t165"></a>
-### #165 — the cost widget links a ticket that has been archived, so the link is dead
-
-Three `cost-registry.csv` rows (tpcds q38, q76, q87) name #115 in their `tickets` column, and
-#115 has been archived — the widget renders `llm-wiki/tickets.md#t115`, which resolves to nothing.
-
-The caveat at the top of `archived-tickets.md` states the rule this broke: a ticket named by the
-registry must not move without the link moving with it. What is missing is anything that
-enforces it, which is why it broke quietly. Either the renderer falls back to
-`archive/archived-tickets.md#tNN` when `tickets.md` has no such anchor, or the registry drops a
-reference as its ticket closes — the first keeps the historical pointer, and that pointer is why
-the column exists. A test over the two pages and the CSV holds it either way: every ticket the
-registry names resolves to an anchor in one of them.
 
 <a id="t164"></a>
 ### #164 — a column ordinal reaches cuDF unchecked, and a bad one degrades rather than throws
