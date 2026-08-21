@@ -427,7 +427,7 @@ fn a_batch_aggregate_runs_the_same_pair_at_a_compaction_and_at_done() {
 /// happen to match.
 /// One key and one summed column, finalized: the shape the three tests below read, so the
 /// list a finalize carries and the row a project has to emit differ by exactly the key.
-fn finalizing_merge(finalize: Vec<NamedExpr>) -> GpuAggregateBatches {
+fn finalizing_merge(finalize: Vec<NamedExpr>, state: &[&str]) -> GpuAggregateBatches {
     GpuAggregateBatches::new(
         Given::input(BatchLayout::MultipleBatches, &["k", "n"]),
         AggregateBody {
@@ -441,7 +441,7 @@ fn finalizing_merge(finalize: Vec<NamedExpr>) -> GpuAggregateBatches {
             }],
             finalize: Some(finalize),
         },
-        columns_of(&["k", "sum(n)"]),
+        columns_of(state),
         columns_of(&["k", "sum(n)"]),
     )
 }
@@ -452,7 +452,7 @@ fn summed() -> Vec<NamedExpr> {
 
 #[test]
 fn a_finalizing_merge_carries_its_finalize_in_a_project_of_its_own() {
-    let node = finalizing_merge(summed());
+    let node = finalizing_merge(summed(), &["k", "sum(n)"]);
     let recipe = aggregate_batches(&node, &[&columns_of(&["k", "n"])], &mut Writer::new())
         .expect("the aggregate's payloads are writable")
         .expect("a batch aggregate drives the ABI");
@@ -472,7 +472,7 @@ fn a_finalizing_merge_carries_its_finalize_in_a_project_of_its_own() {
 /// buffer rather than on the recipe, since the recipe names the call and not its payload.
 #[test]
 fn a_finalize_project_emits_the_group_keys_the_finalize_list_leaves_out() {
-    let node = finalizing_merge(summed());
+    let node = finalizing_merge(summed(), &["k", "sum(n)"]);
     let mut writer = Writer::new();
     let recipe = aggregate_batches(&node, &[&columns_of(&["k", "n"])], &mut writer)
         .expect("the aggregate's payloads are writable")
@@ -491,12 +491,27 @@ fn a_finalize_project_emits_the_group_keys_the_finalize_list_leaves_out() {
     );
 }
 
+/// The keys are taken from the state by position, so a state whose first columns are not
+/// the keys fills the row to the right width out of the wrong columns. Held by
+/// `GpuAggregate::intermediate`'s documented order today, and by this if that ever moves.
+#[test]
+fn a_state_whose_first_columns_are_not_the_keys_is_refused() {
+    let node = finalizing_merge(summed(), &["j", "sum(n)"]);
+    let refused = aggregate_batches(&node, &[&columns_of(&["k", "n"])], &mut Writer::new())
+        .expect_err("a state that does not lead with the keys is not projectable");
+    let message = format!("{refused}");
+    assert!(
+        message.contains("column 0 `k`") && message.contains("names it `j`"),
+        "the refusal has to name the two spellings: {message}"
+    );
+}
+
 /// The width check, shown going red: a finalize list that does not account for every
 /// non-key output column is a plan that answers with a column missing, which is a wrong
 /// answer rather than an error unless this refuses.
 #[test]
 fn a_finalize_that_does_not_fill_the_declared_output_is_refused() {
-    let node = finalizing_merge(Vec::new());
+    let node = finalizing_merge(Vec::new(), &["k", "sum(n)"]);
     let refused = aggregate_batches(&node, &[&columns_of(&["k", "n"])], &mut Writer::new())
         .expect_err("a finalize short of the declared output is not writable");
     let message = format!("{refused}");

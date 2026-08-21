@@ -32,7 +32,7 @@ use peacockdb_ffi::raw::{
 };
 
 use common::exec_mode::CpuOracle;
-use common::{GPU_BUDGET, assert_results_match, data_dir_for};
+use common::{GPU_BUDGET, assert_results_match, data_dir_for, total_rows};
 
 /// A scan reading less than this stops being worth splitting. The value the plan goldens
 /// are canonized at, so every shape below is one that tier already renders.
@@ -567,6 +567,12 @@ async fn walk(sql: &str, knobs: PlanKnobs) -> Walked {
 /// since a GPU join's output order is not deterministic. Returns the calls it made.
 async fn assert_walk_matches_datafusion(sql: &str, knobs: PlanKnobs) -> Vec<FbKind> {
     let walked = walk(sql, knobs).await;
+    // An exact compare of two empty results holds having compared nothing, so a query whose
+    // predicate selected none would prove only that the walk did not crash.
+    assert!(
+        total_rows(&walked.batches) > 0,
+        "the walk exported no rows for {sql}"
+    );
     let expected = context(1)
         .await
         .sql(sql)

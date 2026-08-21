@@ -84,9 +84,9 @@ pub(super) fn aggregate<'a>(
 /// expression per aggregate output column, named as the node declares its output.
 ///
 /// A project replaces the row, so the finalize list alone would answer with the finalized
-/// columns and no keys to read them by. The widths are checked rather than assumed,
-/// because both halves are lists a translation builds and a wrong one is a plan that
-/// returns a right-looking table with a column missing.
+/// columns and no keys to read them by. Both the width and the key positions are checked
+/// rather than assumed: the keys are taken by position, so a state whose first columns are
+/// not the keys would pass the width check and project state columns as keys.
 pub(super) fn finalize_project<'a>(
     b: &mut FlatBufferBuilder<'a>,
     body: &AggregateBody,
@@ -112,6 +112,12 @@ pub(super) fn finalize_project<'a>(
     let mut exprs = Vec::with_capacity(declared);
     for ordinal in 0..keys as u32 {
         let name = node_writer::field_at(state, ordinal).name();
+        let declared_name = node_writer::field_at(output, ordinal).name();
+        if name != declared_name {
+            return Err(PlanError::Invalid(format!(
+                "the finalized output names column {ordinal} `{declared_name}` and the state                  it is projected from names it `{name}` — the keys are taken by position, so                  the two orders have to be the same"
+            )));
+        }
         exprs.push(write_expr(b, &Expr::column(ordinal, name))?);
     }
     for column in finalize {
