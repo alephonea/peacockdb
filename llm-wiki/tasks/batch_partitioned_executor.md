@@ -2244,7 +2244,9 @@ loads the recipe plan T14 already built, and makes exactly the calls the recipes
 each call's output handle into the next one's input and exporting at the root. One helper does the
 whole walk; one test per query calls it, so a failure names the query rather than a stage.
 
-`begin_plan`'s `out_node_count` is asserted equal to the recipe plan's node count, and it is the
+`begin_plan`'s `out_node_count` is asserted equal to the number of fb nodes the writer created —
+not to the `GpuNode` count, which is a different number: stubs, structural unions and any node
+with more than one call all separate the two, in both directions and in most plans. It is the
 first thing this task can settle that nothing before it can: every seq indexes a post-order the
 C++ builds in `index_post_order`, and until a device has parsed a buffer we wrote, our agreement
 with that walk rests on two child-order functions having been read side by side. One assertion, at

@@ -141,7 +141,8 @@ sha256 matches local). Notes on the rows above:
 ## Golden files
 
 All goldens are committed, under `testdata/goldens/`: `tpch.sf1` (271 files), `tpcds.sf1`
-(625), `tpch.sf40` (16), plus the single-file `plan_bytes.sha256` (140 digests). The
+(625), `tpch.sf40` (16), plus two top-level files: `plan_bytes.sha256` (140 digests) and
+`bp-recipe-payloads.txt`, the recipe payloads with a digest each. The
 committed DuckDB profile inputs live beside them in `testdata/duckdb-profiles/{tpch,tpcds}`
 (22 + 99) and `testdata/duckdb-dynfilters/{tpch,tpcds}` (22 + 99).
 
@@ -153,6 +154,7 @@ live in `testdata/`.
 | `<q>.<device>.plan.txt` | plan tier with `UPDATE_CANONICAL=1` | sf1 parquet (schemas + row-group stats reach the plan) | plan goldens tier |
 | `<mode>.plans.txt` | `test_batch_partitioned_plans` with `UPDATE_CANONICAL=1` | sf1 parquet — row-group counts and per-column bytes decide `partition_groups` and the lane rules | the batch-partitioned plan tiers, section by section |
 | `plan_bytes.sha256` | `test_plan_bytes` with `UPDATE_CANONICAL=1`<br>**and** `PEACOCK_REWRITE_PLAN_BYTES=1` | the same physical plans, serialized | <sub>serialized_plan_<br>bytes_are_stable</sub> |
+| `bp-recipe-payloads.txt` | `test_batch_partitioned_plans` with `UPDATE_CANONICAL=1`<br>**and** `PEACOCK_REWRITE_RECIPE_BYTES=1` | sf1 parquet, and the fixed `/tmp` symlink `test_plan_bytes` uses — without it the payloads carry this machine's paths and so does the digest | <sub>tpch_and_tpcds_<br>recipe_payloads</sub> |
 | `….cpu.txt` | the CPU executor under `UPDATE_CANONICAL=1` — never the GPU | sf1 parquet | CPU exec tiers; the GPU tiers assert against it read-only |
 | `….cost.txt` | derived from the sibling `.cpu.txt` text × `cost_model.conf` | `.cpu.txt`, `cost_model.conf` | CPU exec tiers + `test_cost_model` (re-derives and compares) |
 | `….result.txt` | the CPU oracle under `UPDATE_CANONICAL=1`; deleted above 256 KB so the GPU test falls back to a live oracle | sf1 parquet | CPU exec tiers; GPU tiers in `golden_exact`/`golden_approx` mode |
@@ -171,6 +173,11 @@ testdata/{tpch,tpcds}-queries/*.sql
           ├── plan tier, UPDATE_CANONICAL=1
           │     ├──► <q>.<device>.plan.txt
           │     └──► plan_bytes.sha256     [also needs PEACOCK_REWRITE_PLAN_BYTES=1]
+          │
+          ├── test_batch_partitioned_plans, UPDATE_CANONICAL=1
+          │     ├──► <mode>.plans.txt
+          │     └──► bp-recipe-payloads.txt  [also needs PEACOCK_REWRITE_RECIPE_BYTES=1,
+          │                                   and the fixed /tmp symlink]
           │
           ├── CPU executor, UPDATE_CANONICAL=1   (the oracle; the GPU never writes)
           │     ├──► <q>.<mode>-<tp>-<tier>.cpu.txt
@@ -198,6 +205,11 @@ Consequences worth knowing before you regenerate:
 - **The GPU never authors a golden.** Both GPU tiers read the CPU-authored `.cpu.txt` and
   `.result.txt`, which is what makes a GPU-vs-CPU divergence a red test rather than a
   quietly rewritten expectation.
+- **The two byte-level goldens need a second, deliberate variable**
+  (`PEACOCK_REWRITE_PLAN_BYTES=1`, `PEACOCK_REWRITE_RECIPE_BYTES=1`). They pin what the C++
+  is handed, and they are the only files a bulk regen must not quietly rewrite: the diff
+  would come home among hundreds of others. `bp-recipe-payloads.txt` pins the newer of the
+  two serializers, which no GPU has read yet, so it needs the guard more rather than less.
 - **`plan_bytes.sha256` needs a second, deliberate variable.** Under plain
   `UPDATE_CANONICAL=1` the test verifies instead of rewriting, and says so — a bulk regen that moved the wire
   format goes red during the regen, before the goldens are pulled home. It is also the only
