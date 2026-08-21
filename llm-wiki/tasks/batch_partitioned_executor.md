@@ -2175,19 +2175,6 @@ trait needed nothing. One test moved tier against the list above: two IPC stream
 concatenate, so "the ranges are the whole" is asserted in `test_gpu_abi`, where arrow-rs decodes
 them, and the gtest holds the contract edges instead.
 
-**T10 — Exec executors, CPU and GPU.** Filter, project, per-batch sort, aggregate
-(partial/single), unload (`GpuBatch → CpuBatch`, honouring the row range). Reuse legacy operator code by extracting
-helpers — never by calling into strip/wrapper machinery. Per executor: CPU vs
-hand-crafted oracle, GPU vs CPU, empty-batch cases, `CallStats` model ≥ measured on CPU.
-CPU and GPU tests in separate targets so CI hosts split them.
-
-Also here: **`PlaceholderRowExec` is a source that emits its constant rows**, not a shape to
-refuse ([#158](../tickets.md#t158)). DataFusion's `AggregateStatistics` rule answers an
-unfiltered `count(*)` from parquet metadata and leaves this node holding the result, so the
-plan carries the answer and the executor has only to produce it — one lane, one batch, the
-rows the node already holds. The translation layer maps it like any other source; the work
-is the executor, which is why it lands in this task rather than in T4.
-
 **T14 — recipe-plan serialization.** The `GpuNode` → fb-seq mapping implemented, canonized and
 unit-tested. `attach_recipes()` runs after the plan is complete and hangs a recipe on each node
 that drives the GPU ABI; a node that makes no ABI call gets none, which is a fact about the node
@@ -2276,23 +2263,67 @@ join's output order is not deterministic. What it deliberately leaves out is eve
 driver decides — batching, backpressure, arrival order — since every shape here is one batch;
 those arrive with the executors, and the driven end-to-end over every layout is T17's.
 
-**T15 — accumulators.** `GpuCoalesceAllBatches`, `GpuAggregateBatches` (merge-only and
-finalizing),
-`GpuAccumulateBatchesAndSort`, `GpuMergeSortedPartitions`, and the mid-plan `GpuLimit`.
-Edge cases: zero batches, one batch, ties for the merge (partition-major stability), fetch
-interaction, large batch counts, gid-carrying aggregate merges. For the limit specifically:
-that `resident_bytes()` stays zero whatever the offset, that at most two batches per query
-are sliced, and that the scan stops — each asserted as a call or pull count, since a test
-on the rows returned passes just as well when the whole input was read and held.
+What it proved and what it left. Eleven of the twenty-five fb kinds the payload golden holds now
+have a device behind them, and — the reading that matters for the tasks after this one — two of
+the three shapes this mode invented do: `AggregateMode::Merge` and the finalize project. The third
+does not. That is [#136](../tickets.md#t136)'s finish pass — probe keys per batch, the concat at
+done, the finish join, the pad project — because both joins that ran here reduce to a single
+legacy call. Untouched with it: the whole Right family, cross and nested-loop joins, both sort
+nodes, `slice_handle` and a ranged export. The walk refuses each by name rather than driving what
+it cannot handle, so the list is enforced rather than merely written down.
 
-**T16 — partition ops and joins.** `GpuEmitPartitions` (per-batch scatter, N=3 and large
-N, empty outputs for skewed hashes), `GpuMergePartitions` round-robin rule,
-`GpuJoin` with `set_build`/`probe_and_fetch`/`finish_and_fetch`, plus cross and
-nested-loop joins on the same trait: the full capability matrix as a test table — per
-(type × layout): stream-vs-refuse, correctness vs the single-batch oracle, the GPU
-finish pass via key accumulation (#136), null_equals_null on the finish join.
+Three defects came out of it, each a field written once, read once, with the only reader on the
+far side of an ABI nobody had called: a scan carrying DataFusion's file-group list, so one file
+appeared once per lane; a finalize project emitting the finalized columns and not the keys; and an
+aggregate that finalizes alone emitting no finalize project, which would have answered with state
+columns under finalized names on seventeen committed shapes. The payload golden had been pinning
+the first of them faithfully, which is why [build-test.md](../build-test.md) now says what a
+golden pinning a producer against itself does and does not prove.
 
-**T17 — stress injection over real operators.** The Rust counterpart of the prototype's
+**T10, T15 and T16 — the executors, as one task.** All three land together on one branch, because
+they are one question asked of three node families: what does an executor do when the recipe
+already says which calls to make. Ordered inside the task as T10 then T15 then T16, since the
+accumulators and the joins are the Exec executors' shapes with state added.
+
+**T10 — Exec executors.** Filter, project, per-batch sort, aggregate (partial/single), unload
+(`GpuBatch → CpuBatch`, honouring the row range). The **GPU executor runs the recipe attached to
+its node** — the calls, in order, with the handles threaded — and reuses no legacy operator code:
+the recipe is the instruction set, and reaching into legacy operator internals would be a second
+path to the same kernels. The **CPU executor relays to DataFusion**, where reuse with legacy is
+expected rather than avoided, since both are asking DataFusion for the same operator.
+
+**T15 — accumulators.** `GpuCoalesceAllBatches`, `GpuAggregateBatches` (merge-only and finalizing),
+`GpuAccumulateBatchesAndSort`, `GpuMergeSortedPartitions`, and the mid-plan `GpuLimit`. Edge cases:
+zero batches, one batch, ties for the merge (partition-major stability), fetch interaction, large
+batch counts, gid-carrying aggregate merges.
+
+**T16 — partition ops and joins.** `GpuEmitPartitions` (per-batch scatter, N=3 and large N, empty
+outputs for skewed hashes), `GpuMergePartitions`' round-robin rule, `GpuJoin` with
+`set_build`/`probe_and_fetch`/`finish_and_fetch`, plus cross and nested-loop joins on the same
+trait. The [capability matrix](#join-capability-matrix) is emulated as a test table — per
+(type × layout): stream-vs-refuse, correctness against a hand-built oracle, the GPU finish pass via
+key accumulation ([#136](../tickets.md#t136)), `null_equals_null` on the finish join. That finish
+pass is the one shape this mode invented with no device behind it after T21, which is why the
+matrix is emulated here rather than assumed.
+
+**How everything here is tested.** Small synthetic data, never parquet; plans hand-constructed
+rather than planned, so a test names the shape it means instead of hoping a query produces it;
+`attach_recipes()` is fair game, since the recipe is what a GPU executor consumes. The oracle is
+hand-constructed too: an expected result written down, not derived by the code under test. CPU and
+GPU tests in separate targets so CI hosts split them.
+
+**What this task does not do.** No driver: nothing here is hooked into the schedule, and every
+assertion is about one executor answering one call. That defers the whole class of claims that
+read as call counts and pull counts — a limit holding nothing whatever the offset, at most two
+batches sliced per query, the scan stopping — to T17, which is where a driver exists to make them.
+`PlaceholderRowExec` ([#158](../tickets.md#t158)) waits for the same reason: it is a source, and a
+source proves itself by what the driver pulls from it.
+
+**T17 — stress injection over real operators.** It also inherits what the executors task could
+not assert without a driver: a limit holding nothing whatever the offset, at most two batches
+sliced per query, the scan stopping — each a call or pull count — and `PlaceholderRowExec`
+([#158](../tickets.md#t158)), which is a source and so proves itself by what a driver pulls from
+it. The Rust counterpart of the prototype's
 [`LayoutInjector`](../../scripts/exec_model/operators/injection.py): one query, re-run at every
 layout this mode can express, demanding the same answer each time. T13 asserted what mocks can
 assert — delivery, queue bounds, holds equal releases — and answer invariance is the half that

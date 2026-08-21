@@ -43,7 +43,7 @@ and `2gpu` rows also runs locally; large CPU batches go to verda.
 | Plan goldens, bp-tp4-rowgroup (Rust) | 4 lanes at row-group granularity: lanes and many batches at once; plan tree + `--- recipes ---` + `--- memory ---` per query, one file per bench | [tpch_bp_tp4_rowgroup](../peacockdb-core/tests/test_batch_partitioned_plans.rs) | cpp-cpu | 2 |
 | Plan goldens, bp-tp4-sized (Rust) | 4 lanes, the estimator's target — **the only mode a budget tier moves**, recorded in-band; plan tree + `--- recipes ---` + `--- memory ---` per query, one file per bench | [tpch_bp_tp4_sized](../peacockdb-core/tests/test_batch_partitioned_plans.rs) | cpp-cpu | 2 |
 | Plan goldens, meta (Rust) | the registry and the goldens agree both ways; every mode has a golden and every golden a mode; every refusal in a golden names a ticket that exists and carries no host path | [the_registry_matches_the_goldens_in_both_directions](../peacockdb-core/tests/test_batch_partitioned_plans.rs#L427) | cpp-cpu | 4 |
-| Recipe plan structure (Rust) | the claims the payload golden cannot make: every published seq resolves to the kind its recipe names, over every corpus query rather than the fifteen with payloads; the payload set covers every fb kind and call shape the ten goldens hold; the queries that cannot cross the wire are declared; and no plan approaches the verifier's depth cap ([#169](tickets.md#t169)) | [every_published_seq_addresses_the_kind_its_recipe_claims](../peacockdb-core/tests/test_batch_partitioned_plans.rs) | cpp-cpu | 3 |
+| Recipe plan structure (Rust) | the claims the payload golden cannot make: every published seq resolves to the kind its recipe names, over every corpus query rather than only the payload subset; the payload set covers every fb kind and call shape the ten goldens hold; the queries that cannot cross the wire are declared; and no plan approaches the verifier's depth cap ([#169](tickets.md#t169)) | [every_published_seq_addresses_the_kind_its_recipe_claims](../peacockdb-core/tests/test_batch_partitioned_plans.rs) | cpp-cpu | 3 |
 | Recipe payloads golden (Rust) | the payload subset at bp-tp4-rowgroup — chosen as a cover over every fb kind and call shape the mode goldens hold, and asserted to be one, so the membership grows when the mapping does — with every payload rendered and a sha256 over the bytes beside it | [tpch_and_tpcds_recipe_payloads](../peacockdb-core/tests/test_batch_partitioned_plans.rs) | cpp-cpu | 1 |
 | Plan goldens, comparator unit (Rust) | the differ must name what moved, what is missing and what is out of order — every other test in the file is a comparison through it | [a_section_that_moved_is_named_with_the_column_that_moved](../peacockdb-core/tests/test_batch_partitioned_plans.rs#L275) | cpp-cpu | 3 |
 | Registry ↔ CSV (Rust) | each `cost-registry.csv` mode column matches the tests that exist, both directions | [full_table_columns](../peacockdb-core/tests/test_cpu_full_table.rs#L313), [partitioned_gpu_column](../peacockdb-core/tests/test_gpu_partitioned.rs#L46) | cpp-cpu ×4, shad-gpu ×2 | 6 |
@@ -440,13 +440,10 @@ Rules that keep this healthy:
   working tree. (The sf40 *dataset* is what lives only there — its 16 CSV goldens are
   committed.) `plan_bytes.sha256` rides along safely because `test_plan_bytes` itself
   refuses to regenerate without `PEACOCK_REWRITE_PLAN_BYTES=1`.
-- **A golden that pins a producer against itself proves consistency, not correctness.**
-  `bp-recipe-payloads.txt` rendered a scan's file list four times over for three weeks of
-  work: text and digest agreed with each other and with the code, and both completeness
-  passes asked whether the golden was right about what the writer produced rather than
-  whether what the writer produced could be read. Nothing could ask the second question until
-  a device did. For any artifact whose only consumer is on the other side of an ABI, the
-  first read by that consumer is the first check.
+- **A golden that pins a producer against itself proves consistency, not correctness.** Where
+  an artifact's only consumer is on the far side of an ABI, the first read by that consumer is
+  the first check — until then the text and the digest can agree with each other and with the
+  code, and all three be wrong.
   **`--pull-benchmarks` overwrites**, which its name does not say: it deletes nothing, so it
   reads as additive, but it brings back every record the host holds and not only the ones the
   run just wrote. shad-gpu's tree currently holds an instrumentation this repo does not use —
