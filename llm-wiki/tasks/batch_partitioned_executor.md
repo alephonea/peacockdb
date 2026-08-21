@@ -2244,6 +2244,12 @@ loads the recipe plan T14 already built, and makes exactly the calls the recipes
 each call's output handle into the next one's input and exporting at the root. One helper does the
 whole walk; one test per query calls it, so a failure names the query rather than a stage.
 
+`begin_plan`'s `out_node_count` is asserted equal to the recipe plan's node count, and it is the
+first thing this task can settle that nothing before it can: every seq indexes a post-order the
+C++ builds in `index_post_order`, and until a device has parsed a buffer we wrote, our agreement
+with that walk rests on two child-order functions having been read side by side. One assertion, at
+the first call, in the first place both numbers exist at once.
+
 Shapes, chosen so each call is unambiguous. Everything but the aggregates plans one partition and
 one batch, which makes every recipe a single call per node and the walk a straight line: a bare
 scan, a filter, a project over a filter, and the joins — inner, and one build-preserving type,
