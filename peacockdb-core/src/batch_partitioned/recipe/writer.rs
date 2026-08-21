@@ -139,8 +139,9 @@ impl<'a> Writer<'a> {
     }
 
     /// Finish on the one offset left, which is the root by construction: the last node
-    /// created is the last visited in post-order.
-    pub(super) fn finish(mut self) -> Result<Vec<u8>, PlanError> {
+    /// created is the last visited in post-order. Returns the bytes and how many fb nodes
+    /// went into them — stubs and structural unions included, since the C++ indexes those.
+    pub(super) fn finish(mut self) -> Result<(Vec<u8>, Seq), PlanError> {
         let root = match self.pool.as_slice() {
             [root] => *root,
             other => {
@@ -152,6 +153,6 @@ impl<'a> Writer<'a> {
         };
         let plan = fb::GpuPlan::create(&mut self.builder, &fb::GpuPlanArgs { root: Some(root) });
         self.builder.finish(plan, None);
-        Ok(self.builder.finished_data().to_vec())
+        Ok((self.builder.finished_data().to_vec(), self.next_seq))
     }
 }

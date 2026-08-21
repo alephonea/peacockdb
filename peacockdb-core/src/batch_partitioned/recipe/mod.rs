@@ -28,7 +28,7 @@ use super::schema::Schema;
 use aggregate_writer::Phase;
 use writer::Writer;
 
-pub use read::check_seq_kinds;
+pub use read::{check_seq_kinds, depth};
 pub use read::node_at;
 pub use types::{AbiSymbol, Call, CallPattern, FbKind, Input, ProjectRole, Recipe, Seq};
 
@@ -42,6 +42,7 @@ pub use types::{AbiSymbol, Call, CallPattern, FbKind, Input, ProjectRole, Recipe
 pub struct RecipePlan {
     recipes: Vec<Option<Recipe>>,
     bytes: Vec<u8>,
+    wire_nodes: Seq,
 }
 
 impl RecipePlan {
@@ -51,10 +52,22 @@ impl RecipePlan {
         self.recipes.get(node).and_then(|recipe| recipe.as_ref())
     }
 
-    /// Nodes walked — the length the memory model's per-node vector has, and what a
-    /// consumer checks its own tree against before reading a `None` as an answer.
+    /// Nodes in the PLAN TREE — this mode's own, the length the memory model's per-node
+    /// vector has, and what a consumer checks its own tree against before reading a `None`
+    /// as an answer.
     pub fn nodes(&self) -> usize {
         self.recipes.len()
+    }
+
+    /// Nodes in the RECIPE PLAN — the fb tree, stubs and structural unions included, which
+    /// is what `peacock_executor_begin_plan` reports through `out_node_count`.
+    ///
+    /// Deliberately not [`RecipePlan::nodes`] and deliberately named apart: the two count
+    /// different trees and mostly disagree — a node with several calls, a stub, a union
+    /// each separate them — so a driver that checked the wrong one against the C++ would
+    /// be comparing two true numbers about two different things.
+    pub fn wire_nodes(&self) -> usize {
+        self.wire_nodes as usize
     }
 
     /// The serialized recipe plan: what `peacock_executor_begin_plan` is given, and what
@@ -79,8 +92,12 @@ pub fn attach_recipes(root: &dyn GpuNode) -> Result<RecipePlan, PlanError> {
     let mut writer = Writer::new();
     let mut recipes = Vec::new();
     walk(root, &mut writer, &mut recipes)?;
-    let bytes = writer.finish()?;
-    Ok(RecipePlan { recipes, bytes })
+    let (bytes, wire_nodes) = writer.finish()?;
+    Ok(RecipePlan {
+        recipes,
+        bytes,
+        wire_nodes,
+    })
 }
 
 fn walk(

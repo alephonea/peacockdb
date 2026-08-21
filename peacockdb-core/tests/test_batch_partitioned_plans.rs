@@ -15,7 +15,7 @@ use peacockdb_core::batch_partitioned::plan::{BatchSizing, PlanKnobs, plan_batch
 use peacockdb_core::batch_partitioned::plan_text::{
     Payloads, render_plan, render_plan_memory, render_plan_recipes,
 };
-use peacockdb_core::batch_partitioned::recipe::{attach_recipes, check_seq_kinds};
+use peacockdb_core::batch_partitioned::recipe::{attach_recipes, check_seq_kinds, depth};
 use peacockdb_core::config::MemoryLimit;
 
 use common::{data_dir_for, golden_dir_for, queries_dir_for};
@@ -349,11 +349,17 @@ const PAYLOAD_MODE: (&str, usize, BatchSizing) = ("bp-tp4-rowgroup", 4, BatchSiz
 /// the rows that emit nothing), every call shape longer than one call, and every
 /// expression kind a payload can carry — LIKE, CASE, casts, scalar functions, decimal
 /// scales, grouping sets, null substitutions, Welford state, an avg's finalize, fetch and
-/// skip. 31 features between them, and these thirteen are a minimal cover.
+/// skip.
+///
+/// Which half of that a test enforces, so a reader knows what rests on a person: the fb
+/// kinds and the call shapes are asserted against the ten mode goldens by
+/// `the_payload_golden_covers_every_kind_and_call_shape_the_modes_produce` — a mapping arm
+/// or a call pattern that appears there and not here goes red. The expression features are
+/// prose, checked by reading.
 ///
 /// So a query earns a place here by covering something no other query does. Adding one
 /// that covers nothing new adds lines no reader can check against anything.
-const PAYLOAD_QUERIES: [(&str, &str); 13] = [
+const PAYLOAD_QUERIES: [(&str, &str); 15] = [
     // Nested-loop join lives nowhere else in the corpus; the stddev query is the Welford
     // init, both merges and the finalize project; q13 is the outer join's finish pass.
     ("tpch", "q13"),
@@ -364,6 +370,10 @@ const PAYLOAD_QUERIES: [(&str, &str); 13] = [
     // LeftAnti here is a Left outer's DERIVED finish — different keys, no projection, and
     // a pad project after it — so neither covers the other.
     ("tpch", "q22"),
+    // q21 is the single-batch probe, where a filtered semi or anti join is one legacy call
+    // that hands the build side over rather than copying it — the same join types as q22
+    // and q13, and a different shape.
+    ("tpch", "q21"),
     ("tpcds", "q14"),
     ("tpcds", "q97"),
     ("tpcds", "q61"),
@@ -373,6 +383,9 @@ const PAYLOAD_QUERIES: [(&str, &str); 13] = [
     ("tpcds", "q5"),
     ("tpcds", "q91"),
     ("tpcds", "q39"),
+    // q40 is a plain Right outer: probe-local, one call, no finish. The Right in q97 is a
+    // Full outer's per-batch call, which is the same kind doing a different thing.
+    ("tpcds", "q40"),
 ];
 
 /// A digest of the bytes beside the text, because the two can disagree: a field the
@@ -433,7 +446,47 @@ async fn the_payload_golden_carries_what_each_call_hands_the_executor() {
     let path = common::testdata_root()
         .join("goldens")
         .join("bp-recipe-payloads.txt");
+    // Three states, as `plan_bytes.sha256` has for the legacy wire form and for the same
+    // reason: the digests here are this branch's only byte-level pin on the newer
+    // serializer, and the documented way to refresh goldens is a bulk --update-canonical on
+    // verda. Without the second variable that run would rewrite the evidence and the diff
+    // would come home among hundreds. With it, a moved payload goes red DURING the regen.
+    let update = std::env::var("UPDATE_CANONICAL").is_ok();
+    let rewrite = std::env::var("PEACOCK_REWRITE_RECIPE_BYTES").is_ok();
+    if update && !rewrite {
+        let canonical = std::fs::read_to_string(&path).expect("the payload golden");
+        eprintln!(
+            "NOT regenerating {} — verifying instead. The `sha256=` lines are a fixed \
+             expectation from before a change, and the C++ reads these bytes. If the move is \
+             intended, set PEACOCK_REWRITE_RECIPE_BYTES=1 alongside UPDATE_CANONICAL.",
+            path.display()
+        );
+        assert_eq!(
+            digests_of(&canonical),
+            digests_of(&text),
+            "{}: the recipe bytes moved. Regenerating cannot make this green — see the \
+             message above.",
+            path.display()
+        );
+        // The text may still be regenerated: it describes the same bytes.
+        assert_or_update(&path, &text);
+        return;
+    }
     assert_or_update(&path, &text);
+}
+
+/// The `sha256=` line per query, which is the half a bulk regen may not rewrite.
+fn digests_of(text: &str) -> std::collections::BTreeMap<String, String> {
+    let mut digests = std::collections::BTreeMap::new();
+    let mut query = String::new();
+    for line in text.lines() {
+        if let Some(header) = line.strip_prefix("== ") {
+            query = header.to_string();
+        } else if let Some(digest) = line.strip_prefix("sha256=") {
+            digests.insert(query.clone(), digest.to_string());
+        }
+    }
+    digests
 }
 
 /// Every seq every recipe publishes addresses a node of the kind it claims — over every
@@ -451,6 +504,7 @@ async fn every_published_seq_addresses_the_kind_its_recipe_claims() {
     let mut checked = 0;
     let mut faults: Vec<String> = Vec::new();
     let mut uncrossable: Vec<String> = Vec::new();
+    let mut deepest = (0usize, String::new());
     for dataset in ["tpch", "tpcds"] {
         let ctx = peacockdb_core::register_tables_for(
             peacockdb_core::build_session_state(mode.knobs.target_partitions),
@@ -475,6 +529,8 @@ async fn every_published_seq_addresses_the_kind_its_recipe_claims() {
                     if let Err(e) = check_seq_kinds(&recipes) {
                         faults.push(format!("{dataset} {name}: {e}"));
                     }
+                    let reached = depth(&recipes).expect("the plan we just wrote");
+                    deepest = deepest.max((reached, format!("{dataset} {name}")));
                 }
                 // A plan the wire cannot carry has no recipe plan to check. Named rather
                 // than counted: the day a second query joins mixed-join here, that is a
@@ -484,6 +540,15 @@ async fn every_published_seq_addresses_the_kind_its_recipe_claims() {
         }
     }
     assert!(checked > 100, "only {checked} plans reached the check");
+    // #169: a recipe plan is a chain, so its depth is its length, and the C++ verifier
+    // refuses one past 1024 at begin_plan — the whole query, before any call. A tripwire
+    // rather than a note: the number was found by hand once and would drift silently.
+    let (reached, where_) = &deepest;
+    assert!(
+        *reached < 900,
+        "{where_} builds a recipe plan {reached} deep against the verifier's 1024 (#169) — \
+         the shape has to split before it reaches the limit, not the limit be raised"
+    );
     assert_eq!(
         uncrossable,
         ["tpch mixed-join"],
@@ -553,6 +618,127 @@ fn every_query_that_cannot_cross_the_wire_is_declared_and_every_declaration_is_t
             MODES.len()
         );
     }
+}
+
+/// What a recipes line says once its seqs are stripped: the node, its call pattern, the
+/// kinds it addresses and the handles they take — the shape, not the numbering.
+fn call_shapes(text: &str) -> std::collections::BTreeSet<String> {
+    let mut shapes = std::collections::BTreeSet::new();
+    let mut in_recipes = false;
+    for line in text.lines() {
+        match line {
+            // Both files hold the same section, headed differently: the mode goldens put
+            // it between two markers, the payload golden gives a whole section to it after
+            // the digest line.
+            "--- recipes ---" => in_recipes = true,
+            _ if line.starts_with("sha256=") => in_recipes = true,
+            "--- memory ---" => in_recipes = false,
+            _ if line.starts_with("== ") => in_recipes = false,
+            _ if in_recipes => {
+                let line = line.trim();
+                // Payload lines are indented under their call and carry no `: ` shape;
+                // a `none` row and a `not runnable` line are shapes of their own.
+                if !line.contains(": ") && !line.ends_with(": none") {
+                    continue;
+                }
+                // The lane count is a per-plan number rather than a shape: the same call
+                // at four lanes and at nine is one thing to cover.
+                let line = match (line.find("calling_lanes="), line.find(", ")) {
+                    (Some(at), Some(comma)) if comma > at => {
+                        format!("{}{}", &line[..at], &line[comma + 2..])
+                    }
+                    _ => line.to_string(),
+                };
+                let stripped = line
+                    .split('#')
+                    .enumerate()
+                    .map(|(at, part)| {
+                        if at == 0 {
+                            part.to_string()
+                        } else {
+                            // Drop the digits of the seq and keep what follows it.
+                            format!("#{}", part.trim_start_matches(|c: char| c.is_ascii_digit()))
+                        }
+                    })
+                    .collect::<String>();
+                shapes.insert(stripped);
+            }
+            _ => {}
+        }
+    }
+    shapes
+}
+
+/// Every fb kind and every call shape the ten mode goldens hold appears in the payload
+/// golden too.
+///
+/// This is the checked half of [`PAYLOAD_QUERIES`]'s claim. A mapping arm added later
+/// without a payload query for it goes red here rather than waiting for a careful reader —
+/// and the shapes matter as much as the kinds, since the build-side semi family's finish
+/// and a Left outer's derived finish both address a `CudfHashJoin{LeftAnti}` while doing
+/// different things with different arguments.
+#[test]
+fn the_payload_golden_covers_every_kind_and_call_shape_the_modes_produce() {
+    let payloads = std::fs::read_to_string(
+        common::testdata_root()
+            .join("goldens")
+            .join("bp-recipe-payloads.txt"),
+    )
+    .expect("the payload golden");
+    let covered = call_shapes(&payloads);
+
+    let mut wanted = std::collections::BTreeSet::new();
+    for (dataset, sf) in [("tpch", "1"), ("tpcds", "1")] {
+        for (name, ..) in MODES {
+            let text = std::fs::read_to_string(
+                golden_dir_for(dataset, sf).join(format!("{name}.plans.txt")),
+            )
+            .expect("a golden");
+            wanted.extend(call_shapes(&text));
+        }
+    }
+
+    let kind = |shapes: &std::collections::BTreeSet<String>| -> std::collections::BTreeSet<String> {
+        shapes
+            .iter()
+            .flat_map(|shape| {
+                shape
+                    .match_indices("Cudf")
+                    .map(|(at, _)| {
+                        let rest = &shape[at..];
+                        let end = rest
+                            .find(|c: char| c == ',' || c == ')')
+                            .unwrap_or(rest.len());
+                        rest[..end].to_string()
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    };
+    let missing_kinds: Vec<String> = kind(&wanted).difference(&kind(&covered)).cloned().collect();
+    assert!(
+        missing_kinds.is_empty(),
+        "the modes emit fb kinds the payload golden never shows, so nothing pins what they \
+         carry: {missing_kinds:?}"
+    );
+
+    let missing_shapes: Vec<&String> = wanted
+        .difference(&covered)
+        // A shape the modes hold and the payload file cannot: `not runnable` is a
+        // property of mixed-join, which by definition has no payload to show.
+        .filter(|shape| !shape.starts_with("not runnable"))
+        .collect();
+    assert!(
+        missing_shapes.is_empty(),
+        "{} call shapes appear in the mode goldens and in no payload query — add a query \
+         that carries one, per PAYLOAD_QUERIES' rule:\n{}",
+        missing_shapes.len(),
+        missing_shapes
+            .iter()
+            .map(|shape| format!("  {shape}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
 }
 
 async fn check(dataset: &str, sf: &str, mode: Mode) {

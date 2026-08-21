@@ -4,7 +4,7 @@ Code and tests are authoritative; this page maps them.
 
 ## Test categories
 
-**Grand total: 1541 test cases — Rust 1107, C++ 65, Python 369.** The Python figure includes the 93 corpus queries, which only a manual dispatch runs.
+**Grand total: 1552 test cases — Rust 1118, C++ 65, Python 369.** The Python figure includes the 93 corpus queries, which only a manual dispatch runs.
 
 **Runs** — `cpp-cpu` = pipeline.yml's cpp-cpu job, both cuDF legs · `cost-report` = the
 cost-report job · `shad-gpu` = CI GPU job on the remote host, `--test-threads=1` ·
@@ -42,12 +42,13 @@ and `2gpu` rows also runs locally; large CPU batches go to verda.
 | Plan goldens, bp-tp4-rowgroup (Rust) | 4 lanes at row-group granularity: lanes and many batches at once; plan tree + `--- recipes ---` + `--- memory ---` per query, one file per bench | [tpch_bp_tp4_rowgroup](../peacockdb-core/tests/test_batch_partitioned_plans.rs) | cpp-cpu | 2 |
 | Plan goldens, bp-tp4-sized (Rust) | 4 lanes, the estimator's target — **the only mode a budget tier moves**, recorded in-band; plan tree + `--- recipes ---` + `--- memory ---` per query, one file per bench | [tpch_bp_tp4_sized](../peacockdb-core/tests/test_batch_partitioned_plans.rs) | cpp-cpu | 2 |
 | Plan goldens, meta (Rust) | the registry and the goldens agree both ways; every mode has a golden and every golden a mode; every refusal in a golden names a ticket that exists and carries no host path | [the_registry_matches_the_goldens_in_both_directions](../peacockdb-core/tests/test_batch_partitioned_plans.rs#L427) | cpp-cpu | 4 |
+| Recipe plan structure (Rust) | the claims the payload golden cannot make: every published seq resolves to the kind its recipe names, over every corpus query rather than the fifteen with payloads; the payload set covers every fb kind and call shape the ten goldens hold; the queries that cannot cross the wire are declared; and no plan approaches the verifier's depth cap ([#169](tickets.md#t169)) | [every_published_seq_addresses_the_kind_its_recipe_claims](../peacockdb-core/tests/test_batch_partitioned_plans.rs) | cpp-cpu | 3 |
 | Recipe payloads golden (Rust) | twelve queries at bp-tp4-rowgroup with every fb payload rendered and a sha256 over the bytes beside it — the text and the wire form pinned together, since a field the renderer omits moves neither | [tpch_and_tpcds_recipe_payloads](../peacockdb-core/tests/test_batch_partitioned_plans.rs) | cpp-cpu | 1 |
 | Plan goldens, comparator unit (Rust) | the differ must name what moved, what is missing and what is out of order — every other test in the file is a comparison through it | [a_section_that_moved_is_named_with_the_column_that_moved](../peacockdb-core/tests/test_batch_partitioned_plans.rs#L275) | cpp-cpu | 3 |
 | Registry ↔ CSV (Rust) | each `cost-registry.csv` mode column matches the tests that exist, both directions | [full_table_columns](../peacockdb-core/tests/test_cpu_full_table.rs#L313), [partitioned_gpu_column](../peacockdb-core/tests/test_gpu_partitioned.rs#L46) | cpp-cpu ×4, shad-gpu ×2 | 6 |
 | CI wiring guard (Rust) | every Rust target must be named by a CI step — CI does not glob, and the three lists that decide where a GPU target runs must agree | [every_rust_test_target_is_named_by_ci](../peacockdb-core/tests/test_ci_coverage.rs#L323), [the_three_gpu_target_lists_agree](../peacockdb-core/tests/test_ci_coverage.rs#L419) | cost-report | 3 |
 | tp8 flip diagnostic (Rust) | prints would-be flips; a printer, no assertions | [diag_flip_audit](../peacockdb-core/tests/diag_flip_audit.rs#L135) | manual | 1 |
-| Lib unit (Rust) | config tiers, batch-size rule, resident model, and the batch-partitioned types, schema annotations, validation rules, both drivers with the scheduler and the resident accountant over a mock backend, the join recipes, and the expression writer — every variant and operator, since a wrong scalar is invisible in plan text and wrong on a device | [tiers_are_strictly_increasing](../peacockdb-core/src/config.rs#L119), [an_outer_join_that_preserves_its_build_side_keeps_the_keys_and_finishes_with_an_anti_join](../peacockdb-core/src/batch_partitioned/recipe/tests.rs#L161) | cpp-cpu | 322 |
+| Lib unit (Rust) | config tiers, batch-size rule, resident model, and the batch-partitioned types, schema annotations, validation rules, both drivers with the scheduler and the resident accountant over a mock backend, the join recipes, and the expression writer — every variant and operator, since a wrong scalar is invisible in plan text and wrong on a device | [tiers_are_strictly_increasing](../peacockdb-core/src/config.rs#L119), [an_outer_join_that_preserves_its_build_side_keeps_the_keys_and_finishes_with_an_anti_join](../peacockdb-core/src/batch_partitioned/recipe/tests.rs#L161) | cpp-cpu | 330 |
 | Doctest (Rust) | the `CpuExecutor` rustdoc example still compiles | [CpuExecutor example](../peacockdb-core/src/lib.rs#L166) | manual — unlisted, see [#128](tickets.md) | 1 |
 | FFI smoke (Rust) | the crate links; executor lifecycle | [test_executor_lifecycle](../peacockdb-ffi/tests/test_ffi.rs#L17) | cpp-cpu | 2 |
 | Cost-report renderer (Rust) | glyphs, links, ratio bucket, regression gate, history | [bucket_threshold_is_1_4](../cost-report/src/main.rs#L1552), [regression_count_drives_exit_decision](../cost-report/src/main.rs#L1623) | cost-report | 25 |
@@ -68,7 +69,7 @@ and `2gpu` rows also runs locally; large CPU batches go to verda.
 | Dataset validators (Python) | row counts / clustering / embedding stats over whatever dataset they are pointed at; each check tags itself `EXHAUSTIVE` or `SAMPLED` | [validate_tpch.py](../scripts/validate_tpch.py), [check_s3_datasets.py](../scripts/check_s3_datasets.py) | cpp-cpu (sf1) · validate-large (sf40/sf200) | n/a¹ |
 
 ¹ Data-driven — the check count depends on the dataset and SF, so these are excluded from
-the 1541. Everything else in the repo that can be enumerated as a test case is counted.
+the 1552. Everything else in the repo that can be enumerated as a test case is counted.
 
 Notes
 
@@ -438,6 +439,12 @@ Rules that keep this healthy:
   working tree. (The sf40 *dataset* is what lives only there — its 16 CSV goldens are
   committed.) `plan_bytes.sha256` rides along safely because `test_plan_bytes` itself
   refuses to regenerate without `PEACOCK_REWRITE_PLAN_BYTES=1`.
+  **`--pull-benchmarks` overwrites**, which its name does not say: it deletes nothing, so it
+  reads as additive, but it brings back every record the host holds and not only the ones the
+  run just wrote. shad-gpu's tree currently holds an instrumentation this repo does not use —
+  per-node `setup_us`/`submit_us`/`device_us` where the committed form is `time_us` — so a pull
+  after a filtered run rewrites 127 committed files in a format nobody asked for
+  ([#171](tickets.md#t171)). Pull, then keep only what the run wrote.
   The tpch **embeddings cache is NOT syncable** — a per-host intermediate
   (`fetch_embeddings.sh`, ~1.8 GB, gitignored); regenerate it where you need it.
 - Remote CPU runs ship built binaries + goldens + data only — never source. The CPU test

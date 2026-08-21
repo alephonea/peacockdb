@@ -127,3 +127,23 @@ pub fn check_seq_kinds(plan: &RecipePlan) -> Result<(), PlanError> {
     }
     Ok(())
 }
+
+/// How deep the recipe plan is. A chain of nodes is as deep as it is long, and the C++
+/// verifier refuses a plan past its depth limit at `begin_plan` — the whole query, before
+/// any call, which is #169. Read here rather than guessed so a test can watch the headroom.
+pub fn depth(plan: &RecipePlan) -> Result<usize, PlanError> {
+    let options = flatbuffers::VerifierOptions {
+        max_depth: 1024,
+        ..Default::default()
+    };
+    let buffer = flatbuffers::root_with_opts::<fb::GpuPlan>(&options, plan.bytes())
+        .map_err(|e| PlanError::Invalid(format!("the recipe plan does not verify: {e}")))?;
+    let root = buffer
+        .root()
+        .ok_or_else(|| PlanError::Invalid("the recipe plan has no root".to_string()))?;
+    Ok(depth_of(root))
+}
+
+fn depth_of(node: fb::PlanNode<'_>) -> usize {
+    1 + children(&node).into_iter().map(depth_of).max().unwrap_or(0)
+}

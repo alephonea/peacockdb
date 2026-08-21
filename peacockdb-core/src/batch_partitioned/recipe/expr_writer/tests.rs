@@ -447,3 +447,182 @@ fn a_stddev_finalize_writes_with_its_sqrt_under_the_case() {
         fb::UnaryOp::Sqrt
     );
 }
+
+/// The same expression through both writers, byte for byte.
+///
+/// Two producers now write these tables for one consumer: `plan_serializer` from a
+/// DataFusion expression, and this file from the mode's own IR. Every other check on this
+/// side is self-consistent — the digest is of what we wrote, the round trips read our
+/// buffers through our own accessors — so none of them can see a spelling that agrees with
+/// itself and not with what `build_expr` has been read against for the whole corpus.
+///
+/// `expr_translate` is the bridge that makes the comparison possible: one DataFusion
+/// expression becomes our IR, and the two writers must land on the same bytes.
+mod against_the_legacy_writer {
+    use super::*;
+    use crate::batch_partitioned::expr_translate::translate_expr;
+    use crate::plan_serializer::serialize_expr;
+    use datafusion::arrow::datatypes::{Field, Schema as ArrowSchema};
+    use datafusion::logical_expr::Operator;
+    use datafusion::physical_expr::PhysicalExpr;
+    use datafusion::physical_expr::expressions::{
+        BinaryExpr, CaseExpr, CastExpr, Column, IsNotNullExpr, IsNullExpr, Literal, NegativeExpr,
+        NotExpr,
+    };
+    use std::sync::Arc;
+
+    fn schema() -> ArrowSchema {
+        ArrowSchema::new(vec![
+            Field::new("n", DataType::Int64, true),
+            Field::new("d", DataType::Decimal128(15, 2), true),
+            Field::new("s", DataType::Utf8, true),
+            Field::new("b", DataType::Boolean, true),
+        ])
+    }
+
+    fn column(index: usize, name: &str) -> Arc<dyn PhysicalExpr> {
+        Arc::new(Column::new(name, index))
+    }
+
+    fn literal(value: ScalarValue) -> Arc<dyn PhysicalExpr> {
+        Arc::new(Literal::new(value))
+    }
+
+    fn both_ways(expr: &Arc<dyn PhysicalExpr>) -> (Vec<u8>, Vec<u8>) {
+        let arrow = schema();
+        let mut legacy = FlatBufferBuilder::new();
+        let offset = serialize_expr(&mut legacy, expr, &arrow).expect("the legacy writer takes it");
+        legacy.finish(offset, None);
+
+        let ours = translate_expr(expr, &arrow).expect("the bridge takes it");
+        let mut mine = FlatBufferBuilder::new();
+        let offset = write_expr(&mut mine, &ours).expect("our writer takes it");
+        mine.finish(offset, None);
+
+        (legacy.finished_data().to_vec(), mine.finished_data().to_vec())
+    }
+
+    fn agree(what: &str, expr: Arc<dyn PhysicalExpr>) {
+        let (legacy, mine) = both_ways(&expr);
+        assert_eq!(
+            legacy, mine,
+            "{what}: the two writers disagree, and the C++ reads whichever it is handed"
+        );
+    }
+
+    #[test]
+    fn a_column_and_a_literal_are_written_the_same_way() {
+        agree("column", column(0, "n"));
+        agree("int literal", literal(ScalarValue::Int64(Some(42))));
+        agree(
+            "string literal",
+            literal(ScalarValue::Utf8(Some("BUILDING".to_string()))),
+        );
+        agree("typed null", literal(ScalarValue::Int64(None)));
+    }
+
+    #[test]
+    fn a_decimal_literal_carries_the_same_precision_and_scale_from_both() {
+        // The field a wrong write hides in: a scale on the other half of the pair reads as
+        // a plausible number rather than as an error.
+        agree(
+            "decimal literal",
+            literal(ScalarValue::Decimal128(Some(123_456), 15, 2)),
+        );
+        agree(
+            "wide decimal",
+            literal(ScalarValue::Decimal128(
+                Some(1_234_567_890_123_456_789_012_345_678),
+                38,
+                10,
+            )),
+        );
+        agree("decimal null", literal(ScalarValue::Decimal128(None, 20, 4)));
+    }
+
+    #[test]
+    fn a_binary_op_agrees_including_the_declared_decimal_output() {
+        agree(
+            "int compare",
+            Arc::new(BinaryExpr::new(
+                column(0, "n"),
+                Operator::Lt,
+                literal(ScalarValue::Int64(Some(7))),
+            )),
+        );
+        // Division is where the declared output matters: cuDF's own scale is
+        // s_left - s_right and DataFusion's is not, so both writers must carry the same
+        // pair or the C++ lands on a different scale depending on which wrote the plan.
+        agree(
+            "decimal divide",
+            Arc::new(BinaryExpr::new(
+                column(1, "d"),
+                Operator::Divide,
+                literal(ScalarValue::Decimal128(Some(100), 15, 2)),
+            )),
+        );
+    }
+
+    #[test]
+    fn the_four_unaries_both_writers_have_agree() {
+        agree("not", Arc::new(NotExpr::new(column(3, "b"))));
+        agree("is null", Arc::new(IsNullExpr::new(column(0, "n"))));
+        agree("is not null", Arc::new(IsNotNullExpr::new(column(0, "n"))));
+        agree("negative", Arc::new(NegativeExpr::new(column(0, "n"))));
+    }
+
+    #[test]
+    fn a_cast_agrees_on_its_target_and_a_decimal_targets_scale() {
+        agree(
+            "cast to decimal",
+            Arc::new(CastExpr::new(
+                column(0, "n"),
+                DataType::Decimal128(18, 0),
+                None,
+            )),
+        );
+        agree(
+            "cast to float",
+            Arc::new(CastExpr::new(column(0, "n"), DataType::Float64, None)),
+        );
+    }
+
+    #[test]
+    fn a_search_case_agrees_and_so_does_its_absent_comparand() {
+        // The comparand is the shape the reviewer named: a writer that set it where the
+        // other leaves it null would produce a value-form CASE the C++ evaluates
+        // differently, and both buffers would still verify.
+        let when: Arc<dyn PhysicalExpr> = Arc::new(BinaryExpr::new(
+            column(0, "n"),
+            Operator::Gt,
+            literal(ScalarValue::Int64(Some(0))),
+        ));
+        let case = CaseExpr::try_new(
+            None,
+            vec![(when, literal(ScalarValue::Int64(Some(1))))],
+            Some(literal(ScalarValue::Int64(Some(0)))),
+        )
+        .expect("a search-form CASE");
+        agree("search case", Arc::new(case));
+    }
+
+    #[test]
+    fn nesting_agrees_to_the_depth_a_finalize_reaches() {
+        let quotient: Arc<dyn PhysicalExpr> = Arc::new(BinaryExpr::new(
+            Arc::new(CastExpr::new(
+                column(1, "d"),
+                DataType::Decimal128(25, 6),
+                None,
+            )),
+            Operator::Divide,
+            Arc::new(CastExpr::new(
+                column(0, "n"),
+                DataType::Decimal128(25, 0),
+                None,
+            )),
+        ));
+        agree("avg-shaped finalize", Arc::new(NotExpr::new(Arc::new(
+            BinaryExpr::new(quotient, Operator::Gt, literal(ScalarValue::Decimal128(Some(0), 25, 6))),
+        ))));
+    }
+}

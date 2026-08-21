@@ -6,7 +6,7 @@ anchor that the cost widget links to. Device labels are `tp<N>-<tier>` (micro=10
 mini=2GiB, standard=12GiB).
 
 A ticket carries a **Priority** line only when it is not medium; medium is the default.
-New tickets take the next free number (currently 171). Finished and lapsed tickets move to
+New tickets take the next free number (currently 172). Finished and lapsed tickets move to
 `llm-wiki/archive/archived-tickets.md` (Done / Stale) — numbers are never reused, so an old
 reference still resolves there.
 
@@ -17,7 +17,7 @@ reference still resolves there.
 | [Critical correctness](#critical-correctness) | 15 | #166 #153 #80 #59 #46 #47 #60 #121 #122 #123 #118 #119 #120 #117 #41 |
 | [Blockers for disabled coverage](#blockers-for-disabled-coverage) | 17 | #169 #168 #158 #97 #23 #32 #65 #62 #91 #95 #57 #45 #63 #56 #55 #96 #143 |
 | [Performance / architecture](#performance--architecture) | 27 | #170 #155 #154 #152 #151 #150 #149 #148 #147 #146 #145 #19 #16 #20 #71 #101 #73 #110 #75 #136 #137 #138 #139 #140 #141 #144 #142 |
-| [Infrastructure / process](#infrastructure--process) | 25 | #167 #164 #163 #159 #160 #161 #162 #113 #114 #116 #126 #134 #133 #132 #131 #130 #129 #128 #127 #124 #125 #13 #94 #69 #49 |
+| [Infrastructure / process](#infrastructure--process) | 26 | #171 #167 #164 #163 #159 #160 #161 #162 #113 #114 #116 #126 #134 #133 #132 #131 #130 #129 #128 #127 #124 #125 #13 #94 #69 #49 |
 
 ## Critical correctness
 
@@ -702,6 +702,21 @@ tripped, so something can branch on it, but there is nowhere to record into — 
 trip log, and `Underestimate` is the precedent for what one would look like. Related: #91.
 
 ## Infrastructure / process
+
+<a id="t171"></a>
+### #171 — shad-gpu's benchmark tree is in an instrumentation this repo does not use
+
+Every record on the host carries per-node `setup_us`, `submit_us` and `device_us`; the committed
+form is a single `time_us`. Someone's instrumentation change ran there and its output stayed.
+Since `--pull-benchmarks` deletes nothing but overwrites everything it finds, any pull — including
+one after a single filtered case — rewrites all 127 committed files into that other format, which
+is what happened on 2026-08-21 and was reverted by hand.
+
+Two ways out and they are not equivalent. Either the split instrumentation is wanted, in which
+case it belongs in the repo with the goldens regenerated on purpose and the reader taught the new
+lines; or it is not, in which case the host's tree should be cleared so the next pull cannot
+resurrect it. Nobody has decided, and the cost of not deciding is paid by whoever pulls next
+without reading `build-test.md`.
 
 <a id="t167"></a>
 ### #167 — nothing proves a failed query gives its device memory back
