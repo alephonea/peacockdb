@@ -2319,30 +2319,42 @@ batches sliced per query, the scan stopping — to T17, which is where a driver 
 `PlaceholderRowExec` ([#158](../tickets.md#t158)) waits for the same reason: it is a source, and a
 source proves itself by what the driver pulls from it.
 
-**T17 — stress injection over real operators.** It also inherits what the executors task could
-not assert without a driver: a limit holding nothing whatever the offset, at most two batches
-sliced per query, the scan stopping — each a call or pull count — and `PlaceholderRowExec`
-([#158](../tickets.md#t158)), which is a source and so proves itself by what a driver pulls from
-it. The Rust counterpart of the prototype's
-[`LayoutInjector`](../../scripts/exec_model/operators/injection.py): one query, re-run at every
-layout this mode can express, demanding the same answer each time. T13 asserted what mocks can
-assert — delivery, queue bounds, holds equal releases — and answer invariance is the half that
-needs operators which compute, which is why it lands here rather than there.
+**T17 — the whole path, under injection.** The first task in which SQL goes in and rows come out:
+planning, the recipes, the executors and both drivers running together, rather than each proved
+against a fixture of the last one's shape. Every test starts from a query's text and ends at its
+results, so what is under test is the join between the pieces — which is the only part four tasks
+of separate proofs cannot reach.
 
-Rebuild rather than edit, for the reason the prototype records: a node's partitioning is not a
-field. The source captured a row-group mapping at build time and every parent derived its layout
-from its child, so a rewrite re-runs the planner at a chosen `(target_partitions, batching,
-small_table_bytes)` and the shapes come out consistent. Over each: an injected
-`GpuCoalesceAllBatches` above every source — a real N-to-1 rebatcher, so arrival shape is
-genuinely perturbed — and sources emitting zero-row batches at a set probability. The oracle is
-the legacy CPU executor on the same query, which makes this two-engine correctness rather than a
-new expectation.
+The oracle is DataFusion on the same SQL. Not the legacy CPU executor, as this entry said before
+T21: a second engine of our own agrees with us wherever we are consistently wrong, and by the time
+this task runs, the finalize expression it evaluates is the one we also send to the device. The
+one independent implementation in reach is the one that decomposed the aggregate differently.
+
+Each query is re-run under injection, several modes rather than one, with the same answer demanded
+every time. The prototype's [`LayoutInjector`](../../scripts/exec_model/operators/injection.py) is
+where to look for modes worth having — layouts re-planned rather than edited, a rebatcher above
+every source, sources emitting zero-row batches at a set probability — and it is a model rather
+than a specification, so a mode it lacks and this path needs is a mode to add. Rebuild rather than
+edit, for the reason the prototype records: a node's partitioning is not a field, so a rewrite
+re-runs the planner at a chosen `(target_partitions, batching, small_table_bytes)` and the shapes
+come out consistent.
 
 Two rules the injector carries and this one must too: a join may be re-partitioned only when both
 sides are hash-partitioned on the join keys, since otherwise its lane count is load-bearing and
 splitting it joins matching slices; and a degenerate hash — every key into one lane — is a legal
 hash, because a shuffle's contract is co-location and nothing above it may depend on how evenly
-the lanes were loaded. No new dataset and no new queries: this runs what the corpus already has.
+the lanes were loaded.
+
+It also inherits what the executors task could not assert without a driver: a limit holding
+nothing whatever the offset, at most two batches sliced per query, the scan stopping — each a call
+or pull count — and `PlaceholderRowExec` ([#158](../tickets.md#t158)), which is a source and so
+proves itself by what a driver pulls from it.
+
+**Defects found here are fixed here.** Every task before this one proved its own layer against a
+fixture; the first thing to run all of them at once will find things about their joins, and
+parking those behind tickets would leave the path unproven in exactly the way this task exists to
+end. T21 is the precedent: it was meant to be one test file and it found three defects, each a
+rule held by a doc comment with nothing reading it.
 
 **T18 — corpus shapes the benchmarks do not have.** The corpus is numeric-aggregate
 heavy, and this mode's risk sits in what it never sees: an audit of every `.cpu.txt` finds

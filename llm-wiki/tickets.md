@@ -216,7 +216,8 @@ carry a WHERE, GROUP BY or JOIN and the rule cannot fire.
 
 The fix is small and belongs to the new mode: the node is a **source that emits its constant
 rows**, so the executor has only to produce what the plan already holds — one lane, one
-batch. Scheduled into T10. Legacy would need the same node in the fbs to close its half,
+batch. Scheduled into T17, with the driver: a source proves itself by what is pulled from it.
+Legacy would need the same node in the fbs to close its half,
 not worth doing for a shape neither benchmark has.
 
 <a id="t97"></a>
