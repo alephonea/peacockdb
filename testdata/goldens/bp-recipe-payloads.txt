@@ -16,7 +16,7 @@ GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
           files: /tmp/peacock-plan-bytes-root/tpch.sf1/nation.parquet
           schema: [n_nationkey:Int32, n_name:Utf8View, n_regionkey:Int32, n_comment:Utf8View]
 == tpch q13
-sha256=122fa3cb4b0d340f0de14964b31afc6d6af30326c038e0f9ca0ef9845e830146
+sha256=1dba3125e2126a0b326bb7c91ed25dc286c9c5b2bef94d92d77eef7573ce9e27
 GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
   GpuMergeSortedPartitions: calling_lanes=1, at done: execute_node(#25 CudfSortPreservingMerge, all lanes)
       #25 CudfSortPreservingMerge
@@ -104,7 +104,7 @@ GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
                                       files: /tmp/peacock-plan-bytes-root/tpch.sf1/orders.parquet
                                       schema: [o_orderkey:Int64, o_custkey:Int64, o_comment:Utf8View]
 == tpch q15
-sha256=f59a0c3cfe44d0f9cbca07fa852f57bbc2929bc5a38cf62b258fc6061373768d
+sha256=6a4e78e0356f80927b17c14ce9ce8b7f534f431f1c042d7109cfdcc3a1c12292
 GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
   GpuMergeSortedPartitions: calling_lanes=1, at done: execute_node(#25 CudfSortPreservingMerge, all lanes)
       #25 CudfSortPreservingMerge
@@ -202,7 +202,7 @@ GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
                           files: /tmp/peacock-plan-bytes-root/tpch.sf1/lineitem.parquet
                           schema: [l_suppkey:Int64, l_extendedprice:Decimal128, l_discount:Decimal128, l_shipdate:Date32]
 == tpch q21
-sha256=2682251650beef65776a903c9a2126ef5b85b8ce67a0672ea057be6cd1302fce
+sha256=45b56d046b6379d256eba55be2563ede2bf5cd37b29303e00cd672a2197d736f
 GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
   GpuMergeSortedPartitions: calling_lanes=1, at done: execute_node(#41 CudfSortPreservingMerge, all lanes)
       #41 CudfSortPreservingMerge
@@ -369,7 +369,7 @@ GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
                                     files: /tmp/peacock-plan-bytes-root/tpch.sf1/lineitem.parquet
                                     schema: [l_orderkey:Int64, l_suppkey:Int64, l_commitdate:Date32, l_receiptdate:Date32]
 == tpch q22
-sha256=fdc577a94aec09be8f25eeef1f091bb66f00bcdd0ad2852eb82f640524acd5b9
+sha256=25d9defbe32881fe59d5a7553945270154dcb7ee4e12bdee893778d62ad11d95
 GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
   GpuMergeSortedPartitions: calling_lanes=1, at done: execute_node(#23 CudfSortPreservingMerge, all lanes)
       #23 CudfSortPreservingMerge
@@ -463,7 +463,7 @@ GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
                               files: /tmp/peacock-plan-bytes-root/tpch.sf1/orders.parquet
                               schema: [o_custkey:Int64]
 == tpch shuffle-stddev
-sha256=938ff675d751e30b3b77fdc0c41460247c9e877913972e9e690af979e7d92423
+sha256=3c65824585d5713a6d9f0c19d20fcddaa6a37b7a65876c14e432e98455976480
 GpuUnload: calling_lanes=4, per handle: result_from_handle(batch, row range)
   GpuProject: calling_lanes=4, per batch: execute_node(#9 CudfProject, batch)
       #9 CudfProject
@@ -521,7 +521,7 @@ GpuUnload: calling_lanes=4, per handle: result_from_handle(batch, row range)
                       files: /tmp/peacock-plan-bytes-root/tpch.sf1/lineitem.parquet
                       schema: [l_quantity:Decimal128, l_returnflag:Utf8View, l_linestatus:Utf8View]
 == tpcds q14
-sha256=fe2e7c191d3957bbb8b214ae554ce164b66c954943d786b1b42e9cdadf53411c
+sha256=94827ba77bb3b99079d9d9b3b5369aaa7370b6d5b9a70d851db1bafcdc8ceb8b
 GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
   GpuMergeSortedPartitions: calling_lanes=1, at done: execute_node(#382 CudfSortPreservingMerge, all lanes)
       #382 CudfSortPreservingMerge
@@ -560,6 +560,8 @@ GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
                 group_by: channel@0, i_brand_id@1, i_class_id@2, i_category_id@3
                 sum(y.sales): sum(sales@4)
                 sum(y.number_sales): sum(number_sales@5)
+                null_exprs: channel=null::Utf8, i_brand_id=null::Int64, i_class_id=null::Int64, i_category_id=null::Int64
+                grouping_sets: ----, k---, kk--, kkk-, kkkk
             GpuInterleave: none
               GpuProject: calling_lanes=1, per batch: execute_node(#124 CudfProject, batch)
                   #124 CudfProject
@@ -2053,7 +2055,7 @@ GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
                                                                                       files: /tmp/peacock-plan-bytes-root/tpcds.sf1/store_sales.parquet
                                                                                       schema: [ss_sold_date_sk:Int64, ss_item_sk:Int64]
 == tpcds q39
-sha256=cae9d770b49511553a5f1edf3c6254813a7ce980d9498a308689494d0df4a1bb
+sha256=6ac72e7178c1b60863c57642816b93c0b35c4c9816aa40a2a158086186b56174
 GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
   GpuProject: calling_lanes=1, per batch: execute_node(#71 CudfProject, batch)
       #71 CudfProject
@@ -2401,7 +2403,7 @@ GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
                                                                   files: /tmp/peacock-plan-bytes-root/tpcds.sf1/inventory.parquet
                                                                   schema: [inv_date_sk:Int64, inv_item_sk:Int64, inv_warehouse_sk:Int64, inv_quantity_on_hand:Int32]
 == tpcds q40
-sha256=935cab21495bd70c8a160a1ff397e71a7a8d63200ea42418a8b0da0d3486e5f9
+sha256=e465d12be45ecc7095cb3af16bad38fd4cfbf78559da10e6d543123be41db586
 GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
   GpuMergeSortedPartitions: calling_lanes=1, at done: execute_node(#37 CudfSortPreservingMerge, all lanes)
       #37 CudfSortPreservingMerge
@@ -2569,7 +2571,7 @@ GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
                                                           files: /tmp/peacock-plan-bytes-root/tpcds.sf1/catalog_sales.parquet
                                                           schema: [cs_sold_date_sk:Int64, cs_warehouse_sk:Int64, cs_item_sk:Int64, cs_order_number:Int64, cs_sales_price:Decimal128]
 == tpcds q41
-sha256=2f307eee9583099037fdda8277b523baa56e70418d58a8de6d64991ebaaeb402
+sha256=161f5171297b5e856fe46b4a2c8f8a4974a3a0163de12057bfc3e23e9a490c1d
 GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
   GpuMergeSortedPartitions: calling_lanes=1, at done: execute_node(#24 CudfSortPreservingMerge, all lanes)
       #24 CudfSortPreservingMerge
@@ -2661,7 +2663,7 @@ GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
                               files: /tmp/peacock-plan-bytes-root/tpcds.sf1/item.parquet
                               schema: [i_category:Utf8View, i_manufact:Utf8View, i_size:Utf8View, i_color:Utf8View, i_units:Utf8View]
 == tpcds q45
-sha256=659e20b5cc01787bae071650aea49ae4dc34a9664c1129654483f5a886c09e4c
+sha256=9960af4f87cbed0f31647ea64b8aec16ee5cbedc5c88daa83f63917ce75f2484
 GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
   GpuMergeSortedPartitions: calling_lanes=1, at done: execute_node(#43 CudfSortPreservingMerge, all lanes)
       #43 CudfSortPreservingMerge
@@ -2837,7 +2839,7 @@ GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
                                 files: /tmp/peacock-plan-bytes-root/tpcds.sf1/item.parquet
                                 schema: [i_item_sk:Int64, i_item_id:Utf8View]
 == tpcds q5
-sha256=2632895ea423366dd3aeb01672a80a913d84dc4f26581abbc3fc860ca2c2af5c
+sha256=f35ef2fadfd7fc581d9fd5713d3cfe55dc25d9081212938d5731ad1041c97687
 GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
   GpuMergeSortedPartitions: calling_lanes=1, at done: execute_node(#98 CudfSortPreservingMerge, all lanes)
       #98 CudfSortPreservingMerge
@@ -2883,6 +2885,8 @@ GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
                       sum(x.sales): sum(sales@2)
                       sum(x.returns_): sum(returns_@3)
                       sum(x.profit): sum(profit@4)
+                      null_exprs: channel=null::Utf8, id=null::Utf8View
+                      grouping_sets: --, k-, kk
                   GpuUnion: none
                     GpuProject: calling_lanes=4, per batch: execute_node(#26 CudfProject, batch)
                         #26 CudfProject
@@ -3306,7 +3310,7 @@ GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
                                                                 files: /tmp/peacock-plan-bytes-root/tpcds.sf1/web_sales.parquet
                                                                 schema: [ws_item_sk:Int64, ws_web_site_sk:Int64, ws_order_number:Int64]
 == tpcds q61
-sha256=c7b14fbd32b115ccc6dea8043eb2fea56adaf0c785f6aed4fe7918b9d4868a72
+sha256=f3b96483b1d70484168423e7e0f04008caddcefd2864626106217f5465ef5b73
 GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
   GpuAccumulateBatchesAndSort: calling_lanes=1, per batch: execute_node(#83 CudfSort, batch); at done: execute_node(#84 CudfSortPreservingMerge, lane batches)
       #83 CudfSort
@@ -3636,7 +3640,7 @@ GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
                                           files: /tmp/peacock-plan-bytes-root/tpcds.sf1/customer.parquet
                                           schema: [c_customer_sk:Int64, c_current_addr_sk:Int64]
 == tpcds q87
-sha256=af66b61420be878f4128ff13393f16954f9bf933e3969f08163f962eec3d0dde
+sha256=381d144a0e4a9ce2ddeb68754ea9d88ff526329a51b1edcef6cabc98efb5d7af
 GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
   GpuAggregateBatches: calling_lanes=1, per compaction and at done: execute_node(#76 CudfCoalescePartitions, lane batches), execute_node(#77 CudfAggregate{Merge}, prior output); at done: execute_node(#78 CudfProject{finalize}, prior output)
       #76 CudfCoalescePartitions
@@ -3928,7 +3932,7 @@ GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
                                                       files: /tmp/peacock-plan-bytes-root/tpcds.sf1/store_sales.parquet
                                                       schema: [ss_sold_date_sk:Int64, ss_customer_sk:Int64]
 == tpcds q91
-sha256=3f4c287782290922c7ba078b3c1255f281fdb5e8229abc97002dced3f35f3b98
+sha256=ea442f38ac3256230457fdc4ca17a0793f692fc2184bbb49b4fcd13ab4ae9b0f
 GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
   GpuProject: calling_lanes=1, per batch: execute_node(#46 CudfProject, batch)
       #46 CudfProject
@@ -4120,7 +4124,7 @@ GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
                                           files: /tmp/peacock-plan-bytes-root/tpcds.sf1/customer_demographics.parquet
                                           schema: [cd_demo_sk:Int64, cd_marital_status:Utf8View, cd_education_status:Utf8View]
 == tpcds q97
-sha256=3800734a0d1e73d82e9737085870a2b313c84d418b9cc9d16165c8796b8c16da
+sha256=9d32358bd7a847f76eefa5a58923df8603992a1801823024315a0bc55bbf5bff
 GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
   GpuProject: calling_lanes=1, per batch: execute_node(#45 CudfProject, batch)
       #45 CudfProject

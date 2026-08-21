@@ -9,14 +9,16 @@
 
 mod common;
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use peacockdb_core::batch_partitioned::plan::{BatchSizing, PlanKnobs, plan_batch_partitioned};
 use peacockdb_core::batch_partitioned::plan_text::{
     Payloads, render_plan, render_plan_memory, render_plan_recipes,
 };
-use peacockdb_core::batch_partitioned::recipe::{attach_recipes, check_seq_kinds, depth};
+use peacockdb_core::batch_partitioned::recipe::{attach_recipes, check_seq_kinds, depth, node_at};
 use peacockdb_core::config::MemoryLimit;
+use peacockdb_core::generated::gpu_plan_generated::peacock::plan as fb;
 
 use common::{data_dir_for, golden_dir_for, queries_dir_for};
 
@@ -1042,4 +1044,249 @@ fn sections_of(path: &Path) -> std::collections::BTreeMap<String, String> {
         sections.insert(previous, body);
     }
     sections
+}
+
+/// Which fields each writer sets, per fb table, unioned over the whole corpus.
+///
+/// `expr_writer`'s tests compare the two writers byte for byte, which is right for
+/// expressions and wrong for node payloads: the two legitimately differ there. What a
+/// difference must not be is unexamined — a field the legacy writer sets and this one
+/// leaves at its default is either a decision with a reason beside it or the grouping-set
+/// omission again, and from outside the two look identical.
+///
+/// Names come from the fbs rather than from a list here, so a field added to a table is
+/// covered the moment it exists.
+fn fbs_offset_fields() -> std::collections::BTreeMap<String, Vec<String>> {
+    let text = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../flatbuffers/gpu_plan.fbs"),
+    )
+    .expect("the schema");
+    // A scalar equal to its default is written by nobody, so presence says nothing about
+    // it: `interleave: false` and an unset `interleave` are the same bytes. Enums are
+    // scalars too, which is why the enum names are collected rather than assumed.
+    let mut scalars: BTreeSet<String> = [
+        "bool", "byte", "ubyte", "short", "ushort", "int", "uint", "long", "ulong", "float",
+        "double", "int8", "uint8", "int16", "uint16", "int32", "uint32", "int64", "uint64",
+        "float32", "float64",
+    ]
+    .into_iter()
+    .map(String::from)
+    .collect();
+    let mut unions: BTreeSet<String> = BTreeSet::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("enum ") {
+            scalars.insert(rest.split([':', ' ']).next().unwrap().to_string());
+        } else if let Some(rest) = line.strip_prefix("union ") {
+            unions.insert(rest.split([' ', '{']).next().unwrap().to_string());
+        }
+    }
+
+    let mut tables = std::collections::BTreeMap::new();
+    let mut open: Option<(String, Vec<String>)> = None;
+    for line in text.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("table ") {
+            open = Some((rest.trim_end_matches(" {").trim().to_string(), Vec::new()));
+        } else if line == "}" {
+            if let Some((name, fields)) = open.take() {
+                tables.insert(name, fields);
+            }
+        } else if let Some((_, fields)) = open.as_mut() {
+            if line.starts_with("///") || line.is_empty() {
+                continue;
+            }
+            let Some((name, declared)) = line.split_once(':') else {
+                continue;
+            };
+            // Every field takes a vtable slot, so the position is the declaration order
+            // whatever the type; only the ones worth comparing carry a name.
+            let declared = declared
+                .split(|c: char| c == '=' || c == ';' || c == '(')
+                .next()
+                .unwrap_or("")
+                .trim();
+            // A union takes two slots — the type byte, then the offset — so a table
+            // holding one numbers every field after it two higher than it is declared.
+            if unions.contains(declared) {
+                fields.push(String::new());
+            }
+            fields.push(if scalars.contains(declared) {
+                String::new()
+            } else {
+                name.trim().to_string()
+            });
+        }
+    }
+    tables
+}
+
+/// The field indices a table actually set, read off its vtable so a field nobody wrote an
+/// accessor call for is still counted.
+fn fields_set(table: &flatbuffers::Table<'_>) -> BTreeSet<usize> {
+    let vtable = table.vtable();
+    (0..vtable.num_fields())
+        .filter(|index| {
+            vtable.get(flatbuffers::field_index_to_field_offset(
+                *index as flatbuffers::VOffsetT,
+            )) != 0
+        })
+        .collect()
+}
+
+/// Per node kind, the union of the field indices set across every node of that kind.
+fn written_fields(bytes: &[u8]) -> std::collections::BTreeMap<String, BTreeSet<usize>> {
+    let options = flatbuffers::VerifierOptions {
+        max_depth: 1024,
+        ..Default::default()
+    };
+    let plan = flatbuffers::root_with_opts::<fb::GpuPlan>(&options, bytes).expect("it verifies");
+    let mut per_kind: std::collections::BTreeMap<String, BTreeSet<usize>> =
+        std::collections::BTreeMap::new();
+    let mut seq = 0;
+    while let Some(node) = node_at(&plan, seq) {
+        per_kind
+            .entry("PlanNode".to_string())
+            .or_default()
+            .extend(fields_set(&node._tab));
+        if let Some(payload) = node.node() {
+            per_kind
+                .entry(format!("{:?}", node.node_type()))
+                .or_default()
+                .extend(fields_set(&payload));
+        }
+        seq += 1;
+    }
+    per_kind
+}
+/// The differences between the two writers, each with the reason it is one. Everything not
+/// listed has to match: a field the legacy writer sets and this one does not is how the
+/// grouping-set omission shipped, and the payload golden pinned it faithfully.
+const WRITER_DIFFERENCES: [(&str, &str, &str); 5] = [
+    (
+        "CudfScan",
+        "projection",
+        "the file schema written here is already the projected fields, so an empty \
+         projection reads as every column of it",
+    ),
+    (
+        "CudfScan",
+        "row_groups",
+        "the node's own list is overridden per call by execute_scan_rowgroups, so a list \
+         on the node would be a second answer to the same question",
+    ),
+    (
+        "CudfScan",
+        "batches",
+        "the RG map is this mode's own and is executed one batch per call, not read off \
+         the node",
+    ),
+    (
+        "CudfUnion",
+        "output_schema",
+        "the only unions here are structural, gathering a node's unconsumed branches so \
+         nothing is left unreachable; no recipe publishes a seq for one, so execute_union \
+         never runs on it and never reads this",
+    ),
+    (
+        "PlanNode",
+        "output_schema",
+        "nothing on the C++ side reads it — the executors take their types from each \
+         node's own payload",
+    ),
+];
+
+#[tokio::test]
+async fn every_field_the_legacy_writer_sets_is_set_here_or_declared_a_difference() {
+    let names = fbs_offset_fields();
+    let mut legacy: std::collections::BTreeMap<String, BTreeSet<usize>> = Default::default();
+    let mut recipe: std::collections::BTreeMap<String, BTreeSet<usize>> = Default::default();
+    for (dataset, sf) in [("tpch", "1"), ("tpcds", "1")] {
+        let mode = mode(PAYLOAD_MODE.0, PAYLOAD_MODE.1, PAYLOAD_MODE.2);
+        let ctx = peacockdb_core::register_tables_for(
+            peacockdb_core::build_session_state(mode.knobs.target_partitions),
+            &data_dir_for(dataset, sf),
+        )
+        .await
+        .expect("register the tables");
+        for (query, path) in queries(dataset) {
+            let sql = std::fs::read_to_string(&path).expect("the query text");
+            let Ok(frame) = ctx.sql(&sql).await else {
+                continue;
+            };
+            let Ok(plan) = frame.create_physical_plan().await else {
+                continue;
+            };
+            if let Ok((tree, _)) = plan_batch_partitioned(&plan, mode.knobs)
+                && let Ok(recipes) = attach_recipes(tree.as_ref())
+            {
+                merge(&mut recipe, written_fields(recipes.bytes()));
+            }
+            let legacy_plan = common::plan_for(dataset, sf, &query, "tp8-standard").await;
+            if let Ok(bytes) = peacockdb_core::plan_serializer::serialize_plan_mode(
+                &legacy_plan,
+                common::plan_partition_mode("tp8-standard"),
+            ) {
+                merge(&mut legacy, written_fields(&bytes));
+            }
+        }
+    }
+
+    let mut unexplained: Vec<String> = Vec::new();
+    for (kind, set) in &legacy {
+        let Some(here) = recipe.get(kind) else {
+            continue;
+        };
+        for index in set.difference(here) {
+            let field = names
+                .get(kind)
+                .and_then(|fields| fields.get(*index))
+                .map(String::as_str)
+                .unwrap_or("?");
+            if field.is_empty() {
+                continue;
+            }
+            if !WRITER_DIFFERENCES
+                .iter()
+                .any(|(table, name, _)| *table == kind && *name == field)
+            {
+                unexplained.push(format!("{kind}.{field}"));
+            }
+        }
+    }
+    assert!(
+        unexplained.is_empty(),
+        "the legacy writer sets these and the recipe writer leaves them at their default, \
+         with no entry in WRITER_DIFFERENCES saying why: {unexplained:?}"
+    );
+
+    let stale: Vec<String> = WRITER_DIFFERENCES
+        .iter()
+        .filter(|(table, name, _)| {
+            let index = names
+                .get(*table)
+                .and_then(|fields| fields.iter().position(|field| field == name));
+            match (index, legacy.get(*table), recipe.get(*table)) {
+                (Some(index), Some(set), Some(here)) => {
+                    !set.contains(&index) || here.contains(&index)
+                }
+                _ => true,
+            }
+        })
+        .map(|(table, name, _)| format!("{table}.{name}"))
+        .collect();
+    assert!(
+        stale.is_empty(),
+        "WRITER_DIFFERENCES explains differences that are not there — either the field \
+         moved or this writer now sets it: {stale:?}"
+    );
+}
+
+fn merge(
+    into: &mut std::collections::BTreeMap<String, BTreeSet<usize>>,
+    from: std::collections::BTreeMap<String, BTreeSet<usize>>,
+) {
+    for (kind, set) in from {
+        into.entry(kind).or_default().extend(set);
+    }
 }

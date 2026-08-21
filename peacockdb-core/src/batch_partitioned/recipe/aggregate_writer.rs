@@ -44,18 +44,42 @@ pub(super) fn aggregate<'a>(
     for key in &body.group_by {
         group_exprs.push(write_expr(b, key)?);
     }
-    let group_names: Vec<WIPOffset<&str>> = state
-        .fields
-        .fields()
+    let group_names: Vec<WIPOffset<&str>> = (0..body.group_by.len())
+        .map(|position| b.create_string(group_name_at(state, position)))
+        .collect();
+
+    // ROLLUP and CUBE, which only an init node expands: the per-position NULL placeholder
+    // and the masks that say which positions a set drops. `aggregate.cpp` discriminates on
+    // `null_exprs` rather than on the masks, so writing one without the other would run a
+    // plain group-by and answer with one set where the query asked for five.
+    let mut null_exprs = Vec::with_capacity(body.null_exprs.len());
+    for expr in &body.null_exprs {
+        null_exprs.push(write_expr(b, expr)?);
+    }
+    let null_names: Vec<WIPOffset<&str>> = (0..null_exprs.len())
+        .map(|position| b.create_string(group_name_at(state, position)))
+        .collect();
+    let masks: Vec<WIPOffset<fb::GroupingSetMask>> = body
+        .grouping_sets
         .iter()
-        .take(body.group_by.len())
-        .map(|field| b.create_string(field.name()))
+        .map(|mask| {
+            let values = b.create_vector(mask);
+            fb::GroupingSetMask::create(
+                b,
+                &fb::GroupingSetMaskArgs {
+                    values: Some(values),
+                },
+            )
+        })
         .collect();
 
     let (funcs, mergeable) = state_funcs(b, body, state)?;
 
     let group_exprs = b.create_vector(&group_exprs);
     let group_names = b.create_vector(&group_names);
+    let null_exprs = b.create_vector(&null_exprs);
+    let null_names = b.create_vector(&null_names);
+    let grouping_sets = b.create_vector(&masks);
     let funcs = b.create_vector(&funcs);
     let input_schema = serialize_schema(b, &input.fields);
     let aggregate = fb::CudfAggregate::create(
@@ -69,15 +93,23 @@ pub(super) fn aggregate<'a>(
             group_names: Some(group_names),
             aggr_funcs: Some(funcs),
             input: Some(kids[0]),
+            null_exprs: Some(null_exprs),
+            null_names: Some(null_names),
+            grouping_sets: Some(grouping_sets),
             aggr_input_schema: Some(input_schema),
             mergeable_agg_state: mergeable,
-            ..Default::default()
         },
     );
     Ok(Payload {
         kind: fb::PlanNodeKind::CudfAggregate,
         value: aggregate.as_union_value(),
     })
+}
+
+/// The state's key columns lead it, so a group position is a position in it. Shared by the
+/// group names and the NULL-placeholder names, which the wire keeps parallel.
+fn group_name_at(state: &Schema, position: usize) -> &str {
+    node_writer::field_at(state, position as u32).name()
 }
 
 /// The finalize as the project it becomes: the group keys straight through, then one
@@ -115,7 +147,9 @@ pub(super) fn finalize_project<'a>(
         let declared_name = node_writer::field_at(output, ordinal).name();
         if name != declared_name {
             return Err(PlanError::Invalid(format!(
-                "the finalized output names column {ordinal} `{declared_name}` and the state                  it is projected from names it `{name}` — the keys are taken by position, so                  the two orders have to be the same"
+                "the finalized output names column {ordinal} `{declared_name}` and the \
+                 state it is projected from names it `{name}` — the keys are taken by \
+                 position, so the two orders have to be the same"
             )));
         }
         exprs.push(write_expr(b, &Expr::column(ordinal, name))?);

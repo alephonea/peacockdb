@@ -2263,22 +2263,36 @@ join's output order is not deterministic. What it deliberately leaves out is eve
 driver decides — batching, backpressure, arrival order — since every shape here is one batch;
 those arrive with the executors, and the driven end-to-end over every layout is T17's.
 
-What it proved and what it left. Eleven of the twenty-five fb kinds the payload golden holds now
-have a device behind them, and — the reading that matters for the tasks after this one — two of
-the three shapes this mode invented do: `AggregateMode::Merge` and the finalize project. The third
-does not. That is [#136](../tickets.md#t136)'s finish pass — probe keys per batch, the concat at
-done, the finish join, the pad project — because both joins that ran here reduce to a single
-legacy call. Untouched with it: the whole Right family, cross and nested-loop joins, both sort
-nodes, `slice_handle` and a ranged export. The walk refuses each by name rather than driving what
-it cannot handle, so the list is enforced rather than merely written down.
+What it proved and what it left. Ten fb kinds now have a device behind them — the ten the walk's
+`PROVEN` names, against the twenty-three the payload golden publishes. That count is enforced
+rather than recorded: the list is checked both ways against what the queries actually made, so a
+kind claimed and never produced fails as loudly as a kind produced and never claimed. The reading
+that matters for the tasks after this one is which shapes those are: two of the three this mode
+invented ran, `AggregateMode::Merge` and the finalize project. The third did not. That is
+[#136](../tickets.md#t136)'s finish pass — probe keys per batch, the concat at done, the finish
+join, the pad project — because both joins that ran here reduce to a single legacy call. Untouched
+with it: the whole Right family, cross and nested-loop joins, both sort nodes, `slice_handle` and a
+ranged export. Each is refused by name in a `match` over every `FbKind`, so a variant added later
+stops the file compiling rather than going quietly unclassified.
 
-Three defects came out of it, each a field written once, read once, with the only reader on the
-far side of an ABI nobody had called: a scan carrying DataFusion's file-group list, so one file
-appeared once per lane; a finalize project emitting the finalized columns and not the keys; and an
-aggregate that finalizes alone emitting no finalize project, which would have answered with state
-columns under finalized names on seventeen committed shapes. The payload golden had been pinning
-the first of them faithfully, which is why [build-test.md](../build-test.md) now says what a
-golden pinning a producer against itself does and does not prove.
+Four defects came out of it, each the same shape: a field written once, read once, with the only
+reader on the far side of an ABI nobody had called. A scan carrying DataFusion's file-group list,
+so one file appeared once per lane. A finalize project emitting the finalized columns and not the
+keys. An aggregate that finalizes alone emitting no finalize project, which would have answered
+with state columns under finalized names on seventeen committed shapes. And — found last, by
+reading rather than by running — a recipe defaulting `grouping_sets`, `null_exprs` and
+`null_names`, so a ROLLUP's five sets would have reached the device as a plain group-by; the
+device happened to refuse it on a width mismatch, but that was this query's luck rather than a
+property of the class.
+
+Two things followed from how the fourth was found. The payload golden had been pinning it
+faithfully, which is why [build-test.md](../build-test.md) now says what a golden pinning a
+producer against itself does and does not prove — the first of the four was pinned the same way.
+And the writers are now compared at the level the field went missing at: which fields each one
+sets per fb table, read off the vtable and named from the fbs, so a field the legacy writer sets
+and this one defaults must carry a written reason or go red. Expressions were already compared
+byte for byte; node payloads were compared nowhere, which is why nothing said which kind of
+default this was.
 
 **T10, T15 and T16 — the executors, as one task.** All three land together on one branch, because
 they are one question asked of three node families: what does an executor do when the recipe
@@ -2360,7 +2374,7 @@ proves itself by what a driver pulls from it.
 **Defects found here are fixed here.** Every task before this one proved its own layer against a
 fixture; the first thing to run all of them at once will find things about their joins, and
 parking those behind tickets would leave the path unproven in exactly the way this task exists to
-end. T21 is the precedent: it was meant to be one test file and it found three defects, each a
+end. T21 is the precedent: it was meant to be one test file and it found four defects, each a
 rule held by a doc comment with nothing reading it.
 
 **T18 — corpus shapes the benchmarks do not have.** The corpus is numeric-aggregate
