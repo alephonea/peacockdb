@@ -18,6 +18,10 @@ use crate::gpu_rowgroup_prune::surviving_row_groups;
 /// whether each projected column has a NULL in any of them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScanMetadata {
+    /// The one file the groups below are numbered in. DataFusion's file groups are byte
+    /// ranges rather than files, so several of them carry one path; a row-group index means
+    /// nothing without the file it indexes, and the node reads its own from here.
+    pub file: String,
     pub groups: Vec<RowGroupMeta>,
     /// Per projected column, in projection order. Declared nullability says nothing — every
     /// column in both benchmarks is declared nullable, primary keys included — so this is
@@ -98,7 +102,11 @@ pub fn survivor_metadata(parquet: &ParquetExec) -> Result<ScanMetadata, PlanErro
             bytes: bytes as u64,
         });
     }
-    Ok(ScanMetadata { groups: metadata, can_be_null })
+    Ok(ScanMetadata {
+        file: path,
+        groups: metadata,
+        can_be_null,
+    })
 }
 
 #[cfg(test)]

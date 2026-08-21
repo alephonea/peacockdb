@@ -16,9 +16,11 @@ use crate::plan_serializer::serialize_schema;
 
 use super::super::aggregates::{AggCall, AggFunc, PlanAgg};
 use super::super::error::PlanError;
+use super::super::expr::Expr;
 use super::super::nodes::aggregate::AggregateBody;
 use super::super::schema::Schema;
 use super::expr_writer::write_expr;
+use super::node_writer;
 use super::writer::Payload;
 
 /// Which side of the decomposition a node runs: state from raw values, or state merged
@@ -76,6 +78,52 @@ pub(super) fn aggregate<'a>(
         kind: fb::PlanNodeKind::CudfAggregate,
         value: aggregate.as_union_value(),
     })
+}
+
+/// The finalize as the project it becomes: the group keys straight through, then one
+/// expression per aggregate output column, named as the node declares its output.
+///
+/// A project replaces the row, so the finalize list alone would answer with the finalized
+/// columns and no keys to read them by. The widths are checked rather than assumed,
+/// because both halves are lists a translation builds and a wrong one is a plan that
+/// returns a right-looking table with a column missing.
+pub(super) fn finalize_project<'a>(
+    b: &mut FlatBufferBuilder<'a>,
+    body: &AggregateBody,
+    state: &Schema,
+    output: &Schema,
+    kids: &[WIPOffset<fb::PlanNode<'a>>],
+) -> Result<Payload, PlanError> {
+    let finalize = body
+        .finalize
+        .as_ref()
+        .expect("a finalize project is emitted only where the node finalizes");
+    let keys = body.group_by.len();
+    let declared = output.fields.fields().len();
+    if keys + finalize.len() != declared {
+        return Err(PlanError::Invalid(format!(
+            "an aggregate finalizing {} keys and {} columns declares {declared} output \
+             columns — the project that finalizes is the whole row, so the two have to be \
+             the same list",
+            keys,
+            finalize.len()
+        )));
+    }
+    let mut exprs = Vec::with_capacity(declared);
+    for ordinal in 0..keys as u32 {
+        let name = node_writer::field_at(state, ordinal).name();
+        exprs.push(write_expr(b, &Expr::column(ordinal, name))?);
+    }
+    for column in finalize {
+        exprs.push(write_expr(b, &column.expr)?);
+    }
+    let names = output
+        .fields
+        .fields()
+        .iter()
+        .map(|field| b.create_string(field.name()))
+        .collect();
+    Ok(node_writer::project_payload(b, exprs, names, kids[0]))
 }
 
 /// The aggregators as the wire declares them, in the order their state columns appear.

@@ -15,7 +15,9 @@ use std::any::Any;
 pub struct GpuLoadParquet {
     kind: NodeKind,
     pub table: String,
-    pub files: Vec<String>,
+    /// The one file the row-group indices below are numbered in — taken from the metadata
+    /// read that produced them, never assembled beside it.
+    pub file: String,
     pub projection: Vec<u32>,
     pub partition_groups: Vec<Vec<Vec<u32>>>,
     /// The row groups the mapping addresses, with their rows and their parquet bytes over
@@ -33,7 +35,6 @@ pub struct GpuLoadParquet {
 impl GpuLoadParquet {
     pub fn new(
         table: String,
-        files: Vec<String>,
         projection: Vec<u32>,
         partition_groups: Vec<Vec<Vec<u32>>>,
         scan: &ScanMetadata,
@@ -51,7 +52,7 @@ impl GpuLoadParquet {
         Self {
             kind: NodeKind::Source { layout, schema },
             table,
-            files,
+            file: scan.file.clone(),
             projection,
             partition_groups,
             survivors: scan.groups.clone(),

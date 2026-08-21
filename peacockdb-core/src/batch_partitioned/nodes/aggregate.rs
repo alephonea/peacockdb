@@ -1,5 +1,5 @@
 //! The aggregate nodes. Neither carries a phase: each declares aggregators over its own
-//! input and, where it finishes the aggregate, one finalize expression per output column.
+//! input and, where it finishes the aggregate, how each aggregate finishes.
 //! `GpuAggregate` runs per batch; `GpuAggregateBatches` merges pre-aggregated batches and
 //! emits at done.
 
@@ -28,6 +28,10 @@ pub struct AggregateBody {
     /// The NULL substituted for each key a set excludes, in key order.
     pub null_exprs: Vec<Expr>,
     pub aggs: Vec<AggCall>,
+    /// One expression per aggregate output column, and not per output column: a group key is
+    /// not finalized and is not here, so this list is shorter than the node's output
+    /// schema by the number of keys. The project that carries it emits the keys first, and
+    /// `recipe::aggregate_writer::finalize_project` is the one place that rule lives.
     pub finalize: Option<Vec<NamedExpr>>,
 }
 

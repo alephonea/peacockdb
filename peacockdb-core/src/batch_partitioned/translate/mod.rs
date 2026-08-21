@@ -451,19 +451,12 @@ impl Translator {
         let lanes = self.lanes_for(&scan.groups, config.limit);
         let partition_groups = partition(&scan.groups, lanes, self.batching_for_source())?;
 
-        let files = config
-            .file_groups
-            .iter()
-            .flatten()
-            .map(|file| format!("/{}", file.object_meta.location))
-            .collect();
         let projection = match &config.projection {
             Some(columns) => columns.iter().map(|c| *c as u32).collect(),
             None => (0..config.file_schema.fields().len() as u32).collect(),
         };
         Ok(Box::new(GpuLoadParquet::new(
             parquet_table_name(parquet).unwrap_or_default(),
-            files,
             projection,
             partition_groups,
             &scan,

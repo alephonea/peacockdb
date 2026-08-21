@@ -359,7 +359,7 @@ const PAYLOAD_MODE: (&str, usize, BatchSizing) = ("bp-tp4-rowgroup", 4, BatchSiz
 ///
 /// So a query earns a place here by covering something no other query does. Adding one
 /// that covers nothing new adds lines no reader can check against anything.
-const PAYLOAD_QUERIES: [(&str, &str); 15] = [
+const PAYLOAD_QUERIES: [(&str, &str); 16] = [
     // Nested-loop join lives nowhere else in the corpus; the stddev query is the Welford
     // init, both merges and the finalize project; q13 is the outer join's finish pass.
     ("tpch", "q13"),
@@ -374,6 +374,10 @@ const PAYLOAD_QUERIES: [(&str, &str); 15] = [
     // that hands the build side over rather than copying it — the same join types as q22
     // and q13, and a different shape.
     ("tpch", "q21"),
+    // q15 is the aggregate that finalizes on its own: one batch in one lane is already the
+    // whole of every group, so the init node carries the finalize and its recipe is the
+    // partial plus a finalize project. Every other finalize here rides a merge.
+    ("tpch", "q15"),
     ("tpcds", "q14"),
     ("tpcds", "q97"),
     ("tpcds", "q61"),

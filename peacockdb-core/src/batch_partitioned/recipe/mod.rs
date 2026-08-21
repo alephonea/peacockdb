@@ -222,7 +222,9 @@ fn sort(
     )])))
 }
 
-/// State from raw values, per batch.
+/// State from raw values, per batch — and the finalize where the translation gave this
+/// node one, which it does only for a single-batch lane, where one batch is already the
+/// whole of every group.
 fn aggregate(
     aggregate_node: &GpuAggregate,
     inputs: &[&Schema],
@@ -234,12 +236,28 @@ fn aggregate(
     let seq = writer.node(1, |b, kids| {
         aggregate_writer::aggregate(b, body, Phase::Init, input, state, kids)
     })?;
-    Ok(Some(Recipe::of(vec![Call::seq(
+    let mut calls = vec![Call::seq(
         seq,
         FbKind::Aggregate { merge: false },
         vec![Input::Batch],
         CallPattern::PerBatch,
-    )])))
+    )];
+    if body.finalize.is_some() {
+        let output = aggregate_node
+            .kind()
+            .schema()
+            .expect("an aggregate is not a sink");
+        let seq = writer.node(1, |b, kids| {
+            aggregate_writer::finalize_project(b, body, state, output, kids)
+        })?;
+        calls.push(Call::seq(
+            seq,
+            FbKind::Project(ProjectRole::Finalize),
+            vec![Input::PriorOutput],
+            CallPattern::PerBatch,
+        ));
+    }
+    Ok(Some(Recipe::of(calls)))
 }
 
 /// Sorted as the batches arrive, merged once at done: the merge arm takes whatever k
@@ -315,17 +333,10 @@ fn aggregate_batches(
             CallPattern::PerCompaction,
         ),
     ];
-    if let Some(finalize) = &body.finalize {
+    if body.finalize.is_some() {
+        let output = merge.kind().schema().expect("an aggregate is not a sink");
         let seq = writer.node(1, |b, kids| {
-            let mut exprs = Vec::with_capacity(finalize.len());
-            for column in finalize {
-                exprs.push(expr_writer::write_expr(b, &column.expr)?);
-            }
-            let names = finalize
-                .iter()
-                .map(|column| b.create_string(&column.name))
-                .collect();
-            Ok(node_writer::project_payload(b, exprs, names, kids[0]))
+            aggregate_writer::finalize_project(b, body, state, output, kids)
         })?;
         calls.push(Call::seq(
             seq,

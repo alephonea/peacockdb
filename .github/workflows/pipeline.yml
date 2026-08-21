@@ -345,7 +345,12 @@ jobs:
           # real device: the row-group override, the export range and the slice, plus the
           # release skipped exactly where a call consumed the handle. Its companion
           # test_gpu_batch needs no device and runs in the cpp-cpu tier instead.
-          for t in test_gpu_full_table test_gpu_partitioned test_inc2_conformance test_gpu_abi; do
+          # test_gpu_recipe_walk = the recipe plan the planner builds, driven by hand on a
+          # device: one walk making exactly the calls the recipes name, threading handles
+          # between them, with DataFusion on the same SQL as the oracle.
+          # One line on purpose: the coverage guard reads this array with a single
+          # `lines().find`, so a continuation hides every target after the backslash.
+          for t in test_gpu_full_table test_gpu_partitioned test_inc2_conformance test_gpu_abi test_gpu_recipe_walk; do
             exec_path=$(cargo test --no-run -p peacockdb-core --test "$t" \
                 --message-format=json \
               | python3 -c '

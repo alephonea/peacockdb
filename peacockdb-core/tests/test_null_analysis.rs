@@ -34,6 +34,7 @@ fn source(nullable: &[bool]) -> Box<dyn GpuNode> {
         .collect();
     let schema = Schema::new(Arc::new(ArrowSchema::new(fields)));
     let scan = ScanMetadata {
+        file: "/t.parquet".to_string(),
         groups: vec![RowGroupMeta {
             index: 0,
             rows: 100,
@@ -43,7 +44,6 @@ fn source(nullable: &[bool]) -> Box<dyn GpuNode> {
     };
     Box::new(GpuLoadParquet::new(
         "t".to_string(),
-        vec!["t.parquet".to_string()],
         (0..nullable.len() as u32).collect(),
         vec![vec![vec![0]]],
         &scan,

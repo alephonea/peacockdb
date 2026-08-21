@@ -8536,10 +8536,10 @@ GpuUnload
                           GpuLoadParquet: table=date_dim, projections=[d_month_seq@3, d_year@6, d_moy@8], partition_groups=[[[0]]], lanes=1, batches=multiple, schema=[d_month_seq:Int64, d_year:Int64, d_moy:Int64]
 --- recipes ---
 GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
-  GpuMergeSortedPartitions: calling_lanes=1, at done: execute_node(#77 CudfSortPreservingMerge, all lanes)
-    GpuSort: calling_lanes=1, per batch: execute_node(#76 CudfSort, batch)
-      GpuProject: calling_lanes=1, per batch: execute_node(#75 CudfProject, batch)
-        GpuAggregate: calling_lanes=1, per batch: execute_node(#74 CudfAggregate{Partial}, batch)
+  GpuMergeSortedPartitions: calling_lanes=1, at done: execute_node(#78 CudfSortPreservingMerge, all lanes)
+    GpuSort: calling_lanes=1, per batch: execute_node(#77 CudfSort, batch)
+      GpuProject: calling_lanes=1, per batch: execute_node(#76 CudfProject, batch)
+        GpuAggregate: calling_lanes=1, per batch: execute_node(#74 CudfAggregate{Partial}, batch), execute_node(#75 CudfProject{finalize}, prior output)
           GpuProject: calling_lanes=1, per batch: execute_node(#73 CudfProject, batch)
             GpuAggregateBatches: calling_lanes=1, per compaction and at done: execute_node(#70 CudfCoalescePartitions, lane batches), execute_node(#71 CudfAggregate{Merge}, prior output); at done: execute_node(#72 CudfProject{finalize}, prior output)
               GpuAggregate: calling_lanes=1, per batch: execute_node(#69 CudfAggregate{Partial}, batch)

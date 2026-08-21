@@ -6,6 +6,9 @@
 //! producer has finished — the merge's round-robin and the interleave's per-lane child
 //! rotation are that same rule.
 
+use super::node::GpuNode;
+use super::nodes::{NodeRef, as_node_ref};
+
 /// Routes whole batches into a new lane numbering; never touches rows, never buffers.
 /// No backends and no `CallStats` — routing is driver work, and a batch's bytes are
 /// already accounted as driver-held in flight.
@@ -41,6 +44,30 @@ impl BatchForwarder for Forwarder {
                 (0..*children).map(|child| (child, out_lane)).collect()
             }
         }
+    }
+}
+
+/// The routing a node declares, which is a property of the node rather than of a backend —
+/// every backend would compute the same thing, so it is read off the node by whoever routes.
+pub fn forwarder_for(node: &dyn GpuNode) -> Forwarder {
+    let lanes = |plan: &dyn GpuNode| plan.kind().layout().map_or(1, |layout| layout.n);
+    match as_node_ref(node) {
+        NodeRef::MergePartitions(_) => Forwarder::MergePartitions {
+            n: lanes(node.children()[0]),
+        },
+        NodeRef::Union(_) => Forwarder::Union {
+            lanes: node
+                .children()
+                .iter()
+                .enumerate()
+                .flat_map(|(child, branch)| (0..lanes(*branch)).map(move |lane| (child, lane)))
+                .collect(),
+        },
+        NodeRef::Interleave(_) => Forwarder::Interleave {
+            children: node.children().len(),
+            n: lanes(node),
+        },
+        _ => unreachable!("only the three routing nodes are forwarders"),
     }
 }
 
