@@ -13,7 +13,7 @@ use crate::batch_partitioned::expr::{BinaryOp, Expr, NamedExpr};
 use crate::batch_partitioned::layout::{BatchLayout, ColumnOrder, NodeKind, PartitionLayout};
 use crate::batch_partitioned::nodes::aggregate::AggregateBody;
 use crate::batch_partitioned::nodes::join::{JoinFilterColumn, JoinSide, NestedLoopJoinType};
-use crate::batch_partitioned::nodes::{GpuJoin, GpuNestedLoopJoin};
+use crate::batch_partitioned::nodes::{GpuAggregate, GpuJoin, GpuNestedLoopJoin};
 use datafusion::arrow::datatypes::{DataType, Field, Schema as ArrowSchema};
 use datafusion::common::JoinType;
 use std::any::Any;
@@ -446,6 +446,28 @@ fn finalizing_merge(finalize: Vec<NamedExpr>, state: &[&str]) -> GpuAggregateBat
     )
 }
 
+/// The other node that finalizes: the translation hands its finalize to the init itself
+/// where one batch in one lane is already the whole of every group, so no merge exists to
+/// carry it.
+fn finalizing_init(finalize: Vec<NamedExpr>, state: &[&str]) -> GpuAggregate {
+    GpuAggregate::new(
+        Given::input(BatchLayout::SingleBatch, &["k", "n"]),
+        AggregateBody {
+            group_by: vec![Expr::column(0, "k")],
+            grouping_sets: Vec::new(),
+            null_exprs: Vec::new(),
+            aggs: vec![AggCall {
+                func: PlanAgg::Sum,
+                args: vec![Expr::column(1, "n")],
+                outputs: vec![Field::new("sum(n)", DataType::Int64, true)],
+            }],
+            finalize: Some(finalize),
+        },
+        columns_of(state),
+        columns_of(&["k", "sum(n)"]),
+    )
+}
+
 fn summed() -> Vec<NamedExpr> {
     vec![NamedExpr::new(Expr::column(1, "sum(n)"), "sum(n)")]
 }
@@ -464,6 +486,28 @@ fn a_finalizing_merge_carries_its_finalize_in_a_project_of_its_own() {
             (FbKind::Project(ProjectRole::Finalize), CallPattern::AtDone),
         ],
         "the merge runs per compaction and the finalize once, at done"
+    );
+}
+
+/// The init's mirror of the merge below. Both branches of `recipe::aggregate` reach the
+/// same `finalize_project`, so what this pins is the call list: a second call, per batch
+/// rather than at done, since an init that finalizes itself has no compaction to wait for.
+#[test]
+fn an_init_that_finalizes_itself_carries_the_finalize_in_a_project_of_its_own() {
+    let node = finalizing_init(summed(), &["k", "sum(n)"]);
+    let recipe = aggregate(&node, &[&columns_of(&["k", "n"])], &mut Writer::new())
+        .expect("the aggregate's payloads are writable")
+        .expect("an aggregate drives the ABI");
+    assert_eq!(
+        shape(&recipe),
+        vec![
+            (FbKind::Aggregate { merge: false }, CallPattern::PerBatch),
+            (
+                FbKind::Project(ProjectRole::Finalize),
+                CallPattern::PerBatch
+            ),
+        ],
+        "the init builds state and finalizes it, both per batch"
     );
 }
 

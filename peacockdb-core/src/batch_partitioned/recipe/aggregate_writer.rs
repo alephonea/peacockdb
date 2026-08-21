@@ -245,6 +245,15 @@ fn welford_owners<'a>(
     per_agg
 }
 
+/// `out_decimal_precision`/`out_decimal_scale` stay at zero, and that is a decision. They
+/// are the legacy writer's channel for `avg`'s declared decimal type (`operators/aggregate.rs`,
+/// read by `aggregate.cpp` at :216 and :711), but this mode never sends an `avg` to a device:
+/// decomposition splits it into sum and count, so the scale rides on the finalize divide's own
+/// `out_decimal_precision`, which `expr_writer` sets and
+/// `an_average_finalizes_to_the_digits_the_oracle_computes` proves against the oracle's digits.
+/// `PlanAgg::Mean` does cross as `"mean"`, inside the Welford triple, where `is_avg` matches the
+/// name but the value is float64 and the decimal arm cannot fire. Written out rather than
+/// defaulted so a field added to the table has to be answered here.
 fn named_func<'a>(
     b: &mut FlatBufferBuilder<'a>,
     name: &str,
@@ -265,7 +274,8 @@ fn named_func<'a>(
             args: Some(args),
             distinct: false,
             alias: Some(alias),
-            ..Default::default()
+            out_decimal_precision: 0,
+            out_decimal_scale: 0,
         },
     ))
 }

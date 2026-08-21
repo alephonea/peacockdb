@@ -611,6 +611,16 @@ fn times(calls: &[(Seq, FbKind)], kind: FbKind) -> usize {
     calls.iter().filter(|(_, made)| *made == kind).count()
 }
 
+/// Finalize projects whose call directly before them is `kind`. Which aggregate a finalize
+/// belongs to is not in the counts — both branches emit one — so the adjacency is what
+/// separates an init that finalized itself from a merge that did.
+fn finalizing(calls: &[(Seq, FbKind)], kind: FbKind) -> usize {
+    calls
+        .windows(2)
+        .filter(|pair| pair[0].1 == kind && pair[1].1 == FbKind::Project(ProjectRole::Finalize))
+        .count()
+}
+
 /// The queries, named so the coverage read at the end of the file is over the very set the
 /// tests above run rather than a second list that could drift from it.
 const BARE_SCAN: &str = "SELECT * FROM nation";
@@ -703,30 +713,37 @@ async fn an_average_finalizes_to_the_digits_the_oracle_computes() {
     );
 }
 
-/// One batch in one lane is already the whole of every group, so the translation gives the
-/// init node the finalize and no merge runs at all. The 39 finalize projects this branch
-/// added to the goldens are mostly the merge's; this is the other shape, and until now no
-/// device had run it.
+/// Two aggregates, one per branch of the rule. The inner one groups the whole table and
+/// its lane holds many batches, so it takes the merge route and the merge carries the
+/// finalize. The outer `max` reads that merge's one output batch, which is already the
+/// whole of its single group, so the translation hands the finalize to the init itself and
+/// no merge is built for it — the shape the goldens hold 39 of and no device had run.
+///
+/// The adjacency is the claim, not the counts: both branches emit one init and one
+/// finalize, so a plan that lost the self-finalizing arm would still show two of each.
 #[tokio::test]
-async fn an_aggregate_over_a_single_batch_finalizes_without_a_merge() {
+async fn an_aggregate_whose_input_is_one_batch_finalizes_without_a_merge() {
     let calls = assert_walk_matches_datafusion(MAX_OF_SUMS, ONE_LANE).await;
     assert_eq!(
-        times(&calls, FbKind::Aggregate { merge: false }),
-        2,
-        "both aggregates build state from values: {}",
+        finalizing(&calls, FbKind::Aggregate { merge: false }),
+        1,
+        "no init finalized itself, so the single-batch arm never ran: {}",
         trail(&calls)
     );
     assert_eq!(
-        times(&calls, FbKind::Project(ProjectRole::Finalize)),
-        2,
-        "the inner merge finalizes and so does the outer init: {}",
+        finalizing(&calls, FbKind::Aggregate { merge: true }),
+        1,
+        "the inner aggregate's merge stopped carrying its finalize: {}",
         trail(&calls)
     );
 }
 
 /// A ROLLUP is the one shape whose payload is not derivable from the plan line: the masks
-/// and the per-position NULL placeholders decide how many groups come back, and an
-/// aggregate that dropped them answers with one grouping set out of three and looks right.
+/// and the per-position NULL placeholders decide how many groups come back. Dropping them
+/// made this query refuse on the device rather than answer wrongly, because the state then
+/// carried no `__grouping_id` and the merge read a state column as a key — a width
+/// coincidence of this shape, not a property of the class. Where the widths line up, the
+/// same omission answers with one grouping set out of three and looks right.
 #[tokio::test]
 async fn a_rollup_answers_with_every_grouping_set() {
     let calls = assert_walk_matches_datafusion(ROLLUP, ONE_LANE).await;

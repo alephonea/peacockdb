@@ -2264,13 +2264,16 @@ driver decides — batching, backpressure, arrival order — since every shape h
 those arrive with the executors, and the driven end-to-end over every layout is T17's.
 
 What it proved and what it left. Ten fb kinds now have a device behind them — the ten the walk's
-`PROVEN` names, against the twenty-three the payload golden publishes. That count is enforced
-rather than recorded: the list is checked both ways against what the queries actually made, so a
-kind claimed and never produced fails as loudly as a kind produced and never claimed. The reading
-that matters for the tasks after this one is which shapes those are: two of the three this mode
-invented ran, `AggregateMode::Merge` and the finalize project. The third did not. That is
-[#136](../tickets.md#t136)'s finish pass — probe keys per batch, the concat at done, the finish
-join, the pad project — because both joins that ran here reduce to a single legacy call. Untouched
+`PROVEN` names, against the twenty-three labels the payload golden publishes. Labels rather than
+kinds, and the two are not one ruler: three of the twenty-three are one project shape at different
+null-pad widths, and the repartition label carries its lane counts, so the denominator reads as
+more unproven ground than there is. The numerator is the enforced half — checked both ways against
+what the queries actually made, so a kind claimed and never produced fails as loudly as a kind
+produced and never claimed. The reading that matters for the tasks after this one is which shapes
+those are: two of the three this mode invented ran, `AggregateMode::Merge` and the finalize
+project. The third did not. That is [#136](../tickets.md#t136)'s finish pass — probe keys per
+batch, the concat at done, the finish join, the pad project — because both joins that ran here
+reduce to a single legacy call. Untouched
 with it: the whole Right family, cross and nested-loop joins, both sort nodes, `slice_handle` and a
 ranged export. Each is refused by name in a `match` over every `FbKind`, so a variant added later
 stops the file compiling rather than going quietly unclassified.

@@ -1093,7 +1093,7 @@ fn fbs_offset_fields() -> std::collections::BTreeMap<String, Vec<String>> {
                 tables.insert(name, fields);
             }
         } else if let Some((_, fields)) = open.as_mut() {
-            if line.starts_with("///") || line.is_empty() {
+            if line.starts_with("//") || line.is_empty() {
                 continue;
             }
             let Some((name, declared)) = line.split_once(':') else {
@@ -1135,6 +1135,10 @@ fn fields_set(table: &flatbuffers::Table<'_>) -> BTreeSet<usize> {
 }
 
 /// Per node kind, the union of the field indices set across every node of that kind.
+///
+/// `PlanNode` and each node's top-level payload, and nothing below them: a field of a
+/// nested table is outside this comparison, as `AggregateFuncNode`'s decimal pair is.
+/// Those two are answered at `recipe::aggregate_writer::named_func` instead.
 fn written_fields(bytes: &[u8]) -> std::collections::BTreeMap<String, BTreeSet<usize>> {
     let options = flatbuffers::VerifierOptions {
         max_depth: 1024,
@@ -1196,6 +1200,10 @@ const WRITER_DIFFERENCES: [(&str, &str, &str); 5] = [
     ),
 ];
 
+/// The two writers run over different query sets — this one only where planning and
+/// `attach_recipes` both succeed, the legacy one over everything — so a field the legacy
+/// writer sets only on a query this mode refuses arrives here as a difference, and the
+/// entry explaining it would be describing the refusal rather than the writer.
 #[tokio::test]
 async fn every_field_the_legacy_writer_sets_is_set_here_or_declared_a_difference() {
     let names = fbs_offset_fields();
