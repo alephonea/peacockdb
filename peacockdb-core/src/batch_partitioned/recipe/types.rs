@@ -5,6 +5,8 @@ use std::fmt;
 
 use datafusion::common::JoinType;
 
+use crate::generated::gpu_plan_generated::peacock::plan as fb;
+
 /// A node of the recipe plan, addressed by its position in it. The number is the whole
 /// content of an address, which is why a call carries nothing else about the node it runs.
 pub type Seq = u32;
@@ -71,6 +73,26 @@ pub enum FbKind {
     },
     CrossJoin,
     NestedLoopJoin,
+}
+
+impl FbKind {
+    /// The node kind on the wire. What a recipe claims and what the buffer holds are
+    /// checked against each other through this — see `read::check_seq_kinds`.
+    pub fn wire_kind(&self) -> fb::PlanNodeKind {
+        match self {
+            Self::Scan => fb::PlanNodeKind::CudfScan,
+            Self::Filter => fb::PlanNodeKind::CudfFilter,
+            Self::Project(_) | Self::PlainProject => fb::PlanNodeKind::CudfProject,
+            Self::Aggregate { .. } => fb::PlanNodeKind::CudfAggregate,
+            Self::Sort => fb::PlanNodeKind::CudfSort,
+            Self::SortPreservingMerge => fb::PlanNodeKind::CudfSortPreservingMerge,
+            Self::CoalescePartitions => fb::PlanNodeKind::CudfCoalescePartitions,
+            Self::Repartition { .. } => fb::PlanNodeKind::CudfRepartition,
+            Self::HashJoin { .. } => fb::PlanNodeKind::CudfHashJoin,
+            Self::CrossJoin => fb::PlanNodeKind::CudfCrossJoin,
+            Self::NestedLoopJoin => fb::PlanNodeKind::CudfNestedLoopJoin,
+        }
+    }
 }
 
 /// Where a call's input comes from. The driver owns every one; naming them is what makes

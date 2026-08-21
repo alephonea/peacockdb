@@ -1462,29 +1462,39 @@ mod tests {
     /// A closed ticket keeps its registry cell and moves file, so the link has to follow
     /// it. The two files are told apart by which one holds the anchor, never by the
     /// number — an archived number links into the archive and an open one does not.
+    ///
+    /// The numbers are examples and have to stay one open and one archived; this one builds
+    /// its own index, so it goes red only if the LINKING breaks, while its sibling below
+    /// reads the wiki and goes red when a ticket is archived.
     #[test]
     fn an_archived_ticket_links_into_the_archive() {
-        let links = links_with_tickets(&["103"], &["115"]);
-        let archived = tickets_html(&["115".to_string()], &links);
+        let links = links_with_tickets(&["170"], &["103"]);
+        let archived = tickets_html(&["103".to_string()], &links);
         assert!(
-            archived.contains("llm-wiki/archive/archived-tickets.md#t115"),
+            archived.contains("llm-wiki/archive/archived-tickets.md#t103"),
             "{archived}"
         );
-        assert!(archived.contains(">#115<"), "{archived}");
+        assert!(archived.contains(">#103<"), "{archived}");
         // The open one is unmoved by the archive existing.
-        let open = tickets_html(&["103".to_string()], &links);
-        assert!(open.contains("llm-wiki/tickets.md#t103"), "{open}");
+        let open = tickets_html(&["170".to_string()], &links);
+        assert!(open.contains("llm-wiki/tickets.md#t170"), "{open}");
     }
 
     /// The index is read off the anchors, which is what the links point at — so a ticket
     /// that has one resolves and a number that has none anywhere does not.
+    ///
+    /// It reads the real wiki, so the numbers below are examples that must stay one open and
+    /// one archived: archiving the ticket named here turns this red, and the fix is to swap
+    /// in a currently-open number rather than to look for a bug in `path_for`. That is the
+    /// price of reading the files rather than a fixture, and it is the reason this caught
+    /// #103 moving.
     #[test]
     fn the_index_reads_the_anchors_of_both_wiki_files() {
         let wiki = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../llm-wiki");
         let index = TicketIndex::load(&wiki);
-        assert_eq!(index.path_for("103"), Some("llm-wiki/tickets.md"));
+        assert_eq!(index.path_for("170"), Some("llm-wiki/tickets.md"));
         assert_eq!(
-            index.path_for("115"),
+            index.path_for("103"),
             Some("llm-wiki/archive/archived-tickets.md")
         );
         // A number nothing has ever used is a link to nowhere, and says so.

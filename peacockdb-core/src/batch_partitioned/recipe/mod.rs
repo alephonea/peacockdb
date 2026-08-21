@@ -13,6 +13,7 @@ mod aggregate_writer;
 mod expr_writer;
 mod join;
 mod node_writer;
+mod read;
 mod types;
 mod writer;
 
@@ -27,6 +28,8 @@ use super::schema::Schema;
 use aggregate_writer::Phase;
 use writer::Writer;
 
+pub use read::check_seq_kinds;
+pub use read::node_at;
 pub use types::{AbiSymbol, Call, CallPattern, FbKind, Input, ProjectRole, Recipe, Seq};
 
 /// Every node's recipe, indexed by the post-order position the estimator and the memory
@@ -39,7 +42,6 @@ pub use types::{AbiSymbol, Call, CallPattern, FbKind, Input, ProjectRole, Recipe
 pub struct RecipePlan {
     recipes: Vec<Option<Recipe>>,
     bytes: Vec<u8>,
-    unwritable: Vec<(Seq, String)>,
 }
 
 impl RecipePlan {
@@ -56,40 +58,29 @@ impl RecipePlan {
     }
 
     /// The serialized recipe plan: what `peacock_executor_begin_plan` is given, and what
-    /// every seq in every recipe indexes into. Check [`RecipePlan::unwritable`] before
-    /// running it — a plan with a payload the wire could not carry is structurally whole
-    /// and semantically short of one node.
+    /// every seq in every recipe indexes into.
+    ///
+    /// A plan that exists is one every seq of which holds the kind its recipe claims —
+    /// [`attach_recipes`] fails rather than substituting anything for a payload it cannot
+    /// write, so there is no second accessor and no caveat to remember.
     pub fn bytes(&self) -> &[u8] {
         &self.bytes
-    }
-
-    /// Why the payload at a seq is missing, where one is. Empty for every plan whose
-    /// expressions the wire can carry, which is all but #168's today.
-    pub fn unwritable(&self) -> &[(Seq, String)] {
-        &self.unwritable
-    }
-
-    /// What that seq could not write, for the payload rendering.
-    pub fn unwritable_at(&self, seq: Seq) -> Option<&str> {
-        self.unwritable
-            .iter()
-            .find(|(at, _)| *at == seq)
-            .map(|(_, why)| why.as_str())
     }
 }
 
 /// Build the recipe plan for a finished tree. It runs after planning because a recipe is
 /// a statement about a node, and a node is not finished until the plan is.
+///
+/// `Err` where a node's payload cannot be written — an expression the wire has no shape
+/// for (#168) — because a plan missing one node's arguments is not a plan the C++ can be
+/// handed, and the alternative is a buffer whose every later seq has to be checked against
+/// a list to be trusted.
 pub fn attach_recipes(root: &dyn GpuNode) -> Result<RecipePlan, PlanError> {
     let mut writer = Writer::new();
     let mut recipes = Vec::new();
     walk(root, &mut writer, &mut recipes)?;
-    let (bytes, unwritable) = writer.finish()?;
-    Ok(RecipePlan {
-        recipes,
-        bytes,
-        unwritable,
-    })
+    let bytes = writer.finish()?;
+    Ok(RecipePlan { recipes, bytes })
 }
 
 fn walk(

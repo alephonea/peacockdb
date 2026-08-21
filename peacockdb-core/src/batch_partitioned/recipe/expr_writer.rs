@@ -35,7 +35,11 @@ pub(crate) fn write_expr<'a>(
             (fb::ExprNode::ColumnRef, column.as_union_value())
         }
         Expr::Literal(value) => {
-            let scalar = serialize_scalar_value(b, value).map_err(PlanError::Unsupported)?;
+            // The ticket rides the message because it is what a reader of a golden gets:
+            // the wire's `ScalarValue` has no interval, and one corpus residual adds one to
+            // a column, so folding never reaches it (#168).
+            let scalar = serialize_scalar_value(b, value)
+                .map_err(|why| PlanError::Unsupported(format!("{why} (#168)")))?;
             let literal = fb::LiteralExpr::create(
                 b,
                 &fb::LiteralExprArgs {

@@ -193,7 +193,10 @@ path in this engine has ever carried an interval literal; what changed is that t
 says so, where before it lived in an `Err` nobody reads.
 
 Kinds, seqs and handles do not depend on an expression being writable, so the recipe renders as
-it always did and the payload of that one node reads `unavailable:` with the reason.
+it always did and the payload of that one node reads `unavailable:` with the reason. That holds
+because the placeholder adopts the children already taken for the node it replaces — a
+`CudfUnion` over them rather than a leaf. A leaf orphans those subtrees, and an unreachable node
+is never indexed, so every seq above the failure would shift while the rendering said nothing.
 
 Closing it is a third appended `ScalarValue` variant plus the C++ arm, on the terms the other two
 took ([the spec's constraints](tasks/batch_partitioned_executor.md#scope-and-constraints)). Not

@@ -239,19 +239,7 @@ GpuUnload
               GpuMergePartitions: lanes=1, batches=multiple, schema=[l_orderkey:Int64, l_quantity:Decimal128(15,2), l_shipdate:Date32]
                 GpuLoadParquet: table=lineitem, projections=[l_orderkey@0, l_quantity@4, l_shipdate@10], partition_groups=[[[0],[1],[2],[3],[4],[5],[6],[7],[8],[9],[10],[11]],[[12],[13],[14],[15],[16],[17],[18],[19],[20],[21],[22],[23]],[[24],[25],[26],[27],[28],[29],[30],[31],[32],[33],[34],[35]],[[36],[37],[38],[39],[40],[41],[42],[43],[44],[45],[46],[47],[48]]], lanes=4, batches=multiple, schema=[l_orderkey:Int64, l_quantity:Decimal128(15,2), l_shipdate:Date32]
 --- recipes ---
-GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
-  GpuAggregateBatches: calling_lanes=1, per compaction and at done: execute_node(#9 CudfCoalescePartitions, lane batches), execute_node(#10 CudfAggregate{Merge}, prior output); at done: execute_node(#11 CudfProject{finalize}, prior output)
-    GpuMergePartitions: none
-      GpuAggregateBatches: calling_lanes=4, per compaction and at done: execute_node(#7 CudfCoalescePartitions, lane batches), execute_node(#8 CudfAggregate{Merge}, prior output)
-        GpuAggregate: calling_lanes=4, per batch: execute_node(#6 CudfAggregate{Partial}, batch)
-          GpuJoin: calling_lanes=4, per probe batch: execute_node(#5 CudfHashJoin{Inner}, build copy, batch)
-            GpuCoalesceAllBatches: calling_lanes=4, at done: execute_node(#2 CudfCoalescePartitions, lane batches)
-              GpuEmitPartitions: calling_lanes=1, per batch: execute_node(#1 CudfRepartition{Hash, 1→4}, batch)
-                GpuMergePartitions: none
-                  GpuLoadParquet: calling_lanes=4, per batch: execute_scan_rowgroups(#0 CudfScan, row groups)
-            GpuEmitPartitions: calling_lanes=1, per batch: execute_node(#4 CudfRepartition{Hash, 1→4}, batch)
-              GpuMergePartitions: none
-                GpuLoadParquet: calling_lanes=4, per batch: execute_scan_rowgroups(#3 CudfScan, row groups)
+not runnable: unsupported in batch-partitioned mode: unsupported scalar value: IntervalMonthDayNano("IntervalMonthDayNano { months: 0, days: 90, nanoseconds: 0 }") (#168) at #5
 --- memory ---
 budget=2147483648, accumulators=609104490, certain=46500000
 GpuUnload: estimated_max_resident_size=258052245

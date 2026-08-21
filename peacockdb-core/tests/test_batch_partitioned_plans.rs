@@ -15,7 +15,7 @@ use peacockdb_core::batch_partitioned::plan::{BatchSizing, PlanKnobs, plan_batch
 use peacockdb_core::batch_partitioned::plan_text::{
     Payloads, render_plan, render_plan_memory, render_plan_recipes,
 };
-use peacockdb_core::batch_partitioned::recipe::attach_recipes;
+use peacockdb_core::batch_partitioned::recipe::{attach_recipes, check_seq_kinds};
 use peacockdb_core::config::MemoryLimit;
 
 use common::{data_dir_for, golden_dir_for, queries_dir_for};
@@ -116,12 +116,16 @@ async fn render_query(
     }
 }
 
-/// The recipes. An expression the wire cannot carry (#168) costs that node's payload and
-/// nothing else — the kinds, the seqs and the handles do not depend on it — so this
-/// section renders for every plan the mode produces.
+/// The recipes, or the one line saying there are none.
+///
+/// `not runnable`, never `refused:` — the plan plans, validates and runs on the CPU, and
+/// what failed is the crossing to the device. Naming its ticket is not decoration: the
+/// meta test below asserts that every line of this shape names a ticket that exists.
 fn recipes_of(tree: &dyn peacockdb_core::batch_partitioned::GpuNode) -> String {
-    let plan = attach_recipes(tree).expect("a plan's recipes are structural");
-    render_plan_recipes(tree, &plan, Payloads::Omitted)
+    match attach_recipes(tree) {
+        Ok(plan) => render_plan_recipes(tree, &plan, Payloads::Omitted),
+        Err(e) => format!("not runnable: {}\n", relative_to_testdata(&e.to_string())),
+    }
 }
 
 /// A refusal renders the error it was given, and DataFusion's own error text can carry a
@@ -345,16 +349,21 @@ const PAYLOAD_MODE: (&str, usize, BatchSizing) = ("bp-tp4-rowgroup", 4, BatchSiz
 /// the rows that emit nothing), every call shape longer than one call, and every
 /// expression kind a payload can carry — LIKE, CASE, casts, scalar functions, decimal
 /// scales, grouping sets, null substitutions, Welford state, an avg's finalize, fetch and
-/// skip. 30 features between them, and these twelve are a minimal cover.
+/// skip. 31 features between them, and these thirteen are a minimal cover.
 ///
 /// So a query earns a place here by covering something no other query does. Adding one
 /// that covers nothing new adds lines no reader can check against anything.
-const PAYLOAD_QUERIES: [(&str, &str); 12] = [
+const PAYLOAD_QUERIES: [(&str, &str); 13] = [
     // Nested-loop join lives nowhere else in the corpus; the stddev query is the Welford
     // init, both merges and the finalize project; q13 is the outer join's finish pass.
     ("tpch", "q13"),
     ("tpch", "shuffle-stddev"),
     ("tpch", "nested-loop-join"),
+    // q22 is the build-side semi family's finish, whose join type is the node's OWN
+    // LeftAnti: a key project per batch, then coalesce and that join at done. The other
+    // LeftAnti here is a Left outer's DERIVED finish — different keys, no projection, and
+    // a pad project after it — so neither covers the other.
+    ("tpch", "q22"),
     ("tpcds", "q14"),
     ("tpcds", "q97"),
     ("tpcds", "q61"),
@@ -425,6 +434,125 @@ async fn the_payload_golden_carries_what_each_call_hands_the_executor() {
         .join("goldens")
         .join("bp-recipe-payloads.txt");
     assert_or_update(&path, &text);
+}
+
+/// Every seq every recipe publishes addresses a node of the kind it claims — over every
+/// query both benches have, not just the twelve the payload golden carries.
+///
+/// It is the assertion behind the three structural rules in `recipe/writer.rs`: a stub for
+/// an unfilled slot, a node hanging off its own previous call, and a union over what a
+/// node did not consume. Each keeps the order the walk creates nodes in equal to the
+/// post-order the C++ indexes by, and a break in any of them shows up here as a seq that
+/// resolves to nothing or to the wrong kind. The mode goldens cannot catch it: they render
+/// with `Payloads::Omitted` and never open the buffer at all.
+#[tokio::test]
+async fn every_published_seq_addresses_the_kind_its_recipe_claims() {
+    let mode = mode(PAYLOAD_MODE.0, PAYLOAD_MODE.1, PAYLOAD_MODE.2);
+    let mut checked = 0;
+    let mut faults: Vec<String> = Vec::new();
+    let mut uncrossable: Vec<String> = Vec::new();
+    for dataset in ["tpch", "tpcds"] {
+        let ctx = peacockdb_core::register_tables_for(
+            peacockdb_core::build_session_state(mode.knobs.target_partitions),
+            &data_dir_for(dataset, "1"),
+        )
+        .await
+        .expect("register the tables");
+        for (name, path) in queries(dataset) {
+            let sql = std::fs::read_to_string(&path).expect("the query text");
+            let Ok(frame) = ctx.sql(&sql).await else { continue };
+            let Ok(plan) = frame.create_physical_plan().await else {
+                continue;
+            };
+            // A query this mode refuses has no recipes to check; a query it plans has to
+            // publish seqs that resolve.
+            let Ok((tree, _)) = plan_batch_partitioned(&plan, mode.knobs) else {
+                continue;
+            };
+            match attach_recipes(tree.as_ref()) {
+                Ok(recipes) => {
+                    checked += 1;
+                    if let Err(e) = check_seq_kinds(&recipes) {
+                        faults.push(format!("{dataset} {name}: {e}"));
+                    }
+                }
+                // A plan the wire cannot carry has no recipe plan to check. Named rather
+                // than counted: the day a second query joins mixed-join here, that is a
+                // fact about the mode worth a red test rather than a smaller number.
+                Err(_) => uncrossable.push(format!("{dataset} {name}")),
+            }
+        }
+    }
+    assert!(checked > 100, "only {checked} plans reached the check");
+    assert_eq!(
+        uncrossable,
+        ["tpch mixed-join"],
+        "the queries this mode plans but cannot cross to the device are #168's, and only its"
+    );
+    assert!(
+        faults.is_empty(),
+        "{} of {checked} plans publish a seq that does not hold what it claims:\n{}",
+        faults.len(),
+        faults.join("\n")
+    );
+}
+
+/// The queries this mode PLANS but cannot cross to the device, and the ticket for each.
+///
+/// A `not runnable` line means the plan validates and runs on the CPU while one node's
+/// payload has no shape on the wire — so the registry stays out of it: its cell answers
+/// "does this query plan", which for these is yes, and a fourth state would make one cell
+/// answer two questions at once.
+///
+/// Asserted both ways below. A new unwritable expression goes red until someone adds it
+/// here with a ticket, and an entry that stops being true goes red until it is removed —
+/// which is the direction that matters when #168 closes, since a stale entry is how a
+/// declared set rots into a list nobody trusts.
+const NOT_RUNNABLE: &[(&str, &str, &str)] = &[("tpch", "mixed-join", "168")];
+
+#[test]
+fn every_query_that_cannot_cross_the_wire_is_declared_and_every_declaration_is_true() {
+    let mut found: Vec<(String, String)> = Vec::new();
+    for (dataset, sf) in [("tpch", "1"), ("tpcds", "1")] {
+        for (name, ..) in MODES {
+            let path = golden_dir_for(dataset, sf).join(format!("{name}.plans.txt"));
+            for (query, body) in ordered_sections(&std::fs::read_to_string(&path).expect("a golden"))
+            {
+                let Some(line) = body.lines().find(|line| line.starts_with("not runnable")) else {
+                    continue;
+                };
+                let declared = NOT_RUNNABLE
+                    .iter()
+                    .find(|(bench, declared, _)| *bench == dataset && *declared == query);
+                match declared {
+                    Some((_, _, ticket)) => assert!(
+                        line.contains(&format!("(#{ticket})")),
+                        "{dataset}/{name} {query}: declared under #{ticket} and the line cites \
+                         something else:\n{line}"
+                    ),
+                    None => panic!(
+                        "{dataset}/{name} {query}: cannot cross the wire and is not in \
+                         NOT_RUNNABLE — add it with the ticket that explains it:\n{line}"
+                    ),
+                }
+                found.push((dataset.to_string(), query.clone()));
+            }
+        }
+    }
+    for (dataset, query, ticket) in NOT_RUNNABLE {
+        let carried = found
+            .iter()
+            .filter(|(bench, name)| bench == dataset && name == query)
+            .count();
+        assert_eq!(
+            carried,
+            MODES.len(),
+            "{dataset}/{query} is declared under #{ticket} but carries the line in {carried} of \
+             the {} modes — a plan that crosses in one mode and not another is a finding, and a \
+             declaration that has become false is stale",
+            MODES.len()
+        );
+    }
 }
 
 async fn check(dataset: &str, sf: &str, mode: Mode) {
@@ -672,14 +800,26 @@ fn every_refusal_names_a_ticket_that_exists() {
                 golden_dir_for(dataset, sf).join(format!("{name}.plans.txt")),
             )
             .expect("a golden");
-            for line in text.lines().filter(|line| line.starts_with("refused")) {
+            // Both shapes of line that decline something: `refused` is the planner's,
+            // and `not runnable` is the crossing's — the plan runs on the CPU and only the
+            // buffer cannot be built. A ticket is cited in PARENTHESES, which is what
+            // separates it from the `#5` in "at #5", a seq, and from a DataFusion refusal
+            // that cites nothing of ours at all.
+            let declines =
+                |line: &&str| line.starts_with("refused") || line.starts_with("not runnable");
+            for line in text.lines().filter(declines) {
                 let cited: Vec<&str> = line
-                    .match_indices('#')
+                    .match_indices("(#")
                     .filter_map(|(at, _)| {
-                        line[at + 1..].split(|c: char| !c.is_ascii_digit()).next()
+                        line[at + 2..].split(|c: char| !c.is_ascii_digit()).next()
                     })
                     .filter(|number| !number.is_empty())
                     .collect();
+                assert!(
+                    !cited.is_empty() || !line.starts_with("not runnable"),
+                    "{dataset}/{name}: a plan the mode cannot cross names no ticket, so a \
+                     reader has nowhere to go:\n{line}"
+                );
                 for number in cited {
                     assert!(
                         tickets.contains(&format!("### #{number} ")),

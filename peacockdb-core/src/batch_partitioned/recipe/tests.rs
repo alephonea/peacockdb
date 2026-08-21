@@ -5,6 +5,8 @@
 
 use super::*;
 use super::writer::Writer;
+use crate::batch_partitioned::nodes::GpuFilter;
+use datafusion::common::ScalarValue;
 use crate::batch_partitioned::aggregates::{AggCall, PlanAgg};
 use crate::batch_partitioned::expr::{BinaryOp, Expr, NamedExpr};
 use crate::batch_partitioned::layout::{BatchLayout, ColumnOrder, NodeKind, PartitionLayout};
@@ -453,4 +455,60 @@ fn a_finalizing_merge_carries_its_finalize_in_a_project_of_its_own() {
         ],
         "the merge runs per compaction and the finalize once, at done"
     );
+}
+
+/// The one literal the wire cannot carry, in a node with an input — so the walk has
+/// something to lose. #168 is the corpus case (`mixed-join`'s residual adds an interval to
+/// a column), and the failure mode it guards is structural: a placeholder that dropped the
+/// inputs its node had taken would leave them unreachable, and the tree would then be
+/// shorter than the numbering.
+///
+/// A leaf would prove nothing here — the counts agree either way when nothing was taken.
+fn filter_over_scan_with_an_interval() -> GpuFilter {
+    let scan = crate::batch_partitioned::parquet_meta::ScanMetadata {
+        groups: vec![crate::batch_partitioned::partitioner::RowGroupMeta {
+            index: 0,
+            rows: 10,
+            bytes: 100,
+        }],
+        can_be_null: vec![false],
+    };
+    let load = crate::batch_partitioned::nodes::GpuLoadParquet::new(
+        "orders".to_string(),
+        vec!["/orders.parquet".to_string()],
+        vec![0],
+        vec![vec![vec![0]]],
+        &scan,
+        None,
+        columns_of(&["o_orderdate"]),
+    );
+    let ninety_days = ScalarValue::IntervalMonthDayNano(Some(
+        datafusion::arrow::datatypes::IntervalMonthDayNano::new(0, 90, 0),
+    ));
+    GpuFilter::new(
+        Box::new(load),
+        Expr::binary(
+            Expr::column(0, "o_orderdate"),
+            BinaryOp::Lt,
+            Expr::Literal(ninety_days),
+            DataType::Boolean,
+        ),
+        None,
+        columns_of(&["o_orderdate"]),
+    )
+}
+
+#[test]
+fn a_payload_the_wire_cannot_carry_fails_the_plan_and_names_where() {
+    let refused = attach_recipes(&filter_over_scan_with_an_interval())
+        .err()
+        .expect("the wire has no interval, so this plan cannot be built");
+    let said = refused.to_string();
+    // The reason, its ticket, and the seq the node would have taken — the three things a
+    // reader of the golden line needs, and the assertion that keeps the Err arm real: it
+    // would go quietly green the day the writer learns intervals, having stopped testing
+    // anything, so the message is checked rather than merely the failure.
+    assert!(said.contains("scalar value"), "{said}");
+    assert!(said.contains("(#168)"), "{said}");
+    assert!(said.contains(" at #"), "{said}");
 }

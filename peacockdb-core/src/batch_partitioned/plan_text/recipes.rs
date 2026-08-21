@@ -120,17 +120,17 @@ fn render_recipe_node(
                 continue;
             };
             let _ = writeln!(text, "{indent}#{seq} {kind}");
-            match plan.unwritable_at(seq) {
-                Some(why) => {
-                    let _ = writeln!(text, "{indent}  unavailable: {why}");
-                }
-                None => {
-                    let payload = fb_text::node_at(buffer, seq)
-                        .map(|node| fb_text::payload_text(&node, &format!("{indent}  ")))
-                        .unwrap_or_default();
-                    text.push_str(&payload);
-                }
-            }
+            // Expect rather than default: a seq with no node is the numbering outrunning
+            // the tree, and printing nothing there would render a plan whose every later
+            // seq addresses the wrong node as if it were fine.
+            let node = fb_text::node_at(buffer, seq)
+                .unwrap_or_else(|| panic!("seq #{seq} is published as {kind} and the plan has no node there"));
+            assert_eq!(
+                node.node_type(),
+                kind.wire_kind(),
+                "seq #{seq} is published as {kind} and holds a different kind"
+            );
+            text.push_str(&fb_text::payload_text(&node, &format!("{indent}  ")));
         }
     }
     for line in lines {

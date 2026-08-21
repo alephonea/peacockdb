@@ -15,9 +15,14 @@ use crate::generated::gpu_plan_generated::peacock::plan as fb;
 use super::super::error::PlanError;
 use super::types::Seq;
 
-/// The bytes, and the seqs whose payload could not be written with why — see
-/// [`Writer::node`] for when the second is not empty.
-pub(super) type Written = (Vec<u8>, Vec<(Seq, String)>);
+/// The seq a failing payload would have taken, appended to the reason rather than wrapped
+/// around it: a second `PlanError` around the first prints its prefix twice.
+fn at_seq(why: PlanError, seq: Seq) -> PlanError {
+    match why {
+        PlanError::Unsupported(what) => PlanError::Unsupported(format!("{what} at #{seq}")),
+        PlanError::Invalid(what) => PlanError::Invalid(format!("{what} at #{seq}")),
+    }
+}
 
 /// A recipe-plan node under construction: which kind it is and its union payload.
 pub(super) struct Payload {
@@ -30,10 +35,6 @@ pub(super) struct Writer<'a> {
     /// Created and not yet taken as somebody's child, oldest first.
     pool: Vec<WIPOffset<fb::PlanNode<'a>>>,
     next_seq: Seq,
-    /// Seqs whose payload could not be written, with why. A node's arity does not depend
-    /// on its expressions, so the tree, the numbering and the recipe survive one — only
-    /// the payload at that seq does not, and #168 is the case that produces it.
-    unwritable: Vec<(Seq, String)>,
 }
 
 impl<'a> Writer<'a> {
@@ -42,16 +43,15 @@ impl<'a> Writer<'a> {
             builder: FlatBufferBuilder::new(),
             pool: Vec::new(),
             next_seq: 0,
-            unwritable: Vec::new(),
         }
     }
 
     /// Build one addressed node: take `arity` inputs, stub whatever is missing, number it.
     ///
-    /// A payload that cannot be written does not stop the walk: the node keeps its slot
-    /// and its number, the reason is recorded against that seq, and the plan says it is
-    /// not runnable. Giving up the numbering instead would cost every node above it a
-    /// recipe over an expression none of them read.
+    /// A payload that cannot be written fails the whole plan, and the seq it would have
+    /// taken is in the message. Nothing is substituted: a placeholder would be a node the
+    /// recipe names as one kind and the buffer holds as another, and running it would
+    /// return an empty or concatenated table rather than an error.
     pub(super) fn node<F>(&mut self, arity: usize, build: F) -> Result<Seq, PlanError>
     where
         F: FnOnce(
@@ -60,20 +60,9 @@ impl<'a> Writer<'a> {
         ) -> Result<Payload, PlanError>,
     {
         let taken = self.take(arity);
-        match build(&mut self.builder, &taken) {
-            Ok(payload) => Ok(self.push(payload).0),
-            Err(why) => {
-                // A scan of nothing holds the slot, as a stub does: whatever the builder
-                // wrote before it gave up is unreferenced and never read.
-                let scan = fb::CudfScan::create(&mut self.builder, &fb::CudfScanArgs::default());
-                let (seq, _) = self.push(Payload {
-                    kind: fb::PlanNodeKind::CudfScan,
-                    value: scan.as_union_value(),
-                });
-                self.unwritable.push((seq, why.to_string()));
-                Ok(seq)
-            }
-        }
+        let seq = self.next_seq;
+        let payload = build(&mut self.builder, &taken).map_err(|why| at_seq(why, seq))?;
+        Ok(self.push(payload).0)
     }
 
     /// The offsets for one node's slots: the unconsumed ones first, then stubs.
@@ -150,8 +139,8 @@ impl<'a> Writer<'a> {
     }
 
     /// Finish on the one offset left, which is the root by construction: the last node
-    /// created is the last visited in post-order, plus whatever could not be written.
-    pub(super) fn finish(mut self) -> Result<Written, PlanError> {
+    /// created is the last visited in post-order.
+    pub(super) fn finish(mut self) -> Result<Vec<u8>, PlanError> {
         let root = match self.pool.as_slice() {
             [root] => *root,
             other => {
@@ -163,6 +152,6 @@ impl<'a> Writer<'a> {
         };
         let plan = fb::GpuPlan::create(&mut self.builder, &fb::GpuPlanArgs { root: Some(root) });
         self.builder.finish(plan, None);
-        Ok((self.builder.finished_data().to_vec(), self.unwritable))
+        Ok(self.builder.finished_data().to_vec())
     }
 }

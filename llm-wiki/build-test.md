@@ -4,7 +4,7 @@ Code and tests are authoritative; this page maps them.
 
 ## Test categories
 
-**Grand total: 1540 test cases — Rust 1106, C++ 65, Python 369.** The Python figure includes the 93 corpus queries, which only a manual dispatch runs.
+**Grand total: 1541 test cases — Rust 1107, C++ 65, Python 369.** The Python figure includes the 93 corpus queries, which only a manual dispatch runs.
 
 **Runs** — `cpp-cpu` = pipeline.yml's cpp-cpu job, both cuDF legs · `cost-report` = the
 cost-report job · `shad-gpu` = CI GPU job on the remote host, `--test-threads=1` ·
@@ -31,7 +31,7 @@ and `2gpu` rows also runs locally; large CPU batches go to verda.
 | Batch-partitioned ABI (Rust) | the three per-call symbols on a live GPU — a scan's row groups, an export range, a slice — and the release skipped exactly where a call consumed the handle | [test_gpu_abi](../peacockdb-core/tests/test_gpu_abi.rs) | shad-gpu | 4 |
 | GpuBatch surface (Rust) | what the batch reports, and that `consume` hands the handle over without releasing it. Needs no device: the release is null-guarded on the executor, so a CPU tier is its home | [test_gpu_batch](../peacockdb-core/tests/test_gpu_batch.rs) | cpp-cpu | 3 |
 | GPU all-at-once smoke (Rust) | whole-plan `peacock_execute` FFI; retires with [#110](tickets.md) | [scan_nation](../peacockdb-core/tests/test_gpu_executor_misc.rs#L18) | manual | 6 |
-| GPU per-node timing (Rust) | measures, asserts nothing: one `.benchmark.txt` per case, same list as the two GPU tiers ([`gpu_cases.inc`](../peacockdb-core/tests/common/gpu_cases.inc)) | [run_gpu_benchmark](../peacockdb-core/tests/peacock_gpu_benchmarks.rs) | manual | 127 |
+| GPU per-node timing (Rust) | measures, asserts nothing: one `.benchmark.txt` per case, same list as the two GPU tiers ([`gpu_cases.inc`](../peacockdb-core/tests/common/gpu_cases.inc)), so a case returning to either tier arrives here too | [run_gpu_benchmark](../peacockdb-core/tests/peacock_gpu_benchmarks.rs) | manual | 128 |
 | Cost-model goldens (Rust) | `.cost.txt` derivation from `.cpu.txt` × `cost_model.conf` | [cost_goldens_match_and_total_is_byte_identical](../peacockdb-core/tests/test_cost_model.rs#L36) | cost-report | 2 |
 | Planner join capability (Rust) | every hash join type crossed with a residual filter, the co-partitioning and lane rules, and the null analysis both ways; writes its own parquet, so no dataset | [test_planner_join_capability](../peacockdb-core/tests/test_planner_join_capability.rs) | cost-report | 13 |
 | Null analysis rules (Rust) | every rule in the can-this-column-be-NULL pass, on hand-built nodes — a source declares a not-nullable column here, which no corpus fixture can | [a_scalar_function_can_be_null_even_over_operands_that_cannot](../peacockdb-core/tests/test_null_analysis.rs) | cost-report | 8 |
@@ -68,7 +68,7 @@ and `2gpu` rows also runs locally; large CPU batches go to verda.
 | Dataset validators (Python) | row counts / clustering / embedding stats over whatever dataset they are pointed at; each check tags itself `EXHAUSTIVE` or `SAMPLED` | [validate_tpch.py](../scripts/validate_tpch.py), [check_s3_datasets.py](../scripts/check_s3_datasets.py) | cpp-cpu (sf1) · validate-large (sf40/sf200) | n/a¹ |
 
 ¹ Data-driven — the check count depends on the dataset and SF, so these are excluded from
-the 1540. Everything else in the repo that can be enumerated as a test case is counted.
+the 1541. Everything else in the repo that can be enumerated as a test case is counted.
 
 Notes
 

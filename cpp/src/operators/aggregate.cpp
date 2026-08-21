@@ -527,7 +527,7 @@ TableResult execute_aggregate(const fb::CudfAggregate* agg, NodeInputs* in) {
       avg_state_2col = false;
     else if (residual != n_avg * 2)
       throw std::runtime_error(
-          "Final-stage aggregate input width does not match the expected "
+          "state-stage aggregate input width does not match the expected "
           "count(1)/avg(1|2)/stddev(1|3) state layout");
   }
 
@@ -567,6 +567,18 @@ TableResult execute_aggregate(const fb::CudfAggregate* agg, NodeInputs* in) {
                           -1, false, 0, 0});
         requests.push_back(std::move(req));
         // fall through to the shared `in_off += 1` (single Final input column)
+      } else if (is_avg && phase == AggPhase::Merge && !avg_state_2col) {
+        // A grouping-set/ROLLUP Partial emits ONE mean column rather than [sum, count]
+        // state, and the same width recovery that guards the Final arm (#18, the q18/q22
+        // over-run) guards this one: consume ONE column through the shared `in_off += 1`
+        // below. Mean-of-singleton is exact while there is one partial row per key, which
+        // is the same condition the Final arm relies on.
+        cudf::groupby::aggregation_request req;
+        req.values = tv.column(static_cast<cudf::size_type>(in_off));
+        req.aggregations.push_back(cudf::make_mean_aggregation<cudf::groupby_aggregation>());
+        builds.push_back({alias, static_cast<int>(requests.size()), 0});
+        requests.push_back(std::move(req));
+        // falls through to the shared `in_off += 1`
       } else if (is_avg && phase == AggPhase::Merge) {
         // Σ(partial_sum) and Σ(partial_count), emitted as state: the divide is the
         // finalize and belongs to whoever finalizes. Consumes the same TWO columns
