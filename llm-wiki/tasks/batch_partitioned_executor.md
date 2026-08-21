@@ -2330,6 +2330,13 @@ T21: a second engine of our own agrees with us wherever we are consistently wron
 this task runs, the finalize expression it evaluates is the one we also send to the device. The
 one independent implementation in reach is the one that decomposed the aggregate differently.
 
+Ten to fifteen queries, chosen to be interesting rather than representative, and between them
+covering the [join capability matrix](#join-capability-matrix): every join type this mode claims,
+crossed with the layouts that make each one stream or refuse. The matrix is emulated on synthetic
+data in the executors task, where each type is one executor answering one call; here it is planned
+from SQL and run through the drivers, which is the first time a type's claim is tested as the thing
+a user gets rather than as the thing an operator returns.
+
 Each query is re-run under injection, several modes rather than one, with the same answer demanded
 every time. The prototype's [`LayoutInjector`](../../scripts/exec_model/operators/injection.py) is
 where to look for modes worth having — layouts re-planned rather than edited, a rebatcher above
