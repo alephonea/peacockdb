@@ -2288,6 +2288,15 @@ reading rather than by running — a recipe defaulting `grouping_sets`, `null_ex
 device happened to refuse it on a width mismatch, but that was this query's luck rather than a
 property of the class.
 
+A fifth thing came out of it that is not that shape, and is worth separating. The test written to
+guard the third — the aggregate that finalizes alone — was named for something its query does not
+do, and asserted counts that could not tell the two arms apart, since each contributes one init and
+one finalize. Adding the assertion its name implied turned it red on a device: the query's inner
+aggregate spans many batches and merges, and it is the outer one, reading that merge's single
+output batch, that finalizes itself. The arm was covered, by a node other than the one the test
+claimed, and nothing could have said so. It asserts adjacency now. A guard that cannot go red is
+not a guard, and this is what that looks like when the guard is new rather than old.
+
 Two things followed from how the fourth was found. The payload golden had been pinning it
 faithfully, which is why [build-test.md](../build-test.md) now says what a golden pinning a
 producer against itself does and does not prove — the first of the four was pinned the same way.
@@ -2378,7 +2387,7 @@ proves itself by what a driver pulls from it.
 fixture; the first thing to run all of them at once will find things about their joins, and
 parking those behind tickets would leave the path unproven in exactly the way this task exists to
 end. T21 is the precedent: it was meant to be one test file and it found four defects, each a
-rule held by a doc comment with nothing reading it.
+rule held by a doc comment with nothing reading it, and one guard that could not go red.
 
 **T18 — corpus shapes the benchmarks do not have.** The corpus is numeric-aggregate
 heavy, and this mode's risk sits in what it never sees: an audit of every `.cpu.txt` finds
