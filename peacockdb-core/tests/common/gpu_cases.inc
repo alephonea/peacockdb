@@ -158,21 +158,14 @@ gpu_case!(tpch, 1, shuffle_additive_avg, partitioned_tp8_standard, golden_exact)
 // q1: canonical AVG carrier (3 avgs + 4 sums + count, GROUP BY rf,ls) — real 8-way
 // at tp8-standard. Exercises the running column-offset (avgs before count).
 gpu_case!(tpch, 1, q1, partitioned_tp8_standard, golden_exact);
-// STDDEV/VAR at real 8-way: Welford [count,mean,m2] state merged via cuDF MERGE_M2
-// per hash bucket (stddev_samp/pop + var_samp/pop, all 4 finalize branches).
-//
-// QUARANTINED as flaky — ticket #103 (llm-wiki/tickets.md). Intermittently SIGSEGVs
-// (exit 139) in the GpuAggregate final merge on the shad-gpu H200 (the same host CI's
-// gpu-tests job uses), or fails as a contained `vector::reserve` Err — two failure
-// signatures from identical inputs, i.e. nondeterministic, not broken. Suspected
-// origin: the N-way Welford merge; the full-table tier (no merge) never crashes. Not
-// caused by the executors refactor (reproduces at both old and new memory tiers,
-// upstream of every golden comparison).
-// IF YOU SEE THIS FAIL LOCALLY, check #103 before assuming your change caused it — it
-// has already cost one wrongly-diagnosed "regression" and an unnecessary rollback.
-// Cost of disabling: this is the ONLY coverage of the 8-way Welford M2 merge path.
-// The tp8 goldens are deliberately LEFT IN PLACE. Re-enable when #103 is fixed.
-// gpu_case!(tpch, 1, shuffle_stddev, partitioned_tp8_standard, golden_approx_std);
+// STDDEV/VAR at real 8-way: Welford [count,mean,m2] state merged via cuDF MERGE_M2 per
+// hash bucket (stddev_samp/pop + var_samp/pop, all four finalize branches), and the only
+// coverage of that path — which is why it was quarantined for #103 rather than deleted.
+// Enabled again: the crash was the aggregate's output assembly rather than the merge,
+// where `OutBuild` left `res` uninitialized and the mergeable arm indexed a results
+// vector by whatever the stack held. Nondeterministic, indifferent to the budget, and
+// unreachable from tp1, which plans Single and never enters that arm.
+gpu_case!(tpch, 1, shuffle_stddev, partitioned_tp8_standard, golden_approx_std);
 
 // (#96) Real-8-way per-partition JOINs. The partitioned CPU oracle runs
 // PartitionMode::Partitioned joins per-partition (child0[p] ⋈ child1[p]), matching

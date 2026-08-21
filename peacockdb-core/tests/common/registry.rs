@@ -382,14 +382,11 @@ pub fn assert_registry_matches_csv(owned_columns: &[&str], elsewhere: &[(&str, &
 /// DELIBERATELY EMPTY. The mechanism exists (and is staleness-checked below) so a
 /// real exemption can be added honestly, but nothing needs one today.
 ///
-/// In particular tpch/shuffle_stddev — the #103 flaky case — does NOT need one, on
-/// two independent counts: its `partitioned_gpu` cell is `disabled`, and this
-/// invariant only inspects `enabled` cells; and its partitioned-tp8-standard
-/// `.cpu.txt` golden exists anyway, so the check would pass even if the cell were
-/// re-enabled. Adding
-/// an exemption for it would be dead config that silently pre-excuses a future
-/// regression on that query — the same trap as a stale INTENTIONALLY_NOT_IN_CI
-/// entry. If #103 is fixed by re-enabling the cell, nothing here needs to change.
+/// In particular tpch/shuffle_stddev — quarantined under #103 and enabled again since —
+/// does not need one: its partitioned-tp8-standard `.cpu.txt` golden exists, so the
+/// check passes on the merits with the cell back to `enabled`. Adding an exemption for
+/// it would be dead config that silently pre-excuses a future regression on that query —
+/// the same trap as a stale INTENTIONALLY_NOT_IN_CI entry.
 const GOLDEN_INVARIANT_EXEMPT: &[(&str, &str, &str, &str)] = &[];
 
 /// Cross-mode golden invariant: a GPU mode marked `enabled` needs the SAME-LABEL

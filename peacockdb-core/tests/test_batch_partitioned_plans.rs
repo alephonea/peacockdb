@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 
 use peacockdb_core::batch_partitioned::plan::{BatchSizing, PlanKnobs, plan_batch_partitioned};
 use peacockdb_core::batch_partitioned::plan_text::{
-    render_plan, render_plan_memory, render_plan_recipes,
+    Payloads, render_plan, render_plan_memory, render_plan_recipes,
 };
 use peacockdb_core::batch_partitioned::recipe::attach_recipes;
 use peacockdb_core::config::MemoryLimit;
@@ -109,11 +109,19 @@ async fn render_query(
         Ok((tree, model)) => format!(
             "{}--- recipes ---\n{}--- memory ---\n{}",
             render_plan(tree.as_ref()),
-            render_plan_recipes(tree.as_ref(), &attach_recipes(tree.as_ref())),
+            recipes_of(tree.as_ref()),
             render_plan_memory(tree.as_ref(), &model)
         ),
         Err(e) => format!("refused: {}\n", relative_to_testdata(&e.to_string())),
     }
+}
+
+/// The recipes. An expression the wire cannot carry (#168) costs that node's payload and
+/// nothing else — the kinds, the seqs and the handles do not depend on it — so this
+/// section renders for every plan the mode produces.
+fn recipes_of(tree: &dyn peacockdb_core::batch_partitioned::GpuNode) -> String {
+    let plan = attach_recipes(tree).expect("a plan's recipes are structural");
+    render_plan_recipes(tree, &plan, Payloads::Omitted)
 }
 
 /// A refusal renders the error it was given, and DataFusion's own error text can carry a
@@ -314,6 +322,109 @@ fn sections_out_of_order_are_named_by_position() {
         said[0].starts_with("section 0: `q1` in the golden"),
         "{said:?}"
     );
+}
+
+// --- the payload golden ------------------------------------------------------
+//
+// One file, one mode, twelve queries: what each call actually hands the executor, which
+// the ten mode goldens deliberately do not carry. They answer different questions — those
+// say which kernel a node addresses and how often, this says what is in the buffer — and
+// one renderer serves both, so a plan cannot move in one and stand still in the other.
+
+/// The mode the payloads are read at. tp4 because tp1 emits no repartition at all, and
+/// rowgroup because it is the only form with many batches per lane, which is what makes an
+/// accumulating sort and a compaction real rather than degenerate. Not the sized mode:
+/// that one moves whenever the estimator does, and this file should move when a payload
+/// does.
+const PAYLOAD_MODE: (&str, usize, BatchSizing) = ("bp-tp4-rowgroup", 4, BatchSizing::OneBatchPerRowGroup);
+
+/// The queries, and the rule for adding one.
+///
+/// Chosen by cover rather than by taste: every fb node kind the mapping emits (join types
+/// spelled out, both project roles, the repartition, the two symbols that address no seq,
+/// the rows that emit nothing), every call shape longer than one call, and every
+/// expression kind a payload can carry — LIKE, CASE, casts, scalar functions, decimal
+/// scales, grouping sets, null substitutions, Welford state, an avg's finalize, fetch and
+/// skip. 30 features between them, and these twelve are a minimal cover.
+///
+/// So a query earns a place here by covering something no other query does. Adding one
+/// that covers nothing new adds lines no reader can check against anything.
+const PAYLOAD_QUERIES: [(&str, &str); 12] = [
+    // Nested-loop join lives nowhere else in the corpus; the stddev query is the Welford
+    // init, both merges and the finalize project; q13 is the outer join's finish pass.
+    ("tpch", "q13"),
+    ("tpch", "shuffle-stddev"),
+    ("tpch", "nested-loop-join"),
+    ("tpcds", "q14"),
+    ("tpcds", "q97"),
+    ("tpcds", "q61"),
+    ("tpcds", "q87"),
+    ("tpcds", "q45"),
+    ("tpcds", "q41"),
+    ("tpcds", "q5"),
+    ("tpcds", "q91"),
+    ("tpcds", "q39"),
+];
+
+/// A digest of the bytes beside the text, because the two can disagree: a field the
+/// renderer does not print, an ordering that moves. `plan_bytes.sha256` pins the legacy
+/// wire form the same way and for the same reason.
+fn digest_of(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    format!("{:x}", hasher.finalize())
+}
+
+#[tokio::test]
+async fn the_payload_golden_carries_what_each_call_hands_the_executor() {
+    let mode = mode(PAYLOAD_MODE.0, PAYLOAD_MODE.1, PAYLOAD_MODE.2);
+    let mut text = String::new();
+    for dataset in ["tpch", "tpcds"] {
+        let wanted: Vec<&str> = PAYLOAD_QUERIES
+            .iter()
+            .filter(|(bench, _)| *bench == dataset)
+            .map(|(_, query)| *query)
+            .collect();
+        if wanted.is_empty() {
+            continue;
+        }
+        // Through the canonical root, so the paths the buffer embeds — and the digest
+        // over them — are the same on every machine. `test_plan_bytes` holds the legacy
+        // wire form still the same way, and for the same reason.
+        let ctx = peacockdb_core::register_tables_for(
+            peacockdb_core::build_session_state(mode.knobs.target_partitions),
+            &common::canonical_data_dir(dataset, "1"),
+        )
+        .await
+        .expect("register the tables");
+        for (name, path) in queries(dataset) {
+            if !wanted.contains(&name.as_str()) {
+                continue;
+            }
+            let sql = std::fs::read_to_string(&path).expect("the query text");
+            let plan = ctx
+                .sql(&sql)
+                .await
+                .expect("the query parses")
+                .create_physical_plan()
+                .await
+                .expect("the query plans");
+            let (tree, _) = plan_batch_partitioned(&plan, mode.knobs).expect("this mode runs it");
+            let recipes = attach_recipes(tree.as_ref()).expect("a plan's recipes are structural");
+            text.push_str(&format!("== {dataset} {name}\n"));
+            text.push_str(&format!("sha256={}\n", digest_of(recipes.bytes())));
+            text.push_str(&render_plan_recipes(
+                tree.as_ref(),
+                &recipes,
+                Payloads::Shown,
+            ));
+        }
+    }
+    let path = common::testdata_root()
+        .join("goldens")
+        .join("bp-recipe-payloads.txt");
+    assert_or_update(&path, &text);
 }
 
 async fn check(dataset: &str, sf: &str, mode: Mode) {

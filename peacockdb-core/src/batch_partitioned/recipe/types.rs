@@ -9,20 +9,6 @@ use datafusion::common::JoinType;
 /// content of an address, which is why a call carries nothing else about the node it runs.
 pub type Seq = u32;
 
-/// Seq numbers, handed out in call order across one plan.
-#[derive(Debug, Default)]
-pub struct Seqs {
-    next: Seq,
-}
-
-impl Seqs {
-    pub fn allocate(&mut self) -> Seq {
-        let seq = self.next;
-        self.next += 1;
-        seq
-    }
-}
-
 /// The frozen entry points. Two of them take runtime bounds instead of a seq, which is
 /// the reason they exist: a frozen node cannot carry a number that is known only once the
 /// rows have been counted.
@@ -51,6 +37,9 @@ impl AbiSymbol {
 pub enum ProjectRole {
     /// The probe keys this batch contributes to the accumulation (#136).
     ProbeKeys,
+    /// An aggregate's finalize, which is ours rather than the executor's: both engines
+    /// evaluate this expression, so they agree by construction.
+    Finalize,
     /// Build columns straight through, plus one typed NULL per probe column the join's
     /// projection keeps — what makes the anti join's output the joined schema.
     NullPad { nulls: usize },
@@ -66,7 +55,11 @@ pub enum FbKind {
     Project(ProjectRole),
     /// The one a map arm runs; a `CudfProject` with no role of its own.
     PlainProject,
-    Aggregate,
+    /// `Partial` builds state from raw values and `Merge` merges state into state.
+    /// Never `Final`, which would also finalize, and a finalize here is a project.
+    Aggregate {
+        merge: bool,
+    },
     Sort,
     SortPreservingMerge,
     CoalescePartitions,
@@ -241,11 +234,14 @@ impl fmt::Display for FbKind {
             Self::Scan => write!(f, "CudfScan"),
             Self::Filter => write!(f, "CudfFilter"),
             Self::Project(ProjectRole::ProbeKeys) => write!(f, "CudfProject{{probe keys}}"),
+            Self::Project(ProjectRole::Finalize) => write!(f, "CudfProject{{finalize}}"),
             Self::Project(ProjectRole::NullPad { nulls }) => {
                 write!(f, "CudfProject{{build columns + {nulls} null}}")
             }
             Self::PlainProject => write!(f, "CudfProject"),
-            Self::Aggregate => write!(f, "CudfAggregate"),
+            Self::Aggregate { merge } => {
+                write!(f, "CudfAggregate{{{}}}", if *merge { "Merge" } else { "Partial" })
+            }
             Self::Sort => write!(f, "CudfSort"),
             Self::SortPreservingMerge => write!(f, "CudfSortPreservingMerge"),
             Self::CoalescePartitions => write!(f, "CudfCoalescePartitions"),

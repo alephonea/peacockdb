@@ -14,7 +14,9 @@
 #include <flatbuffers/flatbuffers.h>
 #include <gtest/gtest.h>
 
+#include <cmath>
 #include <cstdint>
+#include <map>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -127,6 +129,15 @@ int64_t get_scalar_value<int64_t>(const cudf::column_view& col,
   std::vector<int64_t> host(col.size());
   cudaMemcpy(host.data(), col.data<int64_t>(),
              col.size() * sizeof(int64_t), cudaMemcpyDeviceToHost);
+  return host[row];
+}
+
+template <>
+double get_scalar_value<double>(const cudf::column_view& col,
+                                cudf::size_type row) {
+  std::vector<double> host(col.size());
+  cudaMemcpy(host.data(), col.data<double>(),
+             col.size() * sizeof(double), cudaMemcpyDeviceToHost);
   return host[row];
 }
 
@@ -602,6 +613,294 @@ TEST(PlanExecutor, ProjectRename) {
   EXPECT_EQ(result.table->num_rows(), 5);
   EXPECT_EQ(result.column_names[0], "region_name");
   EXPECT_EQ(result.column_names[1], "key");
+}
+
+/// The fifth UnaryOp, appended so a finalizing aggregate can carry its own finalize
+/// rather than leaving the arithmetic to this side. Two tests because the expression's
+/// shape decides which evaluator runs it, and the enum arm was added to both: an AST-able
+/// expression goes through cudf::ast, and anything the AST cannot express — a CASE, which
+/// is what a stddev's finalize wraps its root in — goes through the column path.
+TEST(PlanExecutor, ProjectSqrtThroughTheAst) {
+  flatbuffers::FlatBufferBuilder fbb;
+
+  auto path = fbb.CreateString(parquet_path("region"));
+  auto paths = fbb.CreateVector(
+      std::vector<flatbuffers::Offset<flatbuffers::String>>{path});
+  auto schema = make_schema(fbb, {
+      {"r_regionkey", fb::DataType_Int32},
+      {"r_name", fb::DataType_Utf8View},
+      {"r_comment", fb::DataType_Utf8View},
+  });
+  auto scan = fb::CreateCudfScan(fbb, paths, schema);
+  auto scan_node =
+      make_plan_node(fbb, fb::PlanNodeKind_CudfScan, scan.Union());
+
+  // sqrt(CAST(r_regionkey AS FLOAT64)) — a cast to FLOAT64 is one of the two the AST
+  // has, so the whole expression stays AST-able.
+  auto casted = make_cast_expr(fbb, make_col_ref(fbb, 0), fb::DataType_Float64);
+  auto un = fb::CreateUnaryExprNode(fbb, fb::UnaryOp_Sqrt, casted);
+  auto root_sqrt = fb::CreateExpr(fbb, fb::ExprNode_UnaryExprNode, un.Union());
+  auto exprs = fbb.CreateVector(
+      std::vector<flatbuffers::Offset<fb::Expr>>{root_sqrt});
+  auto alias = fbb.CreateString("root");
+  auto aliases = fbb.CreateVector(
+      std::vector<flatbuffers::Offset<flatbuffers::String>>{alias});
+  auto proj = fb::CreateCudfProject(fbb, exprs, aliases, scan_node);
+  auto proj_node =
+      make_plan_node(fbb, fb::PlanNodeKind_CudfProject, proj.Union());
+  auto buf = finish_plan(fbb, proj_node);
+
+  auto result = peacock::execute_plan(buf.data(), buf.size());
+
+  ASSERT_EQ(result.table->num_columns(), 1);
+  ASSERT_EQ(result.table->num_rows(), 5);
+  auto col = result.table->view().column(0);
+  ASSERT_EQ(col.type().id(), cudf::type_id::FLOAT64);
+  // r_regionkey is 0..4 in tpch.minimal, so the roots are known exactly.
+  for (cudf::size_type row = 0; row < 5; ++row) {
+    EXPECT_NEAR(get_scalar_value<double>(col, row), std::sqrt(double(row)), 1e-12)
+        << "row " << row;
+  }
+}
+
+TEST(PlanExecutor, ProjectSqrtThroughTheColumnPath) {
+  flatbuffers::FlatBufferBuilder fbb;
+
+  auto path = fbb.CreateString(parquet_path("region"));
+  auto paths = fbb.CreateVector(
+      std::vector<flatbuffers::Offset<flatbuffers::String>>{path});
+  auto schema = make_schema(fbb, {
+      {"r_regionkey", fb::DataType_Int32},
+      {"r_name", fb::DataType_Utf8View},
+      {"r_comment", fb::DataType_Utf8View},
+  });
+  auto scan = fb::CreateCudfScan(fbb, paths, schema);
+  auto scan_node =
+      make_plan_node(fbb, fb::PlanNodeKind_CudfScan, scan.Union());
+
+  // sqrt(CASE WHEN r_regionkey >= 0 THEN CAST(r_regionkey AS FLOAT64) ELSE 0.0 END).
+  // The CASE is what routes it: the AST has no such node, so is_ast_able says no for the
+  // whole expression and the column evaluator takes it.
+  auto when = make_binary_expr(fbb, make_col_ref(fbb, 0), fb::BinaryOp_GtEq,
+                               make_int64_literal(fbb, 0));
+  auto then = make_cast_expr(fbb, make_col_ref(fbb, 0), fb::DataType_Float64);
+  auto arm = fb::CreateCaseWhenThen(fbb, when, then);
+  auto arms = fbb.CreateVector(
+      std::vector<flatbuffers::Offset<fb::CaseWhenThen>>{arm});
+  auto otherwise = make_float64_literal(fbb, 0.0);
+  auto case_node = fb::CreateCaseExprNode(
+      fbb, /*expr=*/flatbuffers::Offset<fb::Expr>{}, arms, otherwise);
+  auto case_expr =
+      fb::CreateExpr(fbb, fb::ExprNode_CaseExprNode, case_node.Union());
+  auto un = fb::CreateUnaryExprNode(fbb, fb::UnaryOp_Sqrt, case_expr);
+  auto root_sqrt = fb::CreateExpr(fbb, fb::ExprNode_UnaryExprNode, un.Union());
+  auto exprs = fbb.CreateVector(
+      std::vector<flatbuffers::Offset<fb::Expr>>{root_sqrt});
+  auto alias = fbb.CreateString("root");
+  auto aliases = fbb.CreateVector(
+      std::vector<flatbuffers::Offset<flatbuffers::String>>{alias});
+  auto proj = fb::CreateCudfProject(fbb, exprs, aliases, scan_node);
+  auto proj_node =
+      make_plan_node(fbb, fb::PlanNodeKind_CudfProject, proj.Union());
+  auto buf = finish_plan(fbb, proj_node);
+
+  auto result = peacock::execute_plan(buf.data(), buf.size());
+
+  ASSERT_EQ(result.table->num_columns(), 1);
+  ASSERT_EQ(result.table->num_rows(), 5);
+  auto col = result.table->view().column(0);
+  ASSERT_EQ(col.type().id(), cudf::type_id::FLOAT64);
+  for (cudf::size_type row = 0; row < 5; ++row) {
+    EXPECT_NEAR(get_scalar_value<double>(col, row), std::sqrt(double(row)), 1e-12)
+        << "row " << row;
+  }
+}
+
+// --- AggregateMode_Merge: state in, state out -------------------------------
+//
+// The mode exists because this engine merges twice — once per lane, once across
+// lanes — and finalizes in a project of its own, so a merge must not finalize. Each
+// path through the arm gets its own test: the Welford triple, an avg's (sum, count)
+// pair, and the one-column aggregates.
+//
+// The shape is the same in all three: one partial, then the SAME partial unioned with
+// itself and merged. Merging a state with an identical copy of itself has an answer
+// that needs no knowledge of the data — the counts and the sums double, the mean does
+// not move — so the assertions are about the merge rather than about nation.parquet.
+
+/// The nation scan every case below aggregates.
+static flatbuffers::Offset<fb::PlanNode> nation_scan_node(
+    flatbuffers::FlatBufferBuilder& fbb) {
+  auto path = fbb.CreateString(parquet_path("nation"));
+  auto paths = fbb.CreateVector(
+      std::vector<flatbuffers::Offset<flatbuffers::String>>{path});
+  auto schema = make_schema(fbb, {
+      {"n_nationkey", fb::DataType_Int32},
+      {"n_name", fb::DataType_Utf8View},
+      {"n_regionkey", fb::DataType_Int32},
+      {"n_comment", fb::DataType_Utf8View},
+  });
+  auto scan = fb::CreateCudfScan(fbb, paths, schema);
+  return make_plan_node(fbb, fb::PlanNodeKind_CudfScan, scan.Union());
+}
+
+/// GROUP BY n_regionkey with one aggregate over n_nationkey, in the given mode.
+///
+/// The ordinals differ by mode and that is the whole point of the pair: a Partial reads
+/// the scan, where the key is column 2 and the value column 0, while a Merge reads the
+/// Partial's own output, where the key is column 0 and the state begins at column 1.
+static flatbuffers::Offset<fb::PlanNode> nation_aggregate(
+    flatbuffers::FlatBufferBuilder& fbb, flatbuffers::Offset<fb::PlanNode> input,
+    fb::AggregateMode mode, const char* func, bool mergeable) {
+  bool merging = mode == fb::AggregateMode_Merge;
+  auto group = make_col_ref(fbb, merging ? 0 : 2, "n_regionkey");
+  auto groups = fbb.CreateVector(
+      std::vector<flatbuffers::Offset<fb::Expr>>{group});
+  auto group_name = fbb.CreateString("n_regionkey");
+  auto group_names = fbb.CreateVector(
+      std::vector<flatbuffers::Offset<flatbuffers::String>>{group_name});
+  // A merge reads its state columns positionally from just past the keys, so the
+  // argument matters only to the partial; it is written either way because the field is
+  // not optional.
+  auto arg = make_col_ref(fbb, merging ? 1 : 0, "n_nationkey");
+  auto args = fbb.CreateVector(std::vector<flatbuffers::Offset<fb::Expr>>{arg});
+  auto name = fbb.CreateString(func);
+  auto alias = fbb.CreateString("state");
+  auto agg_func = fb::CreateAggregateFuncNode(fbb, name, args, /*distinct=*/false,
+                                              alias);
+  auto funcs = fbb.CreateVector(
+      std::vector<flatbuffers::Offset<fb::AggregateFuncNode>>{agg_func});
+  fb::CudfAggregateBuilder builder(fbb);
+  builder.add_mode(mode);
+  builder.add_group_exprs(groups);
+  builder.add_group_names(group_names);
+  builder.add_aggr_funcs(funcs);
+  builder.add_input(input);
+  builder.add_mergeable_agg_state(mergeable);
+  auto agg = builder.Finish();
+  return make_plan_node(fbb, fb::PlanNodeKind_CudfAggregate, agg.Union());
+}
+
+/// The aggregate columns of one execution, keyed by the group they belong to, so two
+/// runs are compared by key rather than by the order cuDF happened to group in.
+static std::map<int32_t, std::vector<double>> by_group(
+    const peacock::TableResult& result) {
+  std::map<int32_t, std::vector<double>> rows;
+  auto view = result.table->view();
+  auto keys = view.column(0);
+  for (cudf::size_type row = 0; row < view.num_rows(); ++row) {
+    std::vector<double> values;
+    for (cudf::size_type c = 1; c < view.num_columns(); ++c) {
+      auto col = view.column(c);
+      switch (col.type().id()) {
+        case cudf::type_id::INT32:
+          values.push_back(double(get_scalar_value<int32_t>(col, row)));
+          break;
+        case cudf::type_id::INT64:
+          values.push_back(double(get_scalar_value<int64_t>(col, row)));
+          break;
+        default:
+          values.push_back(get_scalar_value<double>(col, row));
+          break;
+      }
+    }
+    rows[get_scalar_value<int32_t>(keys, row)] = std::move(values);
+  }
+  return rows;
+}
+
+/// One partial, and the same partial unioned with itself and merged.
+static std::pair<std::map<int32_t, std::vector<double>>,
+                 std::map<int32_t, std::vector<double>>>
+partial_and_merged(const char* func, bool mergeable) {
+  std::map<int32_t, std::vector<double>> partial_rows;
+  {
+    flatbuffers::FlatBufferBuilder fbb;
+    auto partial = nation_aggregate(fbb, nation_scan_node(fbb),
+                                    fb::AggregateMode_Partial, func, mergeable);
+    auto buf = finish_plan(fbb, partial);
+    partial_rows = by_group(peacock::execute_plan(buf.data(), buf.size()));
+  }
+  std::map<int32_t, std::vector<double>> merged_rows;
+  {
+    flatbuffers::FlatBufferBuilder fbb;
+    auto left = nation_aggregate(fbb, nation_scan_node(fbb),
+                                 fb::AggregateMode_Partial, func, mergeable);
+    auto right = nation_aggregate(fbb, nation_scan_node(fbb),
+                                  fb::AggregateMode_Partial, func, mergeable);
+    auto inputs = fbb.CreateVector(
+        std::vector<flatbuffers::Offset<fb::PlanNode>>{left, right});
+    auto both = fb::CreateCudfUnion(fbb, inputs);
+    auto both_node = make_plan_node(fbb, fb::PlanNodeKind_CudfUnion, both.Union());
+    auto merged = nation_aggregate(fbb, both_node, fb::AggregateMode_Merge, func,
+                                   mergeable);
+    auto buf = finish_plan(fbb, merged);
+    merged_rows = by_group(peacock::execute_plan(buf.data(), buf.size()));
+  }
+  return {partial_rows, merged_rows};
+}
+
+TEST(AggregateMerge, WelfordStateComesBackAsStateAndNotAsAValue) {
+  auto [partial, merged] = partial_and_merged("stddev", /*mergeable=*/true);
+  ASSERT_EQ(partial.size(), 5u) << "five regions";
+  ASSERT_EQ(merged.size(), partial.size());
+  for (auto& [key, state] : partial) {
+    ASSERT_EQ(state.size(), 3u) << "the partial emits [count, mean, m2]";
+    auto& after = merged.at(key);
+    ASSERT_EQ(after.size(), 3u) << "and so does the merge — a value would be one column";
+    EXPECT_DOUBLE_EQ(after[0], state[0] * 2) << "group " << key;
+    EXPECT_NEAR(after[1], state[1], 1e-9) << "two identical halves keep the mean";
+    EXPECT_NEAR(after[2], state[2] * 2, 1e-9) << "and add their M2s, the means being equal";
+  }
+}
+
+TEST(AggregateMerge, TheMergedCountIsWidenedSoASecondMergeReadsTheSameLayout) {
+  // cuDF's group_merge_m2 takes an INT32 count and hands one back; a chain of merges
+  // only works if the width the arm emits is the width the next arm reads.
+  flatbuffers::FlatBufferBuilder fbb;
+  auto left = nation_aggregate(fbb, nation_scan_node(fbb),
+                               fb::AggregateMode_Partial, "stddev", true);
+  auto right = nation_aggregate(fbb, nation_scan_node(fbb),
+                                fb::AggregateMode_Partial, "stddev", true);
+  auto inputs = fbb.CreateVector(
+      std::vector<flatbuffers::Offset<fb::PlanNode>>{left, right});
+  auto both = fb::CreateCudfUnion(fbb, inputs);
+  auto both_node = make_plan_node(fbb, fb::PlanNodeKind_CudfUnion, both.Union());
+  auto once = nation_aggregate(fbb, both_node, fb::AggregateMode_Merge, "stddev", true);
+  auto twice = nation_aggregate(fbb, once, fb::AggregateMode_Merge, "stddev", true);
+  auto buf = finish_plan(fbb, twice);
+
+  auto result = peacock::execute_plan(buf.data(), buf.size());
+  auto view = result.table->view();
+  ASSERT_EQ(view.num_columns(), 4) << "the key and the three state columns";
+  EXPECT_EQ(view.column(1).type().id(), cudf::type_id::INT64);
+  EXPECT_EQ(view.column(2).type().id(), cudf::type_id::FLOAT64);
+  EXPECT_EQ(view.column(3).type().id(), cudf::type_id::FLOAT64);
+}
+
+TEST(AggregateMerge, AnAvgsSumAndCountBothSurviveTheMerge) {
+  auto [partial, merged] = partial_and_merged("avg", /*mergeable=*/false);
+  ASSERT_EQ(partial.size(), 5u);
+  for (auto& [key, state] : partial) {
+    ASSERT_EQ(state.size(), 2u) << "the partial emits [sum, count]";
+    auto& after = merged.at(key);
+    ASSERT_EQ(after.size(), 2u) << "the merge emits both, since the divide is the finalize";
+    EXPECT_DOUBLE_EQ(after[0], state[0] * 2) << "group " << key;
+    EXPECT_DOUBLE_EQ(after[1], state[1] * 2) << "group " << key;
+  }
+}
+
+TEST(AggregateMerge, AOneColumnAggregateMergesByItsOwnRule) {
+  // sum merges by sum, and count by sum — the one place a merge is not the same
+  // aggregation as the partial it merges.
+  for (const char* func : {"sum", "count"}) {
+    auto [partial, merged] = partial_and_merged(func, /*mergeable=*/false);
+    ASSERT_EQ(partial.size(), 5u) << func;
+    for (auto& [key, state] : partial) {
+      ASSERT_EQ(state.size(), 1u) << func;
+      EXPECT_DOUBLE_EQ(merged.at(key)[0], state[0] * 2) << func << " group " << key;
+    }
+  }
 }
 
 TEST(PlanExecutor, PassthroughNodes) {

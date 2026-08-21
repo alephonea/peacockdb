@@ -3,9 +3,21 @@
 
 use std::fmt::Write as _;
 
+use crate::generated::gpu_plan_generated::peacock::plan as fb;
+
 use super::super::node::GpuNode;
 use super::super::nodes::category_of;
 use super::super::recipe::RecipePlan;
+use super::fb_text;
+
+/// Whether the section prints what each call passes the executor, or only which kernel it
+/// addresses. One renderer either way: two would drift, and the ten mode goldens and the
+/// payload golden would then disagree about a plan neither of them changed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Payloads {
+    Omitted,
+    Shown,
+}
 
 /// One line per node, in plan order. A node that makes no ABI call says `none` rather
 /// than nothing: "this node touches no device" and "the pass missed it" have to look
@@ -13,7 +25,7 @@ use super::super::recipe::RecipePlan;
 ///
 /// Which is why the coverage check comes first: a plan shorter than the tree renders its
 /// tail as `none` too, and that reads as a forwarder rather than as the gap it is.
-pub fn render_plan_recipes(root: &dyn GpuNode, plan: &RecipePlan) -> String {
+pub fn render_plan_recipes(root: &dyn GpuNode, plan: &RecipePlan, payloads: Payloads) -> String {
     let nodes = count_nodes(root);
     assert_eq!(
         plan.nodes(),
@@ -24,7 +36,18 @@ pub fn render_plan_recipes(root: &dyn GpuNode, plan: &RecipePlan) -> String {
         plan.nodes()
     );
     let mut text = String::new();
-    render_recipe_node(root, 0, &mut Sequence::default(), plan, &mut text);
+    let buffer = (payloads == Payloads::Shown).then(|| {
+        // The same depth the C++ verifier allows (`NodeSession`): a recipe plan is a
+        // chain, one node per seq, so it is as deep as it is long — where a legacy plan is
+        // a tree and never near the default 64.
+        let options = flatbuffers::VerifierOptions {
+            max_depth: 1024,
+            ..Default::default()
+        };
+        flatbuffers::root_with_opts::<fb::GpuPlan>(&options, plan.bytes())
+            .expect("the plan we just wrote")
+    });
+    render_recipe_node(root, 0, &mut Sequence::default(), plan, buffer.as_ref(), &mut text);
     text
 }
 
@@ -67,12 +90,13 @@ fn render_recipe_node(
     depth: usize,
     sequence: &mut Sequence,
     plan: &RecipePlan,
+    buffer: Option<&fb::GpuPlan<'_>>,
     text: &mut String,
 ) {
     let mut lines = Vec::new();
     for child in node.children() {
         let mut child_text = String::new();
-        render_recipe_node(child, depth + 1, sequence, plan, &mut child_text);
+        render_recipe_node(child, depth + 1, sequence, plan, buffer, &mut child_text);
         lines.push(child_text);
     }
     let position = sequence.next;
@@ -87,6 +111,28 @@ fn render_recipe_node(
         None => "none".to_string(),
     };
     let _ = writeln!(text, "{}{}: {line}", "  ".repeat(depth), node.name());
+    if let (Some(buffer), Some(recipe)) = (buffer, plan.get(position)) {
+        // Under the call it belongs to, indented past the tree, so a long payload reads
+        // as this node's rather than as the next line of the plan.
+        let indent = format!("{}    ", "  ".repeat(depth));
+        for call in &recipe.calls {
+            let Some((seq, kind)) = call.target else {
+                continue;
+            };
+            let _ = writeln!(text, "{indent}#{seq} {kind}");
+            match plan.unwritable_at(seq) {
+                Some(why) => {
+                    let _ = writeln!(text, "{indent}  unavailable: {why}");
+                }
+                None => {
+                    let payload = fb_text::node_at(buffer, seq)
+                        .map(|node| fb_text::payload_text(&node, &format!("{indent}  ")))
+                        .unwrap_or_default();
+                    text.push_str(&payload);
+                }
+            }
+        }
+    }
     for line in lines {
         text.push_str(&line);
     }

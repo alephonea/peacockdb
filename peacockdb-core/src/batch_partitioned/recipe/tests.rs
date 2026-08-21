@@ -4,6 +4,7 @@
 //! more coverage than a hand-built node would be.
 
 use super::*;
+use super::writer::Writer;
 use crate::batch_partitioned::aggregates::{AggCall, PlanAgg};
 use crate::batch_partitioned::expr::{BinaryOp, Expr, NamedExpr};
 use crate::batch_partitioned::layout::{BatchLayout, ColumnOrder, NodeKind, PartitionLayout};
@@ -112,7 +113,9 @@ fn join(join_type: JoinType, filter: bool, projection: Option<Vec<u32>>) -> GpuJ
 fn recipe_for(node: &GpuJoin) -> Recipe {
     let build = columns_of(&["k", "label"]);
     let probe = columns_of(&["fk", "v"]);
-    join::hash_join(node, &[&build, &probe], &mut Seqs::default()).expect("a join drives the ABI")
+    join::hash_join(node, &[&build, &probe], &mut Writer::new())
+        .expect("the join's payloads are writable")
+        .expect("a join drives the ABI")
 }
 
 /// `(kind, when)` per call, which is the pair the mapping table states.
@@ -266,28 +269,34 @@ fn the_pad_project_appends_one_null_per_probe_column_the_projection_keeps() {
     );
 }
 
+/// Seqs are the post-order positions of the tree that was built, stubs included — which
+/// is why they are not dense, and why they cannot be counted from the recipes alone.
 #[test]
-fn seqs_ascend_with_call_order_and_no_two_calls_share_one() {
-    let mut seqs = Seqs::default();
+fn seqs_are_the_post_order_positions_of_what_was_built() {
+    let mut writer = Writer::new();
     let build = columns_of(&["k", "label"]);
     let probe = columns_of(&["fk", "v"]);
     let first = join::hash_join(
         &join(JoinType::Left, false, None),
         &[&build, &probe],
-        &mut seqs,
+        &mut writer,
     )
+    .expect("writable")
     .expect("a join drives the ABI");
     let second = join::hash_join(
         &join(JoinType::Inner, false, None),
         &[&build, &probe],
-        &mut seqs,
+        &mut writer,
     )
+    .expect("writable")
     .expect("a join drives the ABI");
-    assert_eq!(first.seqs(), vec![0, 1, 2, 3, 4]);
+    // #0 and #2 are the stubs the key project and the per-batch join took for slots
+    // nothing else filled; #5 is the finish join's.
+    assert_eq!(first.seqs(), vec![1, 3, 4, 6, 7]);
     assert_eq!(
         second.seqs(),
-        vec![5],
-        "seqs are handed out across the plan, not per node"
+        vec![9],
+        "seqs run on across the plan rather than restarting per node"
     );
 }
 
@@ -327,7 +336,8 @@ fn a_nested_loop_join_copies_its_build_side_only_where_the_probe_streams() {
     let inputs_of = |join_type| {
         let node = nested_loop(join_type);
         let schema = columns_of(&["k"]);
-        join::nested_loop_join(&node, &[&schema, &schema], &mut Seqs::default())
+        join::nested_loop_join(&node, &[&schema, &schema], &mut Writer::new())
+            .expect("the join's payload is writable")
             .expect("a nested-loop join drives the ABI")
             .calls[0]
             .inputs
@@ -355,7 +365,8 @@ fn an_accumulating_sort_sorts_every_batch_and_merges_what_the_lane_kept() {
         }],
         Some(10),
     );
-    let recipe = accumulate_and_sort(&node, &[&columns_of(&["a"])], &mut Seqs::default())
+    let recipe = accumulate_and_sort(&node, &[&columns_of(&["a"])], &mut Writer::new())
+        .expect("the sort's payloads are writable")
         .expect("an accumulating sort drives the ABI");
     assert_eq!(
         recipe
@@ -393,13 +404,14 @@ fn a_batch_aggregate_runs_the_same_pair_at_a_compaction_and_at_done() {
         columns_of(&["k", "sum(n)"]),
         columns_of(&["k", "sum(n)"]),
     );
-    let recipe = aggregate_batches(&node, &[&columns_of(&["k", "n"])], &mut Seqs::default())
+    let recipe = aggregate_batches(&node, &[&columns_of(&["k", "n"])], &mut Writer::new())
+        .expect("the aggregate's payloads are writable")
         .expect("a batch aggregate drives the ABI");
     assert_eq!(
         shape(&recipe),
         vec![
             (FbKind::CoalescePartitions, CallPattern::PerCompaction),
-            (FbKind::Aggregate, CallPattern::PerCompaction),
+            (FbKind::Aggregate { merge: true }, CallPattern::PerCompaction),
         ],
         "the compaction is the done pass run early, which is what makes the threshold a \
          scheduling decision"
@@ -407,9 +419,11 @@ fn a_batch_aggregate_runs_the_same_pair_at_a_compaction_and_at_done() {
     assert_eq!(recipe.calls[1].inputs, vec![Input::PriorOutput]);
 }
 
-/// A finalizing merge is the same pair — what a node emits is not what it calls.
+/// A finalizing merge adds the project that carries the finalize — ours, so the two
+/// engines evaluate the same expression rather than agreeing because two implementations
+/// happen to match.
 #[test]
-fn the_finalizing_form_of_a_batch_aggregate_emits_the_same_seq_set() {
+fn a_finalizing_merge_carries_its_finalize_in_a_project_of_its_own() {
     let with_finalize = AggregateBody {
         group_by: vec![Expr::column(0, "k")],
         grouping_sets: Vec::new(),
@@ -427,13 +441,16 @@ fn the_finalizing_form_of_a_batch_aggregate_emits_the_same_seq_set() {
         columns_of(&["k", "sum(n)"]),
         columns_of(&["k", "sum(n)"]),
     );
-    let recipe = aggregate_batches(&node, &[&columns_of(&["k", "n"])], &mut Seqs::default())
+    let recipe = aggregate_batches(&node, &[&columns_of(&["k", "n"])], &mut Writer::new())
+        .expect("the aggregate's payloads are writable")
         .expect("a batch aggregate drives the ABI");
     assert_eq!(
         shape(&recipe),
         vec![
             (FbKind::CoalescePartitions, CallPattern::PerCompaction),
-            (FbKind::Aggregate, CallPattern::PerCompaction),
-        ]
+            (FbKind::Aggregate { merge: true }, CallPattern::PerCompaction),
+            (FbKind::Project(ProjectRole::Finalize), CallPattern::AtDone),
+        ],
+        "the merge runs per compaction and the finalize once, at done"
     );
 }

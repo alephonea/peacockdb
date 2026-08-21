@@ -316,7 +316,7 @@ pub(crate) fn serialize_expr<'a>(
 // Scalar values
 // ---------------------------------------------------------------------------
 
-fn serialize_scalar_value<'a>(
+pub(crate) fn serialize_scalar_value<'a>(
     b: &mut FlatBufferBuilder<'a>,
     sv: &DfScalarValue,
 ) -> Result<WIPOffset<fb::ScalarValue<'a>>, String> {

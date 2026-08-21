@@ -190,9 +190,10 @@ against the other.
    and below it in another.
 2. **Batched loading off|on**: whether the loader emits more than one batch per
    partition. Even when off, the loader's declared layout is `MultipleBatches` — no
-   downstream phase may assume one batch per partition. Only when on does the planner take
-   the memory budget (micro/mini/standard/full) and size batches, and only then does the
-   threshold above bite.
+   downstream phase may assume one batch per partition. The count is known — the partitioner
+   fixes every batch boundary at plan time — so that is incremental simplicity, and
+   [#170](../tickets.md#t170) is what saying so would buy. Only when on does the planner take the memory budget
+   (micro/mini/standard/full) and size batches, and only then does the threshold above bite.
 
    Batching has three forms, and they are an enum rather than a target value that means
    something special at one end of its range: `Off` gives one batch per chunk, `PerRowGroup`
@@ -2257,8 +2258,13 @@ derives a divide's result scale from its operands where arrow takes it from the 
 type — so a wrong cast is invisible on a CPU host and wrong on a GPU, in a column whose type reads
 correctly either way. Assert the digits, not the type.
 
-Answers are checked against the same query on the CPU engine, which makes this two-engine
-correctness rather than a new expectation. What it deliberately leaves out is everything the
+The oracle is DataFusion on the same SQL — `data_fusion_exact`, the CPU tier's own vocabulary —
+and deliberately neither a result golden nor our CPU executor. A golden records what the first run
+produced, so a finalize whose scale is wrong from the start is pinned rather than caught; and our
+CPU executor evaluates the same finalize expression the device is sent, so it agrees with a wrong
+one. DataFusion computes `avg` without a Welford triple, a merge mode or cuDF's divide-scale rule,
+which is what makes agreement with it evidence. Joins compare as sorted multisets, since a GPU
+join's output order is not deterministic. What it deliberately leaves out is everything the
 driver decides — batching, backpressure, arrival order — since every shape here is one batch;
 those arrive with the executors, and the driven end-to-end over every layout is T17's.
 

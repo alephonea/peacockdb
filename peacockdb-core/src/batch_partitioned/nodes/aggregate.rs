@@ -83,6 +83,15 @@ impl GpuAggregate {
     }
 }
 
+impl GpuAggregate {
+    /// `[group keys…, state columns…]` — what the aggregators produce, and where the
+    /// state annotations live. The output schema is the finalized one where this node
+    /// finalizes, so a consumer of the state reads this instead.
+    pub fn intermediate(&self) -> &Schema {
+        &self.intermediate
+    }
+}
+
 impl GpuNode for GpuAggregate {
     fn kind(&self) -> &NodeKind {
         &self.kind
@@ -131,6 +140,14 @@ impl GpuAggregateBatches {
             intermediate,
             input,
         }
+    }
+}
+
+impl GpuAggregateBatches {
+    /// The state this node merges into, before any finalize of its own — see
+    /// [`GpuAggregate::intermediate`].
+    pub fn intermediate(&self) -> &Schema {
+        &self.intermediate
     }
 }
 

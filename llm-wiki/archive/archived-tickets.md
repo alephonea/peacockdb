@@ -23,6 +23,24 @@ the report rather than emitting one that goes nowhere.
 
 ## Done
 
+<a id="t103"></a>
+### #103 — GPU SIGSEGV: shuffle_stddev tp8-standard (Welford N-way merge)
+`gpu_partitioned_tpch_sf1_shuffle_stddev_partitioned_tp8_standard` segfaults (139) or fails as a contained
+`vector::reserve` Err on shad-gpu. Nondeterministic; reproduces at 12 GiB and 120 GiB, so
+not budget-related. Inside `execute_instrumented`, upstream of golden compares; tp1 never
+crashes. Suspect the 8-way Welford M2 merge (`cpp/src/operators/aggregate.cpp`).
+**Fixed and the test is back**, 2026-08-21. The cause was `OutBuild` in
+`cpp/src/operators/aggregate.cpp` carrying default initializers on its last fields only: the
+Final-mergeable arm filled the struct by name and left `res` — an index into the results vector —
+uninitialized, so it read whatever the stack held. That accounts for every symptom: two
+signatures from one input, a budget that changed nothing, and tp1's immunity, since tp1 plans
+`Single` and never enters that arm. Found when a new merge arm wrote the same shape and turned
+the latent read into a segfault on its first call.
+
+`gpu_case!(tpch, 1, shuffle_stddev, partitioned_tp8_standard, golden_approx_std)` is enabled
+again after 20 consecutive green runs on shad-gpu, and `common/gpu_cases.inc` names this ticket
+beside it: if it flakes again, reopen this rather than filing a new number.
+
 <a id="t135"></a>
 ### #135 — Column ordinals are enforced only by cuDF's `at()` and the final result
 Every column reference in the IR is an ordinal into the child's output table, and almost nothing

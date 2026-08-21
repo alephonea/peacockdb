@@ -6,7 +6,7 @@ anchor that the cost widget links to. Device labels are `tp<N>-<tier>` (micro=10
 mini=2GiB, standard=12GiB).
 
 A ticket carries a **Priority** line only when it is not medium; medium is the default.
-New tickets take the next free number (currently 168). Finished and lapsed tickets move to
+New tickets take the next free number (currently 171). Finished and lapsed tickets move to
 `llm-wiki/archive/archived-tickets.md` (Done / Stale) — numbers are never reused, so an old
 reference still resolves there.
 
@@ -14,22 +14,12 @@ reference still resolves there.
 
 | Section | Open | Tickets |
 |---|--:|---|
-| [Critical correctness](#critical-correctness) | 16 | #166 #153 #103 #80 #59 #46 #47 #60 #121 #122 #123 #118 #119 #120 #117 #41 |
-| [Blockers for disabled coverage](#blockers-for-disabled-coverage) | 15 | #158 #97 #23 #32 #65 #62 #91 #95 #57 #45 #63 #56 #55 #96 #143 |
-| [Performance / architecture](#performance--architecture) | 26 | #155 #154 #152 #151 #150 #149 #148 #147 #146 #145 #19 #16 #20 #71 #101 #73 #110 #75 #136 #137 #138 #139 #140 #141 #144 #142 |
+| [Critical correctness](#critical-correctness) | 15 | #166 #153 #80 #59 #46 #47 #60 #121 #122 #123 #118 #119 #120 #117 #41 |
+| [Blockers for disabled coverage](#blockers-for-disabled-coverage) | 17 | #169 #168 #158 #97 #23 #32 #65 #62 #91 #95 #57 #45 #63 #56 #55 #96 #143 |
+| [Performance / architecture](#performance--architecture) | 27 | #170 #155 #154 #152 #151 #150 #149 #148 #147 #146 #145 #19 #16 #20 #71 #101 #73 #110 #75 #136 #137 #138 #139 #140 #141 #144 #142 |
 | [Infrastructure / process](#infrastructure--process) | 25 | #167 #164 #163 #159 #160 #161 #162 #113 #114 #116 #126 #134 #133 #132 #131 #130 #129 #128 #127 #124 #125 #13 #94 #69 #49 |
 
 ## Critical correctness
-
-<a id="t103"></a>
-### #103 — GPU SIGSEGV: shuffle_stddev tp8-standard (Welford N-way merge)
-`gpu_partitioned_tpch_sf1_shuffle_stddev_partitioned_tp8_standard` segfaults (139) or fails as a contained
-`vector::reserve` Err on shad-gpu. Nondeterministic; reproduces at 12 GiB and 120 GiB, so
-not budget-related. Inside `execute_instrumented`, upstream of golden compares; tp1 never
-crashes. Suspect the 8-way Welford M2 merge (`cpp/src/operators/aggregate.cpp`).
-**Test quarantined** 2026-07-31 (commented out in `test_gpu_partitioned.rs`) — it was the only
-coverage of the 8-way M2 merge; tp8 goldens kept. Has already caused one wrongly
-diagnosed "regression" + rollback: check this ticket before blaming your change.
 
 <a id="t166"></a>
 ### #166 — physical planning drops a LIMIT interval, and the answer changes
@@ -170,6 +160,45 @@ concatenate succeeds with the declared type. Cheap, and independent of any corpu
 
 ## Blockers for disabled coverage
 
+<a id="t169"></a>
+### #169 — a recipe plan is a chain, so its depth is its length, and the verifier caps depth
+
+fb children are nested, so the recipe plan for a query is one deep chain rather than a broad
+tree: depth equals the number of addressed nodes plus its stubs. The C++ verifier caps depth at
+1024, and the Rust reader had to have the same limit raised to parse what it had just written.
+
+Deepest today is tpcds at `bp-tp4-rowgroup`, seq 382, so nothing is near it. What makes it worth
+recording is the failure mode: a plan of roughly a thousand addressed nodes fails at
+`begin_plan` — the whole query refused before a call is made — rather than degrading at the call
+that overruns.
+
+The fix belongs here rather than in the verifier. Raising a limit to fit a shape that grows
+without bound only moves the number; splitting one recipe plan into several, loaded in turn, ends
+it. Not urgent at a factor of two and a half of headroom, and it wants measuring before it wants
+designing: nothing yet says a thousand-node plan is a shape this mode should produce.
+
+<a id="t168"></a>
+### #168 — the fbs ScalarValue has no interval, so one join residual has no payload
+
+`ScalarValue` has no interval variant, and `testdata/tpch-queries/mixed-join.sql` adds one to a
+column — `l_shipdate BETWEEN o_orderdate AND o_orderdate + INTERVAL '90' DAY` — so folding cannot
+reach it and that join's recipe has no writable payload.
+
+It is the only query in either bench with the shape: `mixed-join` is the fixture that pairs an
+equi-key with a non-equi residual, and every other corpus interval sits between two literals and
+folds away before serialization. Nothing regressed, either — the legacy path refuses the same
+literal at `serialize_scalar_value`'s unsupported-scalar arm, `mixed_join` has never been staged
+in `gpu_cases.inc`, and its coverage is a plan golden plus a CPU exec case at tp8-mini. No GPU
+path in this engine has ever carried an interval literal; what changed is that the golden now
+says so, where before it lived in an `Err` nobody reads.
+
+Kinds, seqs and handles do not depend on an expression being writable, so the recipe renders as
+it always did and the payload of that one node reads `unavailable:` with the reason.
+
+Closing it is a third appended `ScalarValue` variant plus the C++ arm, on the terms the other two
+took ([the spec's constraints](tasks/batch_partitioned_executor.md#scope-and-constraints)). Not
+proposed: one query is a thin case for a surface change, and T21 does not need it.
+
 <a id="t158"></a>
 ### #158 — an aggregate DataFusion answers from statistics reaches no executor
 `SELECT count(*) FROM nation` never reaches an `AggregateExec`: DataFusion's
@@ -290,6 +319,26 @@ whole-partition aggregate windows need a single batch (coalesce-all first), whil
 rank/dense_rank gaps of #32 carry over unchanged.
 
 ## Performance / architecture
+
+<a id="t170"></a>
+### #170 — a source whose lanes each hold one batch could say so, and three shortcuts would fire
+
+The loader declares `MultipleBatches` unconditionally
+([the spec](tasks/batch_partitioned_executor.md#knobs)), so no downstream node may assume one
+batch per partition. That was incremental simplicity rather than a missing fact: `partitioner.rs`
+computes the row-group → (partition, batch) mapping once at plan time and everything downstream
+consumes it verbatim, so the batch count per lane is `partition_groups[lane].len()` — known in all
+three batching forms, `Sized` included, since the planner cuts by bytes and the loader only
+executes what it was handed.
+
+The condition is that every lane holds exactly one batch, `SingleBatch` being a property of the
+node rather than of a lane: a source with lanes of one and two batches stays `MultipleBatches`.
+
+Saying it fires shortcuts the aggregate sequence already specifies: a 1-partition single-batch
+input needs one `GpuAggregate` carrying both `aggs` and `final`, and a single-batch-per-partition
+input skips the first `GpuAggregateBatches`. Join build sides need nothing new — `translate/mod.rs`
+already elides their coalesce when the input is `SingleBatch`. So the change is one declaration
+and the plans get smaller by themselves. Every bp golden moves, which is its real cost.
 
 <a id="t155"></a>
 ### #155 — umbrella: join execution through a wider C and FlatBuffers API

@@ -1,29 +1,36 @@
-//! The recipe plan: which frozen-ABI calls each plan node makes, and against which seq.
+//! The recipe plan: the buffer the C++ is handed, and per node the ABI calls it drives.
 //!
 //! The C++ side never sees this mode's tree. It is sent a plan in the legacy vocabulary
 //! whose nodes exist to be addressed — a menu of parameterized kernels — and the driver
-//! then calls the ABI as often as its own schedule wants. This module is that mapping:
-//! per node, the calls in order, each naming the seq it addresses and the handles it is
-//! passed. `llm-wiki/tasks/batch_partitioned_executor.md` has the table it implements.
+//! then calls the ABI as often as its own schedule wants. One walk builds that buffer and
+//! records, per plan node, the calls it makes and the seqs they address;
+//! `llm-wiki/tasks/batch_partitioned_executor.md` has the table it implements.
 //!
 //! A node that makes no ABI call gets no recipe, and the absence is a statement about the
 //! node rather than a gap: a forwarder routes batches and touches no device.
 
+mod aggregate_writer;
+mod expr_writer;
 mod join;
+mod node_writer;
 mod types;
+mod writer;
 
+use super::error::PlanError;
 use super::node::GpuNode;
 use super::nodes::{
-    GpuAccumulateBatchesAndSort, GpuAggregateBatches, GpuCoalesceAllBatches, GpuCrossJoin,
-    GpuEmitPartitions, GpuLimit, GpuLoadParquet, GpuMergeSortedPartitions, GpuSort, GpuUnload,
-    NodeRef, as_node_ref,
+    GpuAccumulateBatchesAndSort, GpuAggregate, GpuAggregateBatches, GpuCoalesceAllBatches,
+    GpuCrossJoin, GpuEmitPartitions, GpuFilter, GpuLimit, GpuLoadParquet, GpuMergeSortedPartitions,
+    GpuProject, GpuSort, GpuUnload, NodeRef, as_node_ref,
 };
 use super::schema::Schema;
+use aggregate_writer::Phase;
+use writer::Writer;
 
-pub use types::{AbiSymbol, Call, CallPattern, FbKind, Input, ProjectRole, Recipe, Seq, Seqs};
+pub use types::{AbiSymbol, Call, CallPattern, FbKind, Input, ProjectRole, Recipe, Seq};
 
 /// Every node's recipe, indexed by the post-order position the estimator and the memory
-/// golden already number by, so a reader lines the three up without a second convention.
+/// golden already number by, plus the bytes those recipes address.
 ///
 /// That index is a position in the TREE and a [`Seq`] is an address in the recipe plan:
 /// they part company at the first node with two calls, and a driver holding both at once
@@ -31,6 +38,8 @@ pub use types::{AbiSymbol, Call, CallPattern, FbKind, Input, ProjectRole, Recipe
 #[derive(Debug, Default)]
 pub struct RecipePlan {
     recipes: Vec<Option<Recipe>>,
+    bytes: Vec<u8>,
+    unwritable: Vec<(Seq, String)>,
 }
 
 impl RecipePlan {
@@ -45,23 +54,59 @@ impl RecipePlan {
     pub fn nodes(&self) -> usize {
         self.recipes.len()
     }
-}
 
-/// Hang a recipe on every node that drives the ABI. It runs over the finished tree: a
-/// recipe is a statement about a node, and a node is not finished until the plan is.
-pub fn attach_recipes(root: &dyn GpuNode) -> RecipePlan {
-    let mut plan = RecipePlan::default();
-    let mut seqs = Seqs::default();
-    attach_node(root, &mut seqs, &mut plan);
-    plan
-}
-
-fn attach_node(node: &dyn GpuNode, seqs: &mut Seqs, plan: &mut RecipePlan) {
-    for child in node.children() {
-        attach_node(child, seqs, plan);
+    /// The serialized recipe plan: what `peacock_executor_begin_plan` is given, and what
+    /// every seq in every recipe indexes into. Check [`RecipePlan::unwritable`] before
+    /// running it — a plan with a payload the wire could not carry is structurally whole
+    /// and semantically short of one node.
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
     }
-    let recipe = recipe_of(node, seqs);
-    plan.recipes.push(recipe);
+
+    /// Why the payload at a seq is missing, where one is. Empty for every plan whose
+    /// expressions the wire can carry, which is all but #168's today.
+    pub fn unwritable(&self) -> &[(Seq, String)] {
+        &self.unwritable
+    }
+
+    /// What that seq could not write, for the payload rendering.
+    pub fn unwritable_at(&self, seq: Seq) -> Option<&str> {
+        self.unwritable
+            .iter()
+            .find(|(at, _)| *at == seq)
+            .map(|(_, why)| why.as_str())
+    }
+}
+
+/// Build the recipe plan for a finished tree. It runs after planning because a recipe is
+/// a statement about a node, and a node is not finished until the plan is.
+pub fn attach_recipes(root: &dyn GpuNode) -> Result<RecipePlan, PlanError> {
+    let mut writer = Writer::new();
+    let mut recipes = Vec::new();
+    walk(root, &mut writer, &mut recipes)?;
+    let (bytes, unwritable) = writer.finish()?;
+    Ok(RecipePlan {
+        recipes,
+        bytes,
+        unwritable,
+    })
+}
+
+fn walk(
+    node: &dyn GpuNode,
+    writer: &mut Writer,
+    recipes: &mut Vec<Option<Recipe>>,
+) -> Result<(), PlanError> {
+    let mark = writer.mark();
+    for child in node.children() {
+        walk(child, writer, recipes)?;
+    }
+    let inputs = input_schemas(node);
+    let recipe = emit(node, inputs.as_slice(), writer)?;
+    recipes.push(recipe);
+    // Whatever this node did not consume is gathered here, so nothing it was handed
+    // becomes unreachable: an orphan is never indexed and every seq above it would shift.
+    writer.reduce(mark)
 }
 
 /// The schemas a node declares it consumes, in child order. Read here and handed to the
@@ -75,179 +120,294 @@ fn input_schemas(node: &dyn GpuNode) -> Vec<&Schema> {
 }
 
 /// The mapping, one arm per row of the table. Every arm reads its own node and the
-/// schemas above, and nothing else: the table is a per-node claim, and a function that
-/// could reach a child would let it stop being one.
+/// schemas above, and nothing else.
 ///
-/// Seqs ascend with call order within a node, so a recipe read left to right is also the
-/// recipe plan read top to bottom.
-fn recipe_of(node: &dyn GpuNode, seqs: &mut Seqs) -> Option<Recipe> {
-    let inputs = input_schemas(node);
-    let inputs = inputs.as_slice();
+/// Seqs ascend with the order the nodes are built, which is the order the C++ indexes
+/// them — `writer.rs` has the three rules that keep those the same sequence.
+fn emit(
+    node: &dyn GpuNode,
+    inputs: &[&Schema],
+    writer: &mut Writer,
+) -> Result<Option<Recipe>, PlanError> {
     match as_node_ref(node) {
-        NodeRef::LoadParquet(node) => scan(node, inputs, seqs),
-        // One table row, and so one function: the three are the generic map arm, and
-        // which kernel runs is the node's own kind.
-        NodeRef::Filter(_) => map_arm(FbKind::Filter, inputs, seqs),
-        NodeRef::Project(_) => map_arm(FbKind::PlainProject, inputs, seqs),
-        NodeRef::Aggregate(_) => map_arm(FbKind::Aggregate, inputs, seqs),
-        NodeRef::Sort(node) => sort(node, inputs, seqs),
-        NodeRef::AccumulateBatchesAndSort(node) => accumulate_and_sort(node, inputs, seqs),
-        NodeRef::CoalesceAllBatches(node) => coalesce_all_batches(node, inputs, seqs),
-        NodeRef::AggregateBatches(node) => aggregate_batches(node, inputs, seqs),
-        NodeRef::MergeSortedPartitions(node) => merge_sorted_partitions(node, inputs, seqs),
-        NodeRef::EmitPartitions(node) => emit_partitions(node, inputs, seqs),
-        NodeRef::Join(node) => join::hash_join(node, inputs, seqs),
-        NodeRef::CrossJoin(node) => cross_join(node, inputs, seqs),
-        NodeRef::NestedLoopJoin(node) => join::nested_loop_join(node, inputs, seqs),
-        NodeRef::Limit(node) => limit(node, inputs, seqs),
-        NodeRef::Unload(node) => unload(node, inputs, seqs),
+        NodeRef::LoadParquet(load) => scan(load, node, writer),
+        NodeRef::Filter(filter_node) => filter(filter_node, inputs, writer),
+        NodeRef::Project(project_node) => project(project_node, inputs, writer),
+        NodeRef::Sort(sort_node) => sort(sort_node, inputs, writer),
+        NodeRef::Aggregate(aggregate_node) => aggregate(aggregate_node, inputs, writer),
+        NodeRef::AccumulateBatchesAndSort(accumulator) => {
+            accumulate_and_sort(accumulator, inputs, writer)
+        }
+        NodeRef::CoalesceAllBatches(coalesce) => coalesce_all_batches(coalesce, inputs, writer),
+        NodeRef::AggregateBatches(merge) => aggregate_batches(merge, inputs, writer),
+        NodeRef::MergeSortedPartitions(merge) => merge_sorted_partitions(merge, inputs, writer),
+        NodeRef::EmitPartitions(emitter) => emit_partitions(emitter, node, inputs, writer),
+        NodeRef::Join(join_node) => join::hash_join(join_node, inputs, writer),
+        NodeRef::CrossJoin(cross) => cross_join(cross, inputs, writer),
+        NodeRef::NestedLoopJoin(nested) => join::nested_loop_join(nested, inputs, writer),
+        NodeRef::Limit(limit_node) => limit(limit_node, inputs, writer),
+        NodeRef::Unload(unload_node) => unload(unload_node, inputs, writer),
         // The three that route rather than compute: not one call between them.
-        NodeRef::MergePartitions(_) | NodeRef::Union(_) | NodeRef::Interleave(_) => None,
+        NodeRef::MergePartitions(_) | NodeRef::Union(_) | NodeRef::Interleave(_) => Ok(None),
     }
 }
 
 /// The additive entry point, and the reason it exists: the node's own row-group list is
 /// overridden per call, so one seq serves every batch the mapping cut the scan into.
-fn scan(_node: &GpuLoadParquet, _inputs: &[&Schema], seqs: &mut Seqs) -> Option<Recipe> {
-    Some(Recipe::of(vec![Call::seq(
-        seqs.allocate(),
+fn scan(
+    load: &GpuLoadParquet,
+    node: &dyn GpuNode,
+    writer: &mut Writer,
+) -> Result<Option<Recipe>, PlanError> {
+    let output = node.kind().schema().expect("a source declares its columns");
+    let seq = writer.node(0, |b, _| node_writer::scan(b, load, output))?;
+    Ok(Some(Recipe::of(vec![Call::seq(
+        seq,
         FbKind::Scan,
         vec![Input::RowGroups],
         CallPattern::PerBatch,
-    )]))
+    )])))
 }
 
-fn map_arm(kind: FbKind, _inputs: &[&Schema], seqs: &mut Seqs) -> Option<Recipe> {
-    Some(Recipe::of(vec![Call::seq(
-        seqs.allocate(),
-        kind,
+fn filter(
+    node: &GpuFilter,
+    _inputs: &[&Schema],
+    writer: &mut Writer,
+) -> Result<Option<Recipe>, PlanError> {
+    let seq = writer.node(1, |b, kids| node_writer::filter(b, node, kids))?;
+    Ok(Some(Recipe::of(vec![Call::seq(
+        seq,
+        FbKind::Filter,
         vec![Input::Batch],
         CallPattern::PerBatch,
-    )]))
+    )])))
 }
 
-/// The map arm again; a top-N's `fetch` rides the node, so it trims each batch and the
-/// accumulator above it trims the merged result.
-fn sort(_node: &GpuSort, _inputs: &[&Schema], seqs: &mut Seqs) -> Option<Recipe> {
-    map_arm(FbKind::Sort, _inputs, seqs)
+fn project(
+    node: &GpuProject,
+    _inputs: &[&Schema],
+    writer: &mut Writer,
+) -> Result<Option<Recipe>, PlanError> {
+    let seq = writer.node(1, |b, kids| node_writer::project(b, node, kids))?;
+    Ok(Some(Recipe::of(vec![Call::seq(
+        seq,
+        FbKind::PlainProject,
+        vec![Input::Batch],
+        CallPattern::PerBatch,
+    )])))
+}
+
+/// The map arm; a top-N's `fetch` rides the node, so it trims each batch and whatever
+/// accumulates above it trims the merged result.
+fn sort(
+    node: &GpuSort,
+    inputs: &[&Schema],
+    writer: &mut Writer,
+) -> Result<Option<Recipe>, PlanError> {
+    let input = inputs[0];
+    let seq = writer.node(1, |b, kids| node_writer::sort(b, node, input, kids))?;
+    Ok(Some(Recipe::of(vec![Call::seq(
+        seq,
+        FbKind::Sort,
+        vec![Input::Batch],
+        CallPattern::PerBatch,
+    )])))
+}
+
+/// State from raw values, per batch.
+fn aggregate(
+    aggregate_node: &GpuAggregate,
+    inputs: &[&Schema],
+    writer: &mut Writer,
+) -> Result<Option<Recipe>, PlanError> {
+    let input = inputs[0];
+    let body = &aggregate_node.body;
+    let state = aggregate_node.intermediate();
+    let seq = writer.node(1, |b, kids| {
+        aggregate_writer::aggregate(b, body, Phase::Init, input, state, kids)
+    })?;
+    Ok(Some(Recipe::of(vec![Call::seq(
+        seq,
+        FbKind::Aggregate { merge: false },
+        vec![Input::Batch],
+        CallPattern::PerBatch,
+    )])))
 }
 
 /// Sorted as the batches arrive, merged once at done: the merge arm takes whatever k
 /// handles the call hands it, so the lane's batch count is a runtime number.
 fn accumulate_and_sort(
-    _node: &GpuAccumulateBatchesAndSort,
-    _inputs: &[&Schema],
-    seqs: &mut Seqs,
-) -> Option<Recipe> {
-    Some(Recipe::of(vec![
+    node: &GpuAccumulateBatchesAndSort,
+    inputs: &[&Schema],
+    writer: &mut Writer,
+) -> Result<Option<Recipe>, PlanError> {
+    let input = inputs[0];
+    let per_batch = writer.node(1, |b, kids| {
+        node_writer::accumulating_sort(b, node, input, kids)
+    })?;
+    let at_done = writer.node(1, |b, kids| {
+        node_writer::merge_sorted(b, &node.keys, node.fetch, input, kids)
+    })?;
+    Ok(Some(Recipe::of(vec![
         Call::seq(
-            seqs.allocate(),
+            per_batch,
             FbKind::Sort,
             vec![Input::Batch],
             CallPattern::PerBatch,
         ),
         Call::seq(
-            seqs.allocate(),
+            at_done,
             FbKind::SortPreservingMerge,
             vec![Input::LaneBatches],
             CallPattern::AtDone,
         ),
-    ]))
+    ])))
 }
 
 fn coalesce_all_batches(
     _node: &GpuCoalesceAllBatches,
     _inputs: &[&Schema],
-    seqs: &mut Seqs,
-) -> Option<Recipe> {
-    Some(Recipe::of(vec![Call::seq(
-        seqs.allocate(),
+    writer: &mut Writer,
+) -> Result<Option<Recipe>, PlanError> {
+    let seq = writer.node(1, |b, kids| Ok(node_writer::coalesce_partitions(b, kids)))?;
+    Ok(Some(Recipe::of(vec![Call::seq(
+        seq,
         FbKind::CoalescePartitions,
         vec![Input::LaneBatches],
         CallPattern::AtDone,
-    )]))
+    )])))
 }
 
 /// A compaction runs exactly what done runs, which is what makes the doubling threshold a
-/// scheduling decision rather than a second computation.
+/// scheduling decision rather than a second computation. Where it finalizes, the finalize
+/// rides a project of its own — ours, so both engines evaluate the same expression.
 fn aggregate_batches(
-    _node: &GpuAggregateBatches,
-    _inputs: &[&Schema],
-    seqs: &mut Seqs,
-) -> Option<Recipe> {
-    Some(Recipe::of(vec![
+    merge: &GpuAggregateBatches,
+    inputs: &[&Schema],
+    writer: &mut Writer,
+) -> Result<Option<Recipe>, PlanError> {
+    let input = inputs[0];
+    let body = &merge.body;
+    let state = merge.intermediate();
+    let concat = writer.node(1, |b, kids| Ok(node_writer::coalesce_partitions(b, kids)))?;
+    let merged = writer.node(1, |b, kids| {
+        aggregate_writer::aggregate(b, body, Phase::Merge, input, state, kids)
+    })?;
+    let mut calls = vec![
         Call::seq(
-            seqs.allocate(),
+            concat,
             FbKind::CoalescePartitions,
             vec![Input::LaneBatches],
             CallPattern::PerCompaction,
         ),
         Call::seq(
-            seqs.allocate(),
-            FbKind::Aggregate,
+            merged,
+            FbKind::Aggregate { merge: true },
             vec![Input::PriorOutput],
             CallPattern::PerCompaction,
         ),
-    ]))
+    ];
+    if let Some(finalize) = &body.finalize {
+        let seq = writer.node(1, |b, kids| {
+            let mut exprs = Vec::with_capacity(finalize.len());
+            for column in finalize {
+                exprs.push(expr_writer::write_expr(b, &column.expr)?);
+            }
+            let names = finalize
+                .iter()
+                .map(|column| b.create_string(&column.name))
+                .collect();
+            Ok(node_writer::project_payload(b, exprs, names, kids[0]))
+        })?;
+        calls.push(Call::seq(
+            seq,
+            FbKind::Project(ProjectRole::Finalize),
+            vec![Input::PriorOutput],
+            CallPattern::AtDone,
+        ));
+    }
+    Ok(Some(Recipe::of(calls)))
 }
 
 fn merge_sorted_partitions(
-    _node: &GpuMergeSortedPartitions,
-    _inputs: &[&Schema],
-    seqs: &mut Seqs,
-) -> Option<Recipe> {
-    Some(Recipe::of(vec![Call::seq(
-        seqs.allocate(),
+    node: &GpuMergeSortedPartitions,
+    inputs: &[&Schema],
+    writer: &mut Writer,
+) -> Result<Option<Recipe>, PlanError> {
+    let input = inputs[0];
+    let seq = writer.node(1, |b, kids| {
+        node_writer::merge_partitions(b, node, input, kids)
+    })?;
+    Ok(Some(Recipe::of(vec![Call::seq(
+        seq,
         FbKind::SortPreservingMerge,
         vec![Input::AllLanes],
         CallPattern::AtDone,
-    )]))
+    )])))
 }
 
 /// The lane count is the one thing a recipe repeats from the plan line, because it is a
 /// field of the node the call addresses rather than a fact about this node's output.
 fn emit_partitions(
-    node: &GpuEmitPartitions,
-    _inputs: &[&Schema],
-    seqs: &mut Seqs,
-) -> Option<Recipe> {
+    emitter: &GpuEmitPartitions,
+    node: &dyn GpuNode,
+    inputs: &[&Schema],
+    writer: &mut Writer,
+) -> Result<Option<Recipe>, PlanError> {
+    let input = inputs[0];
     let lanes = node.kind().layout().expect("an emitter is not a sink").n as u32;
-    Some(Recipe::of(vec![Call::seq(
-        seqs.allocate(),
+    let seq = writer.node(1, |b, kids| {
+        node_writer::repartition(b, emitter, input, lanes, kids)
+    })?;
+    Ok(Some(Recipe::of(vec![Call::seq(
+        seq,
         FbKind::Repartition { lanes },
         vec![Input::Batch],
         CallPattern::PerBatch,
-    )]))
+    )])))
 }
 
-fn cross_join(_node: &GpuCrossJoin, _inputs: &[&Schema], seqs: &mut Seqs) -> Option<Recipe> {
-    Some(Recipe::of(vec![Call::seq(
-        seqs.allocate(),
+fn cross_join(
+    _node: &GpuCrossJoin,
+    _inputs: &[&Schema],
+    writer: &mut Writer,
+) -> Result<Option<Recipe>, PlanError> {
+    let seq = writer.node(2, |b, kids| Ok(join::cross_join_payload(b, kids)))?;
+    Ok(Some(Recipe::of(vec![Call::seq(
+        seq,
         FbKind::CrossJoin,
         vec![Input::BuildSideCopy, Input::Batch],
         CallPattern::PerProbeBatch,
-    )]))
+    )])))
 }
 
 /// No seq: skip and fetch are frozen per node, and the right bound for a batch is a
 /// runtime value no frozen node can carry. Only the two straddling batches are sliced —
 /// the rest are forwarded or released where they stand.
-fn limit(_node: &GpuLimit, _inputs: &[&Schema], _seqs: &mut Seqs) -> Option<Recipe> {
-    Some(Recipe::of(vec![Call::bare(
+fn limit(
+    _node: &GpuLimit,
+    _inputs: &[&Schema],
+    _writer: &mut Writer,
+) -> Result<Option<Recipe>, PlanError> {
+    Ok(Some(Recipe::of(vec![Call::bare(
         AbiSymbol::SliceHandle,
         vec![Input::Batch, Input::RowRange],
         CallPattern::PerStraddlingBatch,
-    )]))
+    )])))
 }
 
 /// Also no seq, and for the same reason: the row range the sink exports is counted across
 /// lanes at run time. A batch outside a root-adjacent interval is released without a call.
-fn unload(_node: &GpuUnload, _inputs: &[&Schema], _seqs: &mut Seqs) -> Option<Recipe> {
-    Some(Recipe::of(vec![Call::bare(
+fn unload(
+    _node: &GpuUnload,
+    _inputs: &[&Schema],
+    _writer: &mut Writer,
+) -> Result<Option<Recipe>, PlanError> {
+    Ok(Some(Recipe::of(vec![Call::bare(
         AbiSymbol::ResultFromHandle,
         vec![Input::Batch, Input::RowRange],
         CallPattern::PerHandle,
-    )]))
+    )])))
 }
 
 #[cfg(test)]
