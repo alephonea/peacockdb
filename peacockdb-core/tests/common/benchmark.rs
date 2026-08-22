@@ -3,23 +3,31 @@
 //!
 //! Split out of `common/mod.rs`, which every test target compiles — including the
 //! rust-only ones, which have no FFI to call. So the gating here is per item rather
-//! than per file: the path builder and the formatter are pure and stay available,
-//! and only the parts that execute a query are cut out under `rust-only`.
+//! than per file: the path builder is pure and stays available; the formatter and the
+//! run itself are cut out under `rust-only`, because both now read the conditions of
+//! the run off the process instead of taking them as arguments.
 
 use std::path::PathBuf;
+
+use super::testdata_root;
+
+// Everything but the path builder is cut out under rust-only: the run needs the FFI, and
+// so now does the formatter, which reads the conditions of the run off the process rather
+// than taking them as arguments.
+#[cfg(not(feature = "rust-only"))]
 use std::sync::Arc;
 
+#[cfg(not(feature = "rust-only"))]
 use datafusion::physical_plan::ExecutionPlan;
+#[cfg(not(feature = "rust-only"))]
 use peacockdb_core::cpu_executor::NodeMemoryStats;
+#[cfg(not(feature = "rust-only"))]
+use peacockdb_core::gpu_executor::{install_rmm_pool, RmmPool};
 
-use super::{testdata_root, OneLine};
-
-// Only `run_gpu_benchmark` runs a query, and it is cfg'd out under rust-only along
-// with everything it needs.
 #[cfg(not(feature = "rust-only"))]
 use super::exec_mode::{golden_label, gpu_label_device, ExecMode};
 #[cfg(not(feature = "rust-only"))]
-use super::{data_dir_for, device_config, queries_dir_for};
+use super::{data_dir_for, device_config, queries_dir_for, OneLine};
 
 /// Per-node timing snapshot written by the `peacock_gpu_benchmarks` target.
 ///
@@ -60,23 +68,17 @@ pub fn benchmark_result(dataset: &str, sf: &str, query: &str, label: &str) -> Pa
 /// silently includes one, so without it a reader cannot separate "this node is cheap"
 /// from "this node is under the method's resolution".
 ///
-/// `build_profile` is written for the same class of reason: the gap between the two
-/// totals is Rust that the profile decides the speed of, so two records built under
-/// different profiles look directly comparable and are not. See [`BUILD_PROFILE`].
-///
-/// `allocator` is the third of that family, and the one with the largest effect. cuDF
-/// routes every intermediate through rmm's current device resource; with no pool that is
-/// a `cudaMalloc`/`cudaFree` round trip each, which lands on a node in proportion to how
-/// much it materializes. So it inflates the biggest nodes hardest — distorting the
-/// profile, not just the scale — and two records taken under different resources are not
-/// comparable even node for node. See `install_rmm_pool`.
+/// `build_profile` and `allocator` are read here rather than passed in, because they
+/// are conditions of the run and not choices of the caller: every record is written
+/// from a release build measuring over a pooled rmm resource, and `run_gpu_benchmark`
+/// asserts both before it measures anything. The two lines say WHICH release profile
+/// and which pool sizes, not whether there was one.
+#[cfg(not(feature = "rust-only"))]
 pub fn bench_stats_str(
     plan: &Arc<dyn ExecutionPlan>,
     stats: &[NodeMemoryStats],
     total_us: u64,
     sync_floor_us: u64,
-    build_profile: &str,
-    allocator: &str,
 ) -> String {
     struct Node<'a> {
         stat: &'a NodeMemoryStats,
@@ -147,17 +149,16 @@ pub fn bench_stats_str(
             .to_string(),
     );
     lines.push(
-        "# build_profile = how the harness itself was compiled. total_us MINUS \
-         nodes_total_us is that Rust; records from different profiles are not \
-         comparable on it. Node times are device work and barely move."
+        "# build_profile = how the harness itself was compiled. Always a release build; \
+         total_us MINUS nodes_total_us is that Rust, and node times are device work and \
+         barely move."
             .to_string(),
     );
     lines.push(
-        "# allocator = the rmm device resource the node times were taken under. Without a \
-         pool every cuDF intermediate is a cudaMalloc/cudaFree round trip, charged to the \
-         node that allocated it — so it inflates the largest-output nodes hardest and moves \
-         the PROFILE, not only the scale. Records under different allocators are not \
-         comparable, node for node or in total."
+        "# allocator = the rmm device resource the node times were taken under. Always a \
+         pool: with rmm's default every cuDF intermediate is a cudaMalloc/cudaFree round \
+         trip charged to the node that allocated it, which moves the PROFILE and not only \
+         the scale. The sizes vary with free memory when the pool was built."
             .to_string(),
     );
     // Written for every tree, including trees with no repartition in them. A line
@@ -172,8 +173,8 @@ pub fn bench_stats_str(
          their node line either way. Written whether or not this plan has a repartition."
             .to_string(),
     );
-    lines.push(format!("build_profile={build_profile}"));
-    lines.push(format!("allocator={allocator}"));
+    lines.push(format!("build_profile={BUILD_PROFILE}"));
+    lines.push(format!("allocator={}", install_rmm_pool()));
     lines.push("shared_work_charged_to=p0".to_string());
     lines.push(format!("sync_floor_us={sync_floor_us}"));
     lines.push(format!("nodes_at_or_below_floor={at_floor}/{}", stats.len()));
@@ -186,10 +187,11 @@ pub fn bench_stats_str(
 /// How this binary was compiled, as `<profile-dir> opt-level=<n>`, baked in by
 /// `build.rs` and written into every record.
 ///
-/// The one thing a reader cannot recover from the numbers themselves. Built by
-/// `--build-benchmarks` this reads `benchmarks opt-level=3`; from a plain
-/// `cargo test` it reads `debug opt-level=1`, which measures a different host
-/// overhead — see `[profile.benchmarks]` in the workspace Cargo.toml for why.
+/// The one condition of a run a reader cannot recover from the numbers themselves.
+/// Built by `--build-benchmarks` this reads `benchmarks opt-level=3`; from a plain
+/// `cargo test` it would read `debug opt-level=1`, which measures a different host
+/// overhead — see `[profile.benchmarks]` in the workspace Cargo.toml — and
+/// `run_gpu_benchmark` refuses that build rather than recording it.
 pub const BUILD_PROFILE: &str =
     concat!(env!("PEACOCK_BUILD_PROFILE"), " opt-level=", env!("PEACOCK_BUILD_OPT_LEVEL"));
 
@@ -246,9 +248,7 @@ pub async fn run_gpu_benchmark(
     gpu_label: &str,
     mode: ExecMode,
 ) {
-    use peacockdb_core::gpu_executor::{
-        install_rmm_pool, measure_timing_floor_us, set_node_timing, GpuExecutor,
-    };
+    use peacockdb_core::gpu_executor::{measure_timing_floor_us, set_node_timing, GpuExecutor};
 
     const _: () = assert!(BENCH_MEASURED_RUNS >= 2, "a second minimum needs >= 2 runs");
 
@@ -259,12 +259,26 @@ pub async fn run_gpu_benchmark(
     //
     // Called per case rather than once behind a OnceLock because the C++ side is already
     // idempotent — a second call returns the first one's outcome and builds nothing. One
-    // guard, on the side that owns the resource, rather than two that can disagree; and
-    // asking here means the label is read at the same place it is written.
-    //
-    // Not asserted on. A run without a pool is slower and still a valid measurement; it is
-    // only an invalid COMPARISON, which is what writing the outcome into the file prevents.
+    // guard, on the side that owns the resource, rather than two that can disagree.
     let allocator = install_rmm_pool();
+    assert!(
+        matches!(allocator, RmmPool::Pool { .. }),
+        "the benchmarks measure over a pooled rmm resource, always — this run has \
+         {allocator}. Refuse rather than write it: with rmm's default every cuDF \
+         intermediate is a cudaMalloc/cudaFree round trip charged to the node that \
+         allocated it, so the record would compare with nothing already in \
+         testdata/benchmark-results/."
+    );
+    // Release-family rather than a profile NAME, so a plain `--release` build is not
+    // rejected for the wrong reason; the name still goes into the record, because which
+    // one it was is worth knowing. Checked before the runs: a debug harness measures a
+    // different host overhead in total_us MINUS nodes_total_us, and learning that at write
+    // time costs the whole run.
+    assert!(
+        env!("PEACOCK_BUILD_OPT_LEVEL") == "3" && !cfg!(debug_assertions),
+        "the benchmarks are measured from a release build, always — this one is \
+         {BUILD_PROFILE}. Build it with scripts/build-test-shadgpu.sh --build-benchmarks."
+    );
 
     let data_dir = data_dir_for(dataset, sf);
     let sql_path = queries_dir_for(dataset).join(format!("{query}.sql"));
@@ -329,17 +343,7 @@ pub async fn run_gpu_benchmark(
     std::fs::create_dir_all(out.parent().unwrap()).unwrap();
     std::fs::write(
         &out,
-        format!(
-            "{}\n",
-            bench_stats_str(
-                plan,
-                stats,
-                *total_us,
-                sync_floor_us,
-                BUILD_PROFILE,
-                &allocator.to_string(),
-            )
-        ),
+        format!("{}\n", bench_stats_str(plan, stats, *total_us, sync_floor_us)),
     )
     .unwrap();
     eprintln!(

@@ -30,12 +30,11 @@ fn main() {
 /// Bake how this crate was compiled into it, for `peacock_gpu_benchmarks` to write
 /// into every measurement record (`build_profile=`).
 ///
-/// Two records built under different profiles look directly comparable and are not
-/// (`[profile.benchmarks]` in the workspace Cargo.toml says why). Same trap
-/// `sync_floor_us` and `allocator` exist to close: a number whose meaning depends on
-/// how it was produced has to carry that with it. Of the three this is the only one
-/// baked at compile time, because it is the only one the running process cannot ask
-/// about itself.
+/// The harness refuses to run from a non-release build, so this says WHICH release
+/// profile rather than whether it was one (`[profile.benchmarks]` in the workspace
+/// Cargo.toml says why the distinction is worth keeping). Baked at compile time
+/// because, unlike `sync_floor_us` and `allocator`, it is the one condition of a run
+/// the running process cannot ask about itself.
 ///
 /// Cargo hands a build script `OPT_LEVEL` directly, but not the profile NAME:
 /// `PROFILE` collapses every release-inheriting profile to "release". The profile

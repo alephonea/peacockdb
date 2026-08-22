@@ -11,21 +11,20 @@
 //!
 //!   testdata/benchmark-results/<dataset>.sf<sf>/<query>.<label>.benchmark.txt
 //!
-//! as the plan tree with `time_us` per node, then `build_profile` (how the harness
-//! itself was compiled — see [`common::benchmark::BUILD_PROFILE`]), `allocator` (which
-//! rmm device resource the times were taken under — see
+//! as the plan tree with `time_us` per node, then `build_profile` (which release profile
+//! the harness was compiled under — see [`common::benchmark::BUILD_PROFILE`]),
+//! `allocator` (the rmm pool the times were taken under — see
 //! `executors::backend::gpu_node_executor::install_rmm_pool`), `sync_floor_us` (what the
 //! measurement costs when there is nothing to measure — every node time includes
 //! one), `nodes_at_or_below_floor`, `nodes_total_us` and `total_us`.
 //!
-//! The three head fields all answer the same question in different registers — under
-//! what conditions is this number true — and `allocator` is the one that moves the node
-//! times themselves. It exists because the C++ gtest binaries install a pool and, until
-//! this target did too, the two families of numbers in the tree were taken under
-//! different allocators and compared anyway (`llm-wiki/tickets.md` #151).
-//! See `common::benchmark::run_gpu_benchmark` for why one whole run is picked rather than a
-//! per-node minimum, and `executors::backend::gpu_node_executor::set_node_timing`
-//! for why measuring at all requires synchronizing the CUDA stream.
+//! The first two are conditions of the run rather than variables of it: the records only
+//! compare with each other, and with the C++ gtest binaries' numbers, because every one of
+//! them is a release build measuring over a pool. `run_gpu_benchmark` asserts both before
+//! it measures anything, so the two lines say WHICH profile and which pool sizes, not
+//! whether there was one. See it too for why one whole run is picked rather than a per-node
+//! minimum, and `executors::backend::gpu_node_executor::set_node_timing` for why measuring
+//! at all requires synchronizing the CUDA stream.
 //!
 //! `<label>` is the `<mode>-<tp>-<tier>` component the `.cpu.txt` goldens already
 //! carry, and it is in the file name because 16 of the cases (tpch q1/q3/q5/…, tpcds
