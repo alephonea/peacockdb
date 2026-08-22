@@ -50,13 +50,24 @@ pub struct RegistryEntry {
 inventory::collect!(RegistryEntry);
 
 /// The CSV's per-mode columns, in file order.
-pub const COLUMNS: [&str; 6] = [
+///
+/// The five `bp_` columns are the batch-partitioned mode's plan enablement, one per
+/// mode — the three batching forms crossed with the lane counts that make them distinct. They are the one group no test macro registers: that mode's plan goldens are
+/// one file per mode rather than one file per query, so what declares a cell is the
+/// golden's section for that query, and `test_batch_partitioned_plans` is what holds
+/// the two to each other in both directions.
+pub const COLUMNS: [&str; 11] = [
     "plan",
     "ftc_tp1",
     "ftc_tp8",
     "partitioned_cpu",
     "full_table_gpu",
     "partitioned_gpu",
+    "bp_tp1_single",
+    "bp_tp1_rowgroup",
+    "bp_tp4_single",
+    "bp_tp4_rowgroup",
+    "bp_tp4_sized",
 ];
 
 /// Map a registration to its CSV column.
@@ -94,10 +105,10 @@ pub struct CsvRow {
     pub tickets: Vec<String>,
 }
 
-/// The 14 hand-assigned feature codes. Not derived from SQL and not asserted
+/// The 15 hand-assigned feature codes. Not derived from SQL and not asserted
 /// against it — but the SET is closed, so a typo'd code fails rather than silently
 /// creating a new one-off category that renders as an unknown chip in the widget.
-pub const FEATURE_CODES: [&str; 14] = [
+pub const FEATURE_CODES: [&str; 15] = [
     "window_functions",
     "rollup",
     "grouping_sets",
@@ -112,6 +123,7 @@ pub const FEATURE_CODES: [&str; 14] = [
     "string_like",
     "top_n",
     "outer_join",
+    "limit_offset",
 ];
 
 pub fn registry_csv_path() -> std::path::PathBuf {

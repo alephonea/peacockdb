@@ -1,136 +1,138 @@
-dataset,sf,query,plan,ftc_tp1,ftc_tp8,partitioned_cpu,full_table_gpu,partitioned_gpu,plan_status,features,tickets
-tpcds,1,q1,enabled,enabled,enabled,na,enabled,na,ok,corr_subquery avg top_n,
-tpcds,1,q2,enabled,na,enabled,na,na,na,ok,corr_subquery,56
-tpcds,1,q3,enabled,enabled,enabled,na,enabled,na,ok,corr_subquery top_n,
-tpcds,1,q4,enabled,enabled,enabled,na,enabled,na,ok,corr_subquery top_n,
-tpcds,1,q5,enabled,enabled,enabled,na,enabled,na,ok,rollup top_n outer_join,65 97
-tpcds,1,q6,enabled,enabled,enabled,na,enabled,na,ok,corr_subquery avg top_n,
-tpcds,1,q7,enabled,enabled,enabled,na,enabled,na,ok,avg top_n,
-tpcds,1,q8,enabled,enabled,enabled,na,enabled,na,ok,top_n,
-tpcds,1,q9,enabled,na,enabled,na,na,na,ok,avg,63
-tpcds,1,q10,enabled,enabled,enabled,na,enabled,na,ok,semi_join corr_subquery top_n,97
-tpcds,1,q11,enabled,enabled,enabled,na,enabled,na,ok,corr_subquery top_n,
-tpcds,1,q12,enabled,enabled,enabled,na,enabled,na,ok,window_functions top_n,32
-tpcds,1,q13,enabled,enabled,enabled,na,enabled,na,ok,avg,
-tpcds,1,q14,enabled,enabled,enabled,na,enabled,na,ok,rollup semi_join avg top_n,65 97
-tpcds,1,q15,enabled,enabled,enabled,na,enabled,na,ok,top_n,
-tpcds,1,q16,enabled,enabled,enabled,na,enabled,na,ok,anti_join semi_join corr_subquery count_distinct top_n,97 59 80 62
-tpcds,1,q17,enabled,enabled,enabled,enabled,enabled,enabled,ok,stddev_var avg top_n,
-tpcds,1,q18,enabled,enabled,enabled,na,enabled,na,ok,rollup avg top_n,65
-tpcds,1,q19,enabled,enabled,enabled,na,enabled,na,ok,top_n,
-tpcds,1,q20,enabled,enabled,enabled,na,enabled,na,ok,window_functions top_n,32
-tpcds,1,q21,enabled,enabled,enabled,na,enabled,na,ok,top_n,
-tpcds,1,q22,enabled,enabled,enabled,na,enabled,na,ok,rollup avg top_n,65
-tpcds,1,q23,enabled,enabled,enabled,na,enabled,na,ok,top_n,
-tpcds,1,q24,enabled,enabled,enabled,na,enabled,na,ok,avg,45
-tpcds,1,q25,enabled,enabled,enabled,na,enabled,na,ok,top_n,
-tpcds,1,q26,enabled,enabled,enabled,na,enabled,na,ok,avg top_n,
-tpcds,1,q27,disabled,na,disabled,na,na,na,fail,avg top_n,23
-tpcds,1,q28,enabled,na,enabled,na,na,na,ok,avg count_distinct top_n,62
-tpcds,1,q29,enabled,enabled,enabled,na,enabled,na,ok,top_n,
-tpcds,1,q30,enabled,enabled,enabled,na,enabled,na,ok,corr_subquery avg top_n,
-tpcds,1,q31,enabled,enabled,enabled,na,enabled,na,ok,corr_subquery,
-tpcds,1,q32,enabled,enabled,enabled,na,enabled,na,ok,avg top_n,
-tpcds,1,q33,enabled,enabled,enabled,na,enabled,na,ok,semi_join top_n,97
-tpcds,1,q34,enabled,enabled,enabled,na,enabled,na,ok,corr_subquery,
-tpcds,1,q35,enabled,enabled,enabled,na,enabled,na,ok,semi_join corr_subquery avg top_n,97
-tpcds,1,q36,enabled,na,enabled,na,na,na,ok,window_functions top_n,32
-tpcds,1,q37,enabled,enabled,enabled,na,enabled,na,ok,top_n,
-tpcds,1,q38,enabled,na,enabled,na,na,na,ok,corr_subquery top_n,115
-tpcds,1,q39,enabled,na,enabled,na,na,na,ok,corr_subquery stddev_var avg,57
-tpcds,1,q40,enabled,enabled,enabled,na,enabled,na,ok,top_n outer_join,97
-tpcds,1,q41,enabled,enabled,enabled,na,enabled,na,ok,top_n,
-tpcds,1,q42,enabled,enabled,enabled,na,enabled,na,ok,corr_subquery top_n,
-tpcds,1,q43,enabled,enabled,enabled,na,enabled,na,ok,top_n,
-tpcds,1,q44,enabled,na,enabled,na,na,na,ok,window_functions corr_subquery avg top_n,32
-tpcds,1,q45,enabled,enabled,enabled,na,enabled,na,ok,semi_join top_n,97
-tpcds,1,q46,enabled,enabled,enabled,na,enabled,na,ok,corr_subquery top_n,
-tpcds,1,q47,enabled,na,enabled,na,na,na,ok,window_functions corr_subquery avg top_n,32
-tpcds,1,q48,enabled,enabled,enabled,na,enabled,na,ok,,
-tpcds,1,q49,enabled,na,enabled,na,na,na,ok,window_functions corr_subquery top_n outer_join,32 97
-tpcds,1,q50,enabled,enabled,enabled,na,enabled,na,ok,top_n,
-tpcds,1,q51,enabled,enabled,enabled,na,enabled,na,ok,window_functions corr_subquery top_n outer_join,32 97
-tpcds,1,q52,enabled,enabled,enabled,na,enabled,na,ok,corr_subquery top_n,
-tpcds,1,q53,enabled,enabled,enabled,na,enabled,na,ok,window_functions avg top_n,32
-tpcds,1,q54,enabled,enabled,enabled,na,enabled,na,ok,top_n,
-tpcds,1,q55,enabled,enabled,enabled,na,enabled,na,ok,top_n,
-tpcds,1,q56,enabled,enabled,enabled,na,enabled,na,ok,semi_join top_n,97
-tpcds,1,q57,enabled,na,enabled,na,na,na,ok,window_functions corr_subquery avg top_n,32
-tpcds,1,q58,enabled,enabled,enabled,na,enabled,na,ok,semi_join corr_subquery top_n,97
-tpcds,1,q59,enabled,enabled,enabled,na,enabled,na,ok,corr_subquery top_n,
-tpcds,1,q60,enabled,enabled,enabled,na,enabled,na,ok,semi_join top_n,97
-tpcds,1,q61,enabled,na,enabled,na,na,na,ok,top_n,46
-tpcds,1,q62,enabled,enabled,enabled,na,enabled,na,ok,top_n,
-tpcds,1,q63,enabled,enabled,enabled,na,enabled,na,ok,window_functions avg top_n,32
-tpcds,1,q64,enabled,enabled,enabled,na,enabled,na,ok,corr_subquery,
-tpcds,1,q65,enabled,enabled,enabled,na,enabled,na,ok,corr_subquery avg top_n,
-tpcds,1,q66,enabled,na,enabled,na,na,na,ok,top_n,55
-tpcds,1,q67,enabled,na,enabled,na,na,na,ok,window_functions rollup top_n,32 65
-tpcds,1,q68,enabled,enabled,enabled,na,enabled,na,ok,corr_subquery top_n,
-tpcds,1,q69,enabled,enabled,enabled,na,enabled,na,ok,anti_join semi_join corr_subquery top_n,97 59 80
-tpcds,1,q70,disabled,na,disabled,na,na,na,fail,window_functions rollup semi_join top_n,23 32 65 97
-tpcds,1,q71,enabled,enabled,enabled,na,enabled,na,ok,,
-tpcds,1,q72,disabled,na,disabled,na,na,na,fail,corr_subquery top_n outer_join,23 97
-tpcds,1,q73,enabled,enabled,enabled,na,enabled,na,ok,corr_subquery,
-tpcds,1,q74,enabled,enabled,enabled,na,enabled,na,ok,corr_subquery top_n,
-tpcds,1,q75,enabled,enabled,enabled,na,enabled,na,ok,corr_subquery top_n outer_join,97
-tpcds,1,q76,enabled,na,enabled,na,na,na,ok,top_n,115
-tpcds,1,q77,enabled,na,enabled,na,na,na,ok,rollup corr_subquery top_n outer_join,47 65 97
-tpcds,1,q78,enabled,na,enabled,na,na,na,ok,top_n outer_join,60 97
-tpcds,1,q79,enabled,enabled,enabled,na,enabled,na,ok,corr_subquery top_n,
-tpcds,1,q80,enabled,enabled,enabled,na,enabled,na,ok,rollup top_n outer_join,65 97
-tpcds,1,q81,enabled,enabled,enabled,na,enabled,na,ok,corr_subquery avg top_n,
-tpcds,1,q82,enabled,enabled,enabled,na,enabled,na,ok,top_n,
-tpcds,1,q83,enabled,enabled,enabled,na,enabled,na,ok,semi_join corr_subquery top_n,97
-tpcds,1,q84,enabled,enabled,enabled,na,enabled,na,ok,top_n,
-tpcds,1,q85,enabled,enabled,enabled,na,enabled,na,ok,corr_subquery avg top_n,
-tpcds,1,q86,disabled,na,disabled,na,na,na,fail,window_functions rollup top_n,23 32 65
-tpcds,1,q87,enabled,na,enabled,na,na,na,ok,corr_subquery,115 80
-tpcds,1,q88,enabled,enabled,enabled,na,enabled,na,ok,,
-tpcds,1,q89,enabled,enabled,enabled,na,enabled,na,ok,window_functions avg top_n,32
-tpcds,1,q90,enabled,enabled,enabled,na,enabled,na,ok,top_n,
-tpcds,1,q91,enabled,enabled,enabled,na,enabled,na,ok,string_like,
-tpcds,1,q92,enabled,enabled,enabled,na,enabled,na,ok,avg top_n,
-tpcds,1,q93,enabled,enabled,enabled,na,enabled,na,ok,top_n outer_join,97
-tpcds,1,q94,enabled,enabled,enabled,na,enabled,na,ok,anti_join semi_join corr_subquery count_distinct top_n,97 59 80 62
-tpcds,1,q95,enabled,enabled,enabled,na,enabled,na,ok,semi_join corr_subquery count_distinct top_n,97 62
-tpcds,1,q96,enabled,enabled,enabled,na,enabled,na,ok,top_n,
-tpcds,1,q97,enabled,enabled,enabled,na,enabled,na,ok,corr_subquery top_n outer_join,97
-tpcds,1,q98,enabled,enabled,enabled,na,enabled,na,ok,window_functions,32
-tpcds,1,q99,enabled,enabled,enabled,na,enabled,na,ok,top_n,
-tpch,1,q1,enabled,enabled,enabled,enabled,enabled,enabled,ok,avg,
-tpch,1,q2,enabled,enabled,enabled,na,enabled,na,ok,string_like top_n,
-tpch,1,q3,enabled,enabled,enabled,enabled,enabled,enabled,ok,top_n,
-tpch,1,q4,enabled,enabled,enabled,na,enabled,na,ok,semi_join,97
-tpch,1,q5,enabled,enabled,enabled,enabled,enabled,enabled,ok,,
-tpch,1,q6,enabled,enabled,enabled,enabled,enabled,enabled,ok,,
-tpch,1,q7,enabled,enabled,enabled,enabled,enabled,enabled,ok,,
-tpch,1,q8,enabled,enabled,enabled,enabled,enabled,enabled,ok,,
-tpch,1,q9,enabled,enabled,enabled,enabled,enabled,enabled,ok,string_like,
-tpch,1,q10,enabled,enabled,enabled,na,enabled,na,ok,top_n,
-tpch,1,q11,enabled,enabled,enabled,na,enabled,na,ok,,
-tpch,1,q12,enabled,enabled,enabled,enabled,enabled,enabled,ok,,
-tpch,1,q13,enabled,enabled,enabled,enabled,enabled,enabled,ok,string_like outer_join,
-tpch,1,q14,enabled,enabled,enabled,na,enabled,na,ok,string_like,
-tpch,1,q15,enabled,enabled,enabled,na,enabled,na,ok,,
-tpch,1,q16,enabled,enabled,enabled,na,enabled,na,ok,anti_join semi_join count_distinct string_like,97 59 80 62
-tpch,1,q17,enabled,enabled,enabled,na,enabled,na,ok,avg,
-tpch,1,q18,enabled,enabled,enabled,na,enabled,na,ok,semi_join top_n,97
-tpch,1,q19,enabled,enabled,enabled,enabled,enabled,enabled,ok,,
-tpch,1,q20,enabled,enabled,enabled,na,enabled,na,ok,semi_join string_like,97
-tpch,1,q21,enabled,enabled,enabled,na,enabled,na,ok,anti_join semi_join corr_subquery top_n,97 59 80
-tpch,1,q22,enabled,enabled,enabled,na,enabled,na,ok,anti_join avg,97 59 80
-tpch,1,aggregate_groupby,enabled,enabled,enabled,na,enabled,na,ok,,
-tpch,1,anti_join,enabled,enabled,enabled,enabled,enabled,enabled,ok,anti_join semi_join,
-tpch,1,cross_join,enabled,enabled,enabled,na,enabled,na,ok,cross_join,
-tpch,1,filter_project,enabled,enabled,enabled,na,enabled,na,ok,,
-tpch,1,hash_join,enabled,na,enabled,na,na,na,ok,,116
-tpch,1,join_int,na,na,na,enabled,na,enabled,ok,,116
-tpch,1,left_join,enabled,na,enabled,enabled,na,enabled,ok,outer_join,97
-tpch,1,mixed_join,enabled,na,enabled,na,na,na,ok,,116
-tpch,1,nested_loop_join,enabled,enabled,enabled,na,enabled,na,ok,nested_loop_join,
-tpch,1,scan_limit,enabled,enabled,na,na,enabled,na,ok,top_n,
-tpch,1,semi_join,enabled,enabled,enabled,enabled,enabled,enabled,ok,semi_join,
-tpch,1,shuffle_additive,enabled,enabled,enabled,enabled,enabled,enabled,ok,,
-tpch,1,shuffle_additive_avg,na,enabled,enabled,enabled,enabled,enabled,ok,avg,
-tpch,1,shuffle_stddev,na,enabled,enabled,na,enabled,disabled,ok,stddev_var,103
+dataset,sf,query,plan,ftc_tp1,ftc_tp8,partitioned_cpu,full_table_gpu,partitioned_gpu,bp_tp1_single,bp_tp1_rowgroup,bp_tp4_single,bp_tp4_rowgroup,bp_tp4_sized,plan_status,features,tickets
+tpcds,1,q1,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,corr_subquery avg top_n,
+tpcds,1,q2,enabled,na,enabled,na,na,na,enabled,enabled,enabled,enabled,enabled,ok,corr_subquery,56
+tpcds,1,q3,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,corr_subquery top_n,
+tpcds,1,q4,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,corr_subquery top_n,
+tpcds,1,q5,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,rollup top_n outer_join,65 97
+tpcds,1,q6,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,corr_subquery avg top_n,
+tpcds,1,q7,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,avg top_n,
+tpcds,1,q8,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,top_n,
+tpcds,1,q9,enabled,na,enabled,na,na,na,enabled,enabled,enabled,enabled,enabled,ok,avg,63
+tpcds,1,q10,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,semi_join corr_subquery top_n,97
+tpcds,1,q11,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,corr_subquery top_n,
+tpcds,1,q12,enabled,enabled,enabled,na,enabled,na,disabled,disabled,disabled,disabled,disabled,ok,window_functions top_n,32 143
+tpcds,1,q13,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,avg,
+tpcds,1,q14,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,rollup semi_join avg top_n,65 97
+tpcds,1,q15,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,top_n,
+tpcds,1,q16,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,anti_join semi_join corr_subquery count_distinct top_n,97 59 80 62
+tpcds,1,q17,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,ok,stddev_var avg top_n,
+tpcds,1,q18,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,rollup avg top_n,65
+tpcds,1,q19,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,top_n,
+tpcds,1,q20,enabled,enabled,enabled,na,enabled,na,disabled,disabled,disabled,disabled,disabled,ok,window_functions top_n,32 143
+tpcds,1,q21,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,top_n,
+tpcds,1,q22,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,rollup avg top_n,65
+tpcds,1,q23,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,top_n,
+tpcds,1,q24,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,avg,45
+tpcds,1,q25,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,top_n,
+tpcds,1,q26,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,avg top_n,
+tpcds,1,q27,disabled,na,disabled,na,na,na,na,na,na,na,na,fail,avg top_n,23
+tpcds,1,q28,enabled,na,enabled,na,na,na,disabled,disabled,disabled,disabled,disabled,ok,avg count_distinct top_n,62
+tpcds,1,q29,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,top_n,
+tpcds,1,q30,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,corr_subquery avg top_n,
+tpcds,1,q31,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,corr_subquery,
+tpcds,1,q32,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,avg top_n,
+tpcds,1,q33,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,semi_join top_n,97
+tpcds,1,q34,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,corr_subquery,
+tpcds,1,q35,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,semi_join corr_subquery avg top_n,97
+tpcds,1,q36,enabled,na,enabled,na,na,na,disabled,disabled,disabled,disabled,disabled,ok,window_functions top_n,32 143
+tpcds,1,q37,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,top_n,
+tpcds,1,q38,enabled,na,enabled,na,na,na,enabled,enabled,enabled,enabled,enabled,ok,corr_subquery top_n,115
+tpcds,1,q39,enabled,na,enabled,na,na,na,enabled,enabled,enabled,enabled,enabled,ok,corr_subquery stddev_var avg,57
+tpcds,1,q40,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,top_n outer_join,97
+tpcds,1,q41,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,top_n,
+tpcds,1,q42,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,corr_subquery top_n,
+tpcds,1,q43,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,top_n,
+tpcds,1,q44,enabled,na,enabled,na,na,na,disabled,disabled,disabled,disabled,disabled,ok,window_functions corr_subquery avg top_n,32 143
+tpcds,1,q45,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,semi_join top_n,97
+tpcds,1,q46,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,corr_subquery top_n,
+tpcds,1,q47,enabled,na,enabled,na,na,na,disabled,disabled,disabled,disabled,disabled,ok,window_functions corr_subquery avg top_n,32 143
+tpcds,1,q48,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,,
+tpcds,1,q49,enabled,na,enabled,na,na,na,disabled,disabled,disabled,disabled,disabled,ok,window_functions corr_subquery top_n outer_join,32 97 143
+tpcds,1,q50,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,top_n,
+tpcds,1,q51,enabled,enabled,enabled,na,enabled,na,disabled,disabled,disabled,disabled,disabled,ok,window_functions corr_subquery top_n outer_join,32 97 143
+tpcds,1,q52,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,corr_subquery top_n,
+tpcds,1,q53,enabled,enabled,enabled,na,enabled,na,disabled,disabled,disabled,disabled,disabled,ok,window_functions avg top_n,32 143
+tpcds,1,q54,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,top_n,
+tpcds,1,q55,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,top_n,
+tpcds,1,q56,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,semi_join top_n,97
+tpcds,1,q57,enabled,na,enabled,na,na,na,disabled,disabled,disabled,disabled,disabled,ok,window_functions corr_subquery avg top_n,32 143
+tpcds,1,q58,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,semi_join corr_subquery top_n,97
+tpcds,1,q59,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,corr_subquery top_n,
+tpcds,1,q60,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,semi_join top_n,97
+tpcds,1,q61,enabled,na,enabled,na,na,na,enabled,enabled,enabled,enabled,enabled,ok,top_n,46
+tpcds,1,q62,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,top_n,
+tpcds,1,q63,enabled,enabled,enabled,na,enabled,na,disabled,disabled,disabled,disabled,disabled,ok,window_functions avg top_n,32 143
+tpcds,1,q64,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,corr_subquery,
+tpcds,1,q65,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,corr_subquery avg top_n,
+tpcds,1,q66,enabled,na,enabled,na,na,na,enabled,enabled,enabled,enabled,enabled,ok,top_n,55
+tpcds,1,q67,enabled,na,enabled,na,na,na,disabled,disabled,disabled,disabled,disabled,ok,window_functions rollup top_n,32 65 143
+tpcds,1,q68,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,corr_subquery top_n,
+tpcds,1,q69,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,anti_join semi_join corr_subquery top_n,97 59 80
+tpcds,1,q70,disabled,na,disabled,na,na,na,na,na,na,na,na,fail,window_functions rollup semi_join top_n,23 32 65 97 143
+tpcds,1,q71,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,,
+tpcds,1,q72,disabled,na,disabled,na,na,na,na,na,na,na,na,fail,corr_subquery top_n outer_join,23 97
+tpcds,1,q73,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,corr_subquery,
+tpcds,1,q74,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,corr_subquery top_n,
+tpcds,1,q75,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,corr_subquery top_n outer_join,97
+tpcds,1,q76,enabled,na,enabled,na,na,na,enabled,enabled,enabled,enabled,enabled,ok,top_n,115
+tpcds,1,q77,enabled,na,enabled,na,na,na,enabled,enabled,enabled,enabled,enabled,ok,rollup corr_subquery top_n outer_join,47 65 97
+tpcds,1,q78,enabled,na,enabled,na,na,na,enabled,enabled,enabled,enabled,enabled,ok,top_n outer_join,60 97
+tpcds,1,q79,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,corr_subquery top_n,
+tpcds,1,q80,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,rollup top_n outer_join,65 97
+tpcds,1,q81,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,corr_subquery avg top_n,
+tpcds,1,q82,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,top_n,
+tpcds,1,q83,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,semi_join corr_subquery top_n,97
+tpcds,1,q84,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,top_n,
+tpcds,1,q85,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,corr_subquery avg top_n,
+tpcds,1,q86,disabled,na,disabled,na,na,na,na,na,na,na,na,fail,window_functions rollup top_n,23 32 65 143
+tpcds,1,q87,enabled,na,enabled,na,na,na,enabled,enabled,enabled,enabled,enabled,ok,corr_subquery,115 80
+tpcds,1,q88,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,,
+tpcds,1,q89,enabled,enabled,enabled,na,enabled,na,disabled,disabled,disabled,disabled,disabled,ok,window_functions avg top_n,32 143
+tpcds,1,q90,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,top_n,
+tpcds,1,q91,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,string_like,
+tpcds,1,q92,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,avg top_n,
+tpcds,1,q93,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,top_n outer_join,97
+tpcds,1,q94,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,anti_join semi_join corr_subquery count_distinct top_n,97 59 80 62
+tpcds,1,q95,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,semi_join corr_subquery count_distinct top_n,97 62
+tpcds,1,q96,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,top_n,
+tpcds,1,q97,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,corr_subquery top_n outer_join,97
+tpcds,1,q98,enabled,enabled,enabled,na,enabled,na,disabled,disabled,disabled,disabled,disabled,ok,window_functions,32 143
+tpcds,1,q99,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,top_n,
+tpch,1,q1,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,ok,avg,
+tpch,1,q2,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,string_like top_n,
+tpch,1,q3,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,ok,top_n,
+tpch,1,q4,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,semi_join,97
+tpch,1,q5,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,ok,,
+tpch,1,q6,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,ok,,
+tpch,1,q7,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,ok,,
+tpch,1,q8,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,ok,,
+tpch,1,q9,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,ok,string_like,
+tpch,1,q10,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,top_n,
+tpch,1,q11,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,,
+tpch,1,q12,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,ok,,
+tpch,1,q13,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,ok,string_like outer_join,
+tpch,1,q14,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,string_like,
+tpch,1,q15,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,,
+tpch,1,q16,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,anti_join semi_join count_distinct string_like,97 59 80 62
+tpch,1,q17,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,avg,
+tpch,1,q18,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,semi_join top_n,97
+tpch,1,q19,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,ok,,
+tpch,1,q20,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,semi_join string_like,97
+tpch,1,q21,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,anti_join semi_join corr_subquery top_n,97 59 80
+tpch,1,q22,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,anti_join avg,97 59 80
+tpch,1,aggregate_groupby,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,,
+tpch,1,anti_join,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,ok,anti_join semi_join,
+tpch,1,cross_join,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,cross_join,
+tpch,1,filter_project,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,,
+tpch,1,hash_join,enabled,na,enabled,na,na,na,enabled,enabled,enabled,enabled,enabled,ok,,116
+tpch,1,join_int,na,na,na,enabled,na,enabled,enabled,enabled,enabled,enabled,enabled,ok,,116
+tpch,1,left_join,enabled,na,enabled,enabled,na,enabled,enabled,enabled,enabled,enabled,enabled,ok,outer_join,97
+tpch,1,mixed_join,enabled,na,enabled,na,na,na,enabled,enabled,enabled,enabled,enabled,ok,,116
+tpch,1,nested_limits,na,na,na,na,na,na,enabled,enabled,enabled,enabled,enabled,ok,limit_offset cross_join,
+tpch,1,nested_loop_join,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,nested_loop_join,
+tpch,1,rollup_over_join,na,na,na,na,na,na,enabled,enabled,enabled,enabled,enabled,ok,rollup,
+tpch,1,scan_limit,enabled,enabled,na,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,top_n,
+tpch,1,semi_join,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,ok,semi_join,
+tpch,1,shuffle_additive,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,ok,,
+tpch,1,shuffle_additive_avg,na,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,ok,avg,
+tpch,1,shuffle_stddev,na,enabled,enabled,na,enabled,disabled,enabled,enabled,enabled,enabled,enabled,ok,stddev_var,103

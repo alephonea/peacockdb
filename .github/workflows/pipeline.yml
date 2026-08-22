@@ -164,10 +164,13 @@ jobs:
       # sort-order / clustering checks always run. numpy+pyarrow ship in the rapids base
       # image (cudf depends on pyarrow), but self-heal if a future image drops them
       # rather than letting the validator fail to import.
-      # The exec-model prototype's TPC-H plans, which need the sf1 tables generated
+      # The exec-model prototype's TPC-H plan shapes, which need the sf1 tables generated
       # above — the rest of that suite runs in the cost-report tier, which has no
       # dataset. One matrix leg only: the two legs differ in cuDF, which this pure-python
       # test cannot see, and a second run would only report the same failure twice.
+      # The corpus queries are minutes rather than seconds: they live in
+      # test_tpch_corpus.py and run in exec-model-corpus.yml on manual dispatch, so this
+      # file has none left to exclude.
       - name: Exec-model TPC-H plans (Python)
         if: matrix.cudf == '25.02'
         run: |
@@ -195,7 +198,8 @@ jobs:
           # that reason -- they compiled inside the "pure run" step.
           cargo test --no-run -p peacockdb-core --test test_plan_serialiser --test test_query_plan --test test_cpu_full_table \
             --test test_cpu_executor_misc --test test_cpu_oom --test test_node_executor \
-            --test test_query_plan_misc --test test_cpu_partitioned
+            --test test_query_plan_misc --test test_cpu_partitioned \
+            --test test_batch_partitioned_plans
           cargo test --no-run -p peacockdb-ffi --test test_ffi
           # Separate line because of --features rust-only: cargo's fingerprint
           # includes the feature set, so this cannot share the invocation above.
@@ -203,7 +207,8 @@ jobs:
           # DataFusion/Arrow graph, so the extra compile is small.
           #
           # --lib rides HERE rather than on the default-feature line: the lib unit
-          # tests (config, gpu_rule, resident) touch no FFI, so under rust-only their
+          # tests touch no FFI — config, gpu_rule, resident, and the batch_partitioned
+          # planner, which is most of them now — so under rust-only their
           # binary does not link libpeacock_gpu — a smaller link in the tier that has
           # already hit tmpfs/SIGBUS at link time. It shares this line's already-built
           # rust-only fingerprint, so it costs no extra dependency compile.
@@ -225,6 +230,11 @@ jobs:
       # byte-identical to the build step — especially RUSTFLAGS.
       - name: Run Rust tests
         run: |
+          # Batch-partitioned first: it is the mode under development, so its failures are
+          # the ones worth seeing soonest, and it plans rather than executes so it finishes
+          # in seconds where the legacy tiers take minutes. It plans real sf1 tables,
+          # reading row-group metadata off the parquet, so it needs this tier's dataset.
+          cargo test -p peacockdb-core --test test_batch_partitioned_plans
           cargo test -p peacockdb-core --test test_plan_serialiser
           cargo test -p peacockdb-core --test test_query_plan
           cargo test -p peacockdb-core --test test_cpu_full_table
@@ -248,9 +258,10 @@ jobs:
           # shift that only went red locally would reach master green.
           # See tests/test_plan_bytes.rs and goldens/plan_bytes.sha256.
           cargo test --features rust-only -p peacockdb-core --test test_plan_bytes
-          # The inline #[cfg(test)] modules (config, gpu_rule, resident). Every other
-          # cargo invocation in this file passes --test, which selects integration
-          # targets ONLY — so before this line the 9 lib unit tests ran locally and
+          # The inline #[cfg(test)] modules: config, gpu_rule, resident, and the
+          # batch_partitioned planner, which is 101 of the 110. Every other cargo
+          # invocation in this file passes --test, which selects integration targets
+          # ONLY — so before this line the lib unit tests ran locally and
           # never in CI. test_ci_coverage asserts this line exists.
           cargo test --features rust-only -p peacockdb-core --lib
         env:
@@ -609,14 +620,20 @@ jobs:
           set -euo pipefail
           python3 -c "import pandas" 2>/dev/null || pip install --quiet pandas
           shopt -s nullglob
-          # test_tpch.py needs the generated sf1 tables, which only the cpp-cpu job
-          # produces; it runs there instead. Named rather than pattern-matched, and its
-          # absence is an error, so renaming it cannot silently drop it from both jobs.
-          elsewhere=scripts/exec_model/tests/test_tpch.py
-          [ -f "$elsewhere" ] || { echo "$elsewhere is missing; is it still run in cpp-cpu?"; exit 1; }
+          # These three need the generated sf1 tables, which this job does not have.
+          # test_tpch.py's plan shapes run in cpp-cpu; the two corpus files run in
+          # exec-model-corpus.yml on manual dispatch. Named rather than pattern-matched,
+          # and a missing one is an error, so renaming a file cannot silently drop it from
+          # every job.
+          elsewhere=(scripts/exec_model/tests/test_tpch.py
+                     scripts/exec_model/tests/test_tpch_corpus.py
+                     scripts/exec_model/tests/test_tpcds.py)
+          for e in "${elsewhere[@]}"; do
+            [ -f "$e" ] || { echo "$e is missing; is it still run elsewhere?"; exit 1; }
+          done
           files=()
           for f in scripts/exec_model/tests/test_*.py; do
-            [ "$f" = "$elsewhere" ] || files+=("$f")
+            case " ${elsewhere[*]} " in *" $f "*) ;; *) files+=("$f") ;; esac
           done
           # A vanished glob makes the loop body disappear and the step pass green.
           [ ${#files[@]} -gt 0 ] || { echo "no exec-model test files matched"; exit 1; }
@@ -627,6 +644,30 @@ jobs:
             python3 "$f" || status=1
           done
           exit "$status"
+
+      # The three planner targets run first in this tier for the same reason the
+      # batch-partitioned goldens run first in cpp-cpu: it is the mode under development,
+      # and each of these writes its own parquet, so they finish in well under a second
+      # and a break shows before the report machinery starts.
+      #
+      # The join capability matrix at plan time: every hash join type crossed with a
+      # residual filter, the co-partitioning and lane rules, and the null analysis both
+      # ways. It writes its own parquet — nulls included, which tpch.minimal has none of —
+      # so it needs no generated dataset and belongs in this tier rather than cpp-cpu.
+      - name: Planner join capability (Rust)
+        run: cargo test --features rust-only -p peacockdb-core --test test_planner_join_capability
+
+      # Every shape the planner refuses, reached from the SQL that provokes it: each
+      # asserts its ticket number is in the message a user sees, so a refusal that stops
+      # naming its ticket fails. Same self-written parquet as the step above.
+      - name: Planner join refusals (Rust)
+        run: cargo test --features rust-only -p peacockdb-core --test test_planner_join_refusals
+
+      # Every rule in the null analysis, on hand-built nodes: a source can declare a
+      # NOT-nullable column here, which no corpus fixture can — every column in both
+      # benchmarks is declared nullable, primary keys included.
+      - name: Null analysis rules (Rust)
+        run: cargo test --features rust-only -p peacockdb-core --test test_null_analysis
 
       - name: cost-report unit tests (Rust)
         run: cargo test -p cost-report

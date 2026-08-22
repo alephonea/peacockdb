@@ -12,8 +12,14 @@
   never what the next line does, never process history. If a comment documents an
   important historical decision, a distilled version may go to
   `llm-wiki/archive/historical-comments.md` instead of living in the code.
+- **Comment length is capped.** Four lines for a comment inside a function body, ten for
+  one above a declaration or at the top of a file. A comment past its cap has stopped
+  annotating and started explaining, and an explanation nobody can find unless they are
+  already reading this function is one nobody reads — move it to `llm-wiki/` and leave
+  the line that points there.
 - **Match surrounding idiom** (naming, comment density, error handling). Trust rustfmt;
-  don't hand-format.
+  don't hand-format — and run it over the files you touched, never the crate, which
+  predates the installed rustfmt and reformats 49 of them.
 - **C++ formatting** is defined by `.clang-format` at the repo root. Apply it to the
   lines you changed — `git clang-format` — never to whole files: the tree was never
   machine-formatted, so reformatting one file to fix one function buries a three-line
@@ -36,6 +42,30 @@
 - **No defensive code for impossible scenarios**; trust internal invariants and framework
   guarantees. No fallbacks or feature flags the task didn't ask for.
 - **No scope-creep refactors**: a bug fix doesn't need surrounding cleanup.
+
+## Length limits
+
+- **A ticket is at most 15 lines**: one header, at most two stating the problem, the rest
+  describing it. What runs longer is a design document wearing a ticket's number — put it
+  in `llm-wiki/tasks/` and let the ticket point at it. The cap is also what keeps the list
+  usable: a reader triaging 75 tickets reads headers and first lines, so a ticket that
+  buries its problem statement on line 20 is not being read at all.
+- **A ticket is about code, never about documentation.** A stale sentence, a dead link, a
+  count that no longer adds up, a widget rendering any of them — fix it in the commit that
+  found it. Documentation is anything whose product is prose for a reader: `llm-wiki/`, code
+  comments, and the rendered cost report. Filing costs a number, a triage pass and a reader's
+  attention, and the page stays wrong for as long as it sits in the list. A ticket asking that
+  a page say more is the same shape — pages grow when a human asks, not when a ticket does.
+- **Architecture pages describe the current state, not the route to it.** No "was X, now
+  Y", no account of what an earlier attempt did or why it was abandoned. `architecture.md`
+  and `build-test.md` answer what is true today; git holds the sequence, and a decision
+  worth carrying forward goes to `llm-wiki/archive/`. A page that narrates its own history
+  makes the reader work out which sentence is still in force.
+- **A commit message, a PR description or a PR comment is at most 10 lines**, subject line
+  included. All three are read in a narrow column next to the thing they describe, and the
+  diff is the detail — a message that restates the diff is read by nobody, and one that
+  argues a design is in the wrong place. Point at the ticket or the task spec instead, which
+  is where a later reader will look anyway.
 
 ## Antipatterns
 

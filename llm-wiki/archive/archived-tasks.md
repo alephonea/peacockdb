@@ -4,6 +4,108 @@ Specs for tasks whose PR has merged, newest first. Each is the contract the work
 done against, kept verbatim -- including the amendments and corrections made mid-task,
 since those are the part a later reader cannot reconstruct from the diff.
 
+Merged 2026-08-20 as PR #126, opened against ENS-bp-plan-skeleton and retargeted to
+master when that base merged.
+
+
+---
+
+<!-- archived from llm-wiki/tasks/schema_and_validation.md -->
+
+# schema registry and validation (T7/T8 remainder)
+
+**Goal.** Finish the two tasks whose implementations landed early on
+`ENS-bp-plan-skeleton` but whose test surfaces did not: prove the `Schema` carried on every
+node is right, and make `validate_schemas_and_partitions` a check that can go red for the
+reasons it claims rather than only for the ones a real plan happens to hit.
+
+**What already landed, so nobody rebuilds it.** `Schema` exists with `group_keys` and
+`agg_state`, every node carries a populated one, the plan goldens print the declared type per
+column, and node-local validation is called from `plan_batch_partitioned` with all ten
+goldens passing it node by node. That half was pulled forward by a review finding — ten
+guards existed and none ran on the live path.
+
+## T7 — what the schema tests must show
+
+- A hand-built plan carrying a project, an aggregate and a union produces the expected types
+  and the expected semantics annotations, asserted on the tree rather than on rendered text.
+- The annotations survive the aggregate sequence: `agg_state` is right at the init, at the
+  per-lane merge and at the finalizing merge, which are three schemas for one logical
+  aggregate.
+- **Decimal precision and scale through project, aggregate and union-cast.** This is the
+  one that earns the task: `avg`'s state columns were once typed backwards and per-node
+  bytes could not show it, because both engines derive them from the same plan schema — so
+  CPU and GPU agreed on the same wrong number and only a real divide would have diverged.
+
+## T8 — what validation still owes
+
+- The generic structural pass, over and above the per-node checks that exist.
+- Manually constructed wrong combinations: each rule turned red by an input built to break
+  it, per the reviewer's anchor that a guard which cannot go red is not a guard.
+- Validation run over every canonized corpus plan as a standing check, not as a one-off.
+- Defects in the checks themselves, including any the reviewer reported against
+  `ENS-bp-plan-skeleton` and I deferred here.
+
+**Constraints.** Every committed golden plan passes the validation this task adds. A
+rejection is a planner defect until shown otherwise: stop, report it, and fix planning —
+never weaken the check to fit the plan, and never regenerate a golden to silence one. The
+expectation is still that no plan moves, so a golden that does move is a deliberate decision
+taken with the human rather than a side effect of the regen. A test that only passes is worth
+less than one shown to fail on the defect it guards.
+
+**Verification bar.** Every rule in `validate_schemas_and_partitions` has an input that turns
+it red. Decimal fidelity is asserted at each step of project → aggregate → union-cast. Every
+committed golden plan passes validation, and a golden moves only where a planner fix required
+it. `test_ci_coverage` names whatever targets appear.
+
+
+Merged 2026-08-18 as PR #121.
+
+
+---
+
+<!-- archived from llm-wiki/tasks/join_capability_recipe.md -->
+
+# join capability through the recipe plan (T0 extension)
+
+**Goal.** Establish, by execution rather than argument, that the frozen FlatBuffers schema
+and C++ operators can run **every** join mode in the batch-partitioned model — with the
+build side complete and the probe side arriving in batches — and write the per-mode
+lowering down where the implementation tasks will read it.
+
+**What was built** (all in `scripts/exec_model/`, coordinator-owned):
+
+- `operators/join_types.py` — `JoinType` in the fbs vocabulary and the capability matrix as
+  one function, so no backend can hold a different opinion of it.
+- `operators/cudf_calls.py` — the cuDF calls `cpp/src/operators/join.cpp` makes, at their
+  own signatures: joins that return gather maps, `gather` with its out-of-bounds policy,
+  `scatter`, `apply_boolean_mask`, `cross_join`.
+- `operators/recipe.py` — the fb node structs, a handle registry that consumes on read as
+  `NodeSession` does, and the node implementations mirroring join.cpp branch for branch.
+- `operators/recipe_join.py` — the second join backend: every call answered by emitting fb
+  seqs and making `execute_node` calls.
+- `operators/joins.py` — the pandas backend, widened from five join types to all nine plus
+  cross and nested loop.
+
+**Constraints.** The two backends share no join code; agreement between them is the
+evidence. The recipe backend may not reach for python where the frozen surface has no
+answer — it names the gap and counts what working around it costs (`copy_handle`).
+
+**Verification bar.** `scripts/exec_model/tests/test_end_to_end.py`: every join mode
+against a SQL oracle, on both backends, at five batching/partitioning configs and across
+the layout injector's presets; the emitted seq sequence asserted per mode against the
+spec's table; the per-batch copy counts asserted per family; every refused shape refused
+loudly on both backends. Whole prototype suite green, ~90 s.
+
+**Outcome.** Recorded in the spec's [join capability
+matrix](../tasks/batch_partitioned_executor.md#join-capability-matrix): every mode is expressible,
+the streamed-probe copy cost is [#152](../tickets.md#t152) quantified per family, and one
+shape turned out to be a defect in the shipping engine rather than a limit of the mode —
+[#153](../tickets.md#t153).
+
+
+---
+
 Merged 2026-08-04 as PRs #112 / #115 / #114.
 
 

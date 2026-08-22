@@ -1,3 +1,4 @@
+pub mod batch_partitioned;
 pub mod config;
 pub mod executors;
 pub mod gpu_rule;

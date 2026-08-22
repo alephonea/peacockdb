@@ -81,7 +81,13 @@ def concatenate(frames: list[pd.DataFrame]) -> pd.DataFrame:
     for other in frames[1:]:
         if list(other.columns) != first:
             raise ValueError(f"concatenate column mismatch: {first} vs {list(other.columns)}")
-    return normalize(pd.concat(frames, ignore_index=True))
+    # Zero-row frames are dropped rather than concatenated. An empty lane is routine here,
+    # and pandas is mid-deprecation on what an empty entry does to the result's dtypes —
+    # excluded today, included in pandas 3. cuDF has no such ambiguity: concatenating a
+    # zero-row column of the right type changes nothing. Dropping them makes the two agree
+    # whichever pandas is installed, and the all-empty case keeps the first for its schema.
+    non_empty = [frame for frame in frames if len(frame)]
+    return normalize(pd.concat(non_empty or frames[:1], ignore_index=True))
 
 
 def empty_like(frame: pd.DataFrame) -> pd.DataFrame:

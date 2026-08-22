@@ -30,7 +30,23 @@ from ..operators.accumulators import (
     ReBatchToTarget,
 )
 from ..operators.exec_ops import FilterExec, ProjectExec, SortExec
-from ..operators.expressions import Alias, Binary, Col, IsNotNull, Lit
+from ..operators.expressions import (
+    Alias,
+    Binary,
+    Cast,
+    Coalesce,
+    Col,
+    Concat,
+    DatePart,
+    IsNotNull,
+    Like,
+    Lit,
+    Lower,
+    Not,
+    Round,
+    Substring,
+    Upper,
+)
 from ..operators.frame import PandasBatch, concatenate
 from ..operators.joins import HashJoin, JoinType
 from ..operators.partition_ops import (
@@ -127,6 +143,98 @@ def test_limit_streams_the_interval_out_of_its_input():
     assert list(second[0].frame.v) == [4]
     assert node.sliced == [RowRange(2, 2), RowRange(0, 1)]
     assert node.resident_bytes() == 0
+
+
+# -- the scalar expressions ---------------------------------------------------------
+#
+# Each of these is a decision read off `expr.cpp` rather than a pandas default, and each
+# was found by a corpus query answering something plausible and wrong. They are cheap to
+# state here and expensive to re-derive from a whole-query disagreement.
+
+
+def test_a_comparison_against_null_is_null_and_not_true():
+    # pandas answers `None != 'x'` with True on an object column; SQL and cuDF answer NULL
+    # and the filter drops the row. TPC-DS q19 compares two zip codes where one address has
+    # none, and taking that for a mismatch invented the highest-revenue group in the answer.
+    frame = pd.DataFrame({"a": ["x", None, "y"], "b": ["x", "x", "x"]})
+    result = Binary("!=", Col("a"), Col("b")).evaluate(frame)
+    assert list(result) == [False, pd.NA, True]
+    out, _ = FilterExec(Binary("!=", Col("a"), Col("b"))).exec(batch(frame))
+    assert list(out.frame.a) == ["y"]
+
+
+def test_null_propagation_survives_and_or_and_not():
+    # The point of returning pandas' nullable `boolean`: its &, | and ~ are already Kleene,
+    # so the connectives need no special case. NULL AND False is False; NULL OR True is
+    # True; NOT NULL is NULL.
+    frame = pd.DataFrame({"a": [None], "b": [1]})
+    null = Binary("==", Col("a"), Col("b"))
+    assert list(Binary("and", null, Lit(False)).evaluate(frame)) == [False]
+    assert list(Binary("or", null, Lit(True)).evaluate(frame)) == [True]
+    assert list(Not(null).evaluate(frame)) == [pd.NA]
+
+
+def test_like_has_two_metacharacters_and_nothing_else():
+    # `cudf::strings::like`, not a regex: `.` and `*` are literal, `%` and `_` are not.
+    frame = pd.DataFrame({"s": ["abc", "a.c", "axc", "ac", "a*c"]})
+    assert list(Like(Col("s"), "a_c").evaluate(frame)) == [True, True, True, False, True]
+    assert list(Like(Col("s"), "a.c").evaluate(frame)) == [False, True, False, False, False]
+    assert list(Like(Col("s"), "a%").evaluate(frame)) == [True] * 5
+    assert list(Like(Col("s"), "a_c", negated=True).evaluate(frame)) == [
+        False, False, False, True, False
+    ]
+
+
+def test_substring_is_one_based_as_sql_is():
+    frame = pd.DataFrame({"phone": ["25-989-741-2988"]})
+    assert list(Substring(Col("phone"), 1, 2).evaluate(frame)) == ["25"]
+    assert list(Substring(Col("phone"), 4, 3).evaluate(frame)) == ["989"]
+
+
+def test_round_goes_half_away_from_zero_not_to_even():
+    # DataFusion's f64::round and cudf::round's HALF_UP, which is not python's banker's
+    # rounding: round(2.5) is 3, and round(-2.5) is -3. TPC-DS q54 buckets revenue with it,
+    # where the difference decides which segment a customer lands in.
+    # 1.125 rather than 1.005 for the places case: 1.005 is not representable in float64
+    # and rounds on what the nearest double actually is, which tests the machine and not
+    # the rule. 1.125 is exact, so half-away-from-zero is 1.13 where to-even is 1.12.
+    frame = pd.DataFrame({"v": [2.5, 3.5, -2.5, 1.125]})
+    assert list(Round(Col("v")).evaluate(frame)) == [3.0, 4.0, -3.0, 1.0]
+    assert Round(Col("v"), 2).evaluate(frame).iloc[3] == 1.13
+
+
+def test_concat_treats_a_null_as_the_empty_string():
+    # `narep=""`, which is what expr.cpp passes and what DataFusion's concat does — a null
+    # argument shortens the result rather than nulling the row.
+    frame = pd.DataFrame({"a": ["x", None], "b": ["y", "z"]})
+    assert list(Concat((Col("a"), Col("b"))).evaluate(frame)) == ["xy", "z"]
+
+
+def test_coalesce_takes_the_first_non_null_per_row():
+    frame = pd.DataFrame({"a": [1.0, np.nan, np.nan], "b": [9.0, 2.0, np.nan]})
+    result = Coalesce((Col("a"), Col("b"), Lit(0.0))).evaluate(frame)
+    assert list(result) == [1.0, 2.0, 0.0]
+
+
+def test_upper_and_lower_are_the_thin_wrappers_they_look_like():
+    frame = pd.DataFrame({"s": ["aB"]})
+    assert list(Upper(Col("s")).evaluate(frame)) == ["AB"]
+    assert list(Lower(Col("s")).evaluate(frame)) == ["ab"]
+
+
+def test_a_float_to_integer_cast_truncates_where_duckdb_rounds():
+    # `cudf::cast` truncates toward zero, so this models the engine and not the oracle:
+    # DuckDB answers `CAST(3.7 AS BIGINT)` with 4. The corpus never sees the difference —
+    # its one Cast is q54's `cast(round(revenue/50) as int)`, already integer-valued — but
+    # a second use over a fractional value would disagree with the oracle, not with pandas.
+    frame = pd.DataFrame({"v": [3.7, -3.7]})
+    assert list(Cast(Col("v"), "int64").evaluate(frame)) == [3, -3]
+
+
+def test_date_part_extracts_the_component_the_grouping_keys_on():
+    frame = pd.DataFrame({"d": pd.to_datetime(["1995-03-15", "1996-12-01"])})
+    assert list(DatePart("year", Col("d")).evaluate(frame)) == [1995, 1996]
+    assert list(DatePart("month", Col("d")).evaluate(frame)) == [3, 12]
 
 
 # -- aggregates -------------------------------------------------------------------
@@ -269,7 +377,7 @@ def test_null_equals_null_makes_null_keys_match():
 
 def test_left_outer_emits_unmatched_build_rows_only_at_finish():
     build = pd.DataFrame({"k": [1, 2], "bv": ["a", "b"]})
-    join = HashJoin(JoinType.LEFT_OUTER, ["k"], ["k"])
+    join = HashJoin(JoinType.LEFT, ["k"], ["k"])
     join.set_build(batch(build, "B"))
     probes, _ = join.probe_and_fetch(batch(pd.DataFrame({"k": [2], "pv": [20]}), "P"))
     assert sum(b.num_rows() for b in probes) == 1
@@ -553,7 +661,7 @@ def test_a_left_outer_finish_with_no_probe_batches_pads_the_declared_schema():
     # still come out with the probe columns null-padded, not with a shape that silently
     # depends on whether a probe batch happened to arrive.
     build = pd.DataFrame({"k": [1, 2], "bv": ["a", "b"]})
-    join = HashJoin(JoinType.LEFT_OUTER, ["k"], ["k"], probe_schema=["k", "pv"])
+    join = HashJoin(JoinType.LEFT, ["k"], ["k"], probe_schema=["k", "pv"])
     join.set_build(batch(build, "B"))
     finish, _ = join.finish_and_fetch()
     frame = finish[0].frame
@@ -563,7 +671,7 @@ def test_a_left_outer_finish_with_no_probe_batches_pads_the_declared_schema():
 
 
 def test_an_outer_finish_with_no_probe_batches_and_no_schema_is_loud():
-    join = HashJoin(JoinType.LEFT_OUTER, ["k"], ["k"])
+    join = HashJoin(JoinType.LEFT, ["k"], ["k"])
     join.set_build(batch(pd.DataFrame({"k": [1]}), "B"))
     with raises(ValueError, match="probe_schema"):
         join.finish_and_fetch()

@@ -1,0 +1,82 @@
+name: Exec-model corpus (manual)
+
+# The T0 prototype's corpus queries — 22 TPC-H and 71 TPC-DS query texts lowered by hand
+# into the batch-partitioned nodes (scripts/exec_model/tests/test_tpch_corpus.py,
+# test_tpcds.py). TPC-H is checked against a hand-written pandas oracle per query; TPC-DS
+# against DuckDB running the query's own text, which also needs the DuckDB CLI below.
+#
+# Manual dispatch only, for two reasons. They need the generated sf1 datasets, which the
+# push pipeline builds inside the cpp-cpu container job; and they are minutes rather than
+# seconds, being real tables through a pandas operator chain. The prototype's short tests
+# keep running on every push — the whole suite in cost-report, and test_tpch.py's plan
+# shapes in cpp-cpu, which is now a separate file rather than a `-corpus` exclusion.
+#
+# `backend` chooses what the joins run on. `pandas` is the default sweep; `recipe` routes
+# every join through the FlatBuffers emulation (operators/recipe_join.py), which is the
+# claim PR #121 made — that the frozen fbs and C++ surface executes these queries' joins —
+# checked here against the same oracles rather than against a synthetic matrix.
+#
+# Sharded across processes: the queries are independent, so PCK_SHARD=k/n gives process k
+# every n-th test (scripts/exec_model/tests/harness.py). A shard that selects nothing is an
+# error rather than a green no-op, so SHARDS must not exceed the smallest file's test
+# count — 22 today.
+on:
+  workflow_dispatch:
+    inputs:
+      filter:
+        description: 'Run only tests whose name contains this (empty = all corpus tests)'
+        required: false
+        default: ''
+      backend:
+        description: 'Join backend: pandas, or recipe for the FlatBuffers emulation'
+        required: false
+        default: 'pandas' 
+
+jobs:
+  corpus:
+    name: Corpus queries (${{ inputs.backend }}, shard ${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2]
+    env:
+      SHARDS: 3
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install python dependencies
+        run: pip install --quiet pandas pyarrow
+
+      # Byte-for-byte the pipeline's generator step: the same pinned DuckDB release build
+      # the committed goldens come from, for the same reason (the dsdgen column types drift
+      # between releases). Both benches, since the two corpus files need one each.
+      - name: Generate SF-1 test data
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 8 --retry-all-errors --retry-max-time 300 \
+            https://github.com/duckdb/duckdb/releases/download/v1.5.4/duckdb_cli-linux-amd64.zip -o /tmp/duckdb.zip
+          python3 -c "import zipfile; zipfile.ZipFile('/tmp/duckdb.zip').extractall('/tmp/duckdb-bin')"
+          chmod +x /tmp/duckdb-bin/duckdb
+          export DUCKDB=/tmp/duckdb-bin/duckdb
+          "$DUCKDB" --version
+          testdata/generate_testdata.sh --bench tpch
+          testdata/generate_testdata.sh --bench tpcds
+
+      - name: Run corpus queries
+        env:
+          PCK_SHARD: ${{ matrix.shard }}/3
+          PCK_BACKEND: ${{ inputs.backend }}
+          FILTER: ${{ inputs.filter }}
+          DUCKDB: /tmp/duckdb-bin/duckdb
+        run: |
+          set -euo pipefail
+          # Both files are corpus files now, so no name filter is needed to select them; a
+          # filter narrows within them. No `set -e` short-circuit on the first file: both
+          # run, statuses are OR'd, so one failure cannot hide the other file's.
+          status=0
+          for f in scripts/exec_model/tests/test_tpch_corpus.py scripts/exec_model/tests/test_tpcds.py; do
+            echo "== $f (shard $PCK_SHARD, backend $PCK_BACKEND)"
+            python3 "$f" ${FILTER:+"$FILTER"} || status=1
+          done
+          exit $status

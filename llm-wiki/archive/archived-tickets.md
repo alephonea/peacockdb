@@ -4,10 +4,22 @@ Tickets that are finished or that the tree outgrew. Numbers stay permanent and a
 reused, so a commit message or comment naming an old ticket still resolves — here.
 `llm-wiki/tickets.md` holds only open work.
 
-One caveat before archiving anything else: the cost widget links tickets as
-`llm-wiki/tickets.md#tNN` (`cost-report/src/main.rs`), so a ticket named in the `tickets`
-column of `testdata/cost-registry.csv` must not be moved here without also updating that
-link.
+**Numbers spent without a ticket.** A number withdrawn before it described anything real is
+recorded here and nowhere else, so the counter never walks back over it:
+
+- **#165** — filed and withdrawn 2026-08-20. It reported a dead widget link — `cost-registry.csv`
+  naming #115 after #115 was archived — and there was no such link: the widget already follows a
+  number to the file holding its anchor, with #115 as that test's own case. What was wrong was
+  the note below, which predated that code and now says what holds. Named by commit 7b98a99.
+- **#156** — filed and withdrawn 2026-08-19. It called the exec-model prototype's row-group
+  chunking a defect against the engine; the prototype is a model, not a specification, so
+  diverging from it where it is wrong is the outcome rather than a drift to reconcile
+  (`scripts/exec_model/README.md`). Named by commit 4c89d91.
+
+Archiving a ticket the registry names is safe: the cost widget resolves a number to
+whichever of the two files holds its `<a id="tNN">` anchor (`TicketIndex::path_for` in
+`cost-report/src/main.rs`), and refuses to render a link for a number in neither, failing
+the report rather than emitting one that goes nowhere.
 
 ## Done
 
@@ -54,6 +66,45 @@ cannot account for -50% on joins. Both halves are now settled by one sweep.
 
 **Done.** The pool is now the only way the benchmarks run — there is no switch to turn it
 off and no outcome but a pool that the harness will record.
+
+<a id="t135"></a>
+### #135 — Column ordinals are enforced only by cuDF's `at()` and the final result
+Every column reference in the IR is an ordinal into the child's output table, and almost nothing
+checks them. Two concrete gaps.
+
+(a) `TableResult` is a `cudf::table` plus a name vector with no invariant that the two have the
+same length, and the six sites indexing names use `operator[]` — so a short vector is undefined
+behaviour, not an exception. `filter.cpp` ~L42 reads `fv.column(idx)` and
+`input.column_names[idx]` in one iteration and only the first is checked; it happens to run
+first. Assert `num_columns() == column_names.size()` where `TableResult` is built. (b) Nothing
+checks a child produced its columns in the order the plan assumed. Per-node bytes come from the
+plan's schema on both engines by design (`logical_size_from_schema`, single-sourced so they
+cannot drift), so a node emitting the right count in the wrong order yields identical numbers
+everywhere and surfaces only at the root; a per-node type check in the GPU tiers closes it. Also
+there: `expr.cpp` ~L349 returns `type_id::EMPTY` for an out-of-range ColumnRef instead of
+throwing, turning a bad ordinal into a confusing type error further along.
+
+Closed 2026-08-19. The batch-partitioned planner now checks every column reference's name against the field at its position, so the class is caught at plan time for that mode; the C++ items above are carried by [#164](../tickets.md#t164).
+
+<a id="t115"></a>
+### #115 — q38/q76/q87 set-op & union-count divergences — retriage
+q38 (INTERSECT ×3), q76 (UNION ALL + IS NULL filters + grouped `count(*)`) and q87 (EXCEPT ×2)
+diverged on the GPU historically, and the ticket's instruction was to rerun on an H200, enable
+what passes, and root-cause the rest.
+
+**Done 2026-08-19.** All three rerun on shad-gpu in `golden_exact` — per-node rows and cost
+against a freshly generated `.cpu.txt`, plus the whole result. None diverges in any way: not a
+row count, not a value, not a per-node mismatch. q38 answers 107, q87 47298, and q76 matches
+its 103-line grouped output exactly. Whatever the bucket-I triage saw was fixed somewhere
+between it and today; q87's named suspect — anti/EXCEPT null handling overlapping
+[#80](../tickets.md#t80) — was never the cause, since `EXCEPT` wants the `EQUAL` that anti
+hardcodes.
+
+**The three stay disabled in the legacy modes deliberately**, which is why this is closed
+rather than acted on: they are `full_table_gpu=na` by choice now, not by defect, and the
+registry keeps `115` in their `tickets` column so the widget still says which decision the
+cells rest on. The batch-partitioned mode plans all three; q87 is recorded in
+`llm-wiki/tasks/batch_partitioned_executor.md` as a query whose corpus is larger than legacy's.
 
 <a id="t77"></a>
 ### #77 — Cost report: publish per-SHA history on master

@@ -5,9 +5,13 @@ An emulation of the execution model in
 built to settle the scheduling rule and the trait set before any Rust exists (task T0).
 Not production code. The tests run in CI, in the `cost-report` job's cheap python tier.
 
+**The coordinator owns this prototype.** Changes here are made by the coordinator directly
+rather than delegated, because what it settles is design — which is the same reason the
+spec it models is coordinator-owned.
+
 **Two halves.** The scheduler — plan, drivers, traits — is stdlib only and uses mock
 executors. The operators under `operators/` are pandas-backed, so `test_operators.py`,
-`test_end_to_end.py`, `test_accounting.py` and `test_tpch.py` need pandas (and pyarrow for
+`test_end_to_end.py`, `test_accounting.py` and the TPC-H/TPC-DS files need pandas (and pyarrow for
 the last) and **fail rather than skip** without them: a skipped operator suite reads
 exactly like a passing one.
 
@@ -62,10 +66,19 @@ as a script, so the relative imports resolve either way.
 | `operators/exec_ops.py` | filter, project, sort, partial aggregate, limit, unload |
 | `operators/accumulators.py` | coalesce-all, aggregate-batches, accumulate-and-sort, merge-sorted |
 | `operators/partition_ops.py` | the hash scatter |
-| `operators/joins.py` | the join capability matrix |
+| `operators/join_types.py` | `JoinType` in the fbs vocabulary, and the capability matrix as a function both join backends read |
+| `operators/joins.py` | the pandas join backend — nine hash-join types, cross, nested loop |
+| `operators/cudf_calls.py` | the cuDF calls `cpp/src/operators/join.cpp` makes, modelled: joins that return gather maps, `gather` with its out-of-bounds policy, `scatter`, `apply_boolean_mask` |
+| `operators/recipe.py` | the FlatBuffers node structs, the handle registry with consume-on-use, and the C++ that reads them |
+| `operators/recipe_join.py` | the second join backend: answers every call by emitting fb nodes and making `execute_node` calls |
 | `operators/nodes.py` | `GpuNode` implementations wiring the operators into plans |
 | `operators/validation.py` | the checks a node's `_validator` is composed from with `all_of` — layout expectations and the aggregate state chain. The method is abstract on `GpuNode` (`node.py`) and implemented once, on `PandasNode` (`operators/nodes.py`), which just runs that validator |
 | `operators/injection.py` | `LayoutInjector` — rewrite a plan's partitioning, batching and hash placement |
+| `plan_text.py` | rendering a plan as text, for the corpus plan goldens |
+| `tests/corpus.py` | reading the generated datasets, the corpus budget, the layout runner, and the plan-golden check |
+| `tests/plans_tpch*.py`, `tests/plans_tpcds*.py` | the corpus query lowerings — builders over a table provider, so a plan needs no data |
+| `tests/plan_helpers.py` | the aggregate and sort sequences every lowering is built from |
+| `tests/plans.py` | render or rewrite the plan goldens without executing anything |
 
 Traits are declarations only. The driver tests drive mocks (`tests/mocks.py`) because the
 strategy under test is *which node runs when*; the operator tests drive the real thing.
@@ -109,6 +122,93 @@ categories, and delegates each lane-scoped call to `batch_single_partition_drive
 is one node's lane rather than a chain of them: min-height selection walks a batch up a
 chain node by node on its own.
 
+## The two join backends
+
+Every join test runs twice, on backends that share no join code.
+
+`operators/joins.py` joins with pandas, the way DataFusion joins with DataFusion.
+`operators/recipe_join.py` answers each call the way the GPU will: it emits a **recipe
+plan** — `Cudf*` nodes in the legacy vocabulary, addressed by seq — and makes
+`execute_node(seq, handles)` calls against `operators/recipe.py`, whose registry consumes
+handles exactly as `NodeSession` does and whose node implementations mirror
+`cpp/src/operators/join.cpp` branch for branch over the primitives in
+`operators/cudf_calls.py`. `RecipeJoinBackendSelector` picks it for joins and leaves every
+other category on pandas.
+
+`tests/test_join_capability.py` is where both are driven: one case per join mode against a
+SQL oracle, on both backends, at every batching config and layout preset, plus the emitted
+seq sequence, the copy counts, the null-key asymmetry, and two guards that read
+`cpp/src/operators/join.cpp` and fail when it names a join type or calls a cuDF function
+the model has never heard of. The model mirrors that file by hand and no import links them,
+so those two are the only thing standing between a C++ change and silent drift.
+
+The question it exists to answer is the mode's load-bearing one: can the **frozen** fbs and
+C++ execute every join type with a probe side arriving in batches? Three answers came back,
+and the spec's join tables carry all of them.
+
+- **Yes, for every type**, with the lowering in that table: probe-local types are one node
+  per batch, build-preserving types add the #136 finish sequence, and where the matrix
+  refuses to stream, the single-batch fallback is precisely the legacy call.
+- **At a cost the frozen surface makes unavoidable**: a handle is consumed by the call that
+  reads it and nothing duplicates one, so a streamed probe copies the build side once per
+  batch — [#152](../../llm-wiki/tickets.md#t152), and Left/Full copy the probe batch as
+  well. The session counts every copy, so the figure is asserted rather than estimated.
+- **Except one shape, which turned out to be a defect rather than a limit.** An outer join
+  with a residual filter is wrong in the shipping C++ — the filter is applied after the
+  outer gather, dropping the rows it was meant to preserve
+  ([#153](../../llm-wiki/tickets.md#t153)). Latent, since no corpus query has that shape.
+
+## The corpus
+
+`tests/test_tpch_corpus.py` and `tests/test_tpcds.py` run real benchmark queries — the query
+text lowered by hand into the mode's nodes, over **whole** sf1 tables with the spec's own
+parameters. 22 TPC-H queries and 71 TPC-DS ones: every TPC-DS query the engine already runs
+in `full_table` mode (`testdata/cost-registry.csv`, `ftc_tp1 = enabled`) except the seven
+that need a window function, which the mode has no node for.
+
+**Two oracles, on purpose.** TPC-H has a hand-written pandas equivalent per query: it states
+what the query means in a second language, and catches a lowering that answered a
+differently-shaped question. TPC-DS runs the query's **own text** through DuckDB over the
+same parquet files: that catches a *reading* of the SQL, which a hand-written pair cannot,
+since both halves would share one reading — the circularity #80 complains of. It also pins
+the output column names, which come from the query's aliases and from nowhere else.
+Seventy-one hand-written oracles would have been seventy-one new places to be wrong.
+
+What a comparison asserts is what SQL determines: the rows as a **multiset**, and the ORDER
+BY columns **positionally** (`corpus.matches_oracle`, shared by both benchmarks). Comparing
+whole rows positionally makes a tie into a failure, which is how TPC-H q11 failed — two
+German parts come to 223626.0 exactly, and which of them is printed first is not the
+query's to say. The rest of the TPC-H corpus is still compared positionally throughout,
+because its sort keys are unique in this data; a query that starts failing there has found
+a tie, and the fix is to name its `order_by`, not to re-sort the oracle until they agree.
+
+**Manual dispatch only** (`.github/workflows/exec-model-corpus.yml`): six million lineitem
+rows through a pandas operator chain is minutes, not seconds. The queries are independent,
+so `PCK_SHARD=k/n` splits a file across n processes and `PCK_LAYOUT` picks one of the three
+layouts each query runs at. `test_tpch.py`'s short plan-shape tests are a separate file and
+still run on every push in cpp-cpu.
+
+**`PCK_BACKEND=recipe`** re-runs the whole corpus with every join going through the
+FlatBuffers emulation instead of pandas — the same `Cudf*` node sequence the C++ reads off
+the wire, interpreted by a python model of the cuDF calls. That is the claim the join
+capability work made, checked against real queries rather than against a synthetic matrix.
+
+**Plans are separate from tests.** A plan is a function of the schemas, so the builders in
+`plans_tpch*.py` and `plans_tpcds*.py` take a table provider and never read a row; `plans.py`
+renders every plan from parquet footers in a fraction of a second and writes
+`tpch.plans.txt` / `tpcds.plans.txt`, which the corpus tests then check the default layout
+against. Regenerating a plan golden does not cost a corpus run — only verifying it does.
+
+The TPC-DS lowerings are grouped by what the lowering has to do rather than by number —
+stars, bucketed reports, baskets, correlated subqueries, banded disjunctions, semi/anti/mark
+joins, channel unions, year-over-year self-joins — and `plans_tpcds.py` is the registry that
+names them all.
+
+**Sampling was tried and abandoned.** Both benchmarks are written clustered by date, so a
+row prefix is one quarter of 1992, a row-group sample is a set of date windows, and two
+tables sampled independently join to nothing. Every one of those bit before whole tables
+settled it; `corpus.py` records the reasoning.
+
 ## Layout injection
 
 A query's answer is a function of its rows, not of how they were divided. `LayoutInjector`
@@ -117,7 +217,7 @@ groups, batch sizes and hash placement are whatever preset you name — one lane
 batch, a few of each, many small lanes, lanes with nothing in them, re-cut batch
 boundaries — with sources injecting zero-row batches at a given probability, and with
 `GpuEmitPartitions` placing rows by a hash that ranges from well spread to
-everything-in-one-lane. `test_tpch.py` writes each plan once and runs it at every shape.
+everything-in-one-lane. Each corpus plan is written once and run at every shape.
 
 Rebuilding, not editing: a node's partitioning is baked into a closure at build time, so
 every builder in `nodes.py` records its call and a rewrite re-runs it. Two rules keep the
@@ -247,8 +347,33 @@ F10. **The executor total must be cached, not summed.** The spec says "Σ cached
    while the driver holds them mutably. Refreshing one instance's delta per call removes
    the aliasing along with the cost.
 
+F11. **A residual filter does not by itself force a single-batch probe.** The draft matrix
+   refused a streamed probe to any filtered join. What actually forbids it is the *finish
+   pass*: it sees accumulated keys, and a keys-only table cannot evaluate a predicate over
+   both sides. A filtered Inner — or any probe-local type — streams, because each output
+   row is decided by (the whole build, this batch) and the filter is part of that decision.
+   The matrix in the spec was narrowed to say so.
+   `test_a_residual_filter_rides_the_join_on_both_backends`.
+
+F12. **Modelling the wire found a defect in the shipping engine, not in the model.** The
+   recipe backend reproduces `execute_hash_join` branch for branch, so where it disagreed
+   with the SQL oracle the disagreement belonged to the C++: an outer join's residual
+   filter is applied after the outer gather and drops the rows the outer join exists to
+   keep ([#153](../../llm-wiki/tickets.md#t153)). Reproducing a code path faithfully is
+   worth more than implementing it correctly — a correct model would have hidden this.
+   `test_an_outer_join_with_a_residual_filter_is_refused_not_answered_wrongly`.
+
+## The prototype is a model, not a specification
+
+Where the Rust implementation and this prototype disagree and the prototype is the one that
+is wrong, the Rust is right and the divergence is the outcome, not a drift to reconcile.
+This happened first with row-group chunking: the prototype takes groups until a lane's share
+is reached and overshoots by a whole group, while `ParquetBatchPartitioner` stops where
+stopping is closer, which is what holds the balance bound. Do not file that class as a
+defect against the engine, and do not change the engine to match a model it has outgrown.
+
 ## Not in this cut
 
-The plan-time `estimated_max_resident_size` estimator, and the hand-built TPC-H / TPC-DS
-plan corpus. Window functions are refused by the design (#143). The enforcer is here with
-the accounting formula, and trips cleanly on a tight budget.
+The plan-time `estimated_max_resident_size` estimator, which T6 derives in Rust directly
+rather than here. Window functions are refused by the design (#143). The enforcer is here
+with the accounting formula, and trips cleanly on a tight budget.

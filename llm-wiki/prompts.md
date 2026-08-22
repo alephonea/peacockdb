@@ -179,7 +179,12 @@ reasoning. Anchors: `llm-wiki/architecture.md` (invariants) and `llm-wiki/build-
   `--test-threads=1`); two-engine correctness (CPU and GPU consume the same plan IR — no
   engine-specific plan nodes); deterministic cost (no wall-clock in the fast tier);
   `rust-only` is the tier boundary (no FFI types reachable from rust-only paths).
-- **Verify the diff against `llm-wiki/coding-style.md`** and flag violations.
+- **Verify the diff against `llm-wiki/coding-style.md`** and flag violations. Count the
+  length limits rather than eyeballing them, on everything the diff adds: a comment inside
+  a function body at four lines, one above a declaration or at the top of a file at ten, a
+  ticket at fifteen with at most two of them stating the problem. These are the limits that
+  pass review most easily, because each overrun is small and the prose is usually good — so
+  they are checked arithmetically or not at all.
 - Then a standard correctness pass: logic bugs, API misuse, races, over-broad golden
   regenerations, restating comments, dead code.
 - Findings format: severity (`blocking`/`important`/`nit`), file:line, one-sentence
