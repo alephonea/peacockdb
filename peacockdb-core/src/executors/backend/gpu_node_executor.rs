@@ -27,8 +27,7 @@ use peacockdb_ffi::raw::{
     peacock_executor_begin_plan, peacock_executor_end_plan, peacock_executor_execute_node,
     peacock_handle_release, peacock_install_rmm_pool, peacock_last_error, peacock_result_free,
     peacock_result_from_handle, peacock_measure_timing_floor_us, peacock_set_node_timing,
-    PeacockExecutor, PeacockNodeStats, PeacockRmmPoolInfo, PEACOCK_RMM_POOL_DISABLED,
-    PEACOCK_RMM_POOL_INSTALLED,
+    PeacockExecutor, PeacockNodeStats, PeacockRmmPoolInfo, PEACOCK_RMM_POOL_INSTALLED,
 };
 
 use crate::cpu_executor::logical_size_from_schema;
@@ -36,27 +35,24 @@ use crate::cpu_executor::logical_size_from_schema;
 /// Which device allocator a measurement was taken under — the outcome of
 /// [`install_rmm_pool`], not the request.
 ///
-/// Exists to be written into a record. cuDF routes every intermediate through rmm's
-/// current device resource, and the difference between a pool and rmm's default
-/// (a `cudaMalloc`/`cudaFree` per allocation) is far larger than run-to-run noise —
-/// so two records that do not say which allocator produced them cannot be compared,
-/// and the failure is worst on exactly the nodes with the largest outputs.
+/// cuDF routes every intermediate through rmm's current device resource, and the
+/// difference between a pool and rmm's default (a `cudaMalloc`/`cudaFree` per
+/// allocation) is far larger than run-to-run noise — worst on exactly the nodes with
+/// the largest outputs. So `Unavailable` does not describe a slower run to be recorded
+/// and compared; it describes a run whose times mean nothing, and the benchmark harness
+/// refuses it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RmmPool {
     /// A pooled resource is installed. Sizes are what it was actually built with.
     Pool { integrated: bool, free_bytes: u64, initial_bytes: u64, maximum_bytes: u64 },
-    /// `PEACOCK_RMM_POOL=0`: rmm's default resource, deliberately. This is how the
-    /// allocator's share of a query's time gets measured — same binary, both ways.
-    Disabled,
-    /// The pool could not be built, so rmm's default resource is in place and nobody
-    /// chose that. Distinct from `Disabled` because it is a fact about the host —
-    /// a neighbour holding the device when the reservation was computed — rather than
-    /// about the measurement, and it invalidates a comparison the other one supports.
+    /// The pool could not be built — typically a neighbour holding the device when the
+    /// reservation was computed — so rmm's default resource is in place and nobody
+    /// chose that.
     Unavailable,
 }
 
 impl std::fmt::Display for RmmPool {
-    /// The `allocator=` field of a benchmark record. One line, no spaces around `=`,
+    /// The `allocator=` line of a benchmark record. One line, no spaces around `=`,
     /// sizes in GiB because that is the unit the sizing rule is written in.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         const GIB: f64 = 1073741824.0;
@@ -69,7 +65,6 @@ impl std::fmt::Display for RmmPool {
                 free_bytes as f64 / GIB,
                 if integrated { "an integrated" } else { "a discrete" },
             ),
-            RmmPool::Disabled => write!(f, "rmm-default (PEACOCK_RMM_POOL=0), cudaMalloc per allocation"),
             RmmPool::Unavailable => {
                 write!(f, "rmm-default (pool unavailable), cudaMalloc per allocation")
             }
@@ -104,7 +99,6 @@ pub fn install_rmm_pool() -> RmmPool {
             initial_bytes: info.initial_bytes,
             maximum_bytes: info.maximum_bytes,
         },
-        PEACOCK_RMM_POOL_DISABLED => RmmPool::Disabled,
         // Includes any state a newer C++ side might add: an unrecognised outcome is not
         // an installed pool, and treating it as one is the mistake that matters.
         _ => RmmPool::Unavailable,

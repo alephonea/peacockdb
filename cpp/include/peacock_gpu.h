@@ -91,10 +91,8 @@ typedef struct PeacockNodeStats {
 enum {
   /// A pool is the current device resource.
   PEACOCK_RMM_POOL_INSTALLED = 0,
-  /// PEACOCK_RMM_POOL=0 was set: the default resource, on purpose.
-  PEACOCK_RMM_POOL_DISABLED = 1,
   /// The pool could not be built: the default resource, NOT on purpose.
-  PEACOCK_RMM_POOL_UNAVAILABLE = 2
+  PEACOCK_RMM_POOL_UNAVAILABLE = 1
 };
 
 /// Outcome of installing the pooled device allocator — sizes in bytes, 0 unless
@@ -120,13 +118,10 @@ typedef struct PeacockRmmPoolInfo {
 /// unaffected; making it self-installing is llm-wiki/tickets.md #148.
 ///
 /// @param out_info  Filled with what actually happened. Required.
-/// @return 0 unless out_info is NULL. Deliberately NOT non-zero when no pool was
-///         installed: "disabled by request" and "could not be built" both leave a
-///         perfectly runnable default resource, and a caller that aborted on them
-///         would turn a slower measurement into no measurement. Read `state` and
-///         record it — a time taken with a pool and one taken without differ by
-///         more than noise, so a record that cannot say which is comparable with
-///         nothing.
+/// @return 0 unless out_info is NULL — NOT non-zero on UNAVAILABLE, which still
+///         leaves a runnable default resource. Whether that is fatal is the
+///         caller's call, and for anything being timed it is: a time taken with a
+///         pool and one taken without differ by more than noise.
 int peacock_install_rmm_pool(PeacockRmmPoolInfo* out_info);
 
 /// Turn per-node timing on/off (process-global; off by default).

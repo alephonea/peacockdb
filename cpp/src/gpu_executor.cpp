@@ -114,9 +114,6 @@ int peacock_install_rmm_pool(PeacockRmmPoolInfo* out_info) {
     case peacock::RmmPoolStatus::State::Installed:
       out_info->state = PEACOCK_RMM_POOL_INSTALLED;
       break;
-    case peacock::RmmPoolStatus::State::Disabled:
-      out_info->state = PEACOCK_RMM_POOL_DISABLED;
-      break;
     case peacock::RmmPoolStatus::State::Unavailable:
       out_info->state = PEACOCK_RMM_POOL_UNAVAILABLE;
       break;

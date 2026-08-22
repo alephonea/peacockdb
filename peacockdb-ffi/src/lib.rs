@@ -40,10 +40,8 @@ pub mod raw {
 
     /// A pool is the current device resource.
     pub const PEACOCK_RMM_POOL_INSTALLED: i32 = 0;
-    /// `PEACOCK_RMM_POOL=0` was set: the default resource, on purpose.
-    pub const PEACOCK_RMM_POOL_DISABLED: i32 = 1;
     /// The pool could not be built: the default resource, NOT on purpose.
-    pub const PEACOCK_RMM_POOL_UNAVAILABLE: i32 = 2;
+    pub const PEACOCK_RMM_POOL_UNAVAILABLE: i32 = 1;
 
     #[link(name = "peacock_gpu")]
     unsafe extern "C" {
@@ -77,9 +75,10 @@ pub mod raw {
         /// the engine under the same allocator rather than producing node times that get
         /// compared with theirs anyway.
         ///
-        /// Returns 0 unless `out_info` is null; NOT non-zero when no pool was installed.
-        /// Both "disabled by request" and "could not be built" leave a runnable default
-        /// resource, so the caller records `state` instead of failing on it.
+        /// Returns 0 unless `out_info` is null; NOT non-zero on
+        /// [`PEACOCK_RMM_POOL_UNAVAILABLE`], which still leaves a runnable default
+        /// resource. The caller decides whether that is fatal — for the benchmark
+        /// harness it is.
         pub fn peacock_install_rmm_pool(out_info: *mut PeacockRmmPoolInfo) -> i32;
 
         /// Turn per-node timing on/off (process-global; OFF by default). When on,

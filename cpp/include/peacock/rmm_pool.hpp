@@ -12,7 +12,7 @@
 //   - `peacock_install_rmm_pool` in the FFI, which is how `peacock_gpu_benchmarks` — a Rust
 //     target that cannot include a C++ header — gets the same allocator the gtest binaries
 //     have. Without it the two families of numbers in the tree are taken under different
-//     allocators and quietly compared (llm-wiki/tickets.md #151);
+//     allocators and quietly compared (llm-wiki/archive/archived-tickets.md #151);
 //   - `multi_gpu.cpp` keeps its own per-device installation, because a pool per worker
 //     thread on the device that worker owns is a different lifecycle, but reads the
 //     percentages from here.
@@ -23,10 +23,6 @@
 // accepted and ignored. That is #148, deliberately left open here: making the engine
 // self-install changes where every shipping query's memory comes from and what
 // `gpu_memory_limit` means, which is a decision about the product, not about measurement.
-//
-// PEACOCK_RMM_POOL=0 turns the pool off. That switch is not a fallback for a pool that
-// might fail; it is how the allocator's share of a query's time is measured, by running the
-// same binary both ways.
 #pragma once
 
 // RMM flattened rmm/mr/device/*.hpp into rmm/mr/*.hpp after 25.02, and peacock_tpch_tests
@@ -52,7 +48,6 @@
 #include <cstdlib>
 #include <exception>
 #include <memory>
-#include <string>
 
 namespace peacock {
 
@@ -81,16 +76,14 @@ inline constexpr int kIntegratedMaximumPercent = 90;
 
 // What install_rmm_pool() actually did — not what it was asked to do.
 //
-// Every field here exists to be reported rather than to be acted on. A measurement taken
-// under a pool and one taken without differ by more than noise, so a record that does not
-// say which it is cannot be compared with anything; and the three outcomes are not
-// interchangeable, because "off by request" is a measurement and "could not be built" is a
-// host problem that happens to look like one.
+// Unavailable is a host problem, not a configuration: nothing asks for it and the sizes
+// below are meaningless when it happens. The gtest binaries carry on regardless, since a
+// correctness result does not depend on the allocator; the benchmark harness asserts,
+// since a time does.
 struct RmmPoolStatus {
   enum class State {
     Installed,    // a pool is the current device resource
-    Disabled,     // PEACOCK_RMM_POOL=0 — the default resource, on purpose
-    Unavailable,  // the pool could not be built; the default resource, not on purpose
+    Unavailable,  // the pool could not be built; the default resource is still in place
   };
   State state = State::Unavailable;
   bool integrated = false;
@@ -124,13 +117,6 @@ inline const RmmPoolStatus& install_rmm_pool() {
   if (done) return status;
   done = true;
 
-  const char* off = std::getenv("PEACOCK_RMM_POOL");
-  if (off && std::string(off) == "0") {
-    std::fprintf(stderr, "[rmm] pool disabled by PEACOCK_RMM_POOL=0 — cudaMalloc per allocation\n");
-    status.state = RmmPoolStatus::State::Disabled;
-    return status;
-  }
-
   int device = 0;
   cudaGetDevice(&device);
   cudaDeviceProp prop{};
@@ -158,9 +144,9 @@ inline const RmmPoolStatus& install_rmm_pool() {
   static std::unique_ptr<rmm::mr::pool_memory_resource<rmm::mr::cuda_memory_resource>> pool;
   // Both percentages come off FREE memory, so on a shared host the reservation can fail
   // outright — a neighbour holding most of the device leaves an initial size that was
-  // computed a moment ago and is no longer there. Degrade to the default resource instead
-  // of aborting: without a pool the run is slower, without this catch it does not run at
-  // all, and the record says which of the two happened.
+  // computed a moment ago and is no longer there. Report it instead of aborting here: the
+  // correctness binaries are still right without a pool, and the one caller for which that
+  // is not true — the benchmark harness — refuses the run on Unavailable itself.
   try {
     pool = std::make_unique<rmm::mr::pool_memory_resource<rmm::mr::cuda_memory_resource>>(
         upstream.get(), initial, maximum);
