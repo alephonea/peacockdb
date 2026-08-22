@@ -1,31 +1,31 @@
-GpuSortPreservingMergeExec: [o_year@0 ASC NULLS LAST], time_us=98
-  GpuSortExec: expr=[o_year@0 ASC NULLS LAST], time_us=184
-    p0: time_us=85
-    p1: time_us=4
+GpuSortPreservingMergeExec: [o_year@0 ASC NULLS LAST], time_us=69
+  GpuSortExec: expr=[o_year@0 ASC NULLS LAST], time_us=131
+    p0: time_us=60
+    p1: time_us=3
     p2: time_us=3
     p3: time_us=3
     p4: time_us=3
-    p5: time_us=80
+    p5: time_us=53
     p6: time_us=3
     p7: time_us=3
-    GpuProjectExec: expr=[o_year@0 as o_year, sum(CASE WHEN all_nations.nation = Utf8("BRAZIL") THEN all_nations.volume ELSE Int64(0) END)@1 / sum(all_nations.volume)@2 as mkt_share], time_us=345
-      p0: time_us=120
-      p1: time_us=23
-      p2: time_us=20
-      p3: time_us=19
-      p4: time_us=18
-      p5: time_us=102
-      p6: time_us=22
-      p7: time_us=21
-      GpuAggregateExec: group_by=[o_year], aggr=[sum(CASE WHEN all_nations.nation = Utf8("BRAZIL") THEN all_nations.volume ELSE Int64(0) END), sum(all_nations.volume)], time_us=546
-        p0: time_us=273
+    GpuProjectExec: expr=[o_year@0 as o_year, sum(CASE WHEN all_nations.nation = Utf8("BRAZIL") THEN all_nations.volume ELSE Int64(0) END)@1 / sum(all_nations.volume)@2 as mkt_share], time_us=185
+      p0: time_us=72
+      p1: time_us=9
+      p2: time_us=9
+      p3: time_us=9
+      p4: time_us=9
+      p5: time_us=59
+      p6: time_us=9
+      p7: time_us=9
+      GpuAggregateExec: group_by=[o_year], aggr=[sum(CASE WHEN all_nations.nation = Utf8("BRAZIL") THEN all_nations.volume ELSE Int64(0) END), sum(all_nations.volume)], time_us=359
+        p0: time_us=171
         p1: time_us=5
         p2: time_us=4
         p3: time_us=4
         p4: time_us=4
-        p5: time_us=246
-        p6: time_us=5
-        p7: time_us=5
+        p5: time_us=155
+        p6: time_us=10
+        p7: time_us=6
         GpuCoalesceBatchesExec, time_us=8
           p0: time_us=1
           p1: time_us=1
@@ -35,34 +35,34 @@ GpuSortPreservingMergeExec: [o_year@0 ASC NULLS LAST], time_us=98
           p5: time_us=1
           p6: time_us=1
           p7: time_us=1
-          GpuRepartitionExec: partitioning=Hash([o_year@0], 8), input_partitions=1, time_us=217
-            p0: time_us=176
+          GpuRepartitionExec: partitioning=Hash([o_year@0], 8), input_partitions=1, time_us=140
+            p0: time_us=105
             p1: time_us=3
             p2: time_us=3
             p3: time_us=3
             p4: time_us=3
-            p5: time_us=23
+            p5: time_us=17
             p6: time_us=3
             p7: time_us=3
-            GpuCoalescePartitionsExec, time_us=118
-              GpuAggregateExec: group_by=[o_year], aggr=[sum(CASE WHEN all_nations.nation = Utf8("BRAZIL") THEN all_nations.volume ELSE Int64(0) END), sum(all_nations.volume)], time_us=852
-                p0: time_us=45
-                p1: time_us=35
-                p2: time_us=35
-                p3: time_us=592
-                p4: time_us=42
-                p5: time_us=35
-                p6: time_us=34
-                p7: time_us=34
-                GpuProjectExec: expr=[date_part(YEAR, o_orderdate@2) as o_year, l_extendedprice@0 * (Some(1),20,0 - l_discount@1) as volume, n_name@3 as nation], time_us=338
-                  p0: time_us=30
-                  p1: time_us=21
-                  p2: time_us=20
-                  p3: time_us=183
-                  p4: time_us=24
-                  p5: time_us=21
-                  p6: time_us=20
-                  p7: time_us=19
+            GpuCoalescePartitionsExec, time_us=71
+              GpuAggregateExec: group_by=[o_year], aggr=[sum(CASE WHEN all_nations.nation = Utf8("BRAZIL") THEN all_nations.volume ELSE Int64(0) END), sum(all_nations.volume)], time_us=526
+                p0: time_us=27
+                p1: time_us=17
+                p2: time_us=16
+                p3: time_us=400
+                p4: time_us=17
+                p5: time_us=17
+                p6: time_us=16
+                p7: time_us=16
+                GpuProjectExec: expr=[date_part(YEAR, o_orderdate@2) as o_year, l_extendedprice@0 * (Some(1),20,0 - l_discount@1) as volume, n_name@3 as nation], time_us=192
+                  p0: time_us=18
+                  p1: time_us=10
+                  p2: time_us=10
+                  p3: time_us=114
+                  p4: time_us=10
+                  p5: time_us=10
+                  p6: time_us=10
+                  p7: time_us=10
                   GpuCoalesceBatchesExec, time_us=8
                     p0: time_us=1
                     p1: time_us=1
@@ -72,15 +72,15 @@ GpuSortPreservingMergeExec: [o_year@0 ASC NULLS LAST], time_us=98
                     p5: time_us=1
                     p6: time_us=1
                     p7: time_us=1
-                    GpuHashJoinExec: join_type=Inner, on=[(r_regionkey@0, n_regionkey@3)], projection=[1, 2, 3, 5], time_us=773
-                      p0: time_us=44
-                      p1: time_us=39
-                      p2: time_us=36
-                      p3: time_us=457
-                      p4: time_us=44
-                      p5: time_us=38
-                      p6: time_us=57
-                      p7: time_us=58
+                    GpuHashJoinExec: join_type=Inner, on=[(r_regionkey@0, n_regionkey@3)], projection=[1, 2, 3, 5], time_us=400
+                      p0: time_us=28
+                      p1: time_us=25
+                      p2: time_us=24
+                      p3: time_us=221
+                      p4: time_us=24
+                      p5: time_us=24
+                      p6: time_us=26
+                      p7: time_us=28
                       GpuCoalesceBatchesExec, time_us=8
                         p0: time_us=1
                         p1: time_us=1
@@ -90,20 +90,20 @@ GpuSortPreservingMergeExec: [o_year@0 ASC NULLS LAST], time_us=98
                         p5: time_us=1
                         p6: time_us=1
                         p7: time_us=1
-                        GpuRepartitionExec: partitioning=Hash([r_regionkey@0], 8), input_partitions=1, time_us=138
-                          p0: time_us=115
+                        GpuRepartitionExec: partitioning=Hash([r_regionkey@0], 8), input_partitions=1, time_us=94
+                          p0: time_us=73
                           p1: time_us=2
                           p2: time_us=2
-                          p3: time_us=11
+                          p3: time_us=9
                           p4: time_us=2
                           p5: time_us=2
                           p6: time_us=2
                           p7: time_us=2
-                          GpuCoalescePartitionsExec, time_us=13
+                          GpuCoalescePartitionsExec, time_us=11
                             GpuCoalesceBatchesExec, time_us=1
-                              GpuFilterExec: predicate=r_name@1 = AMERICA, projection=[0], time_us=474
+                              GpuFilterExec: predicate=r_name@1 = AMERICA, projection=[0], time_us=312
                                 GpuRepartitionExec: partitioning=RoundRobinBatch(8), input_partitions=1, time_us=1
-                                  GpuScanExec: table=region, projections=[r_regionkey, r_name], time_us=1265
+                                  GpuScanExec: table=region, projections=[r_regionkey, r_name], time_us=820
                       GpuCoalesceBatchesExec, time_us=8
                         p0: time_us=1
                         p1: time_us=1
@@ -113,25 +113,25 @@ GpuSortPreservingMergeExec: [o_year@0 ASC NULLS LAST], time_us=98
                         p5: time_us=1
                         p6: time_us=1
                         p7: time_us=1
-                        GpuRepartitionExec: partitioning=Hash([n_regionkey@3], 8), input_partitions=1, time_us=531
-                          p0: time_us=314
-                          p1: time_us=4
+                        GpuRepartitionExec: partitioning=Hash([n_regionkey@3], 8), input_partitions=1, time_us=384
+                          p0: time_us=207
+                          p1: time_us=5
                           p2: time_us=4
-                          p3: time_us=56
+                          p3: time_us=41
                           p4: time_us=4
                           p5: time_us=4
-                          p6: time_us=73
-                          p7: time_us=72
-                          GpuCoalescePartitionsExec, time_us=263
-                            GpuProjectExec: expr=[l_extendedprice@1 as l_extendedprice, l_discount@2 as l_discount, o_orderdate@3 as o_orderdate, n_regionkey@4 as n_regionkey, n_name@0 as n_name], time_us=801
-                              p0: time_us=114
-                              p1: time_us=111
-                              p2: time_us=117
-                              p3: time_us=119
-                              p4: time_us=5
-                              p5: time_us=120
-                              p6: time_us=109
-                              p7: time_us=106
+                          p6: time_us=60
+                          p7: time_us=59
+                          GpuCoalescePartitionsExec, time_us=153
+                            GpuProjectExec: expr=[l_extendedprice@1 as l_extendedprice, l_discount@2 as l_discount, o_orderdate@3 as o_orderdate, n_regionkey@4 as n_regionkey, n_name@0 as n_name], time_us=473
+                              p0: time_us=69
+                              p1: time_us=68
+                              p2: time_us=66
+                              p3: time_us=66
+                              p4: time_us=4
+                              p5: time_us=66
+                              p6: time_us=68
+                              p7: time_us=66
                               GpuCoalesceBatchesExec, time_us=8
                                 p0: time_us=1
                                 p1: time_us=1
@@ -141,15 +141,15 @@ GpuSortPreservingMergeExec: [o_year@0 ASC NULLS LAST], time_us=98
                                 p5: time_us=1
                                 p6: time_us=1
                                 p7: time_us=1
-                                GpuHashJoinExec: join_type=Inner, on=[(n_nationkey@0, s_nationkey@2)], projection=[1, 2, 3, 5, 6], time_us=4548
-                                  p0: time_us=659
-                                  p1: time_us=650
-                                  p2: time_us=634
-                                  p3: time_us=616
-                                  p4: time_us=44
-                                  p5: time_us=612
-                                  p6: time_us=653
-                                  p7: time_us=680
+                                GpuHashJoinExec: join_type=Inner, on=[(n_nationkey@0, s_nationkey@2)], projection=[1, 2, 3, 5, 6], time_us=2592
+                                  p0: time_us=379
+                                  p1: time_us=367
+                                  p2: time_us=359
+                                  p3: time_us=359
+                                  p4: time_us=27
+                                  p5: time_us=367
+                                  p6: time_us=371
+                                  p7: time_us=363
                                   GpuCoalesceBatchesExec, time_us=8
                                     p0: time_us=1
                                     p1: time_us=1
@@ -159,16 +159,16 @@ GpuSortPreservingMergeExec: [o_year@0 ASC NULLS LAST], time_us=98
                                     p5: time_us=1
                                     p6: time_us=1
                                     p7: time_us=1
-                                    GpuRepartitionExec: partitioning=Hash([n_nationkey@0], 8), input_partitions=1, time_us=1606
-                                      p0: time_us=512
-                                      p1: time_us=170
-                                      p2: time_us=178
-                                      p3: time_us=168
-                                      p4: time_us=84
-                                      p5: time_us=161
-                                      p6: time_us=167
-                                      p7: time_us=166
-                                      GpuScanExec: table=nation, projections=[n_nationkey, n_name], time_us=1077
+                                    GpuRepartitionExec: partitioning=Hash([n_nationkey@0], 8), input_partitions=1, time_us=1173
+                                      p0: time_us=355
+                                      p1: time_us=130
+                                      p2: time_us=127
+                                      p3: time_us=128
+                                      p4: time_us=55
+                                      p5: time_us=126
+                                      p6: time_us=125
+                                      p7: time_us=127
+                                      GpuScanExec: table=nation, projections=[n_nationkey, n_name], time_us=730
                                   GpuCoalesceBatchesExec, time_us=8
                                     p0: time_us=1
                                     p1: time_us=1
@@ -178,25 +178,25 @@ GpuSortPreservingMergeExec: [o_year@0 ASC NULLS LAST], time_us=98
                                     p5: time_us=1
                                     p6: time_us=1
                                     p7: time_us=1
-                                    GpuRepartitionExec: partitioning=Hash([s_nationkey@2], 8), input_partitions=1, time_us=439
-                                      p0: time_us=204
-                                      p1: time_us=50
-                                      p2: time_us=40
-                                      p3: time_us=37
-                                      p4: time_us=5
-                                      p5: time_us=37
-                                      p6: time_us=33
-                                      p7: time_us=33
-                                      GpuCoalescePartitionsExec, time_us=199
-                                        GpuProjectExec: expr=[l_extendedprice@1 as l_extendedprice, l_discount@2 as l_discount, s_nationkey@3 as s_nationkey, o_orderdate@4 as o_orderdate, n_regionkey@0 as n_regionkey], time_us=440
-                                          p0: time_us=63
-                                          p1: time_us=62
-                                          p2: time_us=61
-                                          p3: time_us=65
+                                    GpuRepartitionExec: partitioning=Hash([s_nationkey@2], 8), input_partitions=1, time_us=266
+                                      p0: time_us=116
+                                      p1: time_us=23
+                                      p2: time_us=29
+                                      p3: time_us=29
+                                      p4: time_us=4
+                                      p5: time_us=22
+                                      p6: time_us=21
+                                      p7: time_us=22
+                                      GpuCoalescePartitionsExec, time_us=115
+                                        GpuProjectExec: expr=[l_extendedprice@1 as l_extendedprice, l_discount@2 as l_discount, s_nationkey@3 as s_nationkey, o_orderdate@4 as o_orderdate, n_regionkey@0 as n_regionkey], time_us=182
+                                          p0: time_us=26
+                                          p1: time_us=26
+                                          p2: time_us=26
+                                          p3: time_us=24
                                           p4: time_us=4
-                                          p5: time_us=61
-                                          p6: time_us=62
-                                          p7: time_us=62
+                                          p5: time_us=25
+                                          p6: time_us=25
+                                          p7: time_us=26
                                           GpuCoalesceBatchesExec, time_us=8
                                             p0: time_us=1
                                             p1: time_us=1
@@ -206,15 +206,15 @@ GpuSortPreservingMergeExec: [o_year@0 ASC NULLS LAST], time_us=98
                                             p5: time_us=1
                                             p6: time_us=1
                                             p7: time_us=1
-                                            GpuHashJoinExec: join_type=Inner, on=[(n_nationkey@0, c_nationkey@4)], projection=[1, 2, 3, 4, 5], time_us=3211
-                                              p0: time_us=467
-                                              p1: time_us=455
-                                              p2: time_us=450
-                                              p3: time_us=451
-                                              p4: time_us=45
-                                              p5: time_us=452
-                                              p6: time_us=444
-                                              p7: time_us=447
+                                            GpuHashJoinExec: join_type=Inner, on=[(n_nationkey@0, c_nationkey@4)], projection=[1, 2, 3, 4, 5], time_us=1650
+                                              p0: time_us=252
+                                              p1: time_us=234
+                                              p2: time_us=228
+                                              p3: time_us=228
+                                              p4: time_us=27
+                                              p5: time_us=226
+                                              p6: time_us=226
+                                              p7: time_us=229
                                               GpuCoalesceBatchesExec, time_us=8
                                                 p0: time_us=1
                                                 p1: time_us=1
@@ -224,16 +224,16 @@ GpuSortPreservingMergeExec: [o_year@0 ASC NULLS LAST], time_us=98
                                                 p5: time_us=1
                                                 p6: time_us=1
                                                 p7: time_us=1
-                                                GpuRepartitionExec: partitioning=Hash([n_nationkey@0], 8), input_partitions=1, time_us=1054
-                                                  p0: time_us=326
-                                                  p1: time_us=120
-                                                  p2: time_us=108
-                                                  p3: time_us=105
-                                                  p4: time_us=82
-                                                  p5: time_us=101
-                                                  p6: time_us=106
-                                                  p7: time_us=106
-                                                  GpuScanExec: table=nation, projections=[n_nationkey, n_regionkey], time_us=1056
+                                                GpuRepartitionExec: partitioning=Hash([n_nationkey@0], 8), input_partitions=1, time_us=693
+                                                  p0: time_us=205
+                                                  p1: time_us=83
+                                                  p2: time_us=72
+                                                  p3: time_us=70
+                                                  p4: time_us=54
+                                                  p5: time_us=68
+                                                  p6: time_us=70
+                                                  p7: time_us=71
+                                                  GpuScanExec: table=nation, projections=[n_nationkey, n_regionkey], time_us=671
                                               GpuCoalesceBatchesExec, time_us=8
                                                 p0: time_us=1
                                                 p1: time_us=1
@@ -243,25 +243,25 @@ GpuSortPreservingMergeExec: [o_year@0 ASC NULLS LAST], time_us=98
                                                 p5: time_us=1
                                                 p6: time_us=1
                                                 p7: time_us=1
-                                                GpuRepartitionExec: partitioning=Hash([c_nationkey@4], 8), input_partitions=1, time_us=408
-                                                  p0: time_us=196
-                                                  p1: time_us=40
-                                                  p2: time_us=35
-                                                  p3: time_us=34
+                                                GpuRepartitionExec: partitioning=Hash([c_nationkey@4], 8), input_partitions=1, time_us=272
+                                                  p0: time_us=128
+                                                  p1: time_us=23
+                                                  p2: time_us=25
+                                                  p3: time_us=22
                                                   p4: time_us=4
-                                                  p5: time_us=33
-                                                  p6: time_us=33
-                                                  p7: time_us=33
-                                                  GpuCoalescePartitionsExec, time_us=203
-                                                    GpuProjectExec: expr=[l_extendedprice@1 as l_extendedprice, l_discount@2 as l_discount, s_nationkey@3 as s_nationkey, o_orderdate@4 as o_orderdate, c_nationkey@0 as c_nationkey], time_us=413
-                                                      p0: time_us=55
-                                                      p1: time_us=52
-                                                      p2: time_us=52
-                                                      p3: time_us=54
-                                                      p4: time_us=51
-                                                      p5: time_us=50
-                                                      p6: time_us=49
-                                                      p7: time_us=50
+                                                  p5: time_us=24
+                                                  p6: time_us=24
+                                                  p7: time_us=22
+                                                  GpuCoalescePartitionsExec, time_us=116
+                                                    GpuProjectExec: expr=[l_extendedprice@1 as l_extendedprice, l_discount@2 as l_discount, s_nationkey@3 as s_nationkey, o_orderdate@4 as o_orderdate, c_nationkey@0 as c_nationkey], time_us=184
+                                                      p0: time_us=23
+                                                      p1: time_us=25
+                                                      p2: time_us=22
+                                                      p3: time_us=23
+                                                      p4: time_us=23
+                                                      p5: time_us=22
+                                                      p6: time_us=22
+                                                      p7: time_us=24
                                                       GpuCoalesceBatchesExec, time_us=8
                                                         p0: time_us=1
                                                         p1: time_us=1
@@ -271,15 +271,15 @@ GpuSortPreservingMergeExec: [o_year@0 ASC NULLS LAST], time_us=98
                                                         p5: time_us=1
                                                         p6: time_us=1
                                                         p7: time_us=1
-                                                        GpuHashJoinExec: join_type=Inner, on=[(c_custkey@0, o_custkey@3)], projection=[1, 2, 3, 4, 6], time_us=2656
-                                                          p0: time_us=381
-                                                          p1: time_us=332
-                                                          p2: time_us=327
-                                                          p3: time_us=320
-                                                          p4: time_us=312
-                                                          p5: time_us=334
-                                                          p6: time_us=329
-                                                          p7: time_us=321
+                                                        GpuHashJoinExec: join_type=Inner, on=[(c_custkey@0, o_custkey@3)], projection=[1, 2, 3, 4, 6], time_us=1344
+                                                          p0: time_us=179
+                                                          p1: time_us=171
+                                                          p2: time_us=166
+                                                          p3: time_us=166
+                                                          p4: time_us=166
+                                                          p5: time_us=164
+                                                          p6: time_us=169
+                                                          p7: time_us=163
                                                           GpuCoalesceBatchesExec, time_us=9
                                                             p0: time_us=2
                                                             p1: time_us=1
@@ -289,19 +289,19 @@ GpuSortPreservingMergeExec: [o_year@0 ASC NULLS LAST], time_us=98
                                                             p5: time_us=1
                                                             p6: time_us=1
                                                             p7: time_us=1
-                                                            GpuRepartitionExec: partitioning=Hash([c_custkey@0], 8), input_partitions=1, time_us=362
-                                                              p0: time_us=231
-                                                              p1: time_us=19
-                                                              p2: time_us=20
-                                                              p3: time_us=19
-                                                              p4: time_us=18
-                                                              p5: time_us=18
-                                                              p6: time_us=18
-                                                              p7: time_us=19
-                                                              GpuCoalescePartitionsExec, time_us=110
-                                                                GpuScanExec: table=customer, projections=[c_custkey, c_nationkey], time_us=36580
-                                                                  p0: time_us=29294
-                                                                  p1: time_us=7286
+                                                            GpuRepartitionExec: partitioning=Hash([c_custkey@0], 8), input_partitions=1, time_us=214
+                                                              p0: time_us=121
+                                                              p1: time_us=13
+                                                              p2: time_us=14
+                                                              p3: time_us=14
+                                                              p4: time_us=12
+                                                              p5: time_us=13
+                                                              p6: time_us=13
+                                                              p7: time_us=14
+                                                              GpuCoalescePartitionsExec, time_us=26
+                                                                GpuScanExec: table=customer, projections=[c_custkey, c_nationkey], time_us=35006
+                                                                  p0: time_us=28242
+                                                                  p1: time_us=6764
                                                           GpuCoalesceBatchesExec, time_us=8
                                                             p0: time_us=1
                                                             p1: time_us=1
@@ -311,25 +311,25 @@ GpuSortPreservingMergeExec: [o_year@0 ASC NULLS LAST], time_us=98
                                                             p5: time_us=1
                                                             p6: time_us=1
                                                             p7: time_us=1
-                                                            GpuRepartitionExec: partitioning=Hash([o_custkey@3], 8), input_partitions=1, time_us=456
-                                                              p0: time_us=206
-                                                              p1: time_us=38
-                                                              p2: time_us=39
-                                                              p3: time_us=34
-                                                              p4: time_us=36
-                                                              p5: time_us=34
-                                                              p6: time_us=35
-                                                              p7: time_us=34
-                                                              GpuCoalescePartitionsExec, time_us=209
-                                                                GpuProjectExec: expr=[l_extendedprice@2 as l_extendedprice, l_discount@3 as l_discount, s_nationkey@4 as s_nationkey, o_custkey@0 as o_custkey, o_orderdate@1 as o_orderdate], time_us=455
-                                                                  p0: time_us=57
-                                                                  p1: time_us=54
-                                                                  p2: time_us=86
-                                                                  p3: time_us=51
-                                                                  p4: time_us=54
-                                                                  p5: time_us=53
-                                                                  p6: time_us=53
-                                                                  p7: time_us=47
+                                                            GpuRepartitionExec: partitioning=Hash([o_custkey@3], 8), input_partitions=1, time_us=276
+                                                              p0: time_us=115
+                                                              p1: time_us=23
+                                                              p2: time_us=23
+                                                              p3: time_us=25
+                                                              p4: time_us=23
+                                                              p5: time_us=22
+                                                              p6: time_us=23
+                                                              p7: time_us=22
+                                                              GpuCoalescePartitionsExec, time_us=119
+                                                                GpuProjectExec: expr=[l_extendedprice@2 as l_extendedprice, l_discount@3 as l_discount, s_nationkey@4 as s_nationkey, o_custkey@0 as o_custkey, o_orderdate@1 as o_orderdate], time_us=193
+                                                                  p0: time_us=24
+                                                                  p1: time_us=23
+                                                                  p2: time_us=25
+                                                                  p3: time_us=23
+                                                                  p4: time_us=29
+                                                                  p5: time_us=23
+                                                                  p6: time_us=24
+                                                                  p7: time_us=22
                                                                   GpuCoalesceBatchesExec, time_us=8
                                                                     p0: time_us=1
                                                                     p1: time_us=1
@@ -339,15 +339,15 @@ GpuSortPreservingMergeExec: [o_year@0 ASC NULLS LAST], time_us=98
                                                                     p5: time_us=1
                                                                     p6: time_us=1
                                                                     p7: time_us=1
-                                                                    GpuHashJoinExec: join_type=Inner, on=[(o_orderkey@0, l_orderkey@0)], projection=[1, 2, 4, 5, 6], time_us=2950
-                                                                      p0: time_us=356
-                                                                      p1: time_us=376
-                                                                      p2: time_us=386
-                                                                      p3: time_us=361
-                                                                      p4: time_us=333
-                                                                      p5: time_us=360
-                                                                      p6: time_us=376
-                                                                      p7: time_us=402
+                                                                    GpuHashJoinExec: join_type=Inner, on=[(o_orderkey@0, l_orderkey@0)], projection=[1, 2, 4, 5, 6], time_us=1355
+                                                                      p0: time_us=189
+                                                                      p1: time_us=168
+                                                                      p2: time_us=167
+                                                                      p3: time_us=169
+                                                                      p4: time_us=166
+                                                                      p5: time_us=168
+                                                                      p6: time_us=163
+                                                                      p7: time_us=165
                                                                       GpuCoalesceBatchesExec, time_us=8
                                                                         p0: time_us=1
                                                                         p1: time_us=1
@@ -357,34 +357,34 @@ GpuSortPreservingMergeExec: [o_year@0 ASC NULLS LAST], time_us=98
                                                                         p5: time_us=1
                                                                         p6: time_us=1
                                                                         p7: time_us=1
-                                                                        GpuRepartitionExec: partitioning=Hash([o_orderkey@0], 8), input_partitions=1, time_us=832
-                                                                          p0: time_us=553
-                                                                          p1: time_us=27
-                                                                          p2: time_us=25
-                                                                          p3: time_us=60
-                                                                          p4: time_us=25
-                                                                          p5: time_us=57
-                                                                          p6: time_us=25
-                                                                          p7: time_us=60
-                                                                          GpuCoalescePartitionsExec, time_us=224
+                                                                        GpuRepartitionExec: partitioning=Hash([o_orderkey@0], 8), input_partitions=1, time_us=314
+                                                                          p0: time_us=198
+                                                                          p1: time_us=16
+                                                                          p2: time_us=16
+                                                                          p3: time_us=16
+                                                                          p4: time_us=17
+                                                                          p5: time_us=18
+                                                                          p6: time_us=17
+                                                                          p7: time_us=16
+                                                                          GpuCoalescePartitionsExec, time_us=79
                                                                             GpuCoalesceBatchesExec, time_us=5
                                                                               p0: time_us=1
                                                                               p1: time_us=1
                                                                               p2: time_us=1
                                                                               p3: time_us=1
                                                                               p4: time_us=1
-                                                                              GpuFilterExec: predicate=o_orderdate@2 >= 1995-01-01 AND o_orderdate@2 <= 1996-12-31, time_us=1103
-                                                                                p0: time_us=267
-                                                                                p1: time_us=187
-                                                                                p2: time_us=183
-                                                                                p3: time_us=181
-                                                                                p4: time_us=285
-                                                                                GpuScanExec: table=orders, projections=[o_orderkey, o_custkey, o_orderdate], time_us=129174
-                                                                                  p0: time_us=25818
-                                                                                  p1: time_us=25860
-                                                                                  p2: time_us=25644
-                                                                                  p3: time_us=26005
-                                                                                  p4: time_us=25847
+                                                                              GpuFilterExec: predicate=o_orderdate@2 >= 1995-01-01 AND o_orderdate@2 <= 1996-12-31, time_us=577
+                                                                                p0: time_us=156
+                                                                                p1: time_us=100
+                                                                                p2: time_us=94
+                                                                                p3: time_us=102
+                                                                                p4: time_us=125
+                                                                                GpuScanExec: table=orders, projections=[o_orderkey, o_custkey, o_orderdate], time_us=125639
+                                                                                  p0: time_us=25757
+                                                                                  p1: time_us=24928
+                                                                                  p2: time_us=25072
+                                                                                  p3: time_us=25035
+                                                                                  p4: time_us=24847
                                                                       GpuCoalesceBatchesExec, time_us=8
                                                                         p0: time_us=1
                                                                         p1: time_us=1
@@ -394,25 +394,25 @@ GpuSortPreservingMergeExec: [o_year@0 ASC NULLS LAST], time_us=98
                                                                         p5: time_us=1
                                                                         p6: time_us=1
                                                                         p7: time_us=1
-                                                                        GpuRepartitionExec: partitioning=Hash([l_orderkey@0], 8), input_partitions=1, time_us=475
-                                                                          p0: time_us=201
-                                                                          p1: time_us=32
-                                                                          p2: time_us=33
-                                                                          p3: time_us=33
-                                                                          p4: time_us=33
-                                                                          p5: time_us=31
-                                                                          p6: time_us=31
-                                                                          p7: time_us=81
-                                                                          GpuCoalescePartitionsExec, time_us=175
-                                                                            GpuProjectExec: expr=[l_orderkey@1 as l_orderkey, l_extendedprice@2 as l_extendedprice, l_discount@3 as l_discount, s_nationkey@0 as s_nationkey], time_us=369
-                                                                              p0: time_us=49
-                                                                              p1: time_us=45
-                                                                              p2: time_us=46
-                                                                              p3: time_us=47
-                                                                              p4: time_us=46
-                                                                              p5: time_us=46
-                                                                              p6: time_us=46
-                                                                              p7: time_us=44
+                                                                        GpuRepartitionExec: partitioning=Hash([l_orderkey@0], 8), input_partitions=1, time_us=246
+                                                                          p0: time_us=112
+                                                                          p1: time_us=20
+                                                                          p2: time_us=19
+                                                                          p3: time_us=19
+                                                                          p4: time_us=19
+                                                                          p5: time_us=19
+                                                                          p6: time_us=19
+                                                                          p7: time_us=19
+                                                                          GpuCoalescePartitionsExec, time_us=96
+                                                                            GpuProjectExec: expr=[l_orderkey@1 as l_orderkey, l_extendedprice@2 as l_extendedprice, l_discount@3 as l_discount, s_nationkey@0 as s_nationkey], time_us=157
+                                                                              p0: time_us=23
+                                                                              p1: time_us=18
+                                                                              p2: time_us=20
+                                                                              p3: time_us=20
+                                                                              p4: time_us=19
+                                                                              p5: time_us=19
+                                                                              p6: time_us=19
+                                                                              p7: time_us=19
                                                                               GpuCoalesceBatchesExec, time_us=8
                                                                                 p0: time_us=1
                                                                                 p1: time_us=1
@@ -422,15 +422,15 @@ GpuSortPreservingMergeExec: [o_year@0 ASC NULLS LAST], time_us=98
                                                                                 p5: time_us=1
                                                                                 p6: time_us=1
                                                                                 p7: time_us=1
-                                                                                GpuHashJoinExec: join_type=Inner, on=[(s_suppkey@0, l_suppkey@1)], projection=[1, 2, 4, 5], time_us=2526
-                                                                                  p0: time_us=326
-                                                                                  p1: time_us=324
-                                                                                  p2: time_us=309
-                                                                                  p3: time_us=310
-                                                                                  p4: time_us=318
-                                                                                  p5: time_us=307
-                                                                                  p6: time_us=321
-                                                                                  p7: time_us=311
+                                                                                GpuHashJoinExec: join_type=Inner, on=[(s_suppkey@0, l_suppkey@1)], projection=[1, 2, 4, 5], time_us=1251
+                                                                                  p0: time_us=167
+                                                                                  p1: time_us=159
+                                                                                  p2: time_us=155
+                                                                                  p3: time_us=156
+                                                                                  p4: time_us=154
+                                                                                  p5: time_us=154
+                                                                                  p6: time_us=153
+                                                                                  p7: time_us=153
                                                                                   GpuCoalesceBatchesExec, time_us=8
                                                                                     p0: time_us=1
                                                                                     p1: time_us=1
@@ -440,18 +440,18 @@ GpuSortPreservingMergeExec: [o_year@0 ASC NULLS LAST], time_us=98
                                                                                     p5: time_us=1
                                                                                     p6: time_us=1
                                                                                     p7: time_us=1
-                                                                                    GpuRepartitionExec: partitioning=Hash([s_suppkey@0], 8), input_partitions=1, time_us=298
-                                                                                      p0: time_us=170
-                                                                                      p1: time_us=20
-                                                                                      p2: time_us=19
-                                                                                      p3: time_us=19
-                                                                                      p4: time_us=18
-                                                                                      p5: time_us=18
-                                                                                      p6: time_us=17
-                                                                                      p7: time_us=17
-                                                                                      GpuCoalescePartitionsExec, time_us=30
+                                                                                    GpuRepartitionExec: partitioning=Hash([s_suppkey@0], 8), input_partitions=1, time_us=182
+                                                                                      p0: time_us=95
+                                                                                      p1: time_us=13
+                                                                                      p2: time_us=13
+                                                                                      p3: time_us=12
+                                                                                      p4: time_us=12
+                                                                                      p5: time_us=12
+                                                                                      p6: time_us=13
+                                                                                      p7: time_us=12
+                                                                                      GpuCoalescePartitionsExec, time_us=18
                                                                                         GpuRepartitionExec: partitioning=RoundRobinBatch(8), input_partitions=1, time_us=1
-                                                                                          GpuScanExec: table=supplier, projections=[s_suppkey, s_nationkey], time_us=3444
+                                                                                          GpuScanExec: table=supplier, projections=[s_suppkey, s_nationkey], time_us=2968
                                                                                   GpuCoalesceBatchesExec, time_us=8
                                                                                     p0: time_us=1
                                                                                     p1: time_us=1
@@ -461,16 +461,16 @@ GpuSortPreservingMergeExec: [o_year@0 ASC NULLS LAST], time_us=98
                                                                                     p5: time_us=1
                                                                                     p6: time_us=1
                                                                                     p7: time_us=1
-                                                                                    GpuRepartitionExec: partitioning=Hash([l_suppkey@1], 8), input_partitions=1, time_us=484
-                                                                                      p0: time_us=267
-                                                                                      p1: time_us=33
-                                                                                      p2: time_us=31
-                                                                                      p3: time_us=31
-                                                                                      p4: time_us=30
-                                                                                      p5: time_us=31
-                                                                                      p6: time_us=30
-                                                                                      p7: time_us=31
-                                                                                      GpuCoalescePartitionsExec, time_us=179
+                                                                                    GpuRepartitionExec: partitioning=Hash([l_suppkey@1], 8), input_partitions=1, time_us=254
+                                                                                      p0: time_us=114
+                                                                                      p1: time_us=20
+                                                                                      p2: time_us=21
+                                                                                      p3: time_us=20
+                                                                                      p4: time_us=19
+                                                                                      p5: time_us=20
+                                                                                      p6: time_us=19
+                                                                                      p7: time_us=21
+                                                                                      GpuCoalescePartitionsExec, time_us=97
                                                                                         GpuCoalesceBatchesExec, time_us=8
                                                                                           p0: time_us=1
                                                                                           p1: time_us=1
@@ -480,15 +480,15 @@ GpuSortPreservingMergeExec: [o_year@0 ASC NULLS LAST], time_us=98
                                                                                           p5: time_us=1
                                                                                           p6: time_us=1
                                                                                           p7: time_us=1
-                                                                                          GpuHashJoinExec: join_type=Inner, on=[(p_partkey@0, l_partkey@1)], projection=[1, 3, 4, 5], time_us=4613
-                                                                                            p0: time_us=637
-                                                                                            p1: time_us=591
-                                                                                            p2: time_us=580
-                                                                                            p3: time_us=557
-                                                                                            p4: time_us=553
-                                                                                            p5: time_us=583
-                                                                                            p6: time_us=554
-                                                                                            p7: time_us=558
+                                                                                          GpuHashJoinExec: join_type=Inner, on=[(p_partkey@0, l_partkey@1)], projection=[1, 3, 4, 5], time_us=2034
+                                                                                            p0: time_us=301
+                                                                                            p1: time_us=251
+                                                                                            p2: time_us=247
+                                                                                            p3: time_us=244
+                                                                                            p4: time_us=240
+                                                                                            p5: time_us=252
+                                                                                            p6: time_us=254
+                                                                                            p7: time_us=245
                                                                                             GpuCoalesceBatchesExec, time_us=8
                                                                                               p0: time_us=1
                                                                                               p1: time_us=1
@@ -498,25 +498,25 @@ GpuSortPreservingMergeExec: [o_year@0 ASC NULLS LAST], time_us=98
                                                                                               p5: time_us=1
                                                                                               p6: time_us=1
                                                                                               p7: time_us=1
-                                                                                              GpuRepartitionExec: partitioning=Hash([p_partkey@0], 8), input_partitions=1, time_us=225
-                                                                                                p0: time_us=139
-                                                                                                p1: time_us=14
-                                                                                                p2: time_us=11
-                                                                                                p3: time_us=12
-                                                                                                p4: time_us=13
-                                                                                                p5: time_us=12
-                                                                                                p6: time_us=12
-                                                                                                p7: time_us=12
-                                                                                                GpuCoalescePartitionsExec, time_us=21
+                                                                                              GpuRepartitionExec: partitioning=Hash([p_partkey@0], 8), input_partitions=1, time_us=145
+                                                                                                p0: time_us=82
+                                                                                                p1: time_us=9
+                                                                                                p2: time_us=9
+                                                                                                p3: time_us=9
+                                                                                                p4: time_us=9
+                                                                                                p5: time_us=9
+                                                                                                p6: time_us=9
+                                                                                                p7: time_us=9
+                                                                                                GpuCoalescePartitionsExec, time_us=14
                                                                                                   GpuCoalesceBatchesExec, time_us=2
                                                                                                     p0: time_us=1
                                                                                                     p1: time_us=1
-                                                                                                    GpuFilterExec: predicate=p_type@1 = ECONOMY ANODIZED STEEL, projection=[0], time_us=1184
-                                                                                                      p0: time_us=660
-                                                                                                      p1: time_us=524
-                                                                                                      GpuScanExec: table=part, projections=[p_partkey, p_type], time_us=53506
-                                                                                                        p0: time_us=32651
-                                                                                                        p1: time_us=20855
+                                                                                                    GpuFilterExec: predicate=p_type@1 = ECONOMY ANODIZED STEEL, projection=[0], time_us=618
+                                                                                                      p0: time_us=321
+                                                                                                      p1: time_us=297
+                                                                                                      GpuScanExec: table=part, projections=[p_partkey, p_type], time_us=52213
+                                                                                                        p0: time_us=31956
+                                                                                                        p1: time_us=20257
                                                                                             GpuCoalesceBatchesExec, time_us=9
                                                                                               p0: time_us=2
                                                                                               p1: time_us=1
@@ -526,31 +526,35 @@ GpuSortPreservingMergeExec: [o_year@0 ASC NULLS LAST], time_us=98
                                                                                               p5: time_us=1
                                                                                               p6: time_us=1
                                                                                               p7: time_us=1
-                                                                                              GpuRepartitionExec: partitioning=Hash([l_partkey@1], 8), input_partitions=1, time_us=4369
-                                                                                                p0: time_us=2680
-                                                                                                p1: time_us=255
-                                                                                                p2: time_us=247
-                                                                                                p3: time_us=241
-                                                                                                p4: time_us=231
-                                                                                                p5: time_us=232
-                                                                                                p6: time_us=227
-                                                                                                p7: time_us=256
-                                                                                                GpuCoalescePartitionsExec, time_us=669
-                                                                                                  GpuScanExec: table=lineitem, projections=[l_orderkey, l_partkey, l_suppkey, l_extendedprice, l_discount], time_us=286377
-                                                                                                    p0: time_us=36061
-                                                                                                    p1: time_us=35730
-                                                                                                    p2: time_us=35762
-                                                                                                    p3: time_us=35847
-                                                                                                    p4: time_us=35847
-                                                                                                    p5: time_us=35778
-                                                                                                    p6: time_us=35753
-                                                                                                    p7: time_us=35599
+                                                                                              GpuRepartitionExec: partitioning=Hash([l_partkey@1], 8), input_partitions=1, time_us=2601
+                                                                                                p0: time_us=2136
+                                                                                                p1: time_us=67
+                                                                                                p2: time_us=67
+                                                                                                p3: time_us=66
+                                                                                                p4: time_us=66
+                                                                                                p5: time_us=66
+                                                                                                p6: time_us=66
+                                                                                                p7: time_us=67
+                                                                                                GpuCoalescePartitionsExec, time_us=339
+                                                                                                  GpuScanExec: table=lineitem, projections=[l_orderkey, l_partkey, l_suppkey, l_extendedprice, l_discount], time_us=271826
+                                                                                                    p0: time_us=34467
+                                                                                                    p1: time_us=34423
+                                                                                                    p2: time_us=34392
+                                                                                                    p3: time_us=33555
+                                                                                                    p4: time_us=34458
+                                                                                                    p5: time_us=33089
+                                                                                                    p6: time_us=34413
+                                                                                                    p7: time_us=33029
 
 # sync_floor_us = cost of the measurement itself (empty timed region: clock + cudaStreamSynchronize on an idle stream). Each node time INCLUDES one PER OUTPUT PARTITION, since a node line is the Σ over its partitions; a node at or below its own floor (sync_floor_us x partitions) is unresolved, not cheap. Do not subtract it.
 # nodes_total_us = Σ of the per-node times above; total_us = the whole query, end to end (parse + plan + serialize + node walk + materialize)
 # build_profile = how the harness itself was compiled. total_us MINUS nodes_total_us is that Rust; records from different profiles are not comparable on it. Node times are device work and barely move.
+# allocator = the rmm device resource the node times were taken under. Without a pool every cuDF intermediate is a cudaMalloc/cudaFree round trip, charged to the node that allocated it — so it inflates the largest-output nodes hardest and moves the PROFILE, not only the scale. Records under different allocators are not comparable, node for node or in total.
+# shared_work_charged_to = which p<k> sub-line carries work a node does once for all of its output partitions. A hash repartition concatenates its input and scatters it in a single operation, and that time is billed to p0 — so p0 standing far above its siblings is the accounting, not skew. Sub-lines sum to their node line either way. Written whether or not this plan has a repartition.
 build_profile=benchmarks opt-level=3
+allocator=rmm-pool initial=113.4GiB max=126.7GiB of 133.4GiB free on a discrete device
+shared_work_charged_to=p0
 sync_floor_us=1
 nodes_at_or_below_floor=25/84
-nodes_total_us=555853
-total_us=569052
+nodes_total_us=513353
+total_us=522744

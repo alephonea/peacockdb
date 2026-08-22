@@ -18,7 +18,7 @@
 #include <string>
 #include <vector>
 
-#include "rmm_pool.hpp"
+#include "peacock/rmm_pool.hpp"
 
 namespace fb = peacock::plan;
 
@@ -726,6 +726,6 @@ TEST(PlanExecutor, JoinProjectSort) {
 
 int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);
-  peacock_test::install_rmm_pool();
+  peacock::install_rmm_pool();
   return RUN_ALL_TESTS();
 }
