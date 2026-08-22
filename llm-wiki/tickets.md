@@ -16,7 +16,7 @@ reference still resolves there.
 |---|--:|---|
 | [Critical correctness](#critical-correctness) | 14 | #103 #80 #59 #46 #47 #60 #121 #122 #123 #118 #119 #120 #117 #41 |
 | [Blockers for disabled coverage](#blockers-for-disabled-coverage) | 15 | #97 #23 #32 #65 #62 #91 #95 #57 #45 #63 #56 #55 #115 #96 #143 |
-| [Performance / architecture](#performance--architecture) | 24 | #152 #151 #150 #149 #148 #147 #146 #145 #19 #16 #20 #71 #101 #73 #110 #75 #136 #137 #138 #139 #140 #141 #144 #142 |
+| [Performance / architecture](#performance--architecture) | 23 | #152 #150 #149 #148 #147 #146 #145 #19 #16 #20 #71 #101 #73 #110 #75 #136 #137 #138 #139 #140 #141 #144 #142 |
 | [Infrastructure / process](#infrastructure--process) | 16 | #113 #114 #116 #126 #132 #131 #130 #129 #128 #127 #124 #125 #13 #94 #69 #49 |
 
 ## Critical correctness
@@ -288,46 +288,6 @@ here only because this build side is the narrow one, which is a property of this
 not of joins; invert the widths and rows would flatter the copy instead. Answer it from the
 goldens before commissioning a measurement.
 
-<a id="t151"></a>
-### #151 — the per-node benchmarks measured the engine with no RMM pool
-
-`peacock_gpu_benchmarks` times the engine through the FFI, and the engine installs no device
-resource ([#148](#t148)) — so every intermediate it allocated was a `cudaMalloc`/`cudaFree`
-round trip, and a node's `time_us` included that. The C++ gtest binaries had stopped
-measuring it, so the two families of numbers in the tree were taken under different
-allocators, and the per-node records charged a node for the default resource — worst exactly
-where its output is largest.
-
-**Landed as the fallback, not the fix.** #148 stays open on its own terms: it also makes a
-shipping query faster, and it carries a second decision about `gpu_memory_limit`. Instead:
-
-- The sizing rule moved to `cpp/include/peacock/rmm_pool.hpp`, shared rather than copied —
-  `multi_gpu.cpp` takes its 85/95 from the same constants. Header-only, because four gtest
-  targets link `cudf::cudf` and gtest but not `peacock_gpu`.
-- `peacock_install_rmm_pool` reports the OUTCOME, not success: installed, disabled by
-  request, or could not be built. The third is new — a failed reservation and a deliberate
-  `PEACOCK_RMM_POOL=0` were indistinguishable, and only one invalidates a comparison.
-- It lives in `libpeacock_gpu.so` though no shipping query calls it. A test-only shim DSO
-  would leave production untouched, but the build sets no `-fvisibility=hidden`, so rmm's
-  current-device-resource state could be duplicated across DSOs — a green run that fixes
-  nothing.
-- Idempotency is in C++ alone, not a Rust `OnceLock`: one guard, on the side that owns the
-  resource. Rebuilding would drop a resource live allocations still point into, and 127
-  `#[test]`s in one process is the shape that finds it.
-- Records carry `allocator=` beside `build_profile=` and `sync_floor_us=`. Recorded, not
-  asserted on — a run without a pool is a valid measurement and an invalid comparison.
-
-**Re-swept, all 127 records, every one faster**: median -9.6% on `total_us`. The move is not
-uniform, which is the whole point — `GpuScanExec` -5.3% (parquet read, few intermediates)
-against `GpuProjectExec` -53%, `GpuHashJoinExec` -51%, `GpuFilterExec` -46%,
-`GpuAggregateExec` -30%. The old records were wrong about the SHAPE of a plan's cost, not
-only its scale.
-
-They were also stale for the smaller second reason this ticket carried — measured before the
-scatter stopped opening a timed region of its own — so a part of that move is not the
-allocator. Measured then at -2.5% median on repartition nodes and -0.6% on whole records, it
-cannot account for -50% on joins. Both halves are now settled by one sweep.
-
 <a id="t150"></a>
 ### #150 — store the embedding columns uncompressed; Snappy costs a third of a vector query to save 3%
 
@@ -421,8 +381,8 @@ The same gap was already found and fixed once, on the other side of the tree:
 `cpp/tests/gpu/multi_gpu.cpp` builds a per-device `pool_memory_resource` inside the worker
 that owns each device, sized off that device's free memory. The single-GPU test binaries and
 the benchmark harness have now been given the same treatment — all three size off
-`cpp/include/peacock/rmm_pool.hpp` ([#151](#t151)). The engine has not, and it is the only
-one of the four that ships.
+`cpp/include/peacock/rmm_pool.hpp` ([#151](archive/archived-tickets.md#t151)). The engine
+has not, and it is the only one of the four that ships.
 
 **Measured cost.** TPC-H q1 over sf40 whole-table on GB10: 76.5 s execute, 2nd-min of 5,
 every run inside [75.4, 78.8] — so this is steady state, not first-touch. The same query

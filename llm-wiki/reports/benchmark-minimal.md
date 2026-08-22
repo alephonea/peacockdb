@@ -22,17 +22,10 @@ Protocol everywhere: execute-only, all-device-synced, **2nd-minimum** of N runs
 (`PEACOCK_BENCHMARK=1`, `PEACOCK_BENCHMARK_RUNS`), discarding first-run pool growth and
 kernel first-touch.
 
-**Every benchmark on this page runs over a pooled RMM allocator, and a number taken without
-one does not belong here.** rmm's default is a `cudaMalloc`/`cudaFree` per allocation, so an
-unpooled run measures the driver's allocator as much as the operators — on the H200 that is
-2.3x on q6, and on a unified-memory host it can be the whole query. The single-GPU binaries
-install the pool themselves (`cpp/include/peacock/rmm_pool.hpp`); the multi-GPU ones always
-did, and `peacock_gpu_benchmarks` now does too, off the same header — so the per-node
-records in `testdata/benchmark-results/` are taken under the same allocator as this page
-([#151](../tickets.md#t151)). They name it in an `allocator=` line; the numbers here do not,
-which is what this paragraph is for. `PEACOCK_RMM_POOL=0` disables it, and exists only to
-measure the allocator's own share. The engine still has no pool of its own —
-[#148](../tickets.md#t148).
+**Every number on this page is taken over a pooled RMM allocator**, which every peacock GPU
+binary installs from `cpp/include/peacock/rmm_pool.hpp` before any cuDF work — rmm's default,
+a `cudaMalloc`/`cudaFree` per allocation, would measure the driver as much as the operators.
+The engine itself still installs no pool ([#148](../tickets.md#t148)).
 
 | | cuDF | DuckDB |
 |---|---|---|
@@ -49,11 +42,9 @@ measure the allocator's own share. The engine still has no pool of its own —
 | q3 — 3-way join, group-by, top-N | 40.1 | 741.2 | 577 |
 | q8 — 7 tables, bushy join order | 47.7 | 679.8 | 1126 |
 
-These replace the unpooled figures this table carried until 2026-08-12 (q6 43.8, q1 309.5,
-q3 55.8, q8 52.8), which an unpooled re-run reproduces to within 1% — so the change is the
-allocator and nothing else. The load column moves too, and by more than the execute column
-on the join queries: the parquet reader allocates per column chunk, so it was paying the
-same per-allocation cost.
+The pool is worth ~2.3x on q6 and less on the join queries, and it moves the load column by
+more than the execute column: the parquet reader allocates per column chunk, so it pays the
+per-allocation cost hardest.
 
 ## TPC-H+V (vector range predicate, cuVS brute-force)
 
