@@ -36,7 +36,7 @@
 # Written on the GPU host and copied back by --pull-benchmarks; llm-wiki/build-test.md
 # has the file format.
 #
-#   testdata/calibration/records.tsv        (#153, git-ignored)
+#   testdata/calibration/records.tsv        (git-ignored)
 # The same run also emits calibration rows, one per timed region. Unconditionally
 # rather than behind a flag: the rows are derived from the run that wrote the tree
 # above, and a flag someone has to remember is a way for the two to silently
@@ -245,8 +245,8 @@ if [ "$RSYNC" -eq 1 ]; then
   # git rather than named, because the hand-maintained list this replaces had gone
   # stale five times. The fifth was the expensive one: cost_model.conf was added to
   # build-test.sh's sweep and to nothing else, so the host kept the pre-taxonomy-split
-  # file and a calibration run came home tagged with categories that no longer exist
-  # (#153) -- wrong data rather than a red test.
+  # file and a calibration run came home tagged with categories that no longer
+  # exist -- wrong data rather than a red test.
   #
   # Additive, unlike the goldens push above: --delete here would erase whatever else
   # provisions this host, and nothing under testdata/ that we do not track is ours to
@@ -531,7 +531,7 @@ remote_bench_script() {
     results=\$PEACOCK_TESTDATA_DIR/benchmark-results
     mkdir -p "\$results"
 
-    # Calibration rows (#153) alongside the tree. Removed rather than appended to:
+    # Calibration rows alongside the tree. Removed rather than appended to:
     # record.rs writes the header only into a fresh file, so a leftover from an
     # earlier run would swallow this one's rows under the earlier one's heading.
     export PEACOCK_RECORD_PATH=\$PEACOCK_TESTDATA_DIR/$BENCH_RECORD_REL

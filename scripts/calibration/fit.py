@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fit the cost model's per-category coefficients from calibration records (#153).
+"""Fit the cost model's per-category coefficients from calibration records.
 
     walltime = const + A * cuda_bytes + B * hbm_bytes
 

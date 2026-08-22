@@ -1,4 +1,4 @@
-// The bare-cuDF half of the calibration record (#153).
+// The bare-cuDF half of the cost-model calibration record.
 //
 // The fit needs rows from two engines on one set of axes: peacockdb pays a host prologue
 // per node that bare cuDF has no analogue for, and the difference between the two sources
@@ -257,7 +257,7 @@ inline std::string allocator_text() {
 /// the two copies room to drift apart.
 inline const char* header_notes() {
   return
-      "# peacockdb cost-model calibration record (#153) — BARE-cuDF source.\n"
+      "# peacockdb cost-model calibration record — BARE-cuDF source.\n"
       "# Column meanings are defined in peacockdb-core/tests/common/record.rs. What is\n"
       "# specific to this source:\n"
       "# node_type = the cuDF entry point, not a plan node: this chain has no plan.\n"

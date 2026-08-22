@@ -1,5 +1,4 @@
 //! Does the instrument change what it measures, and does it measure what it claims?
-//! (#153)
 //!
 //! Every record under `testdata/benchmark-results/` assumes a node's reported time is
 //! the time it would have taken unobserved. `Sync` cannot satisfy that by construction

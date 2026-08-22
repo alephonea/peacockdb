@@ -266,7 +266,7 @@ impl NodeExecutor for GpuNodeExecutor {
         for (k, st) in out_stats[..n].iter().enumerate() {
             let rp = st.rows as usize;
             let bp = logical_size_from_schema(&schema, rp, st.varlen_content_bytes as usize);
-            // C++ reconstructs the same total from cuDF types (#153). Unused — `bp`
+            // C++ reconstructs the same total from cuDF types. Unused — `bp`
             // is — but it must agree: the bare-cuDF sf40 tests never enter Rust and
             // report THEIR number, so if the two ends count bytes differently, every
             // coefficient fitted across both is wrong by an undetectable factor.

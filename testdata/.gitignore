@@ -5,6 +5,6 @@
 /tpch.sf*/
 /tpcds.sf*/
 
-# Calibration records (#153) — measurement input for a fit, rewritten by every
+# Calibration records — measurement input for a fit, rewritten by every
 # benchmark run. The fitted result is what gets committed, not its input.
 /calibration/

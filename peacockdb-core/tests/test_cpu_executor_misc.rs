@@ -210,7 +210,7 @@ async fn test_instrumented_stats_are_populated() {
     );
 }
 
-// --- the calibration record (#153) ------------------------------------------
+// --- the calibration record -------------------------------------------------
 
 /// Every region the record emits, in emission order, as `(out_rows, out_bytes)` read
 /// off a `.cpu.txt` golden: a node's `p<k>:` sub-lines when it has them, its own

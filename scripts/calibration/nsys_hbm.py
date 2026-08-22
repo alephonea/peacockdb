@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""hbm_bytes per timed region, from an Nsight Systems capture (#153).
+"""hbm_bytes per timed region, from an Nsight Systems capture.
 
 The calibration record deliberately has no hbm_bytes column: nothing inside the process
 can count HBM traffic, so it comes from a profiled run and joins back on

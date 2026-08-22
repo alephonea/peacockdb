@@ -1,4 +1,4 @@
-//! The calibration record (#153): one line per timed region, in the one format
+//! The cost-model calibration record: one line per timed region, in the one format
 //! both measurement sources write.
 //!
 //! The fit needs peacockdb sf1 rows and bare-cuDF sf40 rows on the same axes, so the
@@ -198,7 +198,7 @@ pub fn record_header() -> String {
 }
 
 const HEADER_NOTES: &str = "\
-# peacockdb cost-model calibration record (#153). One row per timed region — per
+# peacockdb cost-model calibration record. One row per timed region — per
 # (node, output partition), not per node: the partitioned branches time each partition
 # separately, and a hash repartition bills its shared concat+scatter prologue to p0.
 # source = which engine produced the row. peacockdb pays a host prologue that bare cuDF

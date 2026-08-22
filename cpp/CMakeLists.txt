@@ -206,7 +206,7 @@ set_tests_properties(peacock_plan_tests PROPERTIES LABELS "gpu")
 # itself when that dataset is absent, so it is safe to run anywhere.
 add_executable(peacock_tpch_tests tests/gpu/test_tpch.cpp)
 # src/ for plan_executor.h, and the link to peacock_gpu, are both for one function:
-# logical_size_from_table, the byte formula the calibration record (#153) needs to be
+# logical_size_from_table, the byte formula the calibration record needs to be
 # identical at both ends. Re-deriving it here instead would be a third copy of a rule that
 # already has two, and a fit over two sources counting bytes differently is wrong by a
 # factor nothing in the pipeline can detect. The queries themselves stay bare cuDF.

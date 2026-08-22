@@ -519,9 +519,9 @@ because 17 of the cases are measured at both `full_table-tp1-standard` and
 the plan with `setup_us`/`submit_us`/`device_us` per node (and `p<k>:` sub-lines where
 N>1), then a trailer:
 
-Three terms rather than one because the cost model is fitted across two datasets
-(#153), and peacockdb pays a per-node host prologue — flatbuffer decode, handle
-lookups, AST build — that bare cuDF has no analogue for. Folding it into the work makes
+Three terms rather than one because the cost model is fitted across two datasets,
+and peacockdb pays a per-node host prologue — flatbuffer decode, handle lookups,
+AST build — that bare cuDF has no analogue for. Folding it into the work makes
 every coefficient wrong by a plan-shape-dependent amount, so it is measured separately
 and fitted as its own constant. `test_node_timing` is what checks the split is real:
 that the CUDA events bracket device work rather than that prologue.
@@ -557,7 +557,7 @@ and a rebuild, so every record in the tree was taken at the same counts.
 `cudaStreamSynchronize` after every operator, which changes exactly the thing being
 measured.
 
-Setting `PEACOCK_RECORD_PATH` makes the same run also append calibration rows (#153) to
+Setting `PEACOCK_RECORD_PATH` makes the same run also append calibration rows to
 that file — from the same 2nd-smallest run the record above reports. Unset by default:
 the record is for a fit, not for the committed tree, and the two must not start
 depending on each other. Its column meanings are in the `#` preamble the first append

@@ -51,7 +51,7 @@ Nothing returned a wrong answer, which is exactly why nothing caught it: years f
 cuDF promotes in downstream arithmetic, `materialize` (`gpu_node_executor.rs`) takes whatever
 schema the IPC stream declares without comparing it to `node.schema()`, and the goldens compare
 `pretty_format_batches` text, where `1995` prints identically from either width. Surfaced by
-the byte-total cross-check added for the cost-model calibration (#153) — the first thing in the
+the byte-total cross-check added for the cost-model calibration — the first thing in the
 tree that ever asked about a produced type rather than a produced value. Visible on tpch
 q7/q8/q9 and tpcds q18/q22.
 

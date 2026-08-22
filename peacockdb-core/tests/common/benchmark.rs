@@ -54,8 +54,8 @@ pub fn benchmark_result(dataset: &str, sf: &str, query: &str, label: &str) -> Pa
 /// mixing them in would put reproducible and non-reproducible data in one file.
 ///
 /// Three timing terms rather than one `time_us`, because a single number cannot be
-/// fitted across the peacockdb and bare-cuDF datasets (#153): `setup_us` is a prologue
-/// only peacockdb pays, so folding it in attributes decode overhead to the device and
+/// fitted across the peacockdb and bare-cuDF datasets: `setup_us` is a prologue only
+/// peacockdb pays, so folding it in attributes decode overhead to the device and
 /// makes every coefficient wrong by an amount that varies with plan shape.
 ///
 /// `sync_floor_us` is what the measurement costs when there is nothing to measure
@@ -378,7 +378,7 @@ pub async fn run_gpu_benchmark(
         ),
     )
     .unwrap();
-    // The same run, as calibration rows (#153). Off unless PEACOCK_RECORD_PATH is
+    // The same run, as calibration rows. Off unless PEACOCK_RECORD_PATH is
     // set: the record is for a collection run, not for the committed .benchmark.txt,
     // and the two must not start depending on each other. Sourced from the same
     // second-minimum run the record above reports, so the two files never disagree.

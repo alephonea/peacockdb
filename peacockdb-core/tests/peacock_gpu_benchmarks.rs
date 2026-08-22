@@ -17,8 +17,8 @@
 //! record's own `#` trailer says what each one means.
 //!
 //! Three timing terms rather than one because the cost model is fitted across two
-//! datasets (#153): `setup_us` is a host prologue only peacockdb pays, and folding it
-//! into the device term makes every coefficient wrong by a plan-shape-dependent amount.
+//! datasets: `setup_us` is a host prologue only peacockdb pays, and folding it into
+//! the device term makes every coefficient wrong by a plan-shape-dependent amount.
 //!
 //! The head fields all answer one question in different registers — under what conditions
 //! is this number true. `build_profile` and `allocator` are conditions of the run rather
