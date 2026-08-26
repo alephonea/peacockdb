@@ -43,6 +43,8 @@
   script still exits non-zero.
 - **No defensive code for impossible scenarios**; trust internal invariants and framework
   guarantees. No fallbacks or feature flags the task didn't ask for.
+- **A bug the review finds ships with a regression test**, red before the fix — a defect proved
+  only by the reader who found it is one the next refactor is free to restore.
 - **No scope-creep refactors**: a bug fix doesn't need surrounding cleanup.
 
 ## Names

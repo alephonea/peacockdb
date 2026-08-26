@@ -1871,6 +1871,10 @@ Given that, the remaining scheduling freedoms are pinned:
   the estimator charges, and which matches what a parallel driver will cost anyway. If a
   driver ever goes parallel, emission order is preserved with a reorder buffer or the
   goldens regenerate deliberately.
+- **A sort's tie order is arrival order, and a top-N's is not.** DataFusion keeps tied rows in
+  arrival order when it sorts and reorders them when it takes a top-N, so the accumulating sort
+  orders the whole stream and slices the first N instead. Which of two tied rows a `LIMIT` returns
+  is in the result, and this backend is what a device is read against.
 - **`cudf::merge` tie order**: input tables are passed partition-major (partition 0's
   batches in stream order, then partition 1's, …) regardless of arrival order.
 - Order pinning is part of *result* determinism, not just golden stability: float
@@ -2334,6 +2338,14 @@ key accumulation ([#136](../tickets.md#t136)), `null_equals_null` on the finish 
 pass is the one shape this mode invented with no device behind it after T21, which is why the
 matrix is emulated here rather than assumed.
 
+The build side is copied per probe batch, decided now rather than left open: the frozen surface
+has no copy symbol, so a recipe naming `BuildSideCopy` meets a second probe batch with a dead
+handle. Over the 37 hash joins in the partitioned-tp8-standard goldens the copy costs 0.08 of the
+probe stream at the median and more than it for 12, so forcing a single-batch probe everywhere
+would price every join at the worst one. On a device T16 therefore refuses the second batch naming
+[#152](../tickets.md#t152) — a refusal with its own test — and [#145](../tickets.md#t145) is what
+retires both the refusal and the copy.
+
 **How everything here is tested.** Small synthetic data, never the corpus; plans hand-constructed
 rather than planned, so a test names the shape it means instead of hoping a query produces it;
 `attach_recipes()` is fair game, since the recipe is what a GPU executor consumes. The oracle is
@@ -2397,6 +2409,18 @@ and the snapshotted children, and the three counts a category changes: `ready_la
 `lanes` for a cross-lane accumulator and an emitter, `input_lanes` for the `Done` events a
 partition accumulator owes, and `slot_base` where it is lane-scoped against where it is not. Each
 of those is wrong far from where it shows.
+
+An empty lane's batch is the driver's to make. A GPU node emits nothing where a CPU one emits an
+empty batch of its declared schema, because the device's collapse of nothing answers with a table
+carrying no columns ([#173](../tickets.md#t173)). The driver holds every node's schema without
+asking a device, so this is where the two backends stop disagreeing.
+
+The row range the driver hands an unload is asserted before the call. `clamp_row_range` absorbs
+an offset past the end and a length past it, because a C ABI has to be total — but
+`RowInterval::range_of` cannot produce either, so the tolerance can only be reached by a driver
+whose `rows_seen` has drifted, and what that looks like is a `LIMIT` quietly returning short.
+Assert non-empty and within the batch where the driver builds the range, so the arithmetic names
+itself rather than being absorbed.
 
 The mock backend gets a handful of its own for the same reason one level up. Every assertion in
 `driver/tests/` is measured against it, so a mock that miscounts is 1255 lines of tests agreeing

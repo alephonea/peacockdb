@@ -6,7 +6,7 @@ anchor that the cost widget links to. Device labels are `tp<N>-<tier>` (micro=10
 mini=2GiB, standard=12GiB).
 
 A ticket carries a **Priority** line only when it is not medium; medium is the default.
-New tickets take the next free number (currently 172). Finished and lapsed tickets move to
+New tickets take the next free number (currently 174). Finished and lapsed tickets move to
 `llm-wiki/archive/archived-tickets.md` (Done / Stale) — numbers are never reused, so an old
 reference still resolves there.
 
@@ -16,8 +16,8 @@ reference still resolves there.
 |---|--:|---|
 | [Critical correctness](#critical-correctness) | 15 | #166 #153 #80 #59 #46 #47 #60 #121 #122 #123 #118 #119 #120 #117 #41 |
 | [Blockers for disabled coverage](#blockers-for-disabled-coverage) | 17 | #169 #168 #158 #97 #23 #32 #65 #62 #91 #95 #57 #45 #63 #56 #55 #96 #143 |
-| [Performance / architecture](#performance--architecture) | 26 | #170 #155 #154 #152 #150 #149 #148 #19 #16 #20 #71 #101 #73 #110 #75 #136 #137 #138 #139 #140 #141 #147 #146 #145 #144 #142 |
-| [Infrastructure / process](#infrastructure--process) | 27 | #171 #167 #164 #163 #159 #160 #161 #162 #113 #114 #116 #126 #134 #133 #132 #131 #130 #129 #128 #127 #172 #124 #125 #13 #94 #69 #49 |
+| [Performance / architecture](#performance--architecture) | 27 | #173 #170 #155 #154 #152 #150 #149 #148 #19 #16 #20 #71 #101 #73 #110 #75 #136 #137 #138 #139 #140 #141 #147 #146 #145 #144 #142 |
+| [Infrastructure / process](#infrastructure--process) | 26 | #167 #164 #163 #159 #160 #161 #162 #113 #114 #116 #126 #134 #133 #132 #131 #130 #129 #128 #127 #172 #124 #125 #13 #94 #69 #49 |
 
 ## Critical correctness
 
@@ -323,6 +323,23 @@ whole-partition aggregate windows need a single batch (coalesce-all first), whil
 rank/dense_rank gaps of #32 carry over unchanged.
 
 ## Performance / architecture
+
+<a id="t173"></a>
+### #173 — a collapse of nothing answers with a table that has no columns
+
+`GpuCoalesceAllBatches` over a lane that received no batch returns a handle, which is more than
+was expected — and the table behind it carries zero columns, so the export decodes a batch whose
+first column is out of bounds. `cudf::concatenate` of an empty view list has no schema to preserve
+and `node_session.cpp` does not supply one, though the fb node's input schema is right there.
+
+A node's output owes its declared schema whether or not it has rows, because everything above it
+indexes by ordinal. The two backends therefore disagree today: the CPU one emits an empty batch of
+the declared schema and the GPU one emits nothing at all, which is the asymmetry T17 closes from
+the driver — the one place that knows a node's schema without asking a device.
+
+Found by T15's probe test on a device, which had been written to assert the opposite. Fix is in
+`node_session.cpp`: build the empty table from the node's schema rather than from the concatenate.
+Until then no lane reaches it, because the GPU backend does not call the arm.
 
 <a id="t170"></a>
 ### #170 — a source whose lanes each hold one batch could say so, and three shortcuts would fire
@@ -653,6 +670,15 @@ the peak halves, the tail lengthens, and a materialize-if-small threshold is the
 unlocks [#140](#t140). Tests: the GPU tiers stay byte-identical, plus a gtest releasing N−1
 handles and checking the survivor still reads.
 
+It is also what a streamed join is waiting on. A handle is erased by whatever reads it
+(`node_session.cpp:254`, `:343`, `:431`), so a recipe naming `Input::BuildSideCopy`
+(`recipe/join.rs:52`) has no build side after its first probe batch — the frozen surface has no
+copy, and `slice_handle` moves. Until refcounting lands, T16 refuses a second probe batch on those
+shapes naming [#152](#t152), and the build-side semi family is what streams. Measured over the 37
+hash joins in the partitioned-tp8-standard goldens, `B x build / probe` is 0.08 at the median and
+above 1 for 12 of them, worst q7 at 47x — so the copy is what to pay now and this is what stops
+paying it.
+
 <a id="t144"></a>
 ### #144 — multiple DISTINCT arguments need a gid-multiplying expand
 **Priority: low** — no query in either benchmark has this shape.
@@ -688,21 +714,6 @@ tripped, so something can branch on it, but there is nowhere to record into — 
 trip log, and `Underestimate` is the precedent for what one would look like. Related: #91.
 
 ## Infrastructure / process
-
-<a id="t171"></a>
-### #171 — shad-gpu's benchmark tree is in an instrumentation this repo does not use
-
-Every record on the host carries per-node `setup_us`, `submit_us` and `device_us`; the committed
-form is a single `time_us`. Someone's instrumentation change ran there and its output stayed.
-Since `--pull-benchmarks` deletes nothing but overwrites everything it finds, any pull — including
-one after a single filtered case — rewrites all 127 committed files into that other format, which
-is what happened on 2026-08-21 and was reverted by hand.
-
-Two ways out and they are not equivalent. Either the split instrumentation is wanted, in which
-case it belongs in the repo with the goldens regenerated on purpose and the reader taught the new
-lines; or it is not, in which case the host's tree should be cleared so the next pull cannot
-resurrect it. Nobody has decided, and the cost of not deciding is paid by whoever pulls next
-without reading `build-test.md`.
 
 <a id="t167"></a>
 ### #167 — nothing proves a failed query gives its device memory back

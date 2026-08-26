@@ -21,7 +21,8 @@
 //!     group key → cuDF TIMESTAMP_DAYS). Treat a `badRepartKeys` flag as advisory; the
 //!     kernel's type_id-printing throw is the on-GPU ground truth.
 //! Run: cargo test --features rust-only --test diag_flip_audit -- --nocapture --test-threads=1
-use std::path::PathBuf;
+mod common;
+
 use std::sync::Arc;
 
 use datafusion::arrow::datatypes::DataType;
@@ -31,10 +32,6 @@ use datafusion::physical_plan::repartition::RepartitionExec;
 use datafusion::physical_plan::{ExecutionPlan, Partitioning};
 use peacockdb_core::gpu_rule::{GpuAggregateExec, GpuHashJoinExec, GpuRepartitionExec, GpuScanExec};
 use peacockdb_core::{build_session_state_with_gpu_rules_mode, register_tables_for, PartitionMode};
-
-fn testdata() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../testdata")
-}
 
 fn mergeable(f: &str) -> bool {
     matches!(f.to_ascii_lowercase().as_str(),
@@ -51,8 +48,8 @@ fn murmur3_supported(t: &DataType) -> bool {
 
 async fn audit(dataset: &str, query: &str) {
     let ctx = build_session_state_with_gpu_rules_mode(8, 120*1024*1024*1024, PartitionMode::RealMultiPartition);
-    let ctx = register_tables_for(ctx, &testdata().join(format!("{dataset}.sf1"))).await.unwrap();
-    let sql = std::fs::read_to_string(testdata().join(format!("{dataset}-queries/{query}.sql"))).unwrap();
+    let ctx = register_tables_for(ctx, &common::testdata_root().join(format!("{dataset}.sf1"))).await.unwrap();
+    let sql = std::fs::read_to_string(common::testdata_root().join(format!("{dataset}-queries/{query}.sql"))).unwrap();
     let plan = match ctx.sql(&sql).await {
         Ok(df) => match df.create_physical_plan().await {
             Ok(p) => p, Err(e) => { eprintln!("[AUDIT {query}] PLAN ERROR: {e}"); return; }

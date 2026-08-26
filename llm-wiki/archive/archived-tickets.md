@@ -209,6 +209,27 @@ in the node display — would extend the wire format for a planner the batch-par
 replaces, which plans from scratch and emits no such node. Whether the corpus reaches it was
 never established either way.
 
+<a id="t171"></a>
+### #171 — shad-gpu's benchmark tree is in an instrumentation this repo does not use
+
+Every record on the host carries per-node `setup_us`, `submit_us` and `device_us`; the committed
+form is a single `time_us`. Someone's instrumentation change ran there and its output stayed.
+Since `--pull-benchmarks` deletes nothing but overwrites everything it finds, any pull — including
+one after a single filtered case — rewrites all 127 committed files into that other format, which
+is what happened on 2026-08-21 and was reverted by hand.
+
+Two ways out and they are not equivalent. Either the split instrumentation is wanted, in which
+case it belongs in the repo with the goldens regenerated on purpose and the reader taught the new
+lines; or it is not, in which case the host's tree should be cleared so the next pull cannot
+resurrect it. Nobody has decided, and the cost of not deciding is paid by whoever pulls next
+without reading `build-test.md`.
+
+**Stale 2026-08-25.** Decided the other way round from the ticket's two options: shad-gpu is
+scratch space for benchmark experiments, and the committed records in git are the canonical ones.
+So neither the host's tree has to be cleared nor its instrumentation adopted — a pull brings back
+whatever the host holds, and what to keep is the puller's to read before committing, which
+`build-test.md` says at `--pull-benchmarks`.
+
 <a id="t53"></a>
 ### #53 — Deterministic multi-partition CPU node-by-node execution
 Largely superseded: `partitioned_cpu` produces deterministic tp8-standard `.cpu.txt`

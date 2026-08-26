@@ -381,12 +381,6 @@ pub fn assert_registry_matches_csv(owned_columns: &[&str], elsewhere: &[(&str, &
 /// without the matching CPU golden, which the invariant otherwise forbids.
 /// DELIBERATELY EMPTY. The mechanism exists (and is staleness-checked below) so a
 /// real exemption can be added honestly, but nothing needs one today.
-///
-/// In particular tpch/shuffle_stddev — quarantined under #103 and enabled again since —
-/// does not need one: its partitioned-tp8-standard `.cpu.txt` golden exists, so the
-/// check passes on the merits with the cell back to `enabled`. Adding an exemption for
-/// it would be dead config that silently pre-excuses a future regression on that query —
-/// the same trap as a stale INTENTIONALLY_NOT_IN_CI entry.
 const GOLDEN_INVARIANT_EXEMPT: &[(&str, &str, &str, &str)] = &[];
 
 /// Cross-mode golden invariant: a GPU mode marked `enabled` needs the SAME-LABEL

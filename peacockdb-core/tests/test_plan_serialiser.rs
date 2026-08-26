@@ -1,3 +1,5 @@
+mod common;
+
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -10,7 +12,7 @@ fn assert_valid_flatbuffer(bytes: &[u8]) {
 }
 
 async fn serialize_query(sql: &str) -> Vec<u8> {
-    let data_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../testdata/tpch.minimal");
+    let data_dir = common::testdata_minimal_dir();
     let ctx = peacockdb_core::create_context_with_tables(&data_dir, 1, 2 * 1024 * 1024 * 1024)
         .await
         .unwrap();
@@ -62,7 +64,7 @@ async fn test_serialize_join_sort() {
 async fn test_roundtrip_decimal_field_bytes_equal() {
     use datafusion::arrow::datatypes::DataType;
 
-    let data_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../testdata/tpch.minimal");
+    let data_dir = common::testdata_minimal_dir();
     let ctx = peacockdb_core::create_context_with_tables(&data_dir, 1, 2 * 1024 * 1024 * 1024)
         .await
         .unwrap();

@@ -17,20 +17,11 @@ use crate::plan_serializer::serialize_schema;
 use super::super::aggregates::AggCall;
 use super::super::error::PlanError;
 use super::super::nodes;
-use super::super::nodes::aggregate::AggregateBody;
+use super::super::nodes::aggregate::{AggregateBody, Phase};
 use super::super::schema::Schema;
 use super::expr_writer::write_expr;
 use super::node_writer;
 use super::writer::Payload;
-
-/// Which side of the decomposition a node runs: state from raw values, or state merged
-/// from state. `Partial` and `Merge` on the wire — never `Final`, which also finalizes,
-/// and in this mode a finalize is a project of its own.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Phase {
-    Init,
-    Merge,
-}
 
 pub(super) fn aggregate<'a>(
     b: &mut FlatBufferBuilder<'a>,

@@ -9,6 +9,8 @@
 //! So an executor holds a borrowed session pointer, its recipe's calls, and the schema its
 //! output is priced by. Handles thread from one call to the next.
 
+pub mod accumulate;
+
 use std::sync::Arc;
 
 use datafusion::arrow::array::RecordBatch;
@@ -99,16 +101,7 @@ impl GpuExec {
             stats = node_stats;
         }
         Ok((
-            GpuBatch::new(
-                self.executor,
-                handle,
-                stats.rows as usize,
-                logical_size_from_schema(
-                    &self.schema,
-                    stats.rows as usize,
-                    stats.varlen_content_bytes as usize,
-                ),
-            ),
+            produced(self.executor, handle, stats, &self.schema),
             CallStats::default(),
         ))
     }
@@ -181,9 +174,30 @@ fn decode(bytes: &[u8]) -> Result<Vec<RecordBatch>, BackendError> {
         .map_err(|error| BackendError::new(format!("decoding the exported IPC stream: {error}")))
 }
 
+/// What a call produced, priced by the schema the node declares: the ABI reports rows and
+/// varlen content, and the fixed width per row is the schema's.
+pub(super) fn produced(
+    executor: *mut PeacockExecutor,
+    handle: u64,
+    stats: PeacockNodeStats,
+    schema: &SchemaRef,
+) -> GpuBatch {
+    GpuBatch::new(
+        executor,
+        handle,
+        stats.rows as usize,
+        logical_size_from_schema(
+            schema,
+            stats.rows as usize,
+            stats.varlen_content_bytes as usize,
+        ),
+    )
+}
+
 /// One `execute_node` against the seq a recipe named, its handles all filling the one
-/// child slot an exec node has.
-fn execute_node(
+/// child slot every node this backend drives has. The call CONSUMES them, so a caller
+/// hands over batches it will not release itself.
+pub(super) fn execute_node(
     executor: *mut PeacockExecutor,
     seq: Seq,
     kind: FbKind,
@@ -221,7 +235,7 @@ fn execute_node(
     Ok((handles[0], stats[0]))
 }
 
-fn last_error(executor: *mut PeacockExecutor) -> String {
+pub(super) fn last_error(executor: *mut PeacockExecutor) -> String {
     let message = unsafe { peacock_last_error(executor) };
     if message.is_null() {
         return "no message".to_string();

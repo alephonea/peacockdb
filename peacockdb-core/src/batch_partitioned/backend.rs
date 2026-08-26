@@ -154,7 +154,7 @@ mod tests {
                 fn accumulate_and_fetch(
                     &mut self,
                     _partition: usize,
-                    event: LaneEvent<$backend>,
+                    event: LaneEvent<$batch>,
                 ) -> CallResult<Vec<$batch>> {
                     let out = match event {
                         LaneEvent::Batch(batch) => vec![batch],

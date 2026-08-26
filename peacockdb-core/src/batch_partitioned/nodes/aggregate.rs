@@ -13,6 +13,15 @@ use super::super::node::GpuNode;
 use super::super::schema::{AggStateColumns, Schema};
 use super::{check_column_refs, input_layout, input_schema};
 
+/// Which side of the decomposition a node runs: state built from raw values, or state
+/// merged from state. `Partial` and `Merge` on the wire — never `Final`, which also
+/// finalizes, and in this mode a finalize is a project of its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Phase {
+    Init,
+    Merge,
+}
+
 /// One aggregator as both engines name it: the SQL name the executor knows, the call whose
 /// arguments it reads, and the output column it fills.
 ///

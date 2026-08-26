@@ -9,12 +9,17 @@
 //! one node's stream. Sound for these operators, which spawn nothing, and the reason the
 //! relay is per node: a whole plan would contain the operators that do.
 
+pub mod accumulate;
+mod merge_m2;
+
 use std::sync::Arc;
 
 use datafusion::arrow::array::RecordBatch;
 use datafusion::arrow::compute::concat_batches;
 use datafusion::arrow::datatypes::{Schema as ArrowSchema, SchemaRef};
+use datafusion::execution::context::SessionContext;
 use datafusion::execution::{FunctionRegistry, TaskContext};
+use datafusion::logical_expr::AggregateUDF;
 use datafusion::physical_expr::aggregate::AggregateExprBuilder;
 use datafusion::physical_expr::{LexOrdering, PhysicalSortExpr};
 use datafusion::physical_plan::ExecutionPlan;
@@ -26,13 +31,14 @@ use datafusion::physical_plan::sorts::sort::SortExec;
 
 use crate::executors::single_node::execute_single_node;
 
+use super::aggregates::{AggCall, PlanAgg};
 use super::cpu_batch::CpuBatch;
 use super::error::PlanError;
 use super::executor::{BackendError, CallResult, CallStats, RowRange};
 use super::expr_physical::{physical_expr, physical_projection};
 use super::layout::ColumnOrder;
 use super::node::GpuNode;
-use super::nodes::aggregate::{AggregateBody, finalize_columns, state_funcs};
+use super::nodes::aggregate::{AggregateBody, Phase, finalize_columns, state_funcs};
 use super::nodes::{GpuAggregate, GpuFilter, GpuProject, GpuSort};
 use super::schema::Schema;
 
@@ -110,7 +116,7 @@ impl CpuExec {
         let body = &node.body;
         let state = node.intermediate();
         let mut stages = vec![Stage {
-            node: aggregate_exec(body, AggregateMode::Partial, input, state, ctx.as_ref())?,
+            node: aggregate_exec(body, Phase::Init, input, state, ctx.as_ref())?,
             declared: state.fields.clone(),
         }];
         if body.finalize.is_some() {
@@ -164,9 +170,7 @@ impl CpuExec {
         node: &Arc<dyn ExecutionPlan>,
         inputs: Vec<Vec<RecordBatch>>,
     ) -> Result<Vec<RecordBatch>, BackendError> {
-        futures::executor::block_on(execute_single_node(node, inputs, self.ctx.clone()))
-            .map(|(batches, _)| batches)
-            .map_err(|error| BackendError::new(error.to_string()))
+        run_node(node, inputs, &self.ctx)
     }
 }
 
@@ -182,8 +186,7 @@ impl CpuUnload {
         if rows.covers(n_rows) {
             return Ok((CpuBatch::new(batch), CallStats::default()));
         }
-        let offset = rows.offset.min(n_rows);
-        let length = rows.length.min(n_rows - offset);
+        let (offset, length) = rows.clamp(n_rows);
         Ok((
             CpuBatch::new(batch.slice(offset as usize, length as usize)),
             CallStats::default(),
@@ -206,6 +209,18 @@ fn declared_as(batch: RecordBatch, declared: &SchemaRef) -> Result<RecordBatch, 
     })
 }
 
+/// One DataFusion node over the batches it is handed, which is the whole of what a CPU
+/// executor does. Blocking on the stream is sound for these operators: none of them spawns.
+fn run_node(
+    node: &Arc<dyn ExecutionPlan>,
+    inputs: Vec<Vec<RecordBatch>>,
+    ctx: &Arc<TaskContext>,
+) -> Result<Vec<RecordBatch>, BackendError> {
+    futures::executor::block_on(execute_single_node(node, inputs, ctx.clone()))
+        .map(|(batches, _)| batches)
+        .map_err(|error| BackendError::new(error.to_string()))
+}
+
 /// A child of the right schema and nothing else: `execute_single_node` swaps it for a
 /// stream over the batches the call was handed, so what it holds is never read.
 fn placeholder(schema: &ArrowSchema) -> Arc<dyn ExecutionPlan> {
@@ -218,7 +233,7 @@ fn placeholder(schema: &ArrowSchema) -> Arc<dyn ExecutionPlan> {
 /// triple is one aggregate.
 fn aggregate_exec(
     body: &AggregateBody,
-    mode: AggregateMode,
+    phase: Phase,
     input: &ArrowSchema,
     state: &Schema,
     registry: &dyn FunctionRegistry,
@@ -243,30 +258,30 @@ fn aggregate_exec(
         PhysicalGroupBy::new(keys, named(&body.null_exprs)?, body.grouping_sets.clone())
     };
 
-    let mut aggregates = Vec::new();
-    for func in state_funcs(body, state)? {
-        let udaf = registry.udaf(func.name).map_err(|error| {
-            PlanError::Unsupported(format!(
-                "`{}` is not one of this session's aggregates: {error}",
-                func.name
-            ))
-        })?;
-        let mut args = Vec::with_capacity(func.call.args.len());
-        for arg in &func.call.args {
+    let declared = match phase {
+        Phase::Init => init_aggregates(body, state)?,
+        Phase::Merge => merge_aggregates(body)?,
+    };
+    let mut aggregates = Vec::with_capacity(declared.len());
+    for (udaf, call, alias) in declared {
+        let mut args = Vec::with_capacity(call.args.len());
+        for arg in &call.args {
             args.push(physical_expr(arg, input, registry)?);
         }
         aggregates.push(Arc::new(
             AggregateExprBuilder::new(udaf, args)
                 .schema(input_schema.clone())
-                .alias(&func.alias)
+                .alias(&alias)
                 .build()
-                .map_err(|error| PlanError::Invalid(format!("{}: {error}", func.name)))?,
+                .map_err(|error| PlanError::Invalid(format!("{alias}: {error}")))?,
         ));
     }
 
     let filters = vec![None; aggregates.len()];
+    // Partial in both phases, because in this mode an aggregate always emits state: a
+    // merge is a partial over state columns, and finalizing is a project above it.
     let aggregate = AggregateExec::try_new(
-        mode,
+        AggregateMode::Partial,
         group_by,
         aggregates,
         filters,
@@ -277,6 +292,71 @@ fn aggregate_exec(
     let produced = aggregate.schema();
     check_state_layout(&produced, state)?;
     Ok(Arc::new(aggregate))
+}
+
+/// The init's aggregates: one per [`state_funcs`] entry, resolved by the name both engines
+/// know it by, which is what makes a Welford triple one aggregate of three state columns.
+fn init_aggregates<'a>(
+    body: &'a AggregateBody,
+    state: &'a Schema,
+) -> Result<Vec<(Arc<AggregateUDF>, &'a AggCall, String)>, PlanError> {
+    let registry = SessionContext::new();
+    let mut declared = Vec::new();
+    for func in state_funcs(body, state)? {
+        let udaf = registry
+            .state()
+            .aggregate_functions()
+            .get(func.name)
+            .cloned();
+        let udaf = udaf.ok_or_else(|| {
+            PlanError::Unsupported(format!("`{}` is not a DataFusion aggregate", func.name))
+        })?;
+        declared.push((udaf, func.call, func.alias));
+    }
+    Ok(declared)
+}
+
+/// The merge's aggregates, which the wire and this side spell differently. There a merge is
+/// the SQL aggregate plus a mode; here DataFusion has no mode that reads state and emits
+/// state, so each of this mode's own merge aggregators is resolved on its own — and the one
+/// with no DataFusion aggregate behind it, the Welford triple, gets [`merge_m2`].
+fn merge_aggregates(
+    body: &AggregateBody,
+) -> Result<Vec<(Arc<AggregateUDF>, &AggCall, String)>, PlanError> {
+    let registry = SessionContext::new();
+    let by_name = |name: &str| -> Result<Arc<AggregateUDF>, PlanError> {
+        registry
+            .state()
+            .aggregate_functions()
+            .get(name)
+            .cloned()
+            .ok_or_else(|| {
+                PlanError::Unsupported(format!("`{name}` is not a DataFusion aggregate"))
+            })
+    };
+    let mut declared = Vec::new();
+    for call in &body.aggs {
+        let udaf = match call.func {
+            PlanAgg::Sum => by_name("sum")?,
+            PlanAgg::Min => by_name("min")?,
+            PlanAgg::Max => by_name("max")?,
+            PlanAgg::MergeM2 => merge_m2::udaf(),
+            PlanAgg::Count | PlanAgg::Mean | PlanAgg::M2 => {
+                return Err(PlanError::Invalid(format!(
+                    "a merge reads state and `{}` builds it — a count merges by sum, and a \
+                     Welford triple merges as one merge_m2",
+                    call.func.tag()
+                )));
+            }
+        };
+        let alias = call
+            .outputs
+            .first()
+            .map(|field| field.name().clone())
+            .unwrap_or_default();
+        declared.push((udaf, call, alias));
+    }
+    Ok(declared)
 }
 
 /// The state's key columns lead it, so a group position is a position in it — the same

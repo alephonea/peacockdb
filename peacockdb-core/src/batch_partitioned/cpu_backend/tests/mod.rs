@@ -8,6 +8,7 @@ use crate::batch_partitioned::aggregates::{AggCall, AggFunc, PlanAgg};
 use crate::batch_partitioned::expr::{BinaryOp, Expr, NamedExpr};
 use crate::batch_partitioned::layout::{BatchLayout, NodeKind, PartitionLayout};
 use crate::batch_partitioned::node::GpuNode;
+use crate::batch_partitioned::nodes::aggregate::AggregateBody;
 use crate::batch_partitioned::schema::{AggStateColumns, Schema};
 use datafusion::arrow::array::{Array, ArrayRef, Int32Array, Int64Array, StringArray};
 use datafusion::arrow::datatypes::{DataType, Field};
@@ -24,13 +25,19 @@ struct Given {
 
 impl Given {
     fn of(columns: &[(&str, DataType)]) -> Box<dyn GpuNode> {
+        Self::of_schema(schema_of(columns))
+    }
+
+    /// The same stub over a schema already built — a merge's input is the state its child
+    /// emitted, which is a `Schema` with annotations rather than a column list.
+    fn of_schema(schema: Schema) -> Box<dyn GpuNode> {
         Box::new(Given {
             kind: NodeKind::Intermediate {
                 layout: PartitionLayout {
                     batch_layout: BatchLayout::MultipleBatches,
                     ..PartitionLayout::new(1)
                 },
-                schema: schema_of(columns),
+                schema,
             },
         })
     }
@@ -199,4 +206,5 @@ fn out_rows(batch: &CpuBatch) -> Vec<(String, ScalarValue)> {
         .collect()
 }
 
+mod accumulate;
 mod exec;

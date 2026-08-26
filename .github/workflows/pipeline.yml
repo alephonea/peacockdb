@@ -331,28 +331,17 @@ jobs:
       - name: Build and stage rust GPU test binaries
         run: |
           mkdir -p cpp/install/rust-tests
-          # test_gpu_full_table / test_gpu_partitioned = the MERGED per-query GPU
-          # verify (Phase 2 C2), split by execution mode: one GPU run per query
-          # asserts BOTH per-node rows + rows+schema cost vs the matching
-          # *.<mode>-<tp>-<tier>.cpu.txt goldens AND the final result. The
-          # node-by-node half is what catches intermediate divergences a whole-result
-          # check misses (e.g. q14's INTERSECT NULL-semantics regression), so it MUST
-          # gate. BOTH binaries must be staged — dropping either silently retires a
-          # whole execution mode.
-          # test_inc2_conformance = the live GPU↔CPU Spark-murmur3 partition-id gate
-          # (peacock FFI path vs comet, bit-exact) — the standing Inc2 hash gate.
-          # test_gpu_abi = the batch-partitioned ABI's three per-call symbols against a
-          # real device: the row-group override, the export range and the slice, plus the
-          # release skipped exactly where a call consumed the handle. Its companion
-          # test_gpu_batch needs no device and runs in the cpp-cpu tier instead.
-          # test_gpu_recipe_walk = the recipe plan the planner builds, driven by hand on a
-          # device: one walk making exactly the calls the recipes name, threading handles
-          # between them, with DataFusion on the same SQL as the oracle.
-          # test_gpu_executors = the exec executors on a device, each handed its node's
-          # recipe and one batch: filter, project, per-batch sort, aggregate with and
-          # without its finalize, and the export with a row range. Plans hand-built over
-          # six rows the test writes itself.
-          # One line on purpose: the coverage guard reads this array with a single
+          # The six GPU targets, one line each; build-test.md's test table is the detail.
+          # test_gpu_full_table / test_gpu_partitioned = the per-query GPU verify, split by
+          #   execution mode: each asserts the per-node cost tree against the matching
+          #   .cpu.txt golden AND the final result, which catches an intermediate divergence
+          #   a whole-result check misses. Staging one alone retires an execution mode.
+          # test_inc2_conformance = GPU vs comet Spark-murmur3 partition ids, bit-exact.
+          # test_gpu_abi = the batch-partitioned ABI's three per-call symbols on a device;
+          #   its companion test_gpu_batch needs no device and runs in cpp-cpu instead.
+          # test_gpu_recipe_walk = a recipe plan driven by hand, DataFusion as the oracle.
+          # test_gpu_executors = the exec executors, each handed its recipe and one batch.
+          # One line on purpose: the coverage guard reads the array below with a single
           # `lines().find`, so a continuation hides every target after the backslash.
           for t in test_gpu_full_table test_gpu_partitioned test_inc2_conformance test_gpu_abi test_gpu_recipe_walk test_gpu_executors; do
             exec_path=$(cargo test --no-run -p peacockdb-core --test "$t" \
