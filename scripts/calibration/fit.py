@@ -31,6 +31,9 @@ choice of unit rather than anything about the data.
 
 Regions are the unit, not record rows: a benchmark repeats each region and those rows
 are one measurement observed several times, so they collapse to their median first.
+Which rows are repeats of which is not a column -- the record carries neither a partition
+nor a run index -- it is recoverable from row order, and `region_groups` recovers it.
+The cost category is likewise no longer a column and is read out of cost_model.conf.
 Rows are dropped when their hbm_bytes came from too few samples to integrate -- see
 nsys_hbm.py, which reports how much traffic that omits.
 """
@@ -43,6 +46,11 @@ import sys
 import numpy as np
 
 MB = 1e6
+
+# What a node type whose name is in no cost_model.conf line is fitted under. Kept separate
+# rather than skipped: a type missing from the taxonomy is a thing to notice, and dropping
+# its regions silently would make the fit look complete while it is not.
+UNBINNED = "UNBINNED"
 
 # Fitting a k-parameter model needs more than k points to say anything about the fit's
 # uncertainty; at exactly k it interpolates and reports R2 = 1 having learnt nothing.
@@ -61,6 +69,77 @@ def read_tsv(path):
                 continue
             rows.append(dict(zip(header, f)))
     return rows
+
+
+def read_categories(conf):
+    """node_type -> category, from cost_model.conf.
+
+    The record used to carry the category as a column and deliberately no longer does: it
+    is a lookup, and a copy of a lookup is a copy of a taxonomy as it stood on the day of
+    the run. Reading it here is what lets an old record be refitted under the current one.
+    """
+    out = {}
+    for line in open(conf):
+        f = line.split("#", 1)[0].split()
+        if len(f) < 3:
+            continue
+        for node in f[2].split(","):
+            out[node] = f[0]
+    return out
+
+
+def split_runs(rows):
+    """Rows of one (query, label) -> (regions per execution, executions).
+
+    A benchmark repeats an identical region sequence once per measured execution, so the
+    sequence has a period and the period is the number of regions in one execution. No
+    period divides the length only when there is one execution, which is what a
+    correctness run writes.
+
+    The period is matched on the node identity AND on its row and byte counts, which are
+    deterministic across executions of one plan. Matching node_seq alone would find a
+    false period inside a partitioned plan, where one node contributes several
+    consecutive regions.
+    """
+    def key(r):
+        return (r["node_seq"], r["node_type"], r["in_rows"], r["in_bytes"],
+                r["out_rows"], r["out_bytes"], r["cuda_bytes"])
+
+    keys = [key(r) for r in rows]
+    n = len(keys)
+    for period in range(1, n + 1):
+        if n % period:
+            continue
+        if all(keys[i] == keys[i % period] for i in range(n)):
+            return period, n // period
+    return n, 1
+
+
+def region_groups(rows):
+    """Rows of ONE record file -> ([executions of one region], executions-per-key tally).
+
+    A region is (source, dataset, sf, query, label, ordinal within the execution). Every
+    component earns its place. Source and dataset because query names are reused: the two
+    sources number nodes independently, and tpch q10 and tpcds q10 are different plans.
+    The ordinal rather than node_seq because the record's row is a region, not a node --
+    three of the four execute branches time each output partition separately, and keying
+    on the node would average a repartition's p0 prologue into the partitions that never
+    pay it. A key short of this silently medians unrelated regions together, and the
+    result looks like ordinary data.
+
+    One file at a time, never several concatenated: the recovery reads row order, and two
+    runs appended end to end are not one period.
+    """
+    groups = collections.defaultdict(list)
+    for r in rows:
+        groups[(r["source"], r["dataset"], r["sf"], r["query"], r["label"])].append(r)
+
+    out, seen = [], collections.Counter()
+    for rs in groups.values():
+        period, runs = split_runs(rs)
+        seen[runs] += 1
+        out += [rs[i::period] for i in range(period)]
+    return out, seen
 
 
 def fit_ols(X, y):
@@ -87,6 +166,8 @@ def main():
     ap.add_argument("--hbm", action="append", default=[],
                     help="hbm TSV from nsys_hbm.py; joined on (query, label, node_seq)")
     ap.add_argument("--out", required=True)
+    ap.add_argument("--conf", default="testdata/cost_model.conf",
+                    help="cost_model.conf the categories are read from")
     ap.add_argument("--min-samples", type=int, default=10,
                     help="drop regions whose hbm came from fewer GPU metric samples")
     args = ap.parse_args()
@@ -96,36 +177,43 @@ def main():
         for r in read_tsv(path):
             hbm[(r["query"], r["label"], int(r["node_seq"]))] = r
 
-    rows = []
-    for path in args.record:
-        rows += read_tsv(path)
-    if not rows:
-        sys.exit("no record rows")
-
-    # A region is (source, dataset, sf, query, label, node_seq, partition), and every
-    # component earns its place. Source and dataset because query names are reused: the
-    # two sources number nodes independently, and tpch q10 and tpcds q10 are different
-    # plans. Partition because the record's row is a region, not a node -- three of the
-    # four execute branches time each output partition separately, and collapsing them
-    # averages a repartition's p0 prologue into the partitions that never pay it.
-    # A key short of this silently medians unrelated regions together, and the result
-    # looks like ordinary data.
-    groups = collections.defaultdict(list)
-    for r in rows:
-        groups[(r["source"], r["dataset"], r["sf"], r["query"], r["label"],
-                int(r["node_seq"]), int(r["partition"]))].append(r)
+    categories = read_categories(args.conf)
 
     regions = []
-    for (source, _dataset, _sf, query, label, seq, _partition), rs in groups.items():
-        # hbm comes from the bare-cuDF source only, where every region is one partition.
-        h = hbm.get((query, label, seq)) if source != "peacockdb" else None
-        regions.append(dict(
-            source=source, category=rs[0]["category"], node_type=rs[0]["node_type"],
-            wall_us=statistics.median(int(x["wall_us"]) for x in rs),
-            cuda_mb=int(rs[0]["cuda_bytes"]) / MB,
-            hbm_mb=int(h["hbm_bytes"]) / MB if h else None,
-            samples=int(h["samples"]) if h else None,
-        ))
+    for path in args.record:
+        rows = read_tsv(path)
+        if not rows:
+            sys.exit(f"{path}: no record rows")
+        groups, seen = region_groups(rows)
+        # One file is one run, so its (query, label) groups must agree on how many
+        # executions they hold. Disagreement means the period found is not the execution
+        # count, and every median below would be taken over rows that are not repeats of
+        # each other -- which no later number would reveal.
+        if len(seen) != 1:
+            sys.exit(f"{path}: derived execution counts disagree: {dict(seen)}. "
+                     "Row order does not carry runs the way the format says it does.")
+        for rs in groups:
+            head = rs[0]
+            # hbm comes from the bare-cuDF source only, where every region is one
+            # partition.
+            h = (hbm.get((head["query"], head["label"], int(head["node_seq"])))
+                 if head["source"] != "peacockdb" else None)
+            regions.append(dict(
+                source=head["source"],
+                category=categories.get(head["node_type"], UNBINNED),
+                node_type=head["node_type"],
+                execs=len(rs),
+                wall_us=statistics.median(int(x["wall_us"]) for x in rs),
+                cuda_mb=int(head["cuda_bytes"]) / MB,
+                hbm_mb=int(h["hbm_bytes"]) / MB if h else None,
+                samples=int(h["samples"]) if h else None,
+            ))
+    if not regions:
+        sys.exit("no record rows")
+
+    unbinned = sorted({r["node_type"] for r in regions if r["category"] == UNBINNED})
+    if unbinned:
+        print(f"!! not in {args.conf}: {unbinned} — fitted as {UNBINNED}", file=sys.stderr)
 
     out = []
     by = collections.defaultdict(list)
@@ -207,11 +295,11 @@ def main():
     # where an incomplete region key hides: it does not fail, it medians unrelated rows
     # together, and the only visible trace is a region count quietly below the row count.
     per_source = collections.defaultdict(lambda: [0, 0, set()])
-    for key, rs in groups.items():
-        st = per_source[key[0]]
-        st[0] += len(rs)
+    for r in regions:
+        st = per_source[r["source"]]
+        st[0] += r["execs"]
         st[1] += 1
-        st[2].add(len(rs))
+        st[2].add(r["execs"])
     for source, (nrows, nregions, mult) in sorted(per_source.items()):
         print(f"{source}: {nrows} rows -> {nregions} regions, "
               f"rows per region {sorted(mult)}")
