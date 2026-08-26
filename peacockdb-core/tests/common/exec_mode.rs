@@ -120,14 +120,14 @@ pub fn cpu_oracle_mode(s: &str) -> CpuOracle {
 
 /// Whether a CPU run writes the frozen `.result.txt` golden under UPDATE_CANONICAL.
 ///
-/// INVARIANT: [`ResultGolden::Write`] exactly for the (query, golden-label) pairs a
-/// golden-asserting GPU test consumes (`golden_exact` / `golden_approx` /
-/// `golden_approx_std`) — so `full_table-tp1-standard` and the `partitioned-tp8-standard`
-/// real-partitioning goldens, but NOT `full_table-tp8-mini` (no GPU consumer) and not
-/// oracle-mode queries (>256 KB result → the GPU uses the live oracle, no golden).
-/// Skip-when-should-be-write fails loud (missing golden); write-when-should-be-skip is
-/// an orphan golden written but never read — the silent case this gate exists to
-/// prevent.
+/// Legacy-only, and retires with the legacy modes: the batch-partitioned mode declares a
+/// query's CPU and GPU coverage in one macro, so whether a golden is consumed is derived
+/// there rather than declared (T18 in the task spec).
+///
+/// INVARIANT: [`Write`] exactly for the (query, golden-label) pairs a golden-asserting GPU
+/// test consumes (`golden_exact`/`golden_approx`/`golden_approx_std`) — not
+/// `full_table-tp8-mini`, which has no consumer, nor `oracle` queries. Skip-when-write
+/// fails loud; write-when-skip is an orphan golden, the silent case this gate prevents.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ResultGolden {
     Write,
