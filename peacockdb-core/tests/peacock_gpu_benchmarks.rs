@@ -5,6 +5,12 @@
 //! asserts nothing at all — all three `include!` the same `common/gpu_cases.inc`, so
 //! the sets cannot drift apart.
 //!
+//! Plus one list the other two do not have: `common/bench_cases_sf40.inc`, the sf40
+//! rows. They are here rather than in the shared file because sf40 has no CPU goldens
+//! and is not going to get any, so a row there would enrol it in two correctness
+//! suites that could only fail. That file's `bench_only_case!` is defined in this
+//! target alone — including it elsewhere does not compile.
+//!
 //! Each case runs `BENCH_WARMUP_RUNS` discarded executions and then
 //! `BENCH_MEASURED_RUNS` measured ones, and the run with the SECOND-SMALLEST
 //! end-to-end time is written to
@@ -87,4 +93,17 @@ macro_rules! bench_case {
     };
 }
 
+/// The sf40 rows' reading of a case-list entry. Same body as above, one arm, no
+/// result-mode argument — there is nothing at sf40 to compare a result against.
+///
+/// Defined in this target and in no other, which is the whole mechanism keeping sf40
+/// out of the correctness suites: `common/bench_cases_sf40.inc` included anywhere else
+/// fails to compile on an undefined macro. See that file's header.
+macro_rules! bench_only_case {
+    ($dataset:ident, $sf:literal, $query:ident, full_table_tp1_full) => {
+        bench_case!($dataset, $sf, $query, full_table_tp1_full, ExecMode::FullTable);
+    };
+}
+
 include!("common/gpu_cases.inc");
+include!("common/bench_cases_sf40.inc");
