@@ -2999,8 +2999,12 @@ where the SQL does not determine which, which is what an unordered `LIMIT` is.
 
 So the mode is fine and the comparison is what narrows: DataFusion single-stream is not an
 authority on *which* ten rows a four-lane plan returns. It is still an authority on the rest, and
-an unordered `LIMIT n` determines more than it looks — the count is `min(n, |unlimited|)`, and
-the rows are a sub-multiset of the unlimited query's result. Both are asked of the session that
+an unordered limit determines more than it looks. The count is `max(0, min(n, |unlimited| - m))`
+for `LIMIT n OFFSET m` — written with the offset from the start, because the zero-skip form is a
+rule that goes wrong on the first query that carries one and T20 adds those deliberately. And the
+rows are a sub-*multiset* of the unlimited result, compared as a multiset and not as a set: set
+membership passes a run that returned one row twice where the oracle has it once, which is a
+live failure mode for a limit over a join. Both are asked of the session that
 already runs, neither needs the two plans to agree on which rows, and together they catch what a
 frozen golden cannot: a limit dropped, an offset ignored, rows invented, the wrong table sliced.
 
