@@ -181,3 +181,6 @@ pub fn post_order_of_every_node(root: &dyn GpuNode) -> Result<Vec<usize>, PlanEr
         .map(|node| node.post_order)
         .collect())
 }
+
+#[cfg(test)]
+mod tests;

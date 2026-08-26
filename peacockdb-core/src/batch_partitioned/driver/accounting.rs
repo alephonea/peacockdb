@@ -84,6 +84,10 @@ pub(crate) struct ResidentAccountant {
     calls: usize,
     holds: usize,
     releases: usize,
+    /// Calls that reported a measured transient. An empty `underestimates` means the model
+    /// held only where this is not zero: a backend reporting `None` everywhere produces
+    /// the same empty list for want of an input.
+    measured_calls: usize,
     underestimates: Vec<Underestimate>,
 }
 
@@ -98,6 +102,7 @@ impl ResidentAccountant {
             calls: 0,
             holds: 0,
             releases: 0,
+            measured_calls: 0,
             underestimates: Vec::new(),
         }
     }
@@ -122,6 +127,10 @@ impl ResidentAccountant {
     /// release of something never held would leave behind.
     pub(crate) fn hops(&self) -> (usize, usize) {
         (self.holds, self.releases)
+    }
+
+    pub(crate) fn measured_calls(&self) -> usize {
+        self.measured_calls
     }
 
     pub(crate) fn underestimates(&self) -> &[Underestimate] {
@@ -206,13 +215,16 @@ impl ResidentAccountant {
             Some(current) => self.refresh(slot, current),
             None => self.forget(slot),
         }
-        if let Some(measured) = stats.scratch_bytes.filter(|measured| modelled < *measured) {
-            self.underestimates.push(Underestimate {
-                node: slot.node,
-                lane: slot.lane,
-                modelled,
-                measured,
-            });
+        if let Some(measured) = stats.scratch_bytes {
+            self.measured_calls += 1;
+            if modelled < measured {
+                self.underestimates.push(Underestimate {
+                    node: slot.node,
+                    lane: slot.lane,
+                    modelled,
+                    measured,
+                });
+            }
         }
         self.observe();
         self.check(self.resident(), slot, When::PostCall)

@@ -7,6 +7,7 @@
 mod budget;
 mod failure;
 mod flow;
+mod instrument;
 mod limit;
 mod memory;
 mod stress;

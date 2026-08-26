@@ -7,6 +7,7 @@
 
 use super::*;
 use crate::batch_partitioned::backend::Backend;
+use crate::batch_partitioned::cpu_backend::accumulate::CpuAccumulator;
 use crate::batch_partitioned::cpu_backend::backend::CpuBackend;
 use crate::batch_partitioned::cpu_backend::join::CpuJoin;
 use crate::batch_partitioned::executor::Executor;
@@ -320,6 +321,34 @@ fn an_inner_joins_probe_is_charged_the_build_side_it_reads() {
     .expect("an inner join builds");
     let (probing, _) = inner.set_build(build).expect("the build side is set");
     assert_eq!(probing.scratch_bytes(2, 64), build_bytes + 64);
+}
+
+/// A mid-plan limit holds nothing between calls, whatever its offset — which is the whole
+/// point of the slice symbol: the rows before its start are released where they stand
+/// rather than accumulated until the interval opens.
+///
+/// Red if the limit ever accumulates: a skip of 3 over a batch of 2 would hold that batch.
+#[test]
+fn a_limit_holds_nothing_between_calls_whatever_its_offset() {
+    for skip in [0, 3, 1_000] {
+        let node = GpuLimit::new(
+            streaming(),
+            RowInterval {
+                skip,
+                fetch: Some(2),
+            },
+        );
+        let mut limit = CpuAccumulator::limit(&node);
+        assert_eq!(
+            limit.resident_bytes(),
+            0,
+            "before any batch, at skip {skip}"
+        );
+        let (_, _) = limit
+            .accumulate_and_fetch(grouped(vec![Some("a"), Some("b")], vec![Some(1), Some(2)]))
+            .expect("the arrival is accepted");
+        assert_eq!(limit.resident_bytes(), 0, "and after one, at skip {skip}");
+    }
 }
 
 /// The one input the narrowing cast exists for. Arrow's safe cast answers a value that

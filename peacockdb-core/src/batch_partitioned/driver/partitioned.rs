@@ -45,6 +45,10 @@ pub struct RunReport {
     pub releases: usize,
     pub trace: Vec<TraceEvent>,
     pub underestimates: Vec<Underestimate>,
+    /// How many calls reported a measured transient rather than `None`. What makes an
+    /// empty `underestimates` mean the model held: a backend measuring nothing produces
+    /// the same empty list, and the two are indistinguishable without this.
+    pub measured_calls: usize,
     /// Per node, rows released without an unload call — the saving a limit buys, made
     /// visible, since the rows returned look the same either way.
     pub rows_skipped: Vec<u64>,
@@ -273,6 +277,22 @@ impl<'a, B: Backend> Driver<'a, B> {
                     }
                     Some(range) if !range.covers(arriving) => rows = range,
                     Some(_) => {}
+                }
+                // The ABI clamps an offset past the end and a length past it, because a C
+                // ABI has to be total — and `range_of` can produce neither, so reaching
+                // that tolerance means `rows_seen` has drifted. What that looks like from
+                // the outside is a LIMIT quietly returning short, so the arithmetic is
+                // checked here where it is done rather than absorbed where it is used.
+                if rows != RowRange::WHOLE
+                    && (rows.length == 0 || rows.offset + rows.length > arriving)
+                {
+                    return Err(RunError::Protocol(format!(
+                        "{}: the rows wanted of this batch are {}..+{} of {arriving}",
+                        self.index.nodes[node].node.name(),
+                        rows.offset,
+                        rows.length
+                    ))
+                    .into());
                 }
             }
             let input = consuming
@@ -810,6 +830,7 @@ impl<'a, B: Backend> Driver<'a, B> {
             holds: self.acct.hops().0,
             releases: self.acct.hops().1,
             underestimates: self.acct.underestimates().to_vec(),
+            measured_calls: self.acct.measured_calls(),
             trace: self.trace,
             rows_skipped: self.rows_skipped,
             lanes_of: self.index.nodes.iter().map(|node| node.lanes).collect(),

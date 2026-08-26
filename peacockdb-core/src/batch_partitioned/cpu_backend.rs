@@ -175,12 +175,18 @@ impl CpuExec {
     /// of the node's schema rather than a missing one.
     pub fn exec(&mut self, batch: CpuBatch) -> CallResult<CpuBatch> {
         let mut batches = vec![batch.into_record_batch()];
+        // The largest a stage's ANSWER got — not the largest allocation the call made, so
+        // a sort's working buffers are outside it. What it buys is a measured figure to
+        // check the model against: an exec node's model is its input's size, and a project
+        // that widens its rows exceeds that.
+        let mut scratch = 0;
         for stage in &self.stages {
             let produced = self.run(&stage.node, vec![batches])?;
             batches = produced
                 .into_iter()
                 .map(|batch| declared_as(batch, &stage.declared))
                 .collect::<Result<Vec<RecordBatch>, BackendError>>()?;
+            scratch = scratch.max(batches.iter().map(RecordBatch::get_array_memory_size).sum());
         }
         let schema = &self.stages.last().expect("a node has an operator").declared;
         let batch = concat_batches(schema, batches.iter())
@@ -189,7 +195,12 @@ impl CpuExec {
             Some(fetch) if fetch < batch.num_rows() => batch.slice(0, fetch),
             _ => batch,
         };
-        Ok((CpuBatch::new(kept), CallStats::default()))
+        Ok((
+            CpuBatch::new(kept),
+            CallStats {
+                scratch_bytes: Some(scratch),
+            },
+        ))
     }
 
     fn run(
