@@ -2824,8 +2824,13 @@ which is a tighter check than `<=` on the total and is the form to assert.
 **Two checks change shape under it, and both get stronger rather than weaker.** The loader
 identity — `batch_rows` having `partition_groups`' exact shape — is a plan-against-run
 comparison, and early exit is exactly when the run does less than the plan. Per lane it becomes a
-prefix: `batch_rows[j]` has at most as many entries as `partition_groups[j]`, aligned from the
-start because a scan reads its groups in order, and equal on any run whose marker says `none`.
+prefix, and per lane rather than over the flattened shape: `batch_rows[j]` is a prefix of
+`partition_groups[j]` — its own lane's list, aligned from the start because a scan reads its
+groups in order — with an empty lane allowed, and every lane equal on a run whose marker says
+`none`. The scheduler stops where it is, so one run can have lane 0 complete, lane 1 short and
+lane 2 empty. Compared flattened, that run either goes red or forces the check down to a total
+length, which no longer says a batch lines up with the row groups that made it — the whole reason
+the nesting is there.
 The `in_rows` identity needs no marker at all, because `abandoned` is rendered beside it. That was
 decided against a count rather than a hunch: keying the arithmetic on the marker would soften it
 to `<=` at every node of an early-exiting section, and 84 of 99 tpcds queries carry a `LIMIT` — of
