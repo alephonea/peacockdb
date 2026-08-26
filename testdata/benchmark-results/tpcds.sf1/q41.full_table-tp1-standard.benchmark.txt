@@ -1,24 +1,28 @@
-GpuSortExec: expr=[i_product_name@0 ASC NULLS LAST], fetch=100, time_us=334
-  GpuAggregateExec: group_by=[i_product_name], aggr=[], time_us=335
+GpuSortExec: expr=[i_product_name@0 ASC NULLS LAST], fetch=100, time_us=241
+  GpuAggregateExec: group_by=[i_product_name], aggr=[], time_us=227
     GpuCoalesceBatchesExec, time_us=1
-      GpuFilterExec: predicate=CASE WHEN __always_true@2 IS NULL THEN 0 ELSE item_cnt@1 END > 0, projection=[0], time_us=595
+      GpuFilterExec: predicate=CASE WHEN __always_true@2 IS NULL THEN 0 ELSE item_cnt@1 END > 0, projection=[0], time_us=363
         GpuCoalesceBatchesExec, time_us=1
-          GpuHashJoinExec: join_type=Left, on=[(i_manufact@0, i_manufact@1)], projection=[1, 2, 4], time_us=949
+          GpuHashJoinExec: join_type=Left, on=[(i_manufact@0, i_manufact@1)], projection=[1, 2, 4], time_us=604
             GpuCoalesceBatchesExec, time_us=1
-              GpuFilterExec: predicate=i_manufact_id@0 >= 738 AND i_manufact_id@0 <= 778, projection=[1, 2], time_us=583
-                GpuScanExec: table=item, projections=[i_manufact_id, i_manufact, i_product_name], time_us=14404
-            GpuProjectExec: expr=[count(*)@1 as item_cnt, i_manufact@0 as i_manufact, true as __always_true], time_us=151
-              GpuAggregateExec: group_by=[i_manufact], aggr=[count(*)], time_us=505
+              GpuFilterExec: predicate=i_manufact_id@0 >= 738 AND i_manufact_id@0 <= 778, projection=[1, 2], time_us=393
+                GpuScanExec: table=item, projections=[i_manufact_id, i_manufact, i_product_name], time_us=13789
+            GpuProjectExec: expr=[count(*)@1 as item_cnt, i_manufact@0 as i_manufact, true as __always_true], time_us=97
+              GpuAggregateExec: group_by=[i_manufact], aggr=[count(*)], time_us=323
                 GpuCoalesceBatchesExec, time_us=1
-                  GpuFilterExec: predicate=__common_expr_5@0 AND ((i_color@4 = powder OR i_color@4 = khaki) AND (i_units@5 = Ounce OR i_units@5 = Oz) AND (i_size@3 = medium OR i_size@3 = extra large) OR (i_color@4 = brown OR i_color@4 = honeydew) AND (i_units@5 = Bunch OR i_units@5 = Ton) AND (i_size@3 = N/A OR i_size@3 = small)) OR i_category@1 = Men AND (i_color@4 = floral OR i_color@4 = deep) AND (i_units@5 = N/A OR i_units@5 = Dozen) AND i_size@3 = petite OR i_category@1 = Men AND (i_color@4 = light OR i_color@4 = cornflower) AND (i_units@5 = Box OR i_units@5 = Pound) AND (i_size@3 = medium OR i_size@3 = extra large) OR __common_expr_5@0 AND ((i_color@4 = midnight OR i_color@4 = snow) AND (i_units@5 = Pallet OR i_units@5 = Gross) AND (i_size@3 = medium OR i_size@3 = extra large) OR (i_color@4 = cyan OR i_color@4 = papaya) AND (i_units@5 = Cup OR i_units@5 = Dram) AND (i_size@3 = N/A OR i_size@3 = small)) OR i_category@1 = Men AND (i_color@4 = orange OR i_color@4 = frosted) AND (i_units@5 = Each OR i_units@5 = Tbl) AND i_size@3 = petite OR i_category@1 = Men AND (i_color@4 = forest OR i_color@4 = ghost) AND (i_units@5 = Lb OR i_units@5 = Bundle) AND (i_size@3 = medium OR i_size@3 = extra large), projection=[2], time_us=14184
-                    GpuProjectExec: expr=[i_category@0 = Women as __common_expr_5, i_category@0 as i_category, i_manufact@1 as i_manufact, i_size@2 as i_size, i_color@3 as i_color, i_units@4 as i_units], time_us=582
-                      GpuScanExec: table=item, projections=[i_category, i_manufact, i_size, i_color, i_units], time_us=2875
+                  GpuFilterExec: predicate=__common_expr_5@0 AND ((i_color@4 = powder OR i_color@4 = khaki) AND (i_units@5 = Ounce OR i_units@5 = Oz) AND (i_size@3 = medium OR i_size@3 = extra large) OR (i_color@4 = brown OR i_color@4 = honeydew) AND (i_units@5 = Bunch OR i_units@5 = Ton) AND (i_size@3 = N/A OR i_size@3 = small)) OR i_category@1 = Men AND (i_color@4 = floral OR i_color@4 = deep) AND (i_units@5 = N/A OR i_units@5 = Dozen) AND i_size@3 = petite OR i_category@1 = Men AND (i_color@4 = light OR i_color@4 = cornflower) AND (i_units@5 = Box OR i_units@5 = Pound) AND (i_size@3 = medium OR i_size@3 = extra large) OR __common_expr_5@0 AND ((i_color@4 = midnight OR i_color@4 = snow) AND (i_units@5 = Pallet OR i_units@5 = Gross) AND (i_size@3 = medium OR i_size@3 = extra large) OR (i_color@4 = cyan OR i_color@4 = papaya) AND (i_units@5 = Cup OR i_units@5 = Dram) AND (i_size@3 = N/A OR i_size@3 = small)) OR i_category@1 = Men AND (i_color@4 = orange OR i_color@4 = frosted) AND (i_units@5 = Each OR i_units@5 = Tbl) AND i_size@3 = petite OR i_category@1 = Men AND (i_color@4 = forest OR i_color@4 = ghost) AND (i_units@5 = Lb OR i_units@5 = Bundle) AND (i_size@3 = medium OR i_size@3 = extra large), projection=[2], time_us=9983
+                    GpuProjectExec: expr=[i_category@0 = Women as __common_expr_5, i_category@0 as i_category, i_manufact@1 as i_manufact, i_size@2 as i_size, i_color@3 as i_color, i_units@4 as i_units], time_us=430
+                      GpuScanExec: table=item, projections=[i_category, i_manufact, i_size, i_color, i_units], time_us=2393
 
 # sync_floor_us = cost of the measurement itself (empty timed region: clock + cudaStreamSynchronize on an idle stream). Each node time INCLUDES one PER OUTPUT PARTITION, since a node line is the Σ over its partitions; a node at or below its own floor (sync_floor_us x partitions) is unresolved, not cheap. Do not subtract it.
 # nodes_total_us = Σ of the per-node times above; total_us = the whole query, end to end (parse + plan + serialize + node walk + materialize)
 # build_profile = how the harness itself was compiled. total_us MINUS nodes_total_us is that Rust; records from different profiles are not comparable on it. Node times are device work and barely move.
+# allocator = the rmm device resource the node times were taken under. Without a pool every cuDF intermediate is a cudaMalloc/cudaFree round trip, charged to the node that allocated it — so it inflates the largest-output nodes hardest and moves the PROFILE, not only the scale. Records under different allocators are not comparable, node for node or in total.
+# shared_work_charged_to = which p<k> sub-line carries work a node does once for all of its output partitions. A hash repartition concatenates its input and scatters it in a single operation, and that time is billed to p0 — so p0 standing far above its siblings is the accounting, not skew. Sub-lines sum to their node line either way. Written whether or not this plan has a repartition.
 build_profile=benchmarks opt-level=3
+allocator=rmm-pool initial=113.4GiB max=126.7GiB of 133.4GiB free on a discrete device
+shared_work_charged_to=p0
 sync_floor_us=1
 nodes_at_or_below_floor=4/15
-nodes_total_us=35501
-total_us=48498
+nodes_total_us=28847
+total_us=41794

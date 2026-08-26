@@ -42,7 +42,7 @@
 
 #include <rmm/device_uvector.hpp>
 
-#include "rmm_pool.hpp"
+#include "peacock/rmm_pool.hpp"
 #include "tpch_golden.hpp"
 
 #include <algorithm>
@@ -1187,6 +1187,6 @@ TEST_F(TpchSf40, Q9VectorCompositeJoin) {
 // Same entry point as the other gtest binaries here (the conda cudf ships no gtest_main).
 int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);
-  peacock_test::install_rmm_pool();
+  peacock::install_rmm_pool();
   return RUN_ALL_TESTS();
 }

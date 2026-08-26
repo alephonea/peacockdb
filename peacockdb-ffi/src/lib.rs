@@ -24,6 +24,25 @@ pub mod raw {
         pub time_us: u64,
     }
 
+    /// What [`peacock_install_rmm_pool`] did — sizes are 0 unless `state` is
+    /// [`PEACOCK_RMM_POOL_INSTALLED`]. Mirrors `PeacockRmmPoolInfo` in
+    /// `cpp/include/peacock_gpu.h`.
+    #[repr(C)]
+    #[derive(Clone, Copy, Default)]
+    pub struct PeacockRmmPoolInfo {
+        pub state: i32,
+        /// 1 on an integrated part, which is sized by a different rule.
+        pub integrated: i32,
+        pub free_bytes: u64,
+        pub initial_bytes: u64,
+        pub maximum_bytes: u64,
+    }
+
+    /// A pool is the current device resource.
+    pub const PEACOCK_RMM_POOL_INSTALLED: i32 = 0;
+    /// The pool could not be built: the default resource, NOT on purpose.
+    pub const PEACOCK_RMM_POOL_UNAVAILABLE: i32 = 1;
+
     #[link(name = "peacock_gpu")]
     unsafe extern "C" {
         pub fn peacock_gpu_version() -> *const c_char;
@@ -45,6 +64,22 @@ pub mod raw {
 
         pub fn peacock_result_free(result_bytes: *mut u8);
         pub fn peacock_last_error(executor: *mut PeacockExecutor) -> *const c_char;
+
+        /// Install rmm's pooled device resource for the current device (process-global,
+        /// idempotent, NOT installed by default). Must be called before any GPU work.
+        ///
+        /// Without it every cuDF intermediate the engine allocates is a
+        /// `cudaMalloc`/`cudaFree` round trip. The C++ gtest binaries install the same
+        /// pool from their `main()`; this exists so `peacock_gpu_benchmarks` — which is
+        /// Rust and cannot include the C++ header that owns the sizing rule — measures
+        /// the engine under the same allocator rather than producing node times that get
+        /// compared with theirs anyway.
+        ///
+        /// Returns 0 unless `out_info` is null; NOT non-zero on
+        /// [`PEACOCK_RMM_POOL_UNAVAILABLE`], which still leaves a runnable default
+        /// resource. The caller decides whether that is fatal — for the benchmark
+        /// harness it is.
+        pub fn peacock_install_rmm_pool(out_info: *mut PeacockRmmPoolInfo) -> i32;
 
         /// Turn per-node timing on/off (process-global; OFF by default). When on,
         /// `peacock_executor_execute_node` synchronizes the default stream at every
