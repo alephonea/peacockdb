@@ -32,7 +32,7 @@ rmm::cuda_stream_view const get_default_stream() { return cudf::get_default_stre
 #include <gtest/gtest.h>
 
 #include "plan_executor.h"
-#include "rmm_pool.hpp"
+#include "peacock/rmm_pool.hpp"
 
 // measure_timing_floor_us turns the global timing switch on for its own samples, so
 // it has to hand back what it found. It is called mid-benchmark, between a warm-up
@@ -123,6 +123,6 @@ TEST(CudfGpu, SparkPartitionIdsMatchComet2ColWithNulls) {
 
 int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);
-  peacock_test::install_rmm_pool();
+  peacock::install_rmm_pool();
   return RUN_ALL_TESTS();
 }

@@ -339,12 +339,11 @@ The benchmark row shares the target *root* with the correctness builds on purpos
 spurious `cargo clean -p peacockdb-ffi` on first use — without saving a rebuild. Why the
 profile exists at all is argued once, in `Cargo.toml`; the consequence here is that a
 record's `total_us − nodes_total_us` is only a measurement when it was built under it,
-which is why `build_profile` is in the record.
+which is why the harness refuses to run from a non-release build.
 Two costs, one-time per profile: the first `--build-benchmarks` cold-compiles the whole
 DataFusion stack **and** builds `libpeacock_gpu.so` a third time (peacockdb-ffi's cmake
 runs in `OUT_DIR`, which lives inside the profile dir). It leaves the correctness caches
-untouched, which is the trade. Every record carries `build_profile=` so numbers from
-different profiles are never silently compared.
+untouched, which is the trade.
 
 The container and the native path deliberately do **not** share a cargo cache
 (`/cache/cargo-target` + `RUSTFLAGS=-C debuginfo=0` vs `$PWD/target-cudf-*`), so
@@ -492,7 +491,8 @@ the plan with `time_us` per node (and `p<k>:` sub-lines where N>1), then a trail
 
 | Field | Reading |
 |---|---|
-| `build_profile` | how the harness was compiled. `total_us − nodes_total_us` is that Rust; records from different profiles are not comparable on it |
+| `build_profile` | which release profile the harness was compiled under. `total_us − nodes_total_us` is that Rust. Always a release build — the run asserts it |
+| `allocator` | the rmm pool the node times were taken under, with the sizes it was built with. Always a pool — the run asserts it, because with rmm's default every cuDF intermediate is a `cudaMalloc`/`cudaFree` round trip billed to whichever node allocated it, which inflates the largest-output nodes hardest and so moves the **profile**, not just the scale. The sizes vary with free memory at install time |
 | `shared_work_charged_to` | which `p<k>` sub-line carries work a node does once for all its partitions — the hash scatter concatenates and scatters in one operation and bills p0, so a p0 far above its siblings is the accounting, not skew. Written whether or not the plan has a repartition, so absence means only "written before the field" |
 | `sync_floor_us` | what the timed region costs around no work. **Every node time includes one; do not subtract it** — a node at or below it is unresolved, not cheap |
 | `nodes_at_or_below_floor` | how much of the tree this file cannot resolve. 2/40 is a profile; 35/40 measured mostly its own instrument |

@@ -1,23 +1,27 @@
-GpuSortExec: expr=[sum(store_sales.ss_ext_sales_price)@3 DESC, d_year@0 ASC NULLS LAST, i_category_id@1 ASC NULLS LAST, i_category@2 ASC NULLS LAST], fetch=100, time_us=674
-  GpuAggregateExec: group_by=[d_year, i_category_id, i_category], aggr=[sum(store_sales.ss_ext_sales_price)], time_us=1395
-    GpuProjectExec: expr=[d_year@2 as d_year, ss_ext_sales_price@3 as ss_ext_sales_price, i_category_id@0 as i_category_id, i_category@1 as i_category], time_us=128
+GpuSortExec: expr=[sum(store_sales.ss_ext_sales_price)@3 DESC, d_year@0 ASC NULLS LAST, i_category_id@1 ASC NULLS LAST, i_category@2 ASC NULLS LAST], fetch=100, time_us=469
+  GpuAggregateExec: group_by=[d_year, i_category_id, i_category], aggr=[sum(store_sales.ss_ext_sales_price)], time_us=1139
+    GpuProjectExec: expr=[d_year@2 as d_year, ss_ext_sales_price@3 as ss_ext_sales_price, i_category_id@0 as i_category_id, i_category@1 as i_category], time_us=75
       GpuCoalesceBatchesExec, time_us=1
-        GpuHashJoinExec: join_type=Inner, on=[(i_item_sk@0, ss_item_sk@1)], projection=[1, 2, 3, 5], time_us=888
+        GpuHashJoinExec: join_type=Inner, on=[(i_item_sk@0, ss_item_sk@1)], projection=[1, 2, 3, 5], time_us=455
           GpuCoalesceBatchesExec, time_us=1
-            GpuFilterExec: predicate=i_manager_id@3 = 1, projection=[0, 1, 2], time_us=474
-              GpuScanExec: table=item, projections=[i_item_sk, i_category_id, i_category, i_manager_id], time_us=6088
+            GpuFilterExec: predicate=i_manager_id@3 = 1, projection=[0, 1, 2], time_us=293
+              GpuScanExec: table=item, projections=[i_item_sk, i_category_id, i_category, i_manager_id], time_us=5626
           GpuCoalesceBatchesExec, time_us=1
-            GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ss_sold_date_sk@0)], projection=[1, 3, 4], time_us=1350
+            GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ss_sold_date_sk@0)], projection=[1, 3, 4], time_us=658
               GpuCoalesceBatchesExec, time_us=1
-                GpuFilterExec: predicate=d_moy@2 = 11 AND d_year@1 = 2000, projection=[0, 1], time_us=372
-                  GpuScanExec: table=date_dim, projections=[d_date_sk, d_year, d_moy], time_us=17564
-              GpuScanExec: table=store_sales, projections=[ss_sold_date_sk, ss_item_sk, ss_ext_sales_price], time_us=14871
+                GpuFilterExec: predicate=d_moy@2 = 11 AND d_year@1 = 2000, projection=[0, 1], time_us=164
+                  GpuScanExec: table=date_dim, projections=[d_date_sk, d_year, d_moy], time_us=17010
+              GpuScanExec: table=store_sales, projections=[ss_sold_date_sk, ss_item_sk, ss_ext_sales_price], time_us=13734
 
 # sync_floor_us = cost of the measurement itself (empty timed region: clock + cudaStreamSynchronize on an idle stream). Each node time INCLUDES one PER OUTPUT PARTITION, since a node line is the Σ over its partitions; a node at or below its own floor (sync_floor_us x partitions) is unresolved, not cheap. Do not subtract it.
 # nodes_total_us = Σ of the per-node times above; total_us = the whole query, end to end (parse + plan + serialize + node walk + materialize)
 # build_profile = how the harness itself was compiled. total_us MINUS nodes_total_us is that Rust; records from different profiles are not comparable on it. Node times are device work and barely move.
+# allocator = the rmm device resource the node times were taken under. Without a pool every cuDF intermediate is a cudaMalloc/cudaFree round trip, charged to the node that allocated it — so it inflates the largest-output nodes hardest and moves the PROFILE, not only the scale. Records under different allocators are not comparable, node for node or in total.
+# shared_work_charged_to = which p<k> sub-line carries work a node does once for all of its output partitions. A hash repartition concatenates its input and scatters it in a single operation, and that time is billed to p0 — so p0 standing far above its siblings is the accounting, not skew. Sub-lines sum to their node line either way. Written whether or not this plan has a repartition.
 build_profile=benchmarks opt-level=3
+allocator=rmm-pool initial=113.4GiB max=126.7GiB of 133.4GiB free on a discrete device
+shared_work_charged_to=p0
 sync_floor_us=1
 nodes_at_or_below_floor=4/14
-nodes_total_us=43808
-total_us=47831
+nodes_total_us=39627
+total_us=43547
