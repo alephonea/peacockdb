@@ -512,6 +512,35 @@ remote_bench_script() {
     export PEACOCK_TESTDATA_DIR=$REMOTE_REPO/testdata
     export PEACOCK_TPCH_SF40_DIR=/home/info/peacock-datasets/testdata/tpch.sf40
     export PEACOCK_TPCH_VEC_PARAMS=$REMOTE_REPO/testdata/tpch-vec-queries/query_params.jsonl
+
+    # The sf40 dataset is read in place, outside the repo, and the C++ suites reach it
+    # through the variable above. The rust side has no such variable: it resolves data
+    # as <testdata>/<dataset>.sf<sf> and nothing else, so a benchmark case at sf40 needs
+    # that name to exist. A symlink is what makes one convention cover both -- against
+    # adding a second way to name a dataset path, which is how a run ends up reading one
+    # dataset while reporting another. testdata/.gitignore already hides /tpch.sf*/.
+    #
+    # Only here, not in the gate: the gate's sf40 work is the C++ binaries, which use the
+    # variable. Never replaces what it finds -- a real directory under that name is
+    # someone else's provisioning of this shared host, and the run stops instead.
+    sf40_link=\$PEACOCK_TESTDATA_DIR/tpch.sf40
+    if [ -L "\$sf40_link" ]; then
+      have=\$(readlink "\$sf40_link")
+      if [ "\$have" != "\$PEACOCK_TPCH_SF40_DIR" ]; then
+        echo "!!! \$sf40_link -> \$have, expected \$PEACOCK_TPCH_SF40_DIR"
+        exit 1
+      fi
+    elif [ -e "\$sf40_link" ]; then
+      echo "!!! \$sf40_link exists and is not a symlink -- not touching it"
+      exit 1
+    elif [ ! -d "\$PEACOCK_TPCH_SF40_DIR" ]; then
+      echo "!!! no sf40 dataset at \$PEACOCK_TPCH_SF40_DIR"
+      exit 1
+    else
+      ln -s "\$PEACOCK_TPCH_SF40_DIR" "\$sf40_link"
+      echo "==> linked \$sf40_link -> \$PEACOCK_TPCH_SF40_DIR"
+    fi
+
     # Applied per-command on the benchmark binary alone rather than exported: this
     # path carries glibc-2.35, and exporting it makes the host's own coreutils load
     # the newer libc under the old loader and SIGSEGV — the mkdir/find/wc below would

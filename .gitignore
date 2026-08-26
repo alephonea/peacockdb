@@ -43,3 +43,8 @@ testdata/embeddings-cache/
 # The 26.02 build tree; cpp/build (25.02) is covered above and this one was not,
 # so a `git add cpp` swept 1069 build artifacts into a commit once.
 cpp/build26/
+
+# sf40 benchmark output. The sf1 trees next to it ARE committed — they are a history of
+# measurements, read by nothing. These are not: the sf40 case list is still moving, so
+# every collection run would be a commit of files that are about to be renamed away.
+testdata/benchmark-results/tpch.sf40/
