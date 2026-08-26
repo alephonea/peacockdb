@@ -8,7 +8,7 @@
 //! sections Drivers and Memory accounting.
 
 mod accounting;
-mod index;
+pub(crate) mod index;
 pub use index::post_order_of_every_node;
 #[cfg(test)]
 mod mock;

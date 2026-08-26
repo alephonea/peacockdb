@@ -69,13 +69,17 @@ fn shuffled(lanes: usize) -> Box<dyn GpuNode> {
 fn every_shape_delivers_every_row_it_was_given() {
     for shape in shapes() {
         let script = script_for(&shape);
-        let report = run(shuffled(shape.lanes).as_ref(), &script);
+        let plan = shuffled(shape.lanes);
+        let report = run(plan.as_ref(), &script);
         assert_eq!(
             rows_returned(&report),
             8 * shape.batches * shape.lanes,
             "rows were lost or invented at {}",
             shape.what
         );
+        // Where the answer alone cannot say it: a row lost between two nodes and a row
+        // invented at a third return the same count.
+        assert_conserved(plan.as_ref(), &report);
         assert_eq!(
             report.in_flight_bytes, 0,
             "a batch leaked at {}",

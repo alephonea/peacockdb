@@ -58,6 +58,10 @@ pub struct RunReport {
     pub lanes_of: Vec<usize>,
     /// Per node, per output lane, the batches it emitted in order.
     pub emitted: Vec<Vec<Vec<EmittedBatch>>>,
+    /// Per node, per output lane, rows it emitted that nobody consumed — the queues an early
+    /// exit left standing. Zero everywhere on a run that drained, and what closes
+    /// `consumed + abandoned == the child's emitted` into an equality on every run.
+    pub abandoned: Vec<Vec<u64>>,
     /// Per node, per child, per that child's lane, the rows this node consumed from it.
     /// Indexed by the child's lane rather than the consumer's, so it lines up with that
     /// child's own [`emitted`](RunReport::emitted) where the two differ — an emitter
@@ -100,6 +104,7 @@ pub(crate) struct Driver<'a, B: Backend> {
     rows_skipped: Vec<u64>,
     peak_queued: Vec<usize>,
     emitted: Vec<Vec<Vec<EmittedBatch>>>,
+    abandoned: Vec<Vec<u64>>,
     consumed: Vec<Vec<Vec<u64>>>,
 }
 
@@ -159,6 +164,11 @@ impl<'a, B: Backend> Driver<'a, B> {
             .iter()
             .map(|node| vec![Vec::new(); node.lanes])
             .collect();
+        let abandoned = index
+            .nodes
+            .iter()
+            .map(|node| vec![0u64; node.lanes])
+            .collect();
         let consumed = index
             .nodes
             .iter()
@@ -182,6 +192,7 @@ impl<'a, B: Backend> Driver<'a, B> {
             rows_skipped: vec![0; nodes],
             peak_queued: vec![0; nodes],
             emitted,
+            abandoned,
             consumed,
         };
         driver.wire_forwarders()?;
@@ -681,6 +692,7 @@ impl<'a, B: Backend> Driver<'a, B> {
         for node in 0..self.index.len() {
             for lane in 0..self.states[node].out_queues.len() {
                 while let Some(batch) = self.states[node].out_queues[lane].pop_front() {
+                    self.abandoned[node][lane] += batch.rows();
                     self.acct.release(batch.bytes)?;
                 }
             }
@@ -899,6 +911,7 @@ impl<'a, B: Backend> Driver<'a, B> {
             lanes_of: self.index.nodes.iter().map(|node| node.lanes).collect(),
             peak_queued: self.peak_queued,
             emitted: self.emitted,
+            abandoned: self.abandoned,
             consumed: self.consumed,
             early_exit: self.scheduler.any_satisfied(),
         }

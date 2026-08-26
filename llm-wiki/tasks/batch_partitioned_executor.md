@@ -2958,14 +2958,16 @@ engine moves again.
 structures on one continuation line under the node:
 
     GpuLoadParquet: table=lineitem, partition_groups=[[[0,1],[2,3]],[[4],[5,6,7]]], lanes=2, …
-      in_rows=[] batch_rows=[[1500304, 1500303], [1500304, 1500304]] batch_bytes=[[31881456, 31881440], [31881472, 31881455]]
+      in_rows=[] batch_rows=[[1500304,1500303],[1500304,1500304]] batch_bytes=[[31881456,31881440],[31881472,31881455]]
 
 Lanes outermost and batches within, which is `partition_groups`' own nesting — so on a loader,
 element `i` of lane `j` in all three lines is one batch, and the row groups that produced it sit
 at the same index as its size.
 
 `in_rows` is what the node consumed, per lane, nested by child rather than flat — a filter reads
-`in_rows=[[860160, 737280, …]]` and a join reads both of its sides. Legacy prints one `in_rows`
+`in_rows=[[860160,737280,…]]` and a join reads both of its sides. No space after a comma, which
+is `partition_groups`' committed convention — the two nestings are read index for index and the
+tail case is a 96-batch lane. Legacy prints one `in_rows`
 per partition and it is the first child's, so a join's build side appears nowhere on the join's
 own line; here the two sides differ in kind and the capability matrix turns on which is which,
 so a format that can only show one of them is one that hides the interesting half. A source has
@@ -3041,8 +3043,10 @@ cheap:
   entry for entry. Indexing by the consuming node's lanes would make the identity checkable only
   in aggregate wherever the two counts differ, which is every emitter, merge and accumulator —
   the nodes it is most worth checking. An equality on every run, because the node renders
-  `abandoned` beside it — rows `release_in_flight` dropped, per lane, omitted where zero and so
-  absent from every node of every run that drained. The law is
+  `abandoned` after its own `batch_bytes` — rows `release_in_flight` dropped, per lane, omitted
+  where zero and so absent from every node of every run that drained. It sits on the node that
+  *emitted*, because that is whose output queue was dropped, so the law crosses parent to child
+  exactly as `in_rows` already does. The law is
   `consumed + abandoned == the child's emitted`, with no marker in it and no `<=` anywhere. The
   two exceptions this once named were measured and are both wrong: dropping a probe batch is
   consuming it, and a satisfied limit falls short at whichever node the schedule stopped at rather

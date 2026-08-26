@@ -11,11 +11,13 @@ mod expr_text;
 mod fb_text;
 mod memory;
 mod recipes;
+mod run_text;
 
 pub use expr_text::expr_text;
 use expr_text::join_filter_text;
 pub use memory::render_plan_memory;
 pub use recipes::{Payloads, render_plan_recipes};
+pub use run_text::render_run;
 
 use std::fmt::Write as _;
 
@@ -44,14 +46,27 @@ fn render_node(node: &dyn GpuNode, depth: usize, text: &mut String) {
 }
 
 fn node_line(node: &dyn GpuNode) -> String {
+    let mut parts = node_line_parts(node);
+    if let Some(schema) = node.kind().schema() {
+        parts.push(schema_text(schema));
+    }
+    join_parts(parts)
+}
+
+/// The name, the node's own fields and its layout — everything both goldens carry. The
+/// declared schema is the plan golden's alone and what the run produced is the execution
+/// golden's, so each caller appends its own tail.
+pub(super) fn node_line_parts(node: &dyn GpuNode) -> Vec<String> {
     let mut parts = vec![node.name().to_string()];
     parts.extend(node_fields(node));
     if let Some(layout) = node.kind().layout() {
         parts.push(layout_text(layout, schema_of(node)));
     }
-    if let Some(schema) = node.kind().schema() {
-        parts.push(schema_text(schema));
-    }
+    parts
+}
+
+/// `Name: field, field` — the name alone where a node has no fields at all.
+pub(super) fn join_parts(mut parts: Vec<String>) -> String {
     let mut line = parts.remove(0);
     if !parts.is_empty() {
         let _ = write!(line, ": {}", parts.join(", "));
