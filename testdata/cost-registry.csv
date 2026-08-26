@@ -130,6 +130,7 @@ tpch,1,left_join,enabled,na,enabled,enabled,na,enabled,enabled,enabled,enabled,e
 tpch,1,mixed_join,enabled,na,enabled,na,na,na,enabled,enabled,enabled,enabled,enabled,ok,,116
 tpch,1,nested_limits,na,na,na,na,na,na,enabled,enabled,enabled,enabled,enabled,ok,limit_offset cross_join,
 tpch,1,nested_loop_join,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,nested_loop_join,
+tpch,1,nested_loop_left_join,enabled,enabled,enabled,na,na,na,enabled,enabled,enabled,enabled,enabled,ok,nested_loop_join outer_join,116
 tpch,1,rollup_over_join,na,na,na,na,na,na,enabled,enabled,enabled,enabled,enabled,ok,rollup,
 tpch,1,scan_limit,enabled,enabled,na,na,enabled,na,enabled,enabled,enabled,enabled,enabled,ok,top_n,
 tpch,1,semi_join,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,ok,semi_join,

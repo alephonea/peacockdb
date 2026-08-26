@@ -203,14 +203,48 @@ fn nested_joins_resolve_outermost_first_without_deadlocking() {
     assert_accounted(&report);
 }
 
+/// A lane whose build side ended with no batch, for a join that owes nothing without one:
+/// the lane ends, its probe batches are released where they stand, and the run completes.
 #[test]
-fn a_build_side_that_produced_no_batch_is_an_error() {
+fn a_join_that_owes_nothing_without_a_build_side_ends_its_lane() {
     let plan = join_plan(1);
     let script = join_script().with_accumulator(AccRule::EmitAtDone(0));
-    protocol_error(
-        run_with(plan.as_ref(), &script, None),
-        "build side finished without producing a batch",
+    let report = run(plan.as_ref(), &script);
+    assert_eq!(rows_returned(&report), 0, "no build rows, no joined rows");
+    assert_eq!(
+        count(&report, CallKind::NoBuild),
+        1,
+        "the lane asked what it owed rather than probing"
     );
+    assert_eq!(
+        count(&report, CallKind::SetBuild),
+        0,
+        "and it never entered its probe phase"
+    );
+    // The probe side had already produced: those batches have no reader now.
+    assert!(count(&report, CallKind::ReleaseUnwanted) > 0);
+    assert_accounted(&report);
+}
+
+/// The three types that preserve unmatched probe rows owe their probe side, and making it
+/// takes a call over a build table that does not exist (#175).
+#[test]
+fn a_join_that_owes_its_probe_side_without_a_build_side_is_refused() {
+    let plan = join_plan(1);
+    let script = join_script()
+        .with_accumulator(AccRule::EmitAtDone(0))
+        .with_join(JoinRule {
+            empty_build_owes_its_probe: true,
+            finish_rows: 0,
+            build_residency: 0,
+        });
+    let failure = run_with(plan.as_ref(), &script, None);
+    match failure {
+        Err(RunError::CallFailed(said)) => {
+            assert!(said.contains("build side is empty"), "{said}")
+        }
+        other => panic!("expected the backend to refuse, got {other:?}"),
+    }
 }
 
 #[test]
@@ -367,6 +401,7 @@ fn an_emit_returning_the_wrong_lane_count_is_an_error() {
 fn a_join_that_needs_a_finish_pass_emits_at_the_end() {
     let plan = join_plan(1);
     let script = join_script().with_join(JoinRule {
+        empty_build_owes_its_probe: false,
         finish_rows: 3,
         build_residency: 64,
     });

@@ -126,6 +126,13 @@ pub enum Input {
 }
 
 impl Input {
+    /// Whether this input is the build side, handed over or copied. Asked by an executor
+    /// pricing a call: a probe call that names neither is a call the build side does not
+    /// have to be there for.
+    pub fn is_build_side(&self) -> bool {
+        matches!(self, Self::BuildSide | Self::BuildSideCopy)
+    }
+
     fn text(&self) -> &'static str {
         match self {
             Self::Batch => "batch",
@@ -266,7 +273,11 @@ impl fmt::Display for FbKind {
             }
             Self::PlainProject => write!(f, "CudfProject"),
             Self::Aggregate { merge } => {
-                write!(f, "CudfAggregate{{{}}}", if *merge { "Merge" } else { "Partial" })
+                write!(
+                    f,
+                    "CudfAggregate{{{}}}",
+                    if *merge { "Merge" } else { "Partial" }
+                )
             }
             Self::Sort => write!(f, "CudfSort"),
             Self::SortPreservingMerge => write!(f, "CudfSortPreservingMerge"),

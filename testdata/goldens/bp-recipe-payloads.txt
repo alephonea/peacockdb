@@ -15,6 +15,25 @@ GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
         #2 CudfScan
           files: /tmp/peacock-plan-bytes-root/tpch.sf1/nation.parquet
           schema: [n_nationkey:Int32, n_name:Utf8View, n_regionkey:Int32, n_comment:Utf8View]
+== tpch nested-loop-left-join
+sha256=96129087c412b067dc211c6db28df655a4f009b743d66a1b3d9aa2063da1b67b
+GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
+  GpuNestedLoopJoin: calling_lanes=1, per probe batch: execute_node(#4 CudfNestedLoopJoin, build, batch)
+      #4 CudfNestedLoopJoin
+        join_type: Left
+        filter: (r_regionkey@0 Gt n_regionkey@1)
+    GpuCoalesceAllBatches: calling_lanes=1, at done: execute_node(#1 CudfCoalescePartitions, lane batches)
+        #1 CudfCoalescePartitions
+      GpuLoadParquet: calling_lanes=1, per batch: execute_scan_rowgroups(#0 CudfScan, row groups)
+          #0 CudfScan
+            files: /tmp/peacock-plan-bytes-root/tpch.sf1/region.parquet
+            schema: [r_regionkey:Int32, r_name:Utf8View, r_comment:Utf8View]
+    GpuCoalesceAllBatches: calling_lanes=1, at done: execute_node(#3 CudfCoalescePartitions, lane batches)
+        #3 CudfCoalescePartitions
+      GpuLoadParquet: calling_lanes=1, per batch: execute_scan_rowgroups(#2 CudfScan, row groups)
+          #2 CudfScan
+            files: /tmp/peacock-plan-bytes-root/tpch.sf1/nation.parquet
+            schema: [n_nationkey:Int32, n_name:Utf8View, n_regionkey:Int32, n_comment:Utf8View]
 == tpch q13
 sha256=6ff55ae97eb70538df478974f4910d03ef12825c357e22eb130809a36aec64f7
 GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
@@ -463,7 +482,7 @@ GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
                               files: /tmp/peacock-plan-bytes-root/tpch.sf1/orders.parquet
                               schema: [o_custkey:Int64]
 == tpch shuffle-stddev
-sha256=3c65824585d5713a6d9f0c19d20fcddaa6a37b7a65876c14e432e98455976480
+sha256=35a83f705867e37b73e42d27cacba7d85aeba385bf5e7101dfc006c4999b7958
 GpuUnload: calling_lanes=4, per handle: result_from_handle(batch, row range)
   GpuProject: calling_lanes=4, per batch: execute_node(#9 CudfProject, batch)
       #9 CudfProject
@@ -486,10 +505,10 @@ GpuUnload: calling_lanes=4, per handle: result_from_handle(batch, row range)
         #8 CudfProject{finalize}
           l_returnflag: l_returnflag@0
           l_linestatus: l_linestatus@1
-          stddev(lineitem.l_quantity): case when ((stddev(lineitem.l_quantity)$count@2 Minus 1) LtEq 0) then null::Float64 else Sqrt((stddev(lineitem.l_quantity)$m2@4 Divide (stddev(lineitem.l_quantity)$count@2 Minus 1))) end
-          stddev_pop(lineitem.l_quantity): case when ((stddev_pop(lineitem.l_quantity)$count@5 Minus 0) LtEq 0) then null::Float64 else Sqrt((stddev_pop(lineitem.l_quantity)$m2@7 Divide (stddev_pop(lineitem.l_quantity)$count@5 Minus 0))) end
-          var(lineitem.l_quantity): case when ((var(lineitem.l_quantity)$count@8 Minus 1) LtEq 0) then null::Float64 else (var(lineitem.l_quantity)$m2@10 Divide (var(lineitem.l_quantity)$count@8 Minus 1)) end
-          var_pop(lineitem.l_quantity): case when ((var_pop(lineitem.l_quantity)$count@11 Minus 0) LtEq 0) then null::Float64 else (var_pop(lineitem.l_quantity)$m2@13 Divide (var_pop(lineitem.l_quantity)$count@11 Minus 0)) end
+          stddev(lineitem.l_quantity): case when ((cast(stddev(lineitem.l_quantity)$count@2 as Float64) Minus 1) LtEq 0) then null::Float64 else Sqrt((stddev(lineitem.l_quantity)$m2@4 Divide (cast(stddev(lineitem.l_quantity)$count@2 as Float64) Minus 1))) end
+          stddev_pop(lineitem.l_quantity): case when ((cast(stddev_pop(lineitem.l_quantity)$count@5 as Float64) Minus 0) LtEq 0) then null::Float64 else Sqrt((stddev_pop(lineitem.l_quantity)$m2@7 Divide (cast(stddev_pop(lineitem.l_quantity)$count@5 as Float64) Minus 0))) end
+          var(lineitem.l_quantity): case when ((cast(var(lineitem.l_quantity)$count@8 as Float64) Minus 1) LtEq 0) then null::Float64 else (var(lineitem.l_quantity)$m2@10 Divide (cast(var(lineitem.l_quantity)$count@8 as Float64) Minus 1)) end
+          var_pop(lineitem.l_quantity): case when ((cast(var_pop(lineitem.l_quantity)$count@11 as Float64) Minus 0) LtEq 0) then null::Float64 else (var_pop(lineitem.l_quantity)$m2@13 Divide (cast(var_pop(lineitem.l_quantity)$count@11 as Float64) Minus 0)) end
       GpuEmitPartitions: calling_lanes=1, per batch: execute_node(#5 CudfRepartition{Hash, 1→4}, batch)
           #5 CudfRepartition{Hash, 1→4}
             partitioning: Hash, 4
@@ -2055,7 +2074,7 @@ GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
                                                                                       files: /tmp/peacock-plan-bytes-root/tpcds.sf1/store_sales.parquet
                                                                                       schema: [ss_sold_date_sk:Int64, ss_item_sk:Int64]
 == tpcds q39
-sha256=6ac72e7178c1b60863c57642816b93c0b35c4c9816aa40a2a158086186b56174
+sha256=2817cc1efaf554efe40f8fe009ebb9eed875d95efb67768175a760aeb12e3336
 GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
   GpuProject: calling_lanes=1, per batch: execute_node(#71 CudfProject, batch)
       #71 CudfProject
@@ -2136,7 +2155,7 @@ GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
                                 w_warehouse_sk: w_warehouse_sk@1
                                 i_item_sk: i_item_sk@2
                                 d_moy: d_moy@3
-                                stddev(inventory.inv_quantity_on_hand): case when ((stddev(inventory.inv_quantity_on_hand)$count@4 Minus 1) LtEq 0) then null::Float64 else Sqrt((stddev(inventory.inv_quantity_on_hand)$m2@6 Divide (stddev(inventory.inv_quantity_on_hand)$count@4 Minus 1))) end
+                                stddev(inventory.inv_quantity_on_hand): case when ((cast(stddev(inventory.inv_quantity_on_hand)$count@4 as Float64) Minus 1) LtEq 0) then null::Float64 else Sqrt((stddev(inventory.inv_quantity_on_hand)$m2@6 Divide (cast(stddev(inventory.inv_quantity_on_hand)$count@4 as Float64) Minus 1))) end
                                 avg(inventory.inv_quantity_on_hand): (cast(avg(inventory.inv_quantity_on_hand)$sum@7 as Float64) Divide cast(avg(inventory.inv_quantity_on_hand)$count@8 as Float64))
                             GpuEmitPartitions: calling_lanes=1, per batch: execute_node(#24 CudfRepartition{Hash, 1→4}, batch)
                                 #24 CudfRepartition{Hash, 1→4}
@@ -2288,7 +2307,7 @@ GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
                               w_warehouse_sk: w_warehouse_sk@1
                               i_item_sk: i_item_sk@2
                               d_moy: d_moy@3
-                              stddev(inventory.inv_quantity_on_hand): case when ((stddev(inventory.inv_quantity_on_hand)$count@4 Minus 1) LtEq 0) then null::Float64 else Sqrt((stddev(inventory.inv_quantity_on_hand)$m2@6 Divide (stddev(inventory.inv_quantity_on_hand)$count@4 Minus 1))) end
+                              stddev(inventory.inv_quantity_on_hand): case when ((cast(stddev(inventory.inv_quantity_on_hand)$count@4 as Float64) Minus 1) LtEq 0) then null::Float64 else Sqrt((stddev(inventory.inv_quantity_on_hand)$m2@6 Divide (cast(stddev(inventory.inv_quantity_on_hand)$count@4 as Float64) Minus 1))) end
                               avg(inventory.inv_quantity_on_hand): (cast(avg(inventory.inv_quantity_on_hand)$sum@7 as Float64) Divide cast(avg(inventory.inv_quantity_on_hand)$count@8 as Float64))
                           GpuEmitPartitions: calling_lanes=1, per batch: execute_node(#58 CudfRepartition{Hash, 1→4}, batch)
                               #58 CudfRepartition{Hash, 1→4}

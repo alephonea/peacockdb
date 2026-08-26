@@ -363,12 +363,16 @@ const PAYLOAD_MODE: (&str, usize, BatchSizing) = ("bp-tp4-rowgroup", 4, BatchSiz
 ///
 /// So a query earns a place here by covering something no other query does. Adding one
 /// that covers nothing new adds lines no reader can check against anything.
-const PAYLOAD_QUERIES: [(&str, &str); 16] = [
+const PAYLOAD_QUERIES: [(&str, &str); 17] = [
     // Nested-loop join lives nowhere else in the corpus; the stddev query is the Welford
     // init, both merges and the finalize project; q13 is the outer join's finish pass.
     ("tpch", "q13"),
     ("tpch", "shuffle-stddev"),
     ("tpch", "nested-loop-join"),
+    // The Left form of it, which is the one shape whose probe side is a single batch: its
+    // call takes the build side rather than a copy, because with one call there is no
+    // second batch for the build side to still be there for.
+    ("tpch", "nested-loop-left-join"),
     // q22 is the build-side semi family's finish, whose join type is the node's OWN
     // LeftAnti: a key project per batch, then coalesce and that join at done. The other
     // LeftAnti here is a Left outer's DERIVED finish — different keys, no projection, and

@@ -10,8 +10,10 @@
 //! output is priced by. Handles thread from one call to the next.
 
 pub mod accumulate;
+pub mod backend;
 pub mod emit;
 pub mod join;
+pub mod source;
 
 use std::sync::Arc;
 

@@ -235,6 +235,53 @@ fn the_probe_side_semi_family_answers_per_batch_and_finishes_with_nothing() {
     }
 }
 
+/// A projection that keeps two of the four columns, one from each side.
+fn projecting_join(
+    join_type: JoinType,
+    projection: Vec<u32>,
+    output: &[(&str, DataType)],
+) -> GpuJoin {
+    GpuJoin::new(
+        side(&dim_columns(), BatchLayout::SingleBatch),
+        side(&fact_columns(), BatchLayout::MultipleBatches),
+        join_type,
+        vec![(0, 0)],
+        None,
+        Vec::new(),
+        false,
+        Some(projection),
+        schema_of(output),
+    )
+}
+
+/// The finish pass emits the columns the node's projection keeps, in its order — not every
+/// build column with a pad after it.
+///
+/// It is the pad that makes this worth a case rather than the join: the anti join at done
+/// emits every build column whatever the projection says, so the project above it is what
+/// cuts the row down, and it walks the projection rather than the build side. Every other
+/// join case in this file passes `projection: None`, so nothing here reached that walk —
+/// which is the CPU twin of a defect the device tests already pin.
+#[test]
+fn a_projecting_outer_join_pads_the_columns_its_projection_keeps() {
+    // [label, v]: one column from each side, and the build key dropped — so a pad that
+    // emitted the build side whole would produce three columns, not two.
+    let output = [("label", DataType::Utf8), ("v", DataType::Int64)];
+    let node = projecting_join(JoinType::Left, vec![1, 3], &output);
+    let join = CpuJoin::hash(
+        &node,
+        &schema_of(&dim_columns()).fields,
+        &schema_of(&fact_columns()).fields,
+        ctx(),
+    )
+    .expect("the join builds");
+    assert_eq!(
+        drive(join),
+        rows(&["a|-", "b|20", "b|21", "c|-"]),
+        "two columns per row, and the unmatched build rows carry a typed NULL for v"
+    );
+}
+
 /// The one thing a per-batch answer cannot get right on its own: `k=2` matches the first
 /// probe batch and nothing in the second. A Left join that answered per batch would pad it
 /// as unmatched against the second and emit the row twice.

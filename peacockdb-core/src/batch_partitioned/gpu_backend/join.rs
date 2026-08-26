@@ -15,9 +15,11 @@ use datafusion::common::JoinType;
 
 use peacockdb_ffi::raw::PeacockExecutor;
 
+use super::super::batch::Batch;
 use super::super::error::PlanError;
 use super::super::executor::{BackendError, CallResult, CallStats};
 use super::super::gpu_batch::GpuBatch;
+use super::super::nodes::join::empty_build_answers_nothing;
 use super::super::recipe::{CallPattern, FbKind, Input, ProjectRole, Recipe, Seq};
 use super::{execute_node, produced};
 
@@ -34,6 +36,11 @@ struct JoinCall {
 /// A join before its build side arrives.
 pub struct GpuJoin {
     executor: *mut PeacockExecutor,
+    /// The node's own type, and `None` for the two joins that have none — cross and
+    /// nested-loop. What a finish over no keys owes is decided by this rather than read
+    /// back off the call list: two different nodes publish a LeftAnti at done, and one of
+    /// them owes padded rows.
+    join_type: Option<JoinType>,
     per_probe: Vec<JoinCall>,
     at_done: Vec<JoinCall>,
     keys_schema: Option<SchemaRef>,
@@ -46,6 +53,7 @@ impl GpuJoin {
     pub fn new(
         executor: *mut PeacockExecutor,
         recipe: &Recipe,
+        join_type: Option<JoinType>,
         keys: Option<&ArrowSchema>,
         output: &ArrowSchema,
     ) -> Result<Self, PlanError> {
@@ -82,11 +90,27 @@ impl GpuJoin {
         }
         Ok(Self {
             executor,
+            join_type,
             per_probe,
             at_done,
             keys_schema: keys.map(|schema| Arc::new(schema.clone()) as SchemaRef),
             output: Arc::new(output.clone()),
         })
+    }
+
+    /// This lane's build side finished with no batch — its scatter gave it no build rows.
+    /// The type decides what it owes, and the rule is the one the CPU reads too.
+    pub fn without_build(self) -> Result<(), BackendError> {
+        // Cross and nested-loop joins carry no type here and owe nothing either: every row
+        // they emit is built from a build row, the Left form's padding included.
+        let owes_nothing = self.join_type.map_or(true, empty_build_answers_nothing);
+        if owes_nothing {
+            return Ok(());
+        }
+        Err(BackendError::new(
+            "this lane's build side is empty, and what this join owes is its probe side — \
+             which takes a call over a build table that does not exist (#175)",
+        ))
     }
 
     /// The build side, which is one batch per lane. It is held rather than consumed: which
@@ -116,6 +140,27 @@ pub struct GpuProbingJoin {
 }
 
 impl GpuProbingJoin {
+    /// The build side, from `set_build` until the call that consumes it — `None` after,
+    /// because the surface has no copy and the recipe says which call takes it.
+    pub fn build_bytes(&self) -> usize {
+        self.build.as_ref().map_or(0, GpuBatch::byte_size)
+    }
+
+    /// The probe keys a finishing type keeps until its finish pass runs (#136).
+    pub fn accumulated_bytes(&self) -> usize {
+        self.accumulated.iter().map(GpuBatch::byte_size).sum()
+    }
+
+    /// Whether a probe call reads the build side at all. False for the build-side semi
+    /// family, whose probe call is the key project alone — and the accounting has to know,
+    /// because a transient charged for a read that never happens refuses work that fits.
+    pub fn probe_reads_build(&self) -> bool {
+        self.join
+            .per_probe
+            .iter()
+            .any(|call| call.inputs.iter().any(Input::is_build_side))
+    }
+
     pub fn probe_and_fetch(&mut self, batch: GpuBatch) -> CallResult<Vec<GpuBatch>> {
         self.probes += 1;
         let mut out = Vec::new();
@@ -157,25 +202,39 @@ impl GpuProbingJoin {
     /// it — nothing matched — so an anti join hands its build side up, which is the answer
     /// and the one this backend can express. A semi join owes no rows and a mark join owes
     /// a column of `false`, and neither is a table the frozen surface makes out of nothing.
+    ///
+    /// Decided by the node's type and not by the calls it published: a Left outer's finish
+    /// is a LeftAnti too, and its answer is those build rows PADDED — so a switch reading
+    /// the kind at done would hand a Left outer the wrong rows rather than refusing it.
     fn finish_without_keys(mut self) -> CallResult<Vec<GpuBatch>> {
-        let anti = self.join.at_done.len() == 2
-            && matches!(
-                self.join.at_done[1].kind,
-                FbKind::HashJoin {
-                    join_type: JoinType::LeftAnti
-                }
-            );
-        if anti {
-            return Ok((
-                self.build.take().into_iter().collect(),
-                CallStats::default(),
-            ));
-        }
-        Err(BackendError::new(
+        let owed = match self.join.join_type {
+            Some(JoinType::LeftAnti) => {
+                return Ok((
+                    self.build.take().into_iter().collect(),
+                    CallStats::default(),
+                ));
+            }
+            Some(JoinType::LeftSemi) => "no rows, which is a table of no rows",
+            Some(JoinType::LeftMark) => {
+                "every build row with a false mark, which is a \
+                                         table of literals"
+            }
+            Some(JoinType::Left | JoinType::Full) => {
+                "every build row padded with a typed NULL per probe column, which is a \
+                 table of literals"
+            }
+            other => {
+                return Err(BackendError::new(format!(
+                    "{other:?} publishes no finish, so a lane with no probe keys cannot \
+                     reach one"
+                )));
+            }
+        };
+        Err(BackendError::new(format!(
             "this lane's probe was empty, so its finish has no keys to join against — and \
-             the answer it owes is a table of no rows or of literals, which the frozen \
-             surface cannot make without one (#173)",
-        ))
+             what it owes is {owed}, which the frozen surface cannot make without one \
+             (#173)"
+        )))
     }
 
     /// One call, its named inputs resolved to the handles this join is holding.

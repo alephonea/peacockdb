@@ -232,10 +232,67 @@ fn avg_merge_body(finalize: Option<Vec<NamedExpr>>) -> AggregateBody {
 }
 
 fn merging(body: AggregateBody, output: Schema, compact_bytes: usize) -> CpuAccumulator {
+    merging_under(body, output, compact_bytes, ctx())
+}
+
+fn merging_under(
+    body: AggregateBody,
+    output: Schema,
+    compact_bytes: usize,
+    ctx: Arc<TaskContext>,
+) -> CpuAccumulator {
     let state = avg_state();
     let node =
         GpuAggregateBatches::new(Given::of_schema(state.clone()), body, state.clone(), output);
-    CpuAccumulator::aggregate(&node, &state.fields, ctx(), compact_bytes).expect("the merge builds")
+    CpuAccumulator::aggregate(&node, &state.fields, ctx, compact_bytes).expect("the merge builds")
+}
+
+/// A session configured to give up on grouping as early as it can: the probe after one
+/// row, and any aggregation ratio above zero enough to trigger it.
+fn eager_to_skip() -> Arc<TaskContext> {
+    let config = datafusion::prelude::SessionConfig::new()
+        .set_usize(
+            "datafusion.execution.skip_partial_aggregation_probe_rows_threshold",
+            1,
+        )
+        .set(
+            "datafusion.execution.skip_partial_aggregation_probe_ratio_threshold",
+            &datafusion::common::ScalarValue::Float64(Some(0.0)),
+        );
+    SessionContext::new_with_config(config).task_ctx()
+}
+
+/// DataFusion's partial aggregate stops grouping where grouping is not paying, which is
+/// sound under a Final stage and wrong here: the merge is a Partial too, so duplicate keys
+/// would reach the finalize as extra rows. The executor overrides the thresholds, and this
+/// asserts what the executor DOES rather than what the context said — the difference being
+/// that a later site building an executor from an unguarded context still goes red here.
+///
+/// Red without the override: two rows for `a` instead of one.
+#[test]
+fn a_merge_groups_even_where_the_session_asks_it_not_to() {
+    let out = drive(
+        merging_under(avg_merge_body(None), avg_state(), 1 << 20, eager_to_skip()),
+        vec![
+            avg_state_batch(vec![("a", 12, 3), ("b", 5, 1)]),
+            avg_state_batch(vec![("a", 10, 1)]),
+        ],
+    );
+    assert_eq!(out.len(), 1, "a merge emits nothing until done");
+    assert_eq!(
+        by_key(&out[0]),
+        vec![
+            (
+                "a".to_string(),
+                vec![ScalarValue::Int64(Some(22)), ScalarValue::Int64(Some(4))]
+            ),
+            (
+                "b".to_string(),
+                vec![ScalarValue::Int64(Some(5)), ScalarValue::Int64(Some(1))]
+            ),
+        ],
+        "one row per key, not one per arrival"
+    );
 }
 
 #[test]

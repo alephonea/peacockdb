@@ -181,6 +181,9 @@ mod tests {
                 fn set_build(self, _batch: $batch) -> CallResult<$probing> {
                     Ok(($probing, CallStats::default()))
                 }
+                fn without_build(self) -> Result<(), BackendError> {
+                    Ok(())
+                }
             }
             impl ProbingJoin<$backend> for $probing {
                 fn probe_and_fetch(&mut self, batch: $batch) -> CallResult<Vec<$batch>> {

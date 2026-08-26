@@ -130,6 +130,27 @@ fn a_lane_emits_one_batch_per_entry_of_its_mapping() {
     );
 }
 
+/// The mask maps what the projection names: column 1 alone comes back as one column, and
+/// it is the value column rather than the key the reader would hand over first.
+#[test]
+fn a_lane_reads_the_columns_its_projection_names_and_no_others() {
+    let node = loader(vec![1], vec![vec![vec![0], vec![1]]]);
+    let NodeExecutors::Source(source) =
+        CpuBackend::executors_for(&ctx(), &node, 0, 0).expect("a loader builds a source")
+    else {
+        panic!("a loader is a source");
+    };
+    let SourceStep::Batch { batch, .. } = source.next_batch().expect("the read succeeds") else {
+        panic!("the lane has two entries");
+    };
+    assert_eq!(
+        batch.record_batch().num_columns(),
+        1,
+        "one column named, one column read"
+    );
+    assert_eq!(values_in(&batch), vec![1, 2], "and it is v, not k");
+}
+
 /// A lane the mapping gave nothing is exhausted on its first step rather than an error:
 /// the partitioner is free to produce one, and the driver's answer is an empty lane.
 #[test]

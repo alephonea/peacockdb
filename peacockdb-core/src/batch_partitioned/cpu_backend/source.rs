@@ -8,8 +8,8 @@
 
 use std::sync::Arc;
 
-use datafusion::arrow::array::RecordBatch;
-use datafusion::arrow::compute::concat_batches;
+use datafusion::arrow::array::{ArrayRef, RecordBatch};
+use datafusion::arrow::compute::{cast, concat_batches};
 use datafusion::arrow::datatypes::{Schema as ArrowSchema, SchemaRef};
 use datafusion::parquet::arrow::ProjectionMask;
 use datafusion::parquet::arrow::arrow_reader::{
@@ -20,7 +20,6 @@ use super::super::cpu_batch::CpuBatch;
 use super::super::error::PlanError;
 use super::super::executor::{BackendError, CallStats};
 use super::super::nodes::GpuLoadParquet;
-use super::declared_as;
 
 /// A lane's reads, in the order the mapping named them.
 pub struct CpuSource {
@@ -103,7 +102,38 @@ impl CpuSource {
             read.iter(),
         )
         .map_err(|error| BackendError::new(format!("joining the row groups read: {error}")))?;
-        let batch = declared_as(batch, &self.schema)?;
-        Ok(Some((CpuBatch::new(batch), CallStats::default())))
+        Ok(Some((
+            CpuBatch::new(as_declared(batch, &self.schema)?),
+            CallStats::default(),
+        )))
     }
+}
+
+/// The rows in the types the node declares. The parquet reader answers in the file's own
+/// arrow types, and DataFusion's scan does not: a string column reaches the rest of the
+/// plan as a view type, and every node above was planned against that. So this casts
+/// rather than relabelling, which is what the shared `declared_as` does for a node whose
+/// operator already produced the declared types.
+fn as_declared(batch: RecordBatch, declared: &SchemaRef) -> Result<RecordBatch, BackendError> {
+    if batch.schema().fields() == declared.fields() {
+        return Ok(batch);
+    }
+    let mut columns: Vec<ArrayRef> = Vec::with_capacity(declared.fields().len());
+    for (position, field) in declared.fields().iter().enumerate() {
+        let column = batch.column(position);
+        columns.push(if column.data_type() == field.data_type() {
+            column.clone()
+        } else {
+            cast(column, field.data_type()).map_err(|error| {
+                BackendError::new(format!(
+                    "the scan read {} as {} where the plan declares {}: {error}",
+                    field.name(),
+                    column.data_type(),
+                    field.data_type()
+                ))
+            })?
+        });
+    }
+    RecordBatch::try_new(declared.clone(), columns)
+        .map_err(|error| BackendError::new(format!("the scan's batch is not its schema: {error}")))
 }

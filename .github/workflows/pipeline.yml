@@ -213,7 +213,7 @@ jobs:
           # already hit tmpfs/SIGBUS at link time. It shares this line's already-built
           # rust-only fingerprint, so it costs no extra dependency compile.
           cargo test --no-run --features rust-only -p peacockdb-core --lib --test test_plan_bytes \
-            --test test_cpu_executors
+            --test test_cpu_executors --test test_cpu_batch_partitioned
         env:
           CMAKE_GENERATOR: Ninja
           LD_LIBRARY_PATH: /opt/conda/lib
@@ -275,6 +275,11 @@ jobs:
           # half proves the contract alone, which is why the table is shared rather than
           # copied. Synthetic data written by the test, so no dataset and no device.
           cargo test --features rust-only -p peacockdb-core --test test_cpu_executors
+          # SQL in, rows out: every query planned and run at all five modes against
+          # DataFusion on the same SQL. The first tier where the planner, the recipes,
+          # the executors and both drivers run together rather than each against a
+          # fixture of the last one's shape. Needs sf1, generated above; no device.
+          cargo test --features rust-only -p peacockdb-core --test test_cpu_batch_partitioned
         env:
           CMAKE_GENERATOR: Ninja
           LD_LIBRARY_PATH: /opt/conda/lib

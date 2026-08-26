@@ -295,6 +295,13 @@ enum Emits {
     ProbeSide,
 }
 
+/// Whether the join's output carries a column from each side. False for the two semi
+/// families and for a mark join, whose row is one side's — read by an executor deciding
+/// whether the columns it owes have to be invented or only selected.
+pub fn emits_both_sides(join_type: JoinType) -> bool {
+    matches!(emits(join_type), Emits::BothSides)
+}
+
 fn emits(join_type: JoinType) -> Emits {
     match join_type {
         JoinType::Inner | JoinType::Left | JoinType::Right | JoinType::Full => Emits::BothSides,
@@ -544,6 +551,24 @@ pub fn capability(join_type: JoinType, has_filter: bool) -> Result<JoinCapabilit
             )))
         }
         JoinType::RightSemi | JoinType::RightAnti => streaming(false),
+    }
+}
+
+/// Whether a lane whose build side produced no batch owes no rows at all.
+///
+/// True where every output row is built from a build row, so an empty build side is an
+/// empty answer and the lane can end without a call. False for the three types that
+/// preserve unmatched PROBE rows: what they owe is the probe side, padded or not, and
+/// making it takes a call over a build table that does not exist.
+pub fn empty_build_answers_nothing(join_type: JoinType) -> bool {
+    match join_type {
+        JoinType::Inner
+        | JoinType::Left
+        | JoinType::LeftSemi
+        | JoinType::LeftAnti
+        | JoinType::LeftMark
+        | JoinType::RightSemi => true,
+        JoinType::Right | JoinType::Full | JoinType::RightAnti => false,
     }
 }
 

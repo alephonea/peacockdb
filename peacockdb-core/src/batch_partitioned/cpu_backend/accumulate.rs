@@ -84,6 +84,7 @@ impl CpuAccumulator {
             }
             None => None,
         };
+        let ctx = super::always_aggregating(ctx);
         Ok(Self::Aggregate(AggregateBatches {
             merge,
             finalize,

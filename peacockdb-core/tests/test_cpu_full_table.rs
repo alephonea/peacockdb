@@ -27,6 +27,7 @@ cpu_full_table_result_test!(tpch, 1, aggregate_groupby, tp8_mini, data_fusion_ex
 cpu_full_table_result_test!(tpch, 1, semi_join, tp8_mini, data_fusion_exact, no_result_golden);
 cpu_full_table_result_test!(tpch, 1, anti_join, tp8_mini, data_fusion_exact, no_result_golden);
 cpu_full_table_result_test!(tpch, 1, nested_loop_join, tp8_mini, data_fusion_exact, no_result_golden);
+cpu_full_table_result_test!(tpch, 1, nested_loop_left_join, tp8_mini, data_fusion_exact, no_result_golden);
 cpu_full_table_result_test!(tpch, 1, cross_join, tp8_mini, data_fusion_exact, no_result_golden);
 cpu_full_table_result_test!(tpch, 1, q1, tp8_mini, data_fusion_exact, no_result_golden);
 cpu_full_table_result_test!(tpch, 1, q2, tp8_mini, data_fusion_exact, no_result_golden);
@@ -191,6 +192,7 @@ cpu_full_table_result_test!(tpch, 1, aggregate_groupby, tp1_standard, data_fusio
 cpu_full_table_result_test!(tpch, 1, semi_join, tp1_standard, data_fusion_exact, no_result_golden);
 cpu_full_table_result_test!(tpch, 1, anti_join, tp1_standard, data_fusion_exact, no_result_golden);
 cpu_full_table_result_test!(tpch, 1, nested_loop_join, tp1_standard, data_fusion_exact, result_golden);
+cpu_full_table_result_test!(tpch, 1, nested_loop_left_join, tp1_standard, data_fusion_exact, result_golden);
 cpu_full_table_result_test!(tpch, 1, cross_join, tp1_standard, data_fusion_exact, result_golden);
 cpu_full_table_result_test!(tpch, 1, q1, tp1_standard, data_fusion_exact, result_golden);
 cpu_full_table_result_test!(tpch, 1, q2, tp1_standard, data_fusion_exact, result_golden);

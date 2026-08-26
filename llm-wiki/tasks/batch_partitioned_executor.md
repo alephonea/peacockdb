@@ -403,6 +403,21 @@ multi-lane mid-plan limit is a case T15 constructs rather than canonizes.
 
 ### The aggregate sequence
 
+**DataFusion's partial-aggregation probe must be off, and the reason is structural.** An
+`AggregateExec` in Partial mode measures its own aggregation ratio after
+`skip_partial_aggregation_probe_rows_threshold` rows and, where the groups are nearly as numerous
+as the rows, stops grouping and passes its input through as state. That is sound in a DataFusion
+plan because a Final stage regroups downstream. Here nothing does: the init emits state and the
+merge is a Partial too, so duplicate keys survive to the finalize and come out as extra rows.
+Both take a context with the threshold at `usize::MAX` — stated as the probe never happening
+rather than as a ratio that cannot be met, which is a bound the next reader would have to check.
+
+It is a silent wrong answer, not a failure, and only over a wide high-cardinality group by: one key
+over `store_sales` is exact, `date_dim` is exact, and `GROUP BY ss_customer_sk, ss_item_sk` returns
+2,797,913 against DataFusion's 2,764,744. A device never skips, so this is also what keeps the two
+engines answering the same rather than only this one answering correctly.
+
+
 **An aggregate node carries no phase.** It declares what it computes — a list of
 aggregators over its own input, and optionally a list of finalizing expressions over the
 results — and the planner emits the parts each position needs. This replaces the legacy

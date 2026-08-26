@@ -243,6 +243,9 @@ impl JoinExecutor<CpuBackend> for CpuJoin {
     fn set_build(self, batch: CpuBatch) -> CallResult<CpuProbingJoin> {
         CpuJoin::set_build(self, batch)
     }
+    fn without_build(self) -> Result<(), BackendError> {
+        CpuJoin::without_build(self)
+    }
 }
 
 impl Executor for CpuProbingJoin {

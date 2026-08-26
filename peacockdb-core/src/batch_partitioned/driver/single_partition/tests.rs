@@ -256,6 +256,7 @@ fn a_join_sets_its_build_side_before_it_probes() {
 #[test]
 fn a_join_emits_its_unmatched_rows_at_finish() {
     let script = Script::default().with_join(JoinRule {
+        empty_build_owes_its_probe: false,
         finish_rows: 3,
         build_residency: 0,
     });
@@ -292,8 +293,11 @@ fn a_join_emits_its_unmatched_rows_at_finish() {
     assert!(outcome.finished);
 }
 
+/// A build side that ended with no batch is a call of its own rather than an error: the
+/// scatter gave this lane no build rows, which a small table over many lanes produces
+/// routinely, and what the lane owes is the join type's answer.
 #[test]
-fn a_build_side_that_never_produced_is_refused_at_the_decision() {
+fn a_build_side_that_never_produced_chooses_the_call_that_asks_what_it_owes() {
     let script = Script::default();
     let node = join_node();
     let category = site(&script, node.as_ref()).category;
@@ -301,12 +305,12 @@ fn a_build_side_that_never_produced_is_refused_at_the_decision() {
         has: [false, true],
         done: [true, false],
     };
-    match LaneDriver::<Mock>::default().select(category, &ended) {
-        Err(RunError::Protocol(said)) => {
-            assert!(said.contains("without producing a batch"), "{said}")
-        }
-        other => panic!("a join with no build batch chose {other:?}"),
-    }
+    assert_eq!(
+        LaneDriver::<Mock>::default()
+            .select(category, &ended)
+            .expect("an empty build side is answerable"),
+        LaneCall::NoBuild
+    );
 }
 
 #[test]

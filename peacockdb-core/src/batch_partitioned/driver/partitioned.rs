@@ -236,7 +236,17 @@ impl<'a, B: Backend> Driver<'a, B> {
             if !self.states[node].lanes[lane].can_step(category, &avail) {
                 continue;
             }
-            let call = self.states[node].lanes[lane].select(category, &avail)?;
+            // A protocol violation is about one lane of one node, and the lane driver
+            // knows neither: without this the message names a shape and no site.
+            let name = self.index.nodes[node].node.name();
+            let call = self.states[node].lanes[lane]
+                .select(category, &avail)
+                .map_err(|error| match error {
+                    RunError::Protocol(what) => {
+                        RunError::Protocol(format!("{name} lane {lane}: {what}"))
+                    }
+                    other => other,
+                })?;
             // Every branch below is about the batch this call consumes, and the calls that
             // end a lane consume none: an interval decides nothing about them.
             let consuming = call.consumes().is_some();
@@ -298,7 +308,10 @@ impl<'a, B: Backend> Driver<'a, B> {
                     produced
                 }
             };
-            if call == LaneCall::SetBuild {
+            // Both calls end a lane's build phase, and the hold lifts when every lane
+            // has: a lane that owed nothing still has to say so, or the probe subtree is
+            // held by a lane that will never build.
+            if matches!(call, LaneCall::SetBuild | LaneCall::NoBuild) {
                 self.scheduler.lane_left_build(node);
             }
             if outcome.finished {
@@ -390,12 +403,18 @@ impl<'a, B: Backend> Driver<'a, B> {
                 return Err(wrong_cross(self.index.nodes[node].node).into());
             };
             let modelled = self.acct.begin_call(slot, accumulator, rows, bytes)?;
+            let had_batch = batch.is_some();
             let (event, kind) = match batch {
                 Some(held) => (LaneEvent::Batch(held.batch), CallKind::LaneEvent),
                 None => (LaneEvent::Done, CallKind::LaneDone),
             };
             let accumulated = accumulator.accumulate_and_fetch(lane, event);
-            self.acct.release(bytes)?;
+            // A lane's end carries no batch, so there is nothing to release: counting one
+            // anyway made holds and releases disagree on every plan with a cross-lane
+            // accumulator, which is what the report says they never do.
+            if had_batch {
+                self.acct.release(bytes)?;
+            }
             let (outputs, stats) = accumulated.map_err(|e| self.call_failed(node, lane, e))?;
             let produced = outputs.len();
             for out in outputs {

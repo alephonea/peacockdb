@@ -14,6 +14,7 @@ query_plan_test!(tpch, 1, left_join, tp8_mini);
 query_plan_test!(tpch, 1, semi_join, tp8_mini);
 query_plan_test!(tpch, 1, anti_join, tp8_mini);
 query_plan_test!(tpch, 1, nested_loop_join, tp8_mini);
+query_plan_test!(tpch, 1, nested_loop_left_join, tp8_mini);
 query_plan_test!(tpch, 1, mixed_join, tp8_mini);
 query_plan_test!(tpch, 1, cross_join, tp8_mini);
 query_plan_test!(tpch, 1, q1, tp8_mini);

@@ -14,10 +14,10 @@ use crate::batch_partitioned::layout::{ColumnOrder, PartitionLayout};
 use crate::batch_partitioned::node::RowInterval;
 use crate::batch_partitioned::nodes::join::{JoinFilterColumn, JoinSide, NestedLoopJoinType};
 use crate::batch_partitioned::nodes::{
-    ExecutorCategory, GpuAccumulateBatchesAndSort, GpuCoalesceAllBatches, GpuCrossJoin,
-    GpuEmitPartitions, GpuFilter, GpuInterleave, GpuJoin, GpuLimit, GpuMergePartitions,
-    GpuMergeSortedPartitions, GpuNestedLoopJoin, GpuProject, GpuSort, GpuUnion, GpuUnload,
-    category_of,
+    ExecutorCategory, GpuAccumulateBatchesAndSort, GpuAggregate, GpuAggregateBatches,
+    GpuCoalesceAllBatches, GpuCrossJoin, GpuEmitPartitions, GpuFilter, GpuInterleave, GpuJoin,
+    GpuLimit, GpuMergePartitions, GpuMergeSortedPartitions, GpuNestedLoopJoin, GpuProject, GpuSort,
+    GpuUnion, GpuUnload, NodeRef, as_node_ref, category_of,
 };
 use datafusion::common::JoinType;
 
@@ -74,6 +74,18 @@ fn every_kind() -> Vec<Box<dyn GpuNode>> {
             schema_of(&[GROUPED[0].clone()]),
         )),
         Box::new(GpuSort::new(streaming(), vec![order()], None)),
+        Box::new(GpuAggregate::new(
+            streaming(),
+            summing(),
+            summed_state(),
+            summed_state(),
+        )),
+        Box::new(GpuAggregateBatches::new(
+            given_schema(summed_state()),
+            merging(),
+            summed_state(),
+            summed_state(),
+        )),
         Box::new(GpuCoalesceAllBatches::new(streaming())),
         Box::new(GpuAccumulateBatchesAndSort::new(
             streaming(),
@@ -142,6 +154,53 @@ fn every_kind() -> Vec<Box<dyn GpuNode>> {
     ]
 }
 
+/// A stub input over a state schema, which is what a merge reads.
+fn given_schema(schema: Schema) -> Box<dyn GpuNode> {
+    Box::new(Given {
+        kind: NodeKind::Intermediate {
+            layout: PartitionLayout {
+                batch_layout: BatchLayout::MultipleBatches,
+                ..PartitionLayout::new(1)
+            },
+            schema,
+        },
+    })
+}
+
+/// One sum over the value column, grouped by the key — the smallest body there is, since
+/// what is under test is which executor gets built.
+fn summing() -> AggregateBody {
+    sum_over(1, "v")
+}
+
+/// The same sum a column later: a merge reads the state its child emitted, where column 1
+/// is that sum rather than the value it came from.
+fn merging() -> AggregateBody {
+    sum_over(1, "sum(v)")
+}
+
+fn sum_over(column: u32, name: &str) -> AggregateBody {
+    AggregateBody {
+        group_by: vec![Expr::column(0, "k")],
+        grouping_sets: Vec::new(),
+        null_exprs: Vec::new(),
+        aggs: vec![AggCall {
+            func: PlanAgg::Sum,
+            args: vec![Expr::column(column, name)],
+            outputs: vec![Field::new("sum(v)", DataType::Int64, true)],
+        }],
+        finalize: None,
+    }
+}
+
+fn summed_state() -> Schema {
+    state_of(
+        &[("k", DataType::Utf8), ("sum(v)", DataType::Int64)],
+        1,
+        None,
+    )
+}
+
 fn greater_than_value(bound: i64) -> Expr {
     Expr::binary(
         Expr::column(1, "v"),
@@ -151,10 +210,58 @@ fn greater_than_value(bound: i64) -> Expr {
     )
 }
 
+/// A number per node kind, from an exhaustive match, so the hand-written list below is
+/// answerable: a variant added to `NodeRef` fails to compile here rather than going
+/// quietly untested.
+fn node_kind(node: &dyn GpuNode) -> u8 {
+    match as_node_ref(node) {
+        NodeRef::LoadParquet(_) => LOAD_PARQUET,
+        NodeRef::Filter(_) => 1,
+        NodeRef::Project(_) => 2,
+        NodeRef::Sort(_) => 3,
+        NodeRef::Aggregate(_) => 4,
+        NodeRef::CoalesceAllBatches(_) => 5,
+        NodeRef::AccumulateBatchesAndSort(_) => 6,
+        NodeRef::AggregateBatches(_) => 7,
+        NodeRef::Limit(_) => 8,
+        NodeRef::MergeSortedPartitions(_) => 9,
+        NodeRef::EmitPartitions(_) => 10,
+        NodeRef::Join(_) => 11,
+        NodeRef::CrossJoin(_) => 12,
+        NodeRef::NestedLoopJoin(_) => 13,
+        NodeRef::MergePartitions(_) => 14,
+        NodeRef::Union(_) => 15,
+        NodeRef::Interleave(_) => 16,
+        NodeRef::Unload(_) => 17,
+    }
+}
+
+const LOAD_PARQUET: u8 = 0;
+const NODE_KINDS: u8 = 18;
+
 fn category_built(node: &dyn GpuNode) -> ExecutorCategory {
     CpuBackend::executors_for(&ctx(), node, 0, 0)
         .expect("this backend implements every node kind")
         .category()
+}
+
+/// The aggregate here is the one node kind the list holds twice — `GpuAggregate` and
+/// `GpuAggregateBatches` are different kinds — so the cover is over kinds, not over the
+/// list's length.
+#[test]
+fn the_hand_written_list_holds_every_node_kind_but_the_scan() {
+    let covered: std::collections::BTreeSet<u8> = every_kind()
+        .iter()
+        .map(|node| node_kind(node.as_ref()))
+        .collect();
+    let expected: std::collections::BTreeSet<u8> = (0..NODE_KINDS)
+        .filter(|kind| *kind != LOAD_PARQUET)
+        .collect();
+    assert_eq!(
+        covered, expected,
+        "a node kind exists that this file does not build; the scan is the one exception, \
+         and it is built in source.rs over a parquet that exists"
+    );
 }
 
 #[test]

@@ -84,6 +84,10 @@ pub(super) enum EmitRule {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct JoinRule {
+    /// Whether a lane with no build batch owes its probe side rather than nothing — the
+    /// three join types that preserve unmatched probe rows, which no executor can answer
+    /// without a build table.
+    pub empty_build_owes_its_probe: bool,
     /// Rows the finish pass emits. Zero is a join that needs no finish.
     pub finish_rows: usize,
     /// Bytes the build side keeps resident until the join is done.
@@ -142,6 +146,7 @@ impl Default for Script {
             accumulate: AccRule::CoalesceAll,
             emit: EmitRule::RoundRobin,
             join: JoinRule {
+                empty_build_owes_its_probe: false,
                 finish_rows: 0,
                 build_residency: 0,
             },
@@ -509,6 +514,14 @@ impl JoinExecutor<Mock> for MockJoin {
             },
             stats,
         ))
+    }
+
+    /// A script says what a join owes with no build side, since a mock join has no type.
+    fn without_build(self) -> Result<(), BackendError> {
+        match self.script.join.empty_build_owes_its_probe {
+            false => Ok(()),
+            true => Err(BackendError::new("this lane's build side is empty")),
+        }
     }
 }
 
