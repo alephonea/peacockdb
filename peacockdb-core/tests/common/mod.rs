@@ -493,7 +493,7 @@ pub fn assert_cost_golden_verify(plan: &Arc<dyn ExecutionPlan>, stats: &[NodeMem
 ///   Used only where the sole divergence from the DataFusion oracle is float
 ///   summation reassociation across partitions (~1 ULP), which the node-by-node
 ///   executor incurs at tp>1 and exact-string compare can't tolerate.
-fn assert_results_match(
+pub fn assert_results_match(
     expected: &[RecordBatch],
     actual: &[RecordBatch],
     rel_tol: Option<f64>,

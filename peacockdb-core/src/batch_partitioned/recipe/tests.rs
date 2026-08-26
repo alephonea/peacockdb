@@ -5,6 +5,7 @@
 
 use super::*;
 use super::writer::Writer;
+use crate::generated::gpu_plan_generated::peacock::plan as fb;
 use crate::batch_partitioned::nodes::GpuFilter;
 use datafusion::common::ScalarValue;
 use crate::batch_partitioned::aggregates::{AggCall, PlanAgg};
@@ -12,7 +13,7 @@ use crate::batch_partitioned::expr::{BinaryOp, Expr, NamedExpr};
 use crate::batch_partitioned::layout::{BatchLayout, ColumnOrder, NodeKind, PartitionLayout};
 use crate::batch_partitioned::nodes::aggregate::AggregateBody;
 use crate::batch_partitioned::nodes::join::{JoinFilterColumn, JoinSide, NestedLoopJoinType};
-use crate::batch_partitioned::nodes::{GpuJoin, GpuNestedLoopJoin};
+use crate::batch_partitioned::nodes::{GpuAggregate, GpuJoin, GpuNestedLoopJoin};
 use datafusion::arrow::datatypes::{DataType, Field, Schema as ArrowSchema};
 use datafusion::common::JoinType;
 use std::any::Any;
@@ -424,25 +425,56 @@ fn a_batch_aggregate_runs_the_same_pair_at_a_compaction_and_at_done() {
 /// A finalizing merge adds the project that carries the finalize — ours, so the two
 /// engines evaluate the same expression rather than agreeing because two implementations
 /// happen to match.
+/// One key and one summed column, finalized: the shape the three tests below read, so the
+/// list a finalize carries and the row a project has to emit differ by exactly the key.
+fn finalizing_merge(finalize: Vec<NamedExpr>, state: &[&str]) -> GpuAggregateBatches {
+    GpuAggregateBatches::new(
+        Given::input(BatchLayout::MultipleBatches, &["k", "n"]),
+        AggregateBody {
+            group_by: vec![Expr::column(0, "k")],
+            grouping_sets: Vec::new(),
+            null_exprs: Vec::new(),
+            aggs: vec![AggCall {
+                func: PlanAgg::Sum,
+                args: vec![Expr::column(1, "n")],
+                outputs: vec![Field::new("sum(n)", DataType::Int64, true)],
+            }],
+            finalize: Some(finalize),
+        },
+        columns_of(state),
+        columns_of(&["k", "sum(n)"]),
+    )
+}
+
+/// The other node that finalizes: the translation hands its finalize to the init itself
+/// where one batch in one lane is already the whole of every group, so no merge exists to
+/// carry it.
+fn finalizing_init(finalize: Vec<NamedExpr>, state: &[&str]) -> GpuAggregate {
+    GpuAggregate::new(
+        Given::input(BatchLayout::SingleBatch, &["k", "n"]),
+        AggregateBody {
+            group_by: vec![Expr::column(0, "k")],
+            grouping_sets: Vec::new(),
+            null_exprs: Vec::new(),
+            aggs: vec![AggCall {
+                func: PlanAgg::Sum,
+                args: vec![Expr::column(1, "n")],
+                outputs: vec![Field::new("sum(n)", DataType::Int64, true)],
+            }],
+            finalize: Some(finalize),
+        },
+        columns_of(state),
+        columns_of(&["k", "sum(n)"]),
+    )
+}
+
+fn summed() -> Vec<NamedExpr> {
+    vec![NamedExpr::new(Expr::column(1, "sum(n)"), "sum(n)")]
+}
+
 #[test]
 fn a_finalizing_merge_carries_its_finalize_in_a_project_of_its_own() {
-    let with_finalize = AggregateBody {
-        group_by: vec![Expr::column(0, "k")],
-        grouping_sets: Vec::new(),
-        null_exprs: Vec::new(),
-        aggs: vec![AggCall {
-            func: PlanAgg::Sum,
-            args: vec![Expr::column(1, "n")],
-            outputs: vec![Field::new("sum(n)", DataType::Int64, true)],
-        }],
-        finalize: Some(vec![NamedExpr::new(Expr::column(1, "sum(n)"), "sum(n)")]),
-    };
-    let node = GpuAggregateBatches::new(
-        Given::input(BatchLayout::MultipleBatches, &["k", "n"]),
-        with_finalize,
-        columns_of(&["k", "sum(n)"]),
-        columns_of(&["k", "sum(n)"]),
-    );
+    let node = finalizing_merge(summed(), &["k", "sum(n)"]);
     let recipe = aggregate_batches(&node, &[&columns_of(&["k", "n"])], &mut Writer::new())
         .expect("the aggregate's payloads are writable")
         .expect("a batch aggregate drives the ABI");
@@ -457,6 +489,82 @@ fn a_finalizing_merge_carries_its_finalize_in_a_project_of_its_own() {
     );
 }
 
+/// The init's mirror of the merge below. Both branches of `recipe::aggregate` reach the
+/// same `finalize_project`, so what this pins is the call list: a second call, per batch
+/// rather than at done, since an init that finalizes itself has no compaction to wait for.
+#[test]
+fn an_init_that_finalizes_itself_carries_the_finalize_in_a_project_of_its_own() {
+    let node = finalizing_init(summed(), &["k", "sum(n)"]);
+    let recipe = aggregate(&node, &[&columns_of(&["k", "n"])], &mut Writer::new())
+        .expect("the aggregate's payloads are writable")
+        .expect("an aggregate drives the ABI");
+    assert_eq!(
+        shape(&recipe),
+        vec![
+            (FbKind::Aggregate { merge: false }, CallPattern::PerBatch),
+            (
+                FbKind::Project(ProjectRole::Finalize),
+                CallPattern::PerBatch
+            ),
+        ],
+        "the init builds state and finalizes it, both per batch"
+    );
+}
+
+/// The keys are the half the finalize list does not carry, and a project replaces the row:
+/// finalized columns alone answer with values and nothing to read them by. Asserted on the
+/// buffer rather than on the recipe, since the recipe names the call and not its payload.
+#[test]
+fn a_finalize_project_emits_the_group_keys_the_finalize_list_leaves_out() {
+    let node = finalizing_merge(summed(), &["k", "sum(n)"]);
+    let mut writer = Writer::new();
+    let recipe = aggregate_batches(&node, &[&columns_of(&["k", "n"])], &mut writer)
+        .expect("the aggregate's payloads are writable")
+        .expect("a batch aggregate drives the ABI");
+    let (bytes, _) = writer.finish().expect("one root");
+    let plan = flatbuffers::root::<fb::GpuPlan>(&bytes).expect("the buffer verifies");
+    let seq = *recipe.seqs().last().expect("the finalize is the last call");
+    let project = node_at(&plan, seq)
+        .and_then(|node| node.node_as_cudf_project())
+        .expect("the last seq is the finalize project");
+    let aliases: Vec<&str> = project.aliases().expect("named columns").iter().collect();
+    assert_eq!(
+        aliases,
+        vec!["k", "sum(n)"],
+        "the project has to emit the node's whole declared output"
+    );
+}
+
+/// The keys are taken from the state by position, so a state whose first columns are not
+/// the keys fills the row to the right width out of the wrong columns. Held by
+/// `GpuAggregate::intermediate`'s documented order today, and by this if that ever moves.
+#[test]
+fn a_state_whose_first_columns_are_not_the_keys_is_refused() {
+    let node = finalizing_merge(summed(), &["j", "sum(n)"]);
+    let refused = aggregate_batches(&node, &[&columns_of(&["k", "n"])], &mut Writer::new())
+        .expect_err("a state that does not lead with the keys is not projectable");
+    let message = format!("{refused}");
+    assert!(
+        message.contains("column 0 `k`") && message.contains("names it `j`"),
+        "the refusal has to name the two spellings: {message}"
+    );
+}
+
+/// The width check, shown going red: a finalize list that does not account for every
+/// non-key output column is a plan that answers with a column missing, which is a wrong
+/// answer rather than an error unless this refuses.
+#[test]
+fn a_finalize_that_does_not_fill_the_declared_output_is_refused() {
+    let node = finalizing_merge(Vec::new(), &["k", "sum(n)"]);
+    let refused = aggregate_batches(&node, &[&columns_of(&["k", "n"])], &mut Writer::new())
+        .expect_err("a finalize short of the declared output is not writable");
+    let message = format!("{refused}");
+    assert!(
+        message.contains("1 keys and 0 columns") && message.contains("declares 2 output"),
+        "the refusal has to name both counts: {message}"
+    );
+}
+
 /// The one literal the wire cannot carry, in a node with an input — so the walk has
 /// something to lose. #168 is the corpus case (`mixed-join`'s residual adds an interval to
 /// a column), and the failure mode it guards is structural: a placeholder that dropped the
@@ -466,6 +574,7 @@ fn a_finalizing_merge_carries_its_finalize_in_a_project_of_its_own() {
 /// A leaf would prove nothing here — the counts agree either way when nothing was taken.
 fn filter_over_scan_with_an_interval() -> GpuFilter {
     let scan = crate::batch_partitioned::parquet_meta::ScanMetadata {
+        file: "/orders.parquet".to_string(),
         groups: vec![crate::batch_partitioned::partitioner::RowGroupMeta {
             index: 0,
             rows: 10,
@@ -475,7 +584,6 @@ fn filter_over_scan_with_an_interval() -> GpuFilter {
     };
     let load = crate::batch_partitioned::nodes::GpuLoadParquet::new(
         "orders".to_string(),
-        vec!["/orders.parquet".to_string()],
         vec![0],
         vec![vec![vec![0]]],
         &scan,

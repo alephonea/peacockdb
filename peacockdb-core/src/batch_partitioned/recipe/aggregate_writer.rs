@@ -16,9 +16,11 @@ use crate::plan_serializer::serialize_schema;
 
 use super::super::aggregates::{AggCall, AggFunc, PlanAgg};
 use super::super::error::PlanError;
+use super::super::expr::Expr;
 use super::super::nodes::aggregate::AggregateBody;
 use super::super::schema::Schema;
 use super::expr_writer::write_expr;
+use super::node_writer;
 use super::writer::Payload;
 
 /// Which side of the decomposition a node runs: state from raw values, or state merged
@@ -42,18 +44,42 @@ pub(super) fn aggregate<'a>(
     for key in &body.group_by {
         group_exprs.push(write_expr(b, key)?);
     }
-    let group_names: Vec<WIPOffset<&str>> = state
-        .fields
-        .fields()
+    let group_names: Vec<WIPOffset<&str>> = (0..body.group_by.len())
+        .map(|position| b.create_string(group_name_at(state, position)))
+        .collect();
+
+    // ROLLUP and CUBE, which only an init node expands: the per-position NULL placeholder
+    // and the masks that say which positions a set drops. `aggregate.cpp` discriminates on
+    // `null_exprs` rather than on the masks, so writing one without the other would run a
+    // plain group-by and answer with one set where the query asked for five.
+    let mut null_exprs = Vec::with_capacity(body.null_exprs.len());
+    for expr in &body.null_exprs {
+        null_exprs.push(write_expr(b, expr)?);
+    }
+    let null_names: Vec<WIPOffset<&str>> = (0..null_exprs.len())
+        .map(|position| b.create_string(group_name_at(state, position)))
+        .collect();
+    let masks: Vec<WIPOffset<fb::GroupingSetMask>> = body
+        .grouping_sets
         .iter()
-        .take(body.group_by.len())
-        .map(|field| b.create_string(field.name()))
+        .map(|mask| {
+            let values = b.create_vector(mask);
+            fb::GroupingSetMask::create(
+                b,
+                &fb::GroupingSetMaskArgs {
+                    values: Some(values),
+                },
+            )
+        })
         .collect();
 
     let (funcs, mergeable) = state_funcs(b, body, state)?;
 
     let group_exprs = b.create_vector(&group_exprs);
     let group_names = b.create_vector(&group_names);
+    let null_exprs = b.create_vector(&null_exprs);
+    let null_names = b.create_vector(&null_names);
+    let grouping_sets = b.create_vector(&masks);
     let funcs = b.create_vector(&funcs);
     let input_schema = serialize_schema(b, &input.fields);
     let aggregate = fb::CudfAggregate::create(
@@ -67,15 +93,77 @@ pub(super) fn aggregate<'a>(
             group_names: Some(group_names),
             aggr_funcs: Some(funcs),
             input: Some(kids[0]),
+            null_exprs: Some(null_exprs),
+            null_names: Some(null_names),
+            grouping_sets: Some(grouping_sets),
             aggr_input_schema: Some(input_schema),
             mergeable_agg_state: mergeable,
-            ..Default::default()
         },
     );
     Ok(Payload {
         kind: fb::PlanNodeKind::CudfAggregate,
         value: aggregate.as_union_value(),
     })
+}
+
+/// The state's key columns lead it, so a group position is a position in it. Shared by the
+/// group names and the NULL-placeholder names, which the wire keeps parallel.
+fn group_name_at(state: &Schema, position: usize) -> &str {
+    node_writer::field_at(state, position as u32).name()
+}
+
+/// The finalize as the project it becomes: the group keys straight through, then one
+/// expression per aggregate output column, named as the node declares its output.
+///
+/// A project replaces the row, so the finalize list alone would answer with the finalized
+/// columns and no keys to read them by. Both the width and the key positions are checked
+/// rather than assumed: the keys are taken by position, so a state whose first columns are
+/// not the keys would pass the width check and project state columns as keys.
+pub(super) fn finalize_project<'a>(
+    b: &mut FlatBufferBuilder<'a>,
+    body: &AggregateBody,
+    state: &Schema,
+    output: &Schema,
+    kids: &[WIPOffset<fb::PlanNode<'a>>],
+) -> Result<Payload, PlanError> {
+    let finalize = body
+        .finalize
+        .as_ref()
+        .expect("a finalize project is emitted only where the node finalizes");
+    let keys = body.group_by.len();
+    let declared = output.fields.fields().len();
+    if keys + finalize.len() != declared {
+        return Err(PlanError::Invalid(format!(
+            "an aggregate finalizing {} keys and {} columns declares {declared} output \
+             columns — the project that finalizes is the whole row, so the two have to be \
+             the same list",
+            keys,
+            finalize.len()
+        )));
+    }
+    let mut exprs = Vec::with_capacity(declared);
+    for ordinal in 0..keys as u32 {
+        let name = node_writer::field_at(state, ordinal).name();
+        let declared_name = node_writer::field_at(output, ordinal).name();
+        if name != declared_name {
+            return Err(PlanError::Invalid(format!(
+                "the finalized output names column {ordinal} `{declared_name}` and the \
+                 state it is projected from names it `{name}` — the keys are taken by \
+                 position, so the two orders have to be the same"
+            )));
+        }
+        exprs.push(write_expr(b, &Expr::column(ordinal, name))?);
+    }
+    for column in finalize {
+        exprs.push(write_expr(b, &column.expr)?);
+    }
+    let names = output
+        .fields
+        .fields()
+        .iter()
+        .map(|field| b.create_string(field.name()))
+        .collect();
+    Ok(node_writer::project_payload(b, exprs, names, kids[0]))
 }
 
 /// The aggregators as the wire declares them, in the order their state columns appear.
@@ -157,6 +245,16 @@ fn welford_owners<'a>(
     per_agg
 }
 
+/// `out_decimal_precision`/`out_decimal_scale` stay at zero, and that is a decision. They
+/// are the legacy writer's channel for `avg`'s declared decimal type (`operators/aggregate.rs`,
+/// read by `aggregate.cpp` at :216 and :711), but this mode never sends an `avg` to a device:
+/// decomposition splits it into sum and count, so the scale rides on the finalize divide's own
+/// `out_decimal_precision`, which `expr_writer` sets and
+/// `an_average_finalizes_to_the_digits_the_oracle_computes` proves against the oracle's digits.
+/// No shape this mode plans sends a name `is_avg` matches: inside the Welford triple the func is
+/// named by `sql_name`, and `wire_name`'s `"mean"` is reachable only from the arm below it, which
+/// decomposition leaves no `Mean` aggregator to enter. Written out rather than defaulted so a
+/// field added to the table has to be answered here.
 fn named_func<'a>(
     b: &mut FlatBufferBuilder<'a>,
     name: &str,
@@ -177,7 +275,8 @@ fn named_func<'a>(
             args: Some(args),
             distinct: false,
             alias: Some(alias),
-            ..Default::default()
+            out_decimal_precision: 0,
+            out_decimal_scale: 0,
         },
     ))
 }

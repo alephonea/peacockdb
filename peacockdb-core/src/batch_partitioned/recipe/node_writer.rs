@@ -73,13 +73,17 @@ fn sort_keys<'a>(
 /// (`scan.cpp` builds `projected_names` and hands them to cuDF), so this reads exactly the
 /// columns the node declares — where naming the file's own ordinals would need the file's
 /// full column list, which a plan node does not carry.
+///
+/// One path, because the node reads one file: cuDF takes one row-group vector per source,
+/// so a path repeated per DataFusion file group answers `Must specify row groups for each
+/// source` — or, with no override, reads the file once per entry and concatenates.
 pub(super) fn scan<'a>(
     b: &mut FlatBufferBuilder<'a>,
     node: &GpuLoadParquet,
     output: &Schema,
 ) -> Result<Payload, PlanError> {
-    let paths: Vec<WIPOffset<&str>> = node.files.iter().map(|f| b.create_string(f)).collect();
-    let paths = b.create_vector(&paths);
+    let path = b.create_string(&node.file);
+    let paths = b.create_vector(&[path]);
     let schema = serialize_schema(b, &output.fields);
     let scan = fb::CudfScan::create(
         b,

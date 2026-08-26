@@ -17,7 +17,7 @@ reference still resolves there.
 | [Critical correctness](#critical-correctness) | 15 | #166 #153 #80 #59 #46 #47 #60 #121 #122 #123 #118 #119 #120 #117 #41 |
 | [Blockers for disabled coverage](#blockers-for-disabled-coverage) | 17 | #169 #168 #158 #97 #23 #32 #65 #62 #91 #95 #57 #45 #63 #56 #55 #96 #143 |
 | [Performance / architecture](#performance--architecture) | 26 | #170 #155 #154 #152 #150 #149 #148 #19 #16 #20 #71 #101 #73 #110 #75 #136 #137 #138 #139 #140 #141 #147 #146 #145 #144 #142 |
-| [Infrastructure / process](#infrastructure--process) | 26 | #171 #167 #164 #163 #159 #160 #161 #162 #113 #114 #116 #126 #134 #133 #132 #131 #130 #129 #128 #127 #124 #125 #13 #94 #69 #49 |
+| [Infrastructure / process](#infrastructure--process) | 27 | #171 #167 #164 #163 #159 #160 #161 #162 #113 #114 #116 #126 #134 #133 #132 #131 #130 #129 #128 #127 #172 #124 #125 #13 #94 #69 #49 |
 
 ## Critical correctness
 
@@ -216,7 +216,8 @@ carry a WHERE, GROUP BY or JOIN and the rule cannot fire.
 
 The fix is small and belongs to the new mode: the node is a **source that emits its constant
 rows**, so the executor has only to produce what the plan already holds — one lane, one
-batch. Scheduled into T10. Legacy would need the same node in the fbs to close its half,
+batch. Scheduled into T17, with the driver: a source proves itself by what is pulled from it.
+Legacy would need the same node in the fbs to close its half,
 not worth doing for a shape neither benchmark has.
 
 <a id="t97"></a>
@@ -943,6 +944,16 @@ the test suite references. Same shape as the binary orphans that `--delete` just
 state on a remote host no provisioning path owns, so nobody can say whether it is stale
 or load-bearing. Not deleted, because something outside this repo may read it. Establish
 what wrote them and either bring them under the sweep or remove them.
+
+<a id="t172"></a>
+### #172 — test_batch_partitioned_plans.rs is over the 1000-line bar
+`peacockdb-core/tests/test_batch_partitioned_plans.rs` is 1300 lines against
+coding-style.md's "under 1000". It was 599 at master and crossed the bar mid-chain, at
+1045; T21's writer comparison put it 300 over. The natural seam is that comparison and its
+fbs parsing — `fbs_offset_fields`, `fields_set`, `written_fields`, `WRITER_DIFFERENCES` and
+the test over them, which read a schema and two writers and share nothing with the golden
+assert/compare helpers around them. [#124](#t124) is the precedent: pre-existing, accepted
+at its size, and cut when someone is in the file for another reason.
 
 <a id="t124"></a>
 ### #124 — common/mod.rs is over the 1000-line bar

@@ -73,6 +73,38 @@ pub(super) fn payload_text(node: &fb::PlanNode<'_>, indent: &str) -> String {
                     );
                 }
             }
+            // Only where there are any: a plain group-by writes both empty, and a line
+            // saying so on every aggregate in the file would bury the ones that carry them.
+            if let Some(nulls) = aggregate.null_exprs().filter(|nulls| !nulls.is_empty()) {
+                let names = aggregate.null_names();
+                let written: Vec<String> = nulls
+                    .iter()
+                    .enumerate()
+                    .map(|(position, expr)| {
+                        let name = names
+                            .filter(|names| position < names.len())
+                            .map(|names| names.get(position))
+                            .unwrap_or("?");
+                        format!("{name}={}", expr_text(&expr))
+                    })
+                    .collect();
+                field("null_exprs", written.join(", "));
+            }
+            if let Some(sets) = aggregate.grouping_sets().filter(|sets| !sets.is_empty()) {
+                let written: Vec<String> = sets
+                    .iter()
+                    .map(|set| {
+                        let mask: Vec<&str> = set
+                            .values()
+                            .map(|values| {
+                                values.iter().map(|on| if on { "-" } else { "k" }).collect()
+                            })
+                            .unwrap_or_default();
+                        mask.join("")
+                    })
+                    .collect();
+                field("grouping_sets", written.join(", "));
+            }
             if aggregate.mergeable_agg_state() {
                 field("mergeable_agg_state", "true".to_string());
             }

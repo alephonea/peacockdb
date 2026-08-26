@@ -21,7 +21,7 @@ use crate::batch_partitioned::executor::{
     JoinExecutor, LaneEvent, PartitionAccumulatorExecutor, PartitionEmitterExecutor, ProbingJoin,
     RowRange, SourceExecutor, SourceStep, UnloadExecutor,
 };
-use crate::batch_partitioned::forwarder::Forwarder;
+use crate::batch_partitioned::forwarder::forwarder_for;
 use crate::batch_partitioned::node::GpuNode;
 use crate::batch_partitioned::nodes::{ExecutorCategory, NodeRef, as_node_ref, category_of};
 
@@ -627,29 +627,5 @@ impl Backend for Mock {
             ExecutorCategory::Unload => NodeExecutors::Unload(MockUnload { script }),
             ExecutorCategory::BatchForwarder => NodeExecutors::BatchForwarder(forwarder_for(node)),
         })
-    }
-}
-
-/// The routing a node declares, which is a property of the node rather than of a backend —
-/// every backend would compute the same thing, and the driver is the only consumer.
-fn forwarder_for(node: &dyn GpuNode) -> Forwarder {
-    let lanes = |plan: &dyn GpuNode| plan.kind().layout().map_or(1, |layout| layout.n);
-    match as_node_ref(node) {
-        NodeRef::MergePartitions(_) => Forwarder::MergePartitions {
-            n: lanes(node.children()[0]),
-        },
-        NodeRef::Union(_) => Forwarder::Union {
-            lanes: node
-                .children()
-                .iter()
-                .enumerate()
-                .flat_map(|(child, branch)| (0..lanes(*branch)).map(move |lane| (child, lane)))
-                .collect(),
-        },
-        NodeRef::Interleave(_) => Forwarder::Interleave {
-            children: node.children().len(),
-            n: lanes(node),
-        },
-        _ => unreachable!("only the three routing nodes are forwarders"),
     }
 }

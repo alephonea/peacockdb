@@ -268,12 +268,12 @@ fn batch_sorted_lane() -> PartitionLayout {
 #[test]
 fn a_scan_the_partitioner_gave_no_lanes_is_caught_at_plan_time() {
     let scan = crate::batch_partitioned::parquet_meta::ScanMetadata {
+        file: "/nation.parquet".to_string(),
         groups: Vec::new(),
         can_be_null: vec![false],
     };
     let load = GpuLoadParquet::new(
         "nation".to_string(),
-        vec!["nation.parquet".to_string()],
         vec![0],
         Vec::new(),
         &scan,
@@ -628,6 +628,7 @@ fn a_union_branch_naming_its_columns_differently_is_refused() {
 
 fn loading(partition_groups: Vec<Vec<Vec<u32>>>, survivors: Vec<u32>) -> GpuLoadParquet {
     let scan = crate::batch_partitioned::parquet_meta::ScanMetadata {
+        file: "/nation.parquet".to_string(),
         groups: survivors
             .into_iter()
             .map(
@@ -642,7 +643,6 @@ fn loading(partition_groups: Vec<Vec<Vec<u32>>>, survivors: Vec<u32>) -> GpuLoad
     };
     GpuLoadParquet::new(
         "nation".to_string(),
-        vec!["nation.parquet".to_string()],
         vec![0],
         partition_groups,
         &scan,

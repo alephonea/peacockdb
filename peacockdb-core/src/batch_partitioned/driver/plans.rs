@@ -37,13 +37,13 @@ pub(super) fn source(table: &str, lanes: usize) -> Box<dyn GpuNode> {
         })
         .collect();
     let scan = ScanMetadata {
+        file: format!("/{table}.parquet"),
         groups: groups.clone(),
         can_be_null: vec![false],
     };
     let partition_groups = (0..lanes as u32).map(|lane| vec![vec![lane]]).collect();
     Box::new(GpuLoadParquet::new(
         table.to_string(),
-        vec![format!("/{table}.parquet")],
         vec![0],
         partition_groups,
         &scan,
