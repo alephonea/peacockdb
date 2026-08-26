@@ -247,9 +247,11 @@ fn golden_regions(text: &str) -> Vec<(usize, usize)> {
 /// the plan shape or the partition accounting changes, and it costs nothing to run in
 /// every CPU tier.
 ///
-/// Both modes, because they are the two the record's partition column has to survive:
-/// full-table is one region per node, partitioned is eight for every node below the
-/// coalesce, and only the golden knows which.
+/// Both modes, because they are the two the record's per-partition regions have to
+/// survive: full-table is one region per node, partitioned is eight for every node below
+/// the coalesce, and only the golden knows which. With no partition column, the row
+/// ORDER is the only thing saying which region is which — so this test, which pairs rows
+/// against the golden's regions in order, is what holds that up.
 #[tokio::test]
 async fn calibration_record_regions_match_the_cpu_golden() {
     use common::cost_model::CostModel;
@@ -330,18 +332,15 @@ async fn calibration_record_regions_match_the_cpu_golden() {
             assert_eq!(
                 (at("out_rows"), at("out_bytes")),
                 (want_rows.to_string().as_str(), want_bytes.to_string().as_str()),
-                "{query} @ {label} region {i} ({} p{}): record disagrees with the golden",
+                "{query} @ {label} region {i} ({}): record disagrees with the golden",
                 at("node_type"),
-                at("partition"),
             );
             // The regressor is the category's bytes, and on this source that is
             // out_bytes — the property the sf40 side cannot check for us.
             assert_eq!(at("cuda_bytes"), at("out_bytes"), "{query} @ {label} region {i}");
-            assert!(
-                !at("category").is_empty() && at("category") != "-",
-                "{query} @ {label} region {i}: node type {} is untagged",
-                at("node_type")
-            );
+            // Nothing here checks the cost category: it is not a column, and a node type
+            // the taxonomy does not bin makes `record_rows` panic above rather than
+            // reaching this loop.
         }
 
         // Σ over a node's regions must be its children's totals. The bytes columns are

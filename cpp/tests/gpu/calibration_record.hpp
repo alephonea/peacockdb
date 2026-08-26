@@ -145,6 +145,8 @@ inline Produced produced(
 // ---------------------------------------------------------------------------
 struct Pending {
   uint64_t seq;
+  /// Hand-written at the call site. No longer a column (see `header_notes`); kept
+  /// because it is where this source states what each cuDF call stands for.
   const char* category;
   std::string op;
   uint64_t out_rows, out_bytes, host_us;
@@ -267,9 +269,14 @@ inline const char* header_notes() {
       "# label = load or execute. The parquet read happens once, outside the timed chain.\n"
       "# peacock_host_us = 0 by construction, not by measurement. There is no host\n"
       "#   prologue here to measure — that absence is the whole point of this source.\n"
-      "# partitions/partition = 1/0 always: one stream, no partitioning.\n"
+      "# There is one region per node here: one stream, no partitioning.\n"
       "# cuda_bytes = the mapped call's OUTPUT bytes, under the same formula the node\n"
-      "#   source uses (peacock::logical_size_from_table).\n";
+      "#   source uses (peacock::logical_size_from_table).\n"
+      "# The call→category mapping is NOT written out. The node source's category is a\n"
+      "#   lookup in cost_model.conf and needs no column; this source's is hand-written\n"
+      "#   per call and cannot be recovered from node_type, which here is a cuDF entry\n"
+      "#   point rather than a plan node. It stays at the call sites as the record of\n"
+      "#   what each call was taken to be.\n";
 }
 
 inline void QueryScope::close() {
@@ -296,16 +303,14 @@ inline void QueryScope::close() {
     cudaEventDestroy(p.stop);
 
     if (!record_path()) continue;
-    char buf[1024];
+    char buf[512];
     std::snprintf(buf, sizeof(buf),
-                  "cudf\ttpch\t40\t%s\t%s\t%llu\t%s\t%s\t1\t0\t0\t0\t%llu\t%llu\t%llu"
-                  "\t0\t%llu\t%llu\t%llu\tevents\t%s\t%s\n",
+                  "cudf\ttpch\t40\t%s\t%s\t%llu\t%s\t0\t0\t%llu\t%llu\t%llu"
+                  "\t0\t%llu\t%llu\t%llu\n",
                   query_.c_str(), label_.c_str(), (unsigned long long)p.seq, p.op.c_str(),
-                  p.category, (unsigned long long)p.out_rows,
-                  (unsigned long long)p.out_bytes, (unsigned long long)p.out_bytes,
-                  (unsigned long long)p.host_us, (unsigned long long)device_us,
-                  (unsigned long long)p.host_us, PEACOCK_CXX_BUILD_PROFILE,
-                  allocator_text().c_str());
+                  (unsigned long long)p.out_rows, (unsigned long long)p.out_bytes,
+                  (unsigned long long)p.out_bytes, (unsigned long long)p.host_us,
+                  (unsigned long long)device_us, (unsigned long long)p.host_us);
     rows += buf;
   }
 
@@ -336,11 +341,16 @@ inline void QueryScope::close() {
     return;
   }
   if (fresh) {
+    // The `# run:` lines are the run's conditions, which the node source keeps in the
+    // heading too and refuses to mix within one file. Same three keys, same order,
+    // same spelling — a reader joins the two sources' files and has to see one format.
     out << header_notes()
-        << "source\tdataset\tsf\tquery\tlabel\tnode_seq\tnode_type\tcategory\tpartitions"
-           "\tpartition\tin_rows\tin_bytes\tout_rows\tout_bytes\tcuda_bytes"
-           "\tpeacock_host_us\tcudf_host_us\tdevice_us\twall_us\ttiming_mode"
-           "\tbuild_profile\tallocator\n";
+        << "# run: timing_mode=events\n"
+        << "# run: build_profile=" << PEACOCK_CXX_BUILD_PROFILE << "\n"
+        << "# run: allocator=" << allocator_text() << "\n"
+        << "source\tdataset\tsf\tquery\tlabel\tnode_seq\tnode_type"
+           "\tin_rows\tin_bytes\tout_rows\tout_bytes\tcuda_bytes"
+           "\tpeacock_host_us\tcudf_host_us\tdevice_us\twall_us\n";
   }
   out << rows;
 }

@@ -100,6 +100,33 @@ def busy_union(conn):
     return merged
 
 
+def read_record(path):
+    """Record rows as dicts, keyed by the record's own column line.
+
+    By name and not by position: the record's columns have already changed once, and a
+    reader that counts fields survives such a change quietly -- it would write an hbm.tsv
+    whose query and label held whatever slid into those slots.
+    """
+    names, rows = None, []
+    with open(path) as fh:
+        for line in fh:
+            if line.startswith("#"):
+                continue
+            f = line.rstrip("\n").split("\t")
+            if names is None:
+                names = f
+                continue
+            if len(f) != len(names):
+                sys.exit(f"{path}: row of {len(f)} fields against {len(names)} columns")
+            rows.append(dict(zip(names, f)))
+    if names is None:
+        sys.exit(f"{path} has no column line")
+    missing = [c for c in ("query", "label", "node_seq") if c not in names]
+    if missing:
+        sys.exit(f"{path} has no {missing} column; it has {names}")
+    return rows
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--capture", required=True, help="sqlite export of the .nsys-rep")
@@ -147,15 +174,7 @@ def main():
             "The sampling frequency is above what it sustains; lower it and recapture."
         )
 
-    rows = []
-    with open(args.record) as fh:
-        for line in fh:
-            if line.startswith("#"):
-                continue
-            f = line.rstrip("\n").split("\t")
-            if f[0] == "source":
-                continue
-            rows.append(f)
+    rows = read_record(args.record)
     if len(rows) != len(ranges):
         sys.exit(
             f"{len(ranges)} NVTX ranges against {len(rows)} record rows. The two come from "
@@ -179,17 +198,17 @@ def main():
         return total
 
     out = []
-    for (a, b, text), f in zip(ranges, rows):
+    for (a, b, text), row in zip(ranges, rows):
         # The range is named "<seq> <op>" by the recorder; seq is the join key and this
         # asserts the positional pairing above rather than assuming it.
         seq = int(text.split()[0])
-        if seq != int(f[5]):
-            sys.exit(f"range {text!r} pairs with record row for node_seq {f[5]}")
+        if seq != int(row["node_seq"]):
+            sys.exit(f"range {text!r} pairs with record row for node_seq {row['node_seq']}")
         r, n = integral(read, a, b)
         w, _ = integral(write, a, b)
         busy = busy_ns(a, b)
         out.append(
-            (f[3], f[4], seq, round(r), round(w), round(r + w), n,
+            (row["query"], row["label"], seq, round(r), round(w), round(r + w), n,
              busy // 1000, (b - a - busy) // 1000)
         )
 

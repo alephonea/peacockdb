@@ -7,14 +7,15 @@
 //! no plan to walk. Sharing the format rather than the code is forced: the two
 //! sources agree on what a row MEANS and on nothing else.
 //!
-//! TSV, because `build_profile` and `allocator` contain spaces and commas and are
-//! the fields a reader most needs verbatim.
+//! TSV, and the conditions of the run — timing mode, build profile, allocator — are in
+//! the file's `#` heading rather than in every row: they are constant across a run, and
+//! the heading is free text where the allocator's description keeps its commas.
 //!
 //! `hbm_bytes` is deliberately absent: it comes from Nsight and is joined in
 //! later on `(query, node_seq)`.
 
-use std::io::Write;
-use std::path::PathBuf;
+use std::io::{BufRead, Write};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use datafusion::physical_plan::ExecutionPlan;
@@ -34,9 +35,6 @@ pub const COLUMNS: &[&str] = &[
     "label",
     "node_seq",
     "node_type",
-    "category",
-    "partitions",
-    "partition",
     "in_rows",
     "in_bytes",
     "out_rows",
@@ -46,13 +44,14 @@ pub const COLUMNS: &[&str] = &[
     "cudf_host_us",
     "device_us",
     "wall_us",
-    "timing_mode",
-    "build_profile",
-    "allocator",
 ];
 
 /// What a row cannot be recovered from: which engine produced it, over what data, and
-/// under the three settings that change what its microseconds mean.
+/// under what conditions.
+///
+/// The last three are constant across a run and go into the file's `#` heading rather
+/// than into every row — see [`record_header`]. They are still part of this struct
+/// because the heading is written from it.
 pub struct RunMeta<'a> {
     /// `peacockdb` here; `cudf` from the sf40 side. The fit's `const_peacock` is the
     /// difference between the two, so this is the column it keys on.
@@ -72,6 +71,9 @@ pub struct RunMeta<'a> {
 /// four `execute_node` branches loop over partitions, so a node line would average away
 /// the structure the per-partition times have; the repartition prologue charged to p0
 /// is the clearest case.
+///
+/// The partition is not a column: a node's regions are emitted consecutively, p0 first,
+/// so the column would only restate the order of the rows.
 ///
 /// Post-order, so `node_seq` indexes `stats` directly and matches the order the
 /// `.cpu.txt` and `.benchmark.txt` trees are built in.
@@ -125,10 +127,12 @@ pub fn record_rows(
 
     fn walk(node: &Node, meta: &RunMeta<'_>, model: &CostModel, out: &mut Vec<String>) {
         let node_type = node.plan.name();
-        // Panics rather than emitting an untagged row: an unbinned node type is a hole
-        // in the taxonomy, and a record that quietly drops it is one the fit cannot
-        // notice is incomplete.
-        let category = model.category_name_of(node_type).unwrap_or_else(|| {
+        // Checked, not written: the category is a lookup in cost_model.conf, so a column
+        // would freeze the taxonomy as it stood at collection time. The check stays
+        // because it is the only thing that notices an unbinned node type at all — and a
+        // record that quietly carries one is a record whose analysis cannot know it is
+        // incomplete.
+        model.category_name_of(node_type).unwrap_or_else(|| {
             panic!("{} node type '{node_type}' is not in the cost taxonomy", meta.query)
         });
         let n = node.stat.part_stats.len().max(1);
@@ -157,9 +161,6 @@ pub fn record_rows(
                     meta.label.to_string(),
                     node.seq.to_string(),
                     node_type.to_string(),
-                    category.to_string(),
-                    n.to_string(),
-                    k.to_string(),
                     in_rows.to_string(),
                     in_bytes.to_string(),
                     out_rows.to_string(),
@@ -173,9 +174,6 @@ pub fn record_rows(
                     submit.to_string(),
                     device.to_string(),
                     (setup + submit).to_string(),
-                    meta.timing_mode.to_string(),
-                    meta.build_profile.to_string(),
-                    meta.allocator.to_string(),
                 ]
                 .join("\t"),
             );
@@ -191,19 +189,47 @@ pub fn record_rows(
     rows
 }
 
+/// Marks the heading lines that carry a run's conditions. Machine-read on append, so
+/// the shape is fixed: `# run: <key>=<value>`, one condition per line.
+const RUN_PREFIX: &str = "# run: ";
+
+/// The conditions this run measured under, as heading lines. Constant across a run —
+/// which is why they are here and not columns — but each one changes what the
+/// microseconds MEAN, so a file mixing two of them is a file whose rows cannot be
+/// compared. [`append_records`] refuses to write one.
+fn run_conditions(meta: &RunMeta<'_>) -> Vec<String> {
+    vec![
+        format!("{RUN_PREFIX}timing_mode={}", meta.timing_mode),
+        format!("{RUN_PREFIX}build_profile={}", meta.build_profile),
+        format!("{RUN_PREFIX}allocator={}", meta.allocator),
+    ]
+}
+
 /// The `#` preamble, written once per file. A record has to be readable without this
 /// source, and every line below is one a reader would otherwise guess wrong.
-pub fn record_header() -> String {
-    format!("{HEADER_NOTES}\n{}", COLUMNS.join("\t"))
+pub fn record_header(meta: &RunMeta<'_>) -> String {
+    format!("{HEADER_NOTES}\n{}\n{}", run_conditions(meta).join("\n"), COLUMNS.join("\t"))
 }
 
 const HEADER_NOTES: &str = "\
 # peacockdb cost-model calibration record. One row per timed region — per
 # (node, output partition), not per node: the partitioned branches time each partition
 # separately, and a hash repartition bills its shared concat+scatter prologue to p0.
+# The partition is not a column: a node's regions are written consecutively, p0 first.
+# A benchmark executes its plan several times and writes EVERY measured execution, in
+#   the order they ran; the .benchmark.txt beside it reports one chosen run instead. So
+#   the same (query, label, node_seq) recurs, and a repeat of the root's node_seq is
+#   where one execution's rows end. Spread across those repeats is data, not noise.
+# ONE FILE IS ONE RUN. The `# run:` lines below hold what is constant across it, and
+#   each of them changes what the microseconds MEAN — so appending a run that disagrees
+#   with them is refused rather than merged.
 # source = which engine produced the row. peacockdb pays a host prologue that bare cuDF
 #   has no analogue for; that difference is what const_peacock is fitted to, so rows
 #   from the two sources are not interchangeable.
+# node_type = the plan node's name. Its cost CATEGORY is deliberately not a column: it
+#   is a lookup in cost_model.conf, which changes on its own, and a column would freeze
+#   the taxonomy as it stood when the rows were written. The writer still refuses to
+#   emit a node type the taxonomy does not bin.
 # peacock_host_us = host time before the region's first device touch.
 # cudf_host_us = host time from that touch to the end of the region. Under
 #   timing_mode=sync it CONTAINS the device execution and device_us is 0; under events
@@ -214,9 +240,7 @@ const HEADER_NOTES: &str = "\
 #   out_bytes on the peacockdb source, the mapped call's bytes on the bare-cuDF one.
 # in_rows/in_bytes = summed over ALL children, unlike the .cpu.txt golden, which
 #   renders the first child's.
-# hbm_bytes is NOT here: it comes from Nsight and joins on (query, node_seq).
-# timing_mode, build_profile and allocator each change what the microseconds MEAN. Rows
-#   disagreeing on any of them are not comparable — hence columns, not a run heading.";
+# hbm_bytes is NOT here: it comes from Nsight and joins on (query, node_seq).";
 
 /// Append this run's rows to `$PEACOCK_RECORD_PATH`, or do nothing if it is unset.
 ///
@@ -234,6 +258,9 @@ pub fn append_records(
         std::fs::create_dir_all(dir).ok();
     }
     let fresh = std::fs::metadata(&path).map(|m| m.len() == 0).unwrap_or(true);
+    if !fresh {
+        assert_run_conditions_match(&path, meta);
+    }
     let mut f = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -241,7 +268,7 @@ pub fn append_records(
         .unwrap_or_else(|e| panic!("cannot open {} for records: {e}", path.display()));
     let mut text = String::new();
     if fresh {
-        text.push_str(&record_header());
+        text.push_str(&record_header(meta));
         text.push('\n');
     }
     for row in record_rows(plan, stats, meta, &CostModel::load()) {
@@ -250,4 +277,31 @@ pub fn append_records(
     }
     f.write_all(text.as_bytes())
         .unwrap_or_else(|e| panic!("cannot append records to {}: {e}", path.display()));
+}
+
+/// Refuse to append to a file whose heading describes a different run.
+///
+/// This is the check the three dropped columns used to make possible. As columns, a file
+/// mixing two runs was legal and only detectable afterwards by whoever thought to look;
+/// as a heading written once, the mixing is what has to be caught, and here is the only
+/// place it can be. Reads the heading, not the file: it stops at the first row.
+fn assert_run_conditions_match(path: &Path, meta: &RunMeta<'_>) {
+    let f = std::fs::File::open(path)
+        .unwrap_or_else(|e| panic!("cannot read the heading of {}: {e}", path.display()));
+    let found: Vec<String> = std::io::BufReader::new(f)
+        .lines()
+        .map_while(Result::ok)
+        .take_while(|l| l.starts_with('#'))
+        .filter(|l| l.starts_with(RUN_PREFIX))
+        .collect();
+    let want = run_conditions(meta);
+    assert!(
+        found == want,
+        "{} was written by a different run and this one would not be comparable with \
+         it.\n  file: {}\n  this run: {}\nA record file is one run: point \
+         {RECORD_PATH_ENV} at a new path, or remove that one.",
+        path.display(),
+        found.join(" | "),
+        want.join(" | "),
+    );
 }
