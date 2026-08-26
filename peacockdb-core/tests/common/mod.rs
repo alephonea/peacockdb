@@ -77,6 +77,44 @@ pub fn data_dir_for(dataset: &str, sf: &str) -> PathBuf {
     testdata_root().join(format!("{dataset}.sf{sf}"))
 }
 
+/// A FIXED path that stands in for the testdata root when a plan's own BYTES are the
+/// thing under test.
+///
+/// A serialized plan legitimately embeds absolute parquet paths — the C++ side has to open
+/// those files — so the bytes depend on where the repo is checked out, and a digest of them
+/// would false-red in CI and on any dev box off /media/data. Substituting the path
+/// afterwards does not fix it: a FlatBuffer string is [len][bytes][pad], so a different root
+/// moves the length prefix, every later offset and the padding, and the result would be a
+/// digest of something that is not a real buffer. So the path is held constant instead: a
+/// symlink whose location is the same on every machine.
+pub fn canonical_root() -> PathBuf {
+    let link = PathBuf::from("/tmp/peacock-plan-bytes-root");
+    let real = testdata_root();
+    // Re-pointed every run, since a stale link from another checkout would silently
+    // describe the wrong tree — but swapped rather than removed and recreated. Two test
+    // binaries use this path, and `cargo test` with no `--test` runs them at the same
+    // time: a remove-then-create leaves a window where the path does not resolve, and the
+    // other binary's parquet open fails for a reason that has nothing to do with it.
+    // A rename onto the name is atomic, so the path always resolves, to one root or the
+    // other — and both binaries derive the same root anyway.
+    #[cfg(unix)]
+    {
+        let staged = link.with_extension(std::process::id().to_string());
+        let _ = std::fs::remove_file(&staged);
+        std::os::unix::fs::symlink(&real, &staged).unwrap_or_else(|e| {
+            panic!("cannot create {} -> {}: {e}", staged.display(), real.display())
+        });
+        std::fs::rename(&staged, &link)
+            .unwrap_or_else(|e| panic!("cannot point {} at {}: {e}", link.display(), real.display()));
+    }
+    link
+}
+
+/// [`canonical_root`] for one dataset.
+pub fn canonical_data_dir(dataset: &str, sf: &str) -> PathBuf {
+    canonical_root().join(format!("{dataset}.sf{sf}"))
+}
+
 pub fn queries_dir_for(dataset: &str) -> PathBuf {
     testdata_root().join(format!("{dataset}-queries"))
 }

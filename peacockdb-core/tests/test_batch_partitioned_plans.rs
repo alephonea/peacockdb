@@ -1,8 +1,9 @@
 //! Plan goldens for the batch-partitioned mode: one file per (bench, mode), holding every
 //! query the bench has.
 //!
-//! A section per query — the tree, then `--- memory ---` and the estimator's figures, the
-//! same two-part shape the legacy `.plan.txt` goldens carry. Refusals are content: a query
+//! A section per query — the tree, then `--- recipes ---` and what each node asks of the
+//! device, then `--- memory ---` and the estimator's figures. The legacy `.plan.txt`
+//! goldens carry the first and the last of those. Refusals are content: a query
 //! this mode declines renders its reason where its tree would be, so the file says what
 //! the mode does and does not run.
 
@@ -11,7 +12,10 @@ mod common;
 use std::path::{Path, PathBuf};
 
 use peacockdb_core::batch_partitioned::plan::{BatchSizing, PlanKnobs, plan_batch_partitioned};
-use peacockdb_core::batch_partitioned::plan_text::{render_plan, render_plan_memory};
+use peacockdb_core::batch_partitioned::plan_text::{
+    Payloads, render_plan, render_plan_memory, render_plan_recipes,
+};
+use peacockdb_core::batch_partitioned::recipe::{attach_recipes, check_seq_kinds, depth};
 use peacockdb_core::config::MemoryLimit;
 
 use common::{data_dir_for, golden_dir_for, queries_dir_for};
@@ -103,11 +107,24 @@ async fn render_query(
     };
     match plan_batch_partitioned(&plan, knobs) {
         Ok((tree, model)) => format!(
-            "{}--- memory ---\n{}",
+            "{}--- recipes ---\n{}--- memory ---\n{}",
             render_plan(tree.as_ref()),
+            recipes_of(tree.as_ref()),
             render_plan_memory(tree.as_ref(), &model)
         ),
         Err(e) => format!("refused: {}\n", relative_to_testdata(&e.to_string())),
+    }
+}
+
+/// The recipes, or the one line saying there are none.
+///
+/// `not runnable`, never `refused:` — the plan plans, validates and runs on the CPU, and
+/// what failed is the crossing to the device. Naming its ticket is not decoration: the
+/// meta test below asserts that every line of this shape names a ticket that exists.
+fn recipes_of(tree: &dyn peacockdb_core::batch_partitioned::GpuNode) -> String {
+    match attach_recipes(tree) {
+        Ok(plan) => render_plan_recipes(tree, &plan, Payloads::Omitted),
+        Err(e) => format!("not runnable: {}\n", relative_to_testdata(&e.to_string())),
     }
 }
 
@@ -308,6 +325,419 @@ fn sections_out_of_order_are_named_by_position() {
     assert!(
         said[0].starts_with("section 0: `q1` in the golden"),
         "{said:?}"
+    );
+}
+
+// --- the payload golden ------------------------------------------------------
+//
+// One file, one mode, twelve queries: what each call actually hands the executor, which
+// the ten mode goldens deliberately do not carry. They answer different questions — those
+// say which kernel a node addresses and how often, this says what is in the buffer — and
+// one renderer serves both, so a plan cannot move in one and stand still in the other.
+
+/// The mode the payloads are read at. tp4 because tp1 emits no repartition at all, and
+/// rowgroup because it is the only form with many batches per lane, which is what makes an
+/// accumulating sort and a compaction real rather than degenerate. Not the sized mode:
+/// that one moves whenever the estimator does, and this file should move when a payload
+/// does.
+const PAYLOAD_MODE: (&str, usize, BatchSizing) = ("bp-tp4-rowgroup", 4, BatchSizing::OneBatchPerRowGroup);
+
+/// The queries, and the rule for adding one.
+///
+/// Chosen by cover rather than by taste: every fb node kind the mapping emits (join types
+/// spelled out, both project roles, the repartition, the two symbols that address no seq,
+/// the rows that emit nothing), every call shape longer than one call, and every
+/// expression kind a payload can carry — LIKE, CASE, casts, scalar functions, decimal
+/// scales, grouping sets, null substitutions, Welford state, an avg's finalize, fetch and
+/// skip.
+///
+/// Which half of that a test enforces, so a reader knows what rests on a person: the fb
+/// kinds and the call shapes are asserted against the ten mode goldens by
+/// `the_payload_golden_covers_every_kind_and_call_shape_the_modes_produce` — a mapping arm
+/// or a call pattern that appears there and not here goes red. The expression features are
+/// prose, checked by reading.
+///
+/// So a query earns a place here by covering something no other query does. Adding one
+/// that covers nothing new adds lines no reader can check against anything.
+const PAYLOAD_QUERIES: [(&str, &str); 15] = [
+    // Nested-loop join lives nowhere else in the corpus; the stddev query is the Welford
+    // init, both merges and the finalize project; q13 is the outer join's finish pass.
+    ("tpch", "q13"),
+    ("tpch", "shuffle-stddev"),
+    ("tpch", "nested-loop-join"),
+    // q22 is the build-side semi family's finish, whose join type is the node's OWN
+    // LeftAnti: a key project per batch, then coalesce and that join at done. The other
+    // LeftAnti here is a Left outer's DERIVED finish — different keys, no projection, and
+    // a pad project after it — so neither covers the other.
+    ("tpch", "q22"),
+    // q21 is the single-batch probe, where a filtered semi or anti join is one legacy call
+    // that hands the build side over rather than copying it — the same join types as q22
+    // and q13, and a different shape.
+    ("tpch", "q21"),
+    ("tpcds", "q14"),
+    ("tpcds", "q97"),
+    ("tpcds", "q61"),
+    ("tpcds", "q87"),
+    ("tpcds", "q45"),
+    ("tpcds", "q41"),
+    ("tpcds", "q5"),
+    ("tpcds", "q91"),
+    ("tpcds", "q39"),
+    // q40 is a plain Right outer: probe-local, one call, no finish. The Right in q97 is a
+    // Full outer's per-batch call, which is the same kind doing a different thing.
+    ("tpcds", "q40"),
+];
+
+/// A digest of the bytes beside the text, because the two can disagree: a field the
+/// renderer does not print, an ordering that moves. `plan_bytes.sha256` pins the legacy
+/// wire form the same way and for the same reason.
+fn digest_of(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    format!("{:x}", hasher.finalize())
+}
+
+#[tokio::test]
+async fn the_payload_golden_carries_what_each_call_hands_the_executor() {
+    let mode = mode(PAYLOAD_MODE.0, PAYLOAD_MODE.1, PAYLOAD_MODE.2);
+    let mut text = String::new();
+    for dataset in ["tpch", "tpcds"] {
+        let wanted: Vec<&str> = PAYLOAD_QUERIES
+            .iter()
+            .filter(|(bench, _)| *bench == dataset)
+            .map(|(_, query)| *query)
+            .collect();
+        if wanted.is_empty() {
+            continue;
+        }
+        // Through the canonical root, so the paths the buffer embeds — and the digest
+        // over them — are the same on every machine. `test_plan_bytes` holds the legacy
+        // wire form still the same way, and for the same reason.
+        let ctx = peacockdb_core::register_tables_for(
+            peacockdb_core::build_session_state(mode.knobs.target_partitions),
+            &common::canonical_data_dir(dataset, "1"),
+        )
+        .await
+        .expect("register the tables");
+        for (name, path) in queries(dataset) {
+            if !wanted.contains(&name.as_str()) {
+                continue;
+            }
+            let sql = std::fs::read_to_string(&path).expect("the query text");
+            let plan = ctx
+                .sql(&sql)
+                .await
+                .expect("the query parses")
+                .create_physical_plan()
+                .await
+                .expect("the query plans");
+            let (tree, _) = plan_batch_partitioned(&plan, mode.knobs).expect("this mode runs it");
+            let recipes = attach_recipes(tree.as_ref()).expect("a plan's recipes are structural");
+            text.push_str(&format!("== {dataset} {name}\n"));
+            text.push_str(&format!("sha256={}\n", digest_of(recipes.bytes())));
+            text.push_str(&render_plan_recipes(
+                tree.as_ref(),
+                &recipes,
+                Payloads::Shown,
+            ));
+        }
+    }
+    let path = common::testdata_root()
+        .join("goldens")
+        .join("bp-recipe-payloads.txt");
+    // Three states, as `plan_bytes.sha256` has for the legacy wire form and for the same
+    // reason: the digests here are this branch's only byte-level pin on the newer
+    // serializer, and the documented way to refresh goldens is a bulk --update-canonical on
+    // verda. Without the second variable that run would rewrite the evidence and the diff
+    // would come home among hundreds. With it, a moved payload goes red DURING the regen.
+    let update = std::env::var("UPDATE_CANONICAL").is_ok();
+    let rewrite = std::env::var("PEACOCK_REWRITE_RECIPE_BYTES").is_ok();
+    if update && !rewrite {
+        let canonical = std::fs::read_to_string(&path).expect("the payload golden");
+        eprintln!(
+            "NOT regenerating {} — verifying instead. The `sha256=` lines are a fixed \
+             expectation from before a change, and the C++ reads these bytes. If the move is \
+             intended, set PEACOCK_REWRITE_RECIPE_BYTES=1 alongside UPDATE_CANONICAL.",
+            path.display()
+        );
+        assert_eq!(
+            digests_of(&canonical),
+            digests_of(&text),
+            "{}: the recipe bytes moved. Regenerating cannot make this green — see the \
+             message above.",
+            path.display()
+        );
+        // The text may still be regenerated: it describes the same bytes.
+        assert_or_update(&path, &text);
+        return;
+    }
+    assert_or_update(&path, &text);
+}
+
+/// The `sha256=` line per query, which is the half a bulk regen may not rewrite.
+fn digests_of(text: &str) -> std::collections::BTreeMap<String, String> {
+    let mut digests = std::collections::BTreeMap::new();
+    let mut query = String::new();
+    for line in text.lines() {
+        if let Some(header) = line.strip_prefix("== ") {
+            query = header.to_string();
+        } else if let Some(digest) = line.strip_prefix("sha256=") {
+            digests.insert(query.clone(), digest.to_string());
+        }
+    }
+    digests
+}
+
+/// Every seq every recipe publishes addresses a node of the kind it claims — over every
+/// query both benches have, not just the twelve the payload golden carries.
+///
+/// It is the assertion behind the three structural rules in `recipe/writer.rs`: a stub for
+/// an unfilled slot, a node hanging off its own previous call, and a union over what a
+/// node did not consume. Each keeps the order the walk creates nodes in equal to the
+/// post-order the C++ indexes by, and a break in any of them shows up here as a seq that
+/// resolves to nothing or to the wrong kind. The mode goldens cannot catch it: they render
+/// with `Payloads::Omitted` and never open the buffer at all.
+#[tokio::test]
+async fn every_published_seq_addresses_the_kind_its_recipe_claims() {
+    let mode = mode(PAYLOAD_MODE.0, PAYLOAD_MODE.1, PAYLOAD_MODE.2);
+    let mut checked = 0;
+    let mut faults: Vec<String> = Vec::new();
+    let mut uncrossable: Vec<String> = Vec::new();
+    let mut deepest = (0usize, String::new());
+    for dataset in ["tpch", "tpcds"] {
+        let ctx = peacockdb_core::register_tables_for(
+            peacockdb_core::build_session_state(mode.knobs.target_partitions),
+            &data_dir_for(dataset, "1"),
+        )
+        .await
+        .expect("register the tables");
+        for (name, path) in queries(dataset) {
+            let sql = std::fs::read_to_string(&path).expect("the query text");
+            let Ok(frame) = ctx.sql(&sql).await else { continue };
+            let Ok(plan) = frame.create_physical_plan().await else {
+                continue;
+            };
+            // A query this mode refuses has no recipes to check; a query it plans has to
+            // publish seqs that resolve.
+            let Ok((tree, _)) = plan_batch_partitioned(&plan, mode.knobs) else {
+                continue;
+            };
+            match attach_recipes(tree.as_ref()) {
+                Ok(recipes) => {
+                    checked += 1;
+                    if let Err(e) = check_seq_kinds(&recipes) {
+                        faults.push(format!("{dataset} {name}: {e}"));
+                    }
+                    let reached = depth(&recipes).expect("the plan we just wrote");
+                    deepest = deepest.max((reached, format!("{dataset} {name}")));
+                }
+                // A plan the wire cannot carry has no recipe plan to check. Named rather
+                // than counted: the day a second query joins mixed-join here, that is a
+                // fact about the mode worth a red test rather than a smaller number.
+                Err(_) => uncrossable.push(format!("{dataset} {name}")),
+            }
+        }
+    }
+    assert!(checked > 100, "only {checked} plans reached the check");
+    // #169: a recipe plan is a chain, so its depth is its length, and the C++ verifier
+    // refuses one past 1024 at begin_plan — the whole query, before any call. A tripwire
+    // rather than a note: the number was found by hand once and would drift silently.
+    let (reached, where_) = &deepest;
+    assert!(
+        *reached < 900,
+        "{where_} builds a recipe plan {reached} deep against the verifier's 1024 (#169) — \
+         the shape has to split before it reaches the limit, not the limit be raised"
+    );
+    assert_eq!(
+        uncrossable,
+        ["tpch mixed-join"],
+        "the queries this mode plans but cannot cross to the device are #168's, and only its"
+    );
+    assert!(
+        faults.is_empty(),
+        "{} of {checked} plans publish a seq that does not hold what it claims:\n{}",
+        faults.len(),
+        faults.join("\n")
+    );
+}
+
+/// The queries this mode PLANS but cannot cross to the device, and the ticket for each.
+///
+/// A `not runnable` line means the plan validates and runs on the CPU while one node's
+/// payload has no shape on the wire — so the registry stays out of it: its cell answers
+/// "does this query plan", which for these is yes, and a fourth state would make one cell
+/// answer two questions at once.
+///
+/// Asserted both ways below. A new unwritable expression goes red until someone adds it
+/// here with a ticket, and an entry that stops being true goes red until it is removed —
+/// which is the direction that matters when #168 closes, since a stale entry is how a
+/// declared set rots into a list nobody trusts.
+const NOT_RUNNABLE: &[(&str, &str, &str)] = &[("tpch", "mixed-join", "168")];
+
+#[test]
+fn every_query_that_cannot_cross_the_wire_is_declared_and_every_declaration_is_true() {
+    let mut found: Vec<(String, String)> = Vec::new();
+    for (dataset, sf) in [("tpch", "1"), ("tpcds", "1")] {
+        for (name, ..) in MODES {
+            let path = golden_dir_for(dataset, sf).join(format!("{name}.plans.txt"));
+            for (query, body) in ordered_sections(&std::fs::read_to_string(&path).expect("a golden"))
+            {
+                let Some(line) = body.lines().find(|line| line.starts_with("not runnable")) else {
+                    continue;
+                };
+                let declared = NOT_RUNNABLE
+                    .iter()
+                    .find(|(bench, declared, _)| *bench == dataset && *declared == query);
+                match declared {
+                    Some((_, _, ticket)) => assert!(
+                        line.contains(&format!("(#{ticket})")),
+                        "{dataset}/{name} {query}: declared under #{ticket} and the line cites \
+                         something else:\n{line}"
+                    ),
+                    None => panic!(
+                        "{dataset}/{name} {query}: cannot cross the wire and is not in \
+                         NOT_RUNNABLE — add it with the ticket that explains it:\n{line}"
+                    ),
+                }
+                found.push((dataset.to_string(), query.clone()));
+            }
+        }
+    }
+    for (dataset, query, ticket) in NOT_RUNNABLE {
+        let carried = found
+            .iter()
+            .filter(|(bench, name)| bench == dataset && name == query)
+            .count();
+        assert_eq!(
+            carried,
+            MODES.len(),
+            "{dataset}/{query} is declared under #{ticket} but carries the line in {carried} of \
+             the {} modes — a plan that crosses in one mode and not another is a finding, and a \
+             declaration that has become false is stale",
+            MODES.len()
+        );
+    }
+}
+
+/// What a recipes line says once its seqs are stripped: the node, its call pattern, the
+/// kinds it addresses and the handles they take — the shape, not the numbering.
+fn call_shapes(text: &str) -> std::collections::BTreeSet<String> {
+    let mut shapes = std::collections::BTreeSet::new();
+    let mut in_recipes = false;
+    for line in text.lines() {
+        match line {
+            // Both files hold the same section, headed differently: the mode goldens put
+            // it between two markers, the payload golden gives a whole section to it after
+            // the digest line.
+            "--- recipes ---" => in_recipes = true,
+            _ if line.starts_with("sha256=") => in_recipes = true,
+            "--- memory ---" => in_recipes = false,
+            _ if line.starts_with("== ") => in_recipes = false,
+            _ if in_recipes => {
+                let line = line.trim();
+                // Payload lines are indented under their call and carry no `: ` shape;
+                // a `none` row and a `not runnable` line are shapes of their own.
+                if !line.contains(": ") && !line.ends_with(": none") {
+                    continue;
+                }
+                // The lane count is a per-plan number rather than a shape: the same call
+                // at four lanes and at nine is one thing to cover.
+                let line = match (line.find("calling_lanes="), line.find(", ")) {
+                    (Some(at), Some(comma)) if comma > at => {
+                        format!("{}{}", &line[..at], &line[comma + 2..])
+                    }
+                    _ => line.to_string(),
+                };
+                let stripped = line
+                    .split('#')
+                    .enumerate()
+                    .map(|(at, part)| {
+                        if at == 0 {
+                            part.to_string()
+                        } else {
+                            // Drop the digits of the seq and keep what follows it.
+                            format!("#{}", part.trim_start_matches(|c: char| c.is_ascii_digit()))
+                        }
+                    })
+                    .collect::<String>();
+                shapes.insert(stripped);
+            }
+            _ => {}
+        }
+    }
+    shapes
+}
+
+/// Every fb kind and every call shape the ten mode goldens hold appears in the payload
+/// golden too.
+///
+/// This is the checked half of [`PAYLOAD_QUERIES`]'s claim. A mapping arm added later
+/// without a payload query for it goes red here rather than waiting for a careful reader —
+/// and the shapes matter as much as the kinds, since the build-side semi family's finish
+/// and a Left outer's derived finish both address a `CudfHashJoin{LeftAnti}` while doing
+/// different things with different arguments.
+#[test]
+fn the_payload_golden_covers_every_kind_and_call_shape_the_modes_produce() {
+    let payloads = std::fs::read_to_string(
+        common::testdata_root()
+            .join("goldens")
+            .join("bp-recipe-payloads.txt"),
+    )
+    .expect("the payload golden");
+    let covered = call_shapes(&payloads);
+
+    let mut wanted = std::collections::BTreeSet::new();
+    for (dataset, sf) in [("tpch", "1"), ("tpcds", "1")] {
+        for (name, ..) in MODES {
+            let text = std::fs::read_to_string(
+                golden_dir_for(dataset, sf).join(format!("{name}.plans.txt")),
+            )
+            .expect("a golden");
+            wanted.extend(call_shapes(&text));
+        }
+    }
+
+    let kind = |shapes: &std::collections::BTreeSet<String>| -> std::collections::BTreeSet<String> {
+        shapes
+            .iter()
+            .flat_map(|shape| {
+                shape
+                    .match_indices("Cudf")
+                    .map(|(at, _)| {
+                        let rest = &shape[at..];
+                        let end = rest
+                            .find(|c: char| c == ',' || c == ')')
+                            .unwrap_or(rest.len());
+                        rest[..end].to_string()
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    };
+    let missing_kinds: Vec<String> = kind(&wanted).difference(&kind(&covered)).cloned().collect();
+    assert!(
+        missing_kinds.is_empty(),
+        "the modes emit fb kinds the payload golden never shows, so nothing pins what they \
+         carry: {missing_kinds:?}"
+    );
+
+    let missing_shapes: Vec<&String> = wanted
+        .difference(&covered)
+        // A shape the modes hold and the payload file cannot: `not runnable` is a
+        // property of mixed-join, which by definition has no payload to show.
+        .filter(|shape| !shape.starts_with("not runnable"))
+        .collect();
+    assert!(
+        missing_shapes.is_empty(),
+        "{} call shapes appear in the mode goldens and in no payload query — add a query \
+         that carries one, per PAYLOAD_QUERIES' rule:\n{}",
+        missing_shapes.len(),
+        missing_shapes
+            .iter()
+            .map(|shape| format!("  {shape}"))
+            .collect::<Vec<_>>()
+            .join("\n")
     );
 }
 
@@ -556,14 +986,26 @@ fn every_refusal_names_a_ticket_that_exists() {
                 golden_dir_for(dataset, sf).join(format!("{name}.plans.txt")),
             )
             .expect("a golden");
-            for line in text.lines().filter(|line| line.starts_with("refused")) {
+            // Both shapes of line that decline something: `refused` is the planner's,
+            // and `not runnable` is the crossing's — the plan runs on the CPU and only the
+            // buffer cannot be built. A ticket is cited in PARENTHESES, which is what
+            // separates it from the `#5` in "at #5", a seq, and from a DataFusion refusal
+            // that cites nothing of ours at all.
+            let declines =
+                |line: &&str| line.starts_with("refused") || line.starts_with("not runnable");
+            for line in text.lines().filter(declines) {
                 let cited: Vec<&str> = line
-                    .match_indices('#')
+                    .match_indices("(#")
                     .filter_map(|(at, _)| {
-                        line[at + 1..].split(|c: char| !c.is_ascii_digit()).next()
+                        line[at + 2..].split(|c: char| !c.is_ascii_digit()).next()
                     })
                     .filter(|number| !number.is_empty())
                     .collect();
+                assert!(
+                    !cited.is_empty() || !line.starts_with("not runnable"),
+                    "{dataset}/{name}: a plan the mode cannot cross names no ticket, so a \
+                     reader has nowhere to go:\n{line}"
+                );
                 for number in cited {
                     assert!(
                         tickets.contains(&format!("### #{number} ")),

@@ -69,7 +69,10 @@ arrive from the human one at a time.
     retargets each child PR as its base merges. Never reorder or skip a link to merge
     something sooner.
 - **You perform *all* git operations** (branch, commit, push, PR, merge). The developer
-  and reviewer never mutate git state.
+  and reviewer never mutate git state. Stage the paths you mean and read `git status` before
+  committing: `git add -A <dir>` sweeps in whatever untracked files happen to sit there, and
+  `git add -u` skips the new files a task just added, so a commit that builds for you does not
+  build for anyone else.
 - **Merging to master happens *only* when a human instructs it, in that message.** Never
   on your own judgment, however green CI is and however satisfied the reviewer. The
   instruction covers only the PR or chain it names and does not carry forward to the
@@ -189,6 +192,10 @@ reasoning. Anchors: `llm-wiki/architecture.md` (invariants) and `llm-wiki/build-
   `--test-threads=1`); two-engine correctness (CPU and GPU consume the same plan IR — no
   engine-specific plan nodes); deterministic cost (no wall-clock in the fast tier);
   `rust-only` is the tier boundary (no FFI types reachable from rust-only paths).
+- **A page states facts, not type names.** Checking whether a schema or signature change left a
+  wiki page true by grepping for the changed identifier answers a narrower question: enum members,
+  field origins and counts are spelled out in prose, so the sentences a change falsifies rarely
+  carry the name anywhere near them. Read the sections that own the fact.
 - **Verify the diff against `llm-wiki/coding-style.md`** and flag violations. Count the
   length limits rather than eyeballing them, on everything the diff adds: a comment inside
   a function body at four lines, one above a declaration or at the top of a file at ten, a

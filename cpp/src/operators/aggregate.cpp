@@ -51,7 +51,11 @@ static cudf::size_type stddev_ddof(const std::string& f) {
 //   Partial = first pass, emits per-partition STATE   -> AVG = [sum, count] (2 cols)
 //   Final   = merges partial STATE across the shuffle -> AVG = Σsum / Σcount
 // SUM/COUNT/MIN/MAX are phase-insensitive except count-Final -> sum.
-enum class AggPhase { Single, Partial, Final };
+//   Merge   = merges partial STATE and emits STATE, not a finished value. The
+//             batch-partitioned mode merges once per lane and again across lanes,
+//             and finalizes in a project of its own, so the merge and the finalize
+//             Final couples are separate here.
+enum class AggPhase { Single, Partial, Final, Merge };
 static AggPhase agg_phase(fb::AggregateMode m) {
   switch (m) {
     case fb::AggregateMode_Partial:
@@ -62,6 +66,8 @@ static AggPhase agg_phase(fb::AggregateMode m) {
     case fb::AggregateMode_Single:
     case fb::AggregateMode_SinglePartitioned:
       return AggPhase::Single;
+    case fb::AggregateMode_Merge:
+      return AggPhase::Merge;
     default:
       throw std::runtime_error("agg_phase: unsupported AggregateMode");
   }
@@ -457,20 +463,27 @@ TableResult execute_aggregate(const fb::CudfAggregate* agg, NodeInputs* in) {
   //   Final-avg   -> 2 reqs [sum(partial_sum)], [sum(partial_count)] (1 out col)
   // The Final-input cursor `in_off` must advance by each agg's STATE WIDTH (avg
   // = 2, not 1), symmetrically with the Partial output assembly.
+  // Every field carries a default: the arms below fill an OutBuild by name and set only
+  // what they use, so an uninitialized one is read as whichever bit pattern the stack
+  // held — `res` indexes a result vector and `avg_div` selects a whole assembly path.
   struct OutBuild {
     std::string name;
-    int req;          // request index producing the (primary) result
-    int res;          // result index within that request
-    bool count_cast;  // INT32 count -> INT64
-    int req_div;      // Final-avg: request producing Σcount (-1 otherwise)
-    bool avg_div;     // Final-avg: out = Σsum / Σcount
-    int32_t out_scale;      // decimal out scale for the avg divide
-    uint8_t out_precision;  // 0 => float avg
+    int req = 0;              // request index producing the (primary) result
+    int res = 0;              // result index within that request
+    bool count_cast = false;  // INT32 count -> INT64
+    int req_div = -1;         // Final-avg: request producing Σcount (-1 otherwise)
+    bool avg_div = false;     // Final-avg: out = Σsum / Σcount
+    int32_t out_scale = 0;      // decimal out scale for the avg divide
+    uint8_t out_precision = 0;  // 0 => float avg
     // Final-stddev/var: the request result is a MERGE_M2 struct {count, mean, m2};
     // finalize to var = m2/(count-ddof) (NULL when count-ddof<=0), stddev = √var.
     bool std_finalize = false;
     bool is_variance = false;  // finalize as variance (skip the sqrt)
     int ddof = 1;              // divisor n-ddof (0 = population, 1 = sample)
+    // Merge-stddev/var: the same MERGE_M2 struct, handed back as state rather than
+    // finalized. One OutBuild per child, so the node emits [count, mean, m2] in the
+    // order the next merge expects to read them.
+    int struct_child = -1;
   };
   std::vector<cudf::groupby::aggregation_request> requests;
   std::vector<OutBuild> builds;
@@ -493,7 +506,8 @@ TableResult execute_aggregate(const fb::CudfAggregate* agg, NodeInputs* in) {
   // Partial emits 1 MEAN col per avg and its Final lands here; reading 2 cols for
   // such a 1-col avg over-runs the input (q18/q22 OOB).
   bool avg_state_2col = true;
-  if (phase == AggPhase::Final && agg->aggr_funcs()) {
+  const bool reads_state = phase == AggPhase::Final || phase == AggPhase::Merge;
+  if (reads_state && agg->aggr_funcs()) {
     size_t n_funcs = agg->aggr_funcs()->size();
     size_t n_avg = 0, n_std = 0;
     for (flatbuffers::uoffset_t i = 0; i < n_funcs; ++i) {
@@ -513,7 +527,7 @@ TableResult execute_aggregate(const fb::CudfAggregate* agg, NodeInputs* in) {
       avg_state_2col = false;
     else if (residual != n_avg * 2)
       throw std::runtime_error(
-          "Final-stage aggregate input width does not match the expected "
+          "state-stage aggregate input width does not match the expected "
           "count(1)/avg(1|2)/stddev(1|3) state layout");
   }
 
@@ -553,6 +567,34 @@ TableResult execute_aggregate(const fb::CudfAggregate* agg, NodeInputs* in) {
                           -1, false, 0, 0});
         requests.push_back(std::move(req));
         // fall through to the shared `in_off += 1` (single Final input column)
+      } else if (is_avg && phase == AggPhase::Merge && !avg_state_2col) {
+        // A grouping-set/ROLLUP Partial emits ONE mean column rather than [sum, count]
+        // state, and the same width recovery that guards the Final arm (#18, the q18/q22
+        // over-run) guards this one: consume ONE column through the shared `in_off += 1`
+        // below. Mean-of-singleton is exact while there is one partial row per key, which
+        // is the same condition the Final arm relies on.
+        cudf::groupby::aggregation_request req;
+        req.values = tv.column(static_cast<cudf::size_type>(in_off));
+        req.aggregations.push_back(cudf::make_mean_aggregation<cudf::groupby_aggregation>());
+        builds.push_back({alias, static_cast<int>(requests.size()), 0});
+        requests.push_back(std::move(req));
+        // falls through to the shared `in_off += 1`
+      } else if (is_avg && phase == AggPhase::Merge) {
+        // Σ(partial_sum) and Σ(partial_count), emitted as state: the divide is the
+        // finalize and belongs to whoever finalizes. Consumes the same TWO columns
+        // Final does.
+        cudf::groupby::aggregation_request req_s, req_c;
+        req_s.values = tv.column(static_cast<cudf::size_type>(in_off));
+        req_s.aggregations.push_back(cudf::make_sum_aggregation<cudf::groupby_aggregation>());
+        req_c.values = tv.column(static_cast<cudf::size_type>(in_off + 1));
+        req_c.aggregations.push_back(cudf::make_sum_aggregation<cudf::groupby_aggregation>());
+        int r = static_cast<int>(requests.size());
+        builds.push_back({alias, r, 0, false, -1, false, 0, 0});      // Σ partial_sum
+        builds.push_back({alias, r + 1, 0, false, -1, false, 0, 0});  // Σ partial_count
+        requests.push_back(std::move(req_s));
+        requests.push_back(std::move(req_c));
+        in_off += 2;
+        continue;  // avg consumed TWO state columns
       } else if (is_avg && phase == AggPhase::Final) {
         // Merge: Σ(partial_sum) / Σ(partial_count). The two state cols sit at
         // [in_off, in_off+1] (running offset accounts for prior avgs' 2 cols).
@@ -588,6 +630,40 @@ TableResult execute_aggregate(const fb::CudfAggregate* agg, NodeInputs* in) {
         builds.push_back({alias, r, 1, false, -1, false, 0, 0});  // mean
         builds.push_back({alias, r, 2, false, -1, false, 0, 0});  // m2
         requests.push_back(std::move(req));
+      } else if ((is_stddev_name(name) || is_var_name(name)) &&
+                 phase == AggPhase::Merge && mergeable) {
+        // The Final arm's merge without its finalize: pack [count, mean, m2] at
+        // [in_off .. in_off+2] and MERGE_M2 per group, then hand the struct's three
+        // children back as columns. Count MUST be INT32 going in — cuDF 25.02's
+        // group_merge_m2 rejects INT64 at runtime — and comes back out as INT64, so
+        // a second merge reads the same widths this one did.
+        auto cnt = cudf::cast(tv.column(static_cast<cudf::size_type>(in_off)),
+                              cudf::data_type{cudf::type_id::INT32});
+        auto mean = std::make_unique<cudf::column>(
+            tv.column(static_cast<cudf::size_type>(in_off + 1)));
+        auto m2 = std::make_unique<cudf::column>(
+            tv.column(static_cast<cudf::size_type>(in_off + 2)));
+        std::vector<std::unique_ptr<cudf::column>> members;
+        members.push_back(std::move(cnt));
+        members.push_back(std::move(mean));
+        members.push_back(std::move(m2));
+        computed_args.push_back(cudf::make_structs_column(
+            tv.num_rows(), std::move(members), 0, rmm::device_buffer{}));
+        cudf::groupby::aggregation_request req;
+        req.values = computed_args.back()->view();
+        req.aggregations.push_back(
+            cudf::make_merge_m2_aggregation<cudf::groupby_aggregation>());
+        int r = static_cast<int>(requests.size());
+        for (int child = 0; child < 3; ++child) {
+          OutBuild ob;
+          ob.name = alias;
+          ob.req = r;
+          ob.struct_child = child;
+          builds.push_back(ob);
+        }
+        requests.push_back(std::move(req));
+        in_off += 3;
+        continue;  // stddev/var consumed THREE state columns
       } else if ((is_stddev_name(name) || is_var_name(name)) &&
                  phase == AggPhase::Final && mergeable) {
         // Merge Welford state across partitions: pack the 3 partial cols
@@ -626,7 +702,7 @@ TableResult execute_aggregate(const fb::CudfAggregate* agg, NodeInputs* in) {
       } else {
         // Single-avg (plain mean) OR sum/count/min/max/stddev — one request.
         cudf::groupby::aggregation_request req;
-        if (phase == AggPhase::Final) {
+        if (reads_state) {
           req.values = tv.column(static_cast<cudf::size_type>(in_off));
         } else if (is_avg) {
           // Single-avg: mean over the value cast up to the declared out scale
@@ -643,7 +719,7 @@ TableResult execute_aggregate(const fb::CudfAggregate* agg, NodeInputs* in) {
           }
           req.values = base;
         } else if ((is_stddev_name(name) || is_var_name(name)) &&
-                   phase != AggPhase::Final) {
+                   (phase == AggPhase::Partial || phase == AggPhase::Single)) {
           // SINGLE-PARTITION stddev/var: cuDF's make_std/make_variance keep the
           // input type (e.g. DECIMAL l_quantity), but DataFusion's stddev/var are
           // FLOAT64 — cast first, as the mergeable M2 path does. (Final on this leg
@@ -654,12 +730,12 @@ TableResult execute_aggregate(const fb::CudfAggregate* agg, NodeInputs* in) {
         } else {
           req.values = arg_col(func);
         }
-        req.aggregations.push_back(make_agg(name, phase == AggPhase::Final));
+        req.aggregations.push_back(make_agg(name, reads_state));
         builds.push_back({alias, static_cast<int>(requests.size()), 0,
                           (name == "count" || name == "COUNT"), -1, false, 0, 0});
         requests.push_back(std::move(req));
       }
-      if (phase == AggPhase::Final) in_off += 1;
+      if (reads_state) in_off += 1;
     }
   }
 
@@ -684,7 +760,15 @@ TableResult execute_aggregate(const fb::CudfAggregate* agg, NodeInputs* in) {
   }
   for (auto& b : builds) {
     std::unique_ptr<cudf::column> col;
-    if (b.std_finalize) {
+    if (b.struct_child >= 0) {
+      // Merge-stddev/var: state out, not a value. cuDF's merged count child is
+      // INT32; widen it so both merges of a chain read the same layout.
+      auto merged = agg_results[b.req].results[b.res]->view();
+      auto child = merged.child(b.struct_child);
+      col = child.type().id() == cudf::type_id::INT32
+                ? cudf::cast(child, cudf::data_type{cudf::type_id::INT64})
+                : std::make_unique<cudf::column>(child);
+    } else if (b.std_finalize) {
       // MERGE_M2 result is a struct {count, mean, m2}. Finalize:
       //   var = m2 / (count - ddof);  stddev = sqrt(var)
       // with DataFusion's sample-NULL semantics: count-ddof <= 0 (a single-row

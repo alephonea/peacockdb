@@ -135,4 +135,4 @@ tpch,1,scan_limit,enabled,enabled,na,na,enabled,na,enabled,enabled,enabled,enabl
 tpch,1,semi_join,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,ok,semi_join,
 tpch,1,shuffle_additive,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,ok,,
 tpch,1,shuffle_additive_avg,na,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,ok,avg,
-tpch,1,shuffle_stddev,na,enabled,enabled,na,enabled,disabled,enabled,enabled,enabled,enabled,enabled,ok,stddev_var,103
+tpch,1,shuffle_stddev,na,enabled,enabled,na,enabled,enabled,enabled,enabled,enabled,enabled,enabled,ok,stddev_var,

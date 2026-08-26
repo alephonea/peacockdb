@@ -90,6 +90,17 @@ working set** (see [GPU execution](#gpu-execution-through-the-frozen-ffi)):
 A task that seems to need a fourth symbol (candidates: #136, #142) goes to the human as a
 coordinator proposal — the blocked task, the smallest additive change, the workaround's cost.
 
+**Two additive changes to the schema are approved on the same terms**, both appended so no
+ordinal moves and no existing plan's bytes change: `UnaryOp` gains `Sqrt` and `AggregateMode`
+gains `Merge`. They are the two halves of one decomposition — a merge that only merges, and a
+finalize written as an expression — and without them the C++'s hardwired arithmetic is the only
+one available, which leaves the two engines agreeing because two implementations happen to match.
+Neither is a Welford accommodation: any aggregate whose state is composite meets the same wall,
+and Welford is the first one this corpus contains. Both follow the protocol #128 set: settled here
+before they are written, legacy paths untouched, `plan_bytes.sha256` proving the legacy wire form
+did not move, and each new arm exercised by a gtest in the plan-executor suite on shad-gpu — an
+arm nothing runs is a claim nobody has checked.
+
 **Coexistence.** All six legacy modes and their tests stay functional throughout.
 Retiring them is a separate, later decision (blocked at minimum by #143). Code reuse with
 legacy is moderate and always by extracting shared helpers, never by entangling the new
@@ -179,9 +190,10 @@ against the other.
    and below it in another.
 2. **Batched loading off|on**: whether the loader emits more than one batch per
    partition. Even when off, the loader's declared layout is `MultipleBatches` — no
-   downstream phase may assume one batch per partition. Only when on does the planner take
-   the memory budget (micro/mini/standard/full) and size batches, and only then does the
-   threshold above bite.
+   downstream phase may assume one batch per partition. The count is known — the partitioner
+   fixes every batch boundary at plan time — so that is incremental simplicity, and
+   [#170](../tickets.md#t170) is what saying so would buy. Only when on does the planner take the memory budget
+   (micro/mini/standard/full) and size batches, and only then does the threshold above bite.
 
    Batching has three forms, and they are an enum rather than a target value that means
    something special at one end of its range: `Off` gives one batch per chunk, `PerRowGroup`
@@ -480,9 +492,13 @@ column (existing C++ behavior, #65 caveats unchanged), every node downstream gro
 this falls out of: the input to a finalizing `GpuAggregateBatches` must have
 `KeyDistribution.hashKeys ⊆ its group columns` — subset, not equality.
 
-Two costs, both small. The expression IR gains `sqrt` (a `UnaryOp` variant —
-cuDF's `unary_operator::SQRT` is what the hardwired finalize already calls), and the
-translation layer gains a decomposition registry of about six entries, whose state names
+Three costs, all small. Two are appended fbs values, one per half of the sequence: `sqrt` becomes
+a `UnaryOp` on both sides — our IR and the fbs — so a finalize can be written (cuDF's
+`unary_operator::SQRT` is what the hardwired finalize already calls), and `AggregateMode` gains
+`Merge`, merge state and emit state, so a merge can be only a merge. The fbs had no such mode
+because the C++ merged and finalized on one call, which is precisely the coupling this
+decomposition undoes. Third, the translation layer gains a decomposition registry of about six
+entries, whose state names
 and types come from DataFusion's `AggregateExpr::state_fields()` so our split cannot drift
 from the split DataFusion planned. Adding an aggregate is then a row in that registry
 rather than an arm in C++. What stays on the C++ side is the cuDF calling convention alone:
@@ -1670,7 +1686,7 @@ The mapping:
 | `GpuAccumulateBatchesAndSort` | `CudfSort` + `CudfSortPreservingMerge` | per-batch sort calls, then one merge-arm call at done |
 | `GpuMergeSortedPartitions` | `CudfSortPreservingMerge` | one merge-arm call over all sorted handles, partition-major order |
 | `GpuCoalesceAllBatches` | `CudfCoalescePartitions` | one collapse-arm call over the partition's batch handles |
-| `GpuAggregateBatches` | `CudfCoalescePartitions` + `CudfAggregate` (merge aggregators, with `final` when it finalizes) | one concat + one aggregate call per compaction, and again at done |
+| `GpuAggregateBatches` | `CudfCoalescePartitions` + `CudfAggregate` in merge mode, plus a `CudfProject` carrying the finalize where it finalizes | one concat + one aggregate call per compaction, and again at done; the project runs once, at done |
 | `GpuEmitPartitions` | `CudfRepartition(Hash, 1→N)` | repartition arm, one call per batch → N handles |
 | `GpuJoin` | `CudfHashJoin`, plus finish-pass seqs (key project, concat, anti/semi join, pad project) per #136 — per type in the [capability matrix](#join-capability-matrix), which is where the seq sequence for each join mode is spelled out and tested | map arm per (partition, probe batch), plus a copy of the build handle before each, since the call consumes it (#152) |
 | `GpuCrossJoin` / `GpuNestedLoopJoin` | same-kind node (`CudfCrossJoin` / `CudfNestedLoopJoin`) | one map-arm call |
@@ -1683,6 +1699,26 @@ kind → expected seq set and call pattern), because it is the load-bearing tric
 keeps C++ frozen. The fb names in the table are the post-T1 ones (`CudfScan`, `CudfRepartition`, …); the
 `GpuNode` column is this mode's own vocabulary, and keeping the two visually apart is what
 the rename bought.
+
+**Every aggregate merges as state and finalizes in a project.** A `GpuAggregateBatches` lowers to
+`CudfCoalescePartitions` plus `CudfAggregate` in merge mode, and where it finalizes, a
+`CudfProject` carrying the finalize expression. One rule with no exception is the point: both
+engines evaluate the same expression, so they agree by construction rather than by two
+implementations happening to match.
+
+The two appended fbs values this needs, `UnaryOp.Sqrt` and `AggregateMode.Merge`, are
+[the aggregate sequence](#the-aggregate-sequence)'s to explain and
+[Scope and constraints](#scope-and-constraints)' to approve. Worth knowing here is only why a
+merge mode had to be added rather than found: cuDF's `MERGE_M2` is reachable only from an arm that
+finalizes on the same call, and these plans stack two merges, per lane and then across lanes, so
+the lower one would have nothing to hand upward.
+
+The casts are the part to get right: cuDF's divide takes its scale from its operands, so `avg`'s
+denominator goes to `Decimal128(p, 0)` and its numerator to the declared type inside the project —
+the rule [Implicit casts become explicit](#implicit-casts-become-explicit) already states, now
+reaching a finalize. The fb aggregate takes SQL names, so the writer reconstructs `stddev` from
+the schema's `agg_state` annotations rather than from the three aggregators; that is the only
+aggregate needing it, since every other one merges per column under its own tag.
 
 **The limit lowering rule.** A per-batch `GpuLimit` call cannot be correct: the fb node's
 skip/fetch are frozen per seq, so every batch would be truncated to the same bounds
@@ -1975,7 +2011,8 @@ of five where CPU execution is enabled.
 
 Tasks in dependency order, and the numbers now ascend with it. T13 is the one that does not:
 it landed early, because both drivers over a mock backend needed none of T9–T12, and it keeps
-its number because commits and reviews already name it. T11 and T12 were retired in the same
+its number because commits and reviews already name it. T21 sits out of order for the same
+reason — it was split off T14 after it had been narrowed, and a number is never reused. T11 and T12 were retired in the same
 renumbering — their work is T15 and T16 — so a number is never reused and an older reference
 still resolves. Each task is one developer hand-off with its own proving tests.
 Legacy tests stay green throughout — every task that touches shared code runs the
@@ -2151,20 +2188,93 @@ plan carries the answer and the executor has only to produce it — one lane, on
 rows the node already holds. The translation layer maps it like any other source; the work
 is the executor, which is why it lands in this task rather than in T4.
 
-**T14 — recipe-plan serialization and GPU integration.** Re-check `avg`'s finalize casts
-here against a real GPU result: the denominator goes to `Decimal128(p, 0)` and the numerator
-to the declared type so cuDF's own divide scale lands where DataFusion declared it, and no
-CPU-side test can prove that arithmetic. The GpuNode → fb-seq mapping
-table implemented and unit-tested (expected seq sets and call patterns per node kind);
-driver-side stats folding across calls into `NodeMemoryStats`; first end-to-end queries
-on shad-gpu (scan → filter → aggregate; a join; a sort+limit), GPU vs CPU.
+**T14 — recipe-plan serialization.** The `GpuNode` → fb-seq mapping implemented, canonized and
+unit-tested. `attach_recipes()` runs after the plan is complete and hangs a recipe on each node
+that drives the GPU ABI; a node that makes no ABI call gets none, which is a fact about the node
+and so is worth reading off the plan. One function per node kind produces that node's recipe from
+**that node alone** — no child, no parent, no tree walk. The mapping table is a per-node statement
+and a function that can reach a child would let it stop being one, so the restriction is the
+design rather than an economy.
 
-What lands here and what waits, now that this task sits before the accumulators and the
-joins: the mapping is a translation artifact — a `GpuNode` tree in, a recipe plan out — so it
-covers every node kind and is unit-testable against the plans T6 already canonized, with no
-executor in sight. The end-to-end half is bounded by what T10 built, so it is
-scan → filter → aggregate here; the join and the sort+limit follow their executors in T16 and
-T15 and prove the seq sequences the [capability matrix](#join-capability-matrix) spells out.
+A recipe is a sequence of ABI calls, each carrying the built FlatBuffers node it addresses — the
+payload, not a reference to where the fields live. Two renderings, one function taking an enum:
+without payloads it is a section in every `<mode>.plans.txt`, between the plan tree and
+`--- memory ---`, keeping the tree shape and repeating nothing the tree already shows except the
+lane count; with payloads it is a golden of its own, holding the recipes alone — no plan tree, no
+memory — for a subset of queries chosen to reach every fb kind and every call shape longer than
+one call. A digest of the serialized bytes rides beside the payload text, since text and bytes can
+disagree and `plan_bytes.sha256` is the precedent for pinning the wire form rather than a
+description of it. Unit tests cover the kinds whose recipe is more than one call, `GpuJoin` first:
+the seq set and call pattern per join type, against the
+[capability matrix](#join-capability-matrix).
+
+Dense seqs are impossible, and that is a property of the fbs rather than a choice. Children are
+nested (`input`, `left`/`right`, `inputs`) and `CudfScan` is the only leaf table, so a set of
+addressed nodes whose arities exceed its own edge count has to be padded with stub scans — and
+every stub takes a post-order slot, so it moves the seqs above it. Three rules follow: stubs
+rather than a re-hung child, since a shared offset is a DAG and gets indexed twice; a call whose
+input is a runtime handle hangs off the previous fb node of its own recipe, or a stub where there
+is none; and a forwarder's unconsumed branch is gathered by a structural `CudfUnion`, because an
+orphan is never indexed and its shift has no visible cause. The pass and the serializer are
+therefore one walk: a seq is the post-order index of what was built, so it cannot be counted
+before the building.
+
+The `Expr` -> `fb::Expr` writer is its own file and is where the unit tests concentrate: every
+expression variant and operator, nesting, and each scalar kind the corpus produces — decimals
+with their precision and scale first, since a wrong write there is invisible in plan text and
+wrong on a device. `plan_serializer.rs` serializes a DataFusion plan and keeps that one job;
+`serialize_scalar_value` and `serialize_schema` are reused, `serialize_expr` cannot be, since it
+downcasts `PhysicalExpr` and this IR is our own.
+
+Post-order is the agreement to assert rather than assume: `begin_plan` indexes post-order, so the
+emitted tree has to number exactly as the recipes say, and a plan simple enough to check by its
+answer would answer correctly while addressing the wrong node.
+
+Nothing executes here and nothing new runs on a GPU. `scripts/exec_model/operators/recipe.py` and
+`recipe_join.py` are the starting point for the join sequences — a model, not a spec, and the fbs
+and `cpp/src/operators/join.cpp` are what settle a disagreement.
+
+The proving set is the new unit tests and the golden target, and no legacy subsets — the human
+scoped it that way because the change is additive: a recipe is attached to a plan nothing reads
+yet, so the only tests whose result can move are the ones that read it.
+
+**T21 — a recipe plan on a live GPU, driven by hand.** It needs T14 and nothing else: no driver,
+no executors, no scheduling. A new test file on the shad-gpu tier plans a query over TPC-H sf1,
+loads the recipe plan T14 already built, and makes exactly the calls the recipes name, threading
+each call's output handle into the next one's input and exporting at the root. One helper does the
+whole walk; one test per query calls it, so a failure names the query rather than a stage.
+
+`begin_plan`'s `out_node_count` is asserted equal to the number of fb nodes the writer created —
+not to the `GpuNode` count, which is a different number: stubs, structural unions and any node
+with more than one call all separate the two, in both directions and in most plans. It is the
+first thing this task can settle that nothing before it can: every seq indexes a post-order the
+C++ builds in `index_post_order`, and until a device has parsed a buffer we wrote, our agreement
+with that walk rests on two child-order functions having been read side by side. One assertion, at
+the first call, in the first place both numbers exist at once.
+
+Shapes, chosen so each call is unambiguous. Everything but the aggregates plans one partition and
+one batch, which makes every recipe a single call per node and the walk a straight line: a bare
+scan, a filter, a project over a filter, and the joins — inner, and one build-preserving type,
+whose single probe batch takes the legacy one-call form. The aggregates plan one batch and **two**
+partitions, because a merge is the operator this mode adds and one partition never performs one:
+two lanes each merge their own state, the cross-lane merge folds them, and the finalize project
+runs once. That is the first time `AggregateMode::Merge` and the finalize expression meet a
+device.
+
+`avg` is the case worth a test of its own. Its finalize divides a decimal by a count, and cuDF
+derives a divide's result scale from its operands where arrow takes it from the declared output
+type — so a wrong cast is invisible on a CPU host and wrong on a GPU, in a column whose type reads
+correctly either way. Assert the digits, not the type.
+
+The oracle is DataFusion on the same SQL — `data_fusion_exact`, the CPU tier's own vocabulary —
+and deliberately neither a result golden nor our CPU executor. A golden records what the first run
+produced, so a finalize whose scale is wrong from the start is pinned rather than caught; and our
+CPU executor evaluates the same finalize expression the device is sent, so it agrees with a wrong
+one. DataFusion computes `avg` without a Welford triple, a merge mode or cuDF's divide-scale rule,
+which is what makes agreement with it evidence. Joins compare as sorted multisets, since a GPU
+join's output order is not deterministic. What it deliberately leaves out is everything the
+driver decides — batching, backpressure, arrival order — since every shape here is one batch;
+those arrive with the executors, and the driven end-to-end over every layout is T17's.
 
 **T15 — accumulators.** `GpuCoalesceAllBatches`, `GpuAggregateBatches` (merge-only and
 finalizing),

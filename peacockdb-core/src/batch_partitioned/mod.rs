@@ -25,6 +25,7 @@ pub mod parquet_meta;
 pub mod partitioner;
 pub mod plan;
 pub mod plan_text;
+pub mod recipe;
 pub mod schema;
 pub mod translate;
 pub(crate) mod validate;

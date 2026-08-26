@@ -79,12 +79,10 @@ async fn inc5_stddev_final_agg_at_tp8_partitioned_matches_datafusion() {
     // DataFusionApproximate (see CpuOracle for the general rationale): here the
     // reassociated sum is the Welford M2 across the 8 partitions — observed rel diff
     // ~3e-14, so exact-string compare cannot be used.
-    // ResultGolden::Skip while quarantined: the golden_approx_std consumer at
-    // shuffle_stddev/partitioned-tp8-standard is commented out pending #103, so
-    // generating the .result.txt would write an ORPHAN golden — written, never read —
-    // precisely the silent failure the `ResultGolden` gate prevents. Flip back to
-    // Write when #103 re-enables the gpu_partitioned_test!. The already-committed
-    // .result.txt is deliberately left in place.
+    // Write, not Skip: the golden_approx_std consumer at
+    // shuffle-stddev/partitioned-tp8-standard is enabled again (#103 was an
+    // uninitialized OutBuild field, not the merge), so this golden is read rather than
+    // orphaned — which is the thing the `ResultGolden` gate is there to prevent.
     common::assert_cpu_results_match_datafusion(
         "tpch",
         "1",
@@ -92,7 +90,7 @@ async fn inc5_stddev_final_agg_at_tp8_partitioned_matches_datafusion() {
         "tp8-standard",
         CpuOracle::DataFusionApproximate,
         ExecMode::Partitioned,
-        ResultGolden::Skip,
+        ResultGolden::Write,
     )
     .await;
 }

@@ -283,6 +283,9 @@ cudf::ast::expression& build_expr(const fb::Expr* expr, ExprContext& ctx,
           return ctx.keep(std::make_unique<cudf::ast::operation>(
               cudf::ast::ast_operator::SUB, lit, arg));
         }
+        case fb::UnaryOp_Sqrt:
+          return ctx.keep(std::make_unique<cudf::ast::operation>(
+              cudf::ast::ast_operator::SQRT, arg));
         default:
           throw std::runtime_error(
               "unsupported UnaryOp: " + std::to_string(un->op()));
@@ -373,7 +376,9 @@ static cudf::type_id infer_expr_type(const fb::Expr* expr,
         case fb::UnaryOp_IsNull:
         case fb::UnaryOp_IsNotNull:
           return cudf::type_id::BOOL8;
-        default:  // Negative
+        // Negative and Sqrt both answer in their operand's type; a stddev's
+        // finalize takes the root of a FLOAT64 quotient.
+        default:
           return infer_expr_type(u->arg(), table);
       }
     }
@@ -873,6 +878,8 @@ std::unique_ptr<cudf::column> build_column(
           return cudf::is_null(arg->view());
         case fb::UnaryOp_IsNotNull:
           return cudf::is_valid(arg->view());
+        case fb::UnaryOp_Sqrt:
+          return cudf::unary_operation(arg->view(), cudf::unary_operator::SQRT);
         default:
           throw std::runtime_error(
               "UnaryOp not supported in column path: " + std::to_string(un->op()));
