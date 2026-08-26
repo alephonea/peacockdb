@@ -61,6 +61,10 @@ BENCH_TARGET=peacock_gpu_benchmarks
 BENCH_STAGING=cpp/install/rust-benchmarks
 # Relative to testdata/ on both sides, so one name drives the remote export and the pull.
 BENCH_RECORD_REL=calibration/records.tsv
+# The Nsight capture of a PCK_BENCH_NSYS run, and its sqlite export. Same convention.
+# Only the export travels: the .nsys-rep is the profiler's own format and is tens of
+# times the size, and nothing on this side reads it.
+BENCH_CAPTURE_REL=calibration/capture
 # opt-3: the default test profile leaves workspace crates at opt-level 1 and so measures
 # a host overhead that is not the engine's. See `[profile.benchmarks]` in Cargo.toml.
 BENCH_PROFILE=benchmarks
@@ -99,7 +103,13 @@ Usage: build-test-shadgpu.sh [flags]
   --run-benchmarks            attached measurement run
   --run-benchmarks-detached   setsid on the host; poll with --benchmark-status
   --benchmark-status          read-only: still going / finished / log tail
-  --pull-benchmarks           fetch testdata/benchmark-results/ and the calibration record
+  --pull-benchmarks           fetch testdata/benchmark-results/, the calibration record
+                              and the sqlite export of a capture, if there is one
+
+Knobs read from the environment, not flags:
+  PCK_TEST_FILTER=<sub>       cargo-test name filter forwarded to the rust binaries
+  PCK_BENCH_NSYS=1            --run-benchmarks captures under nsys (see the note at
+                              PCK_BENCH_NSYS in this file)
   --all                       = --build --push-binaries --patch --run
 
 --all deliberately does NOT imply the benchmark phases: that is what keeps a
@@ -384,6 +394,12 @@ EOF
 : "${PCK_TEST_FILTER:=}"
 filter_q=$(printf '%q' "$PCK_TEST_FILTER")
 
+# Capture knob for --run-benchmarks. Off unless set, and deliberately not a flag: a
+# capture is a different measurement, not a variant of the run — nsys serializes what it
+# traces, so the times in the .benchmark.txt of a captured run are not comparable with
+# any other. Something a caller has to type is the right shape for that.
+: "${PCK_BENCH_NSYS:=}"
+
 # --- run: the correctness gate ------------------------------------------------
 # Knobs, set in the caller's env rather than as flags:
 #   PEACOCK_GPU_DEBUG=1    PCK_TRACE + a per-node cudaStreamSynchronize in
@@ -571,12 +587,49 @@ remote_bench_script() {
     # would read green having measured nothing. mktemp gives the comparison point.
     stamp=\$(mktemp)
 
+    # PCK_BENCH_NSYS: trace the run instead of just measuring it. PEACOCK_NVTX turns on
+    # the node/partition ranges the capture is joined on -- without it the trace has
+    # libcudf's calls and no way to say which node they belong to.
+    #
+    # --trace=nvtx,cuda and nothing else: no --sample (the CPU profiler's SIGPROF
+    # interrupts the very host spans the ranges measure) and no --gpu-metrics-device
+    # (that is the hbm measurement, it needs a frequency chosen against the device and
+    # it doubles the file for a column this join does not read).
+    #
+    # Exported to sqlite here, on the machine that wrote it: nsys export needs the same
+    # nsys that captured, and only the export is small enough to want on the wire.
+    capture=""
+    if [ -n "$PCK_BENCH_NSYS" ]; then
+      capture=\$PEACOCK_TESTDATA_DIR/$BENCH_CAPTURE_REL
+      mkdir -p "\$(dirname "\$capture")"
+      rm -f "\$capture.nsys-rep" "\$capture.sqlite"
+      export PEACOCK_NVTX=1
+      echo "==> capturing to \$capture.nsys-rep"
+    fi
+
     # --test-threads=1 is not optional: cuDF/RMM share one process-wide pool and one
     # default stream, so concurrent cases would measure each other's contention.
     echo "==> $BENCH_TARGET (filter=$filter_q)"
-    LD_LIBRARY_PATH="\$bench_ld:\${LD_LIBRARY_PATH:-}" \\
-      "\$bin" --nocapture --test-threads=1 $filter_q
-    status=\$?
+    if [ -n "\$capture" ]; then
+      # `env` between nsys and the binary, not LD_LIBRARY_PATH in front of nsys: the
+      # path carries glibc-2.35, and nsys is a host binary that would load it under the
+      # host's own loader and die — the same trap the bench_ld comment above describes.
+      # env inherits an untouched environment and sets the variable for its child alone.
+      nsys profile --trace=nvtx,cuda --sample=none --cpuctxsw=none \\
+                   --force-overwrite=true -o "\$capture" \\
+        env LD_LIBRARY_PATH="\$bench_ld:\${LD_LIBRARY_PATH:-}" \\
+          "\$bin" --nocapture --test-threads=1 $filter_q
+      status=\$?
+      # Even after a failed run: a capture of the executions that did happen is still
+      # the only copy of them, and re-running to get one costs the whole run again.
+      nsys export --type=sqlite --force-overwrite=true \\
+                  -o "\$capture.sqlite" "\$capture.nsys-rep" || true
+      ls -l "\$capture.nsys-rep" "\$capture.sqlite" 2>/dev/null || true
+    else
+      LD_LIBRARY_PATH="\$bench_ld:\${LD_LIBRARY_PATH:-}" \\
+        "\$bin" --nocapture --test-threads=1 $filter_q
+      status=\$?
+    fi
 
     written=\$(find "\$results" -name '*.benchmark.txt' -newer "\$stamp" | wc -l)
     total=\$(find "\$results" -name '*.benchmark.txt' | wc -l)
@@ -667,6 +720,17 @@ EOF
     echo "==> fetched $(grep -vc '^#' "testdata/$BENCH_RECORD_REL") calibration rows"
   else
     echo "==> no calibration record on the host (a run from before it was emitted?)"
+  fi
+  # The sqlite export of a PCK_BENCH_NSYS run, on the same terms: tested over ssh, and
+  # absent is the normal case rather than a failure. Not the .nsys-rep beside it -- see
+  # BENCH_CAPTURE_REL. Left on the host until the next capture overwrites it, so a pull
+  # that follows an ordinary run brings home the previous capture; the file is dated by
+  # its mtime and nothing joins it to a record automatically.
+  if ssh "$REMOTE" test -f "$REMOTE_REPO/testdata/$BENCH_CAPTURE_REL.sqlite"; then
+    mkdir -p "testdata/$(dirname "$BENCH_CAPTURE_REL")"
+    resilient_rsync "$REMOTE:$REMOTE_REPO/testdata/$BENCH_CAPTURE_REL.sqlite" \
+      "testdata/$BENCH_CAPTURE_REL.sqlite"
+    echo "==> fetched capture $(du -h "testdata/$BENCH_CAPTURE_REL.sqlite" | cut -f1)"
   fi
 fi
 
