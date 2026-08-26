@@ -2743,6 +2743,24 @@ carries a marker saying so, rather than being deleted — the legacy path delete
 "no golden" and as "golden not applicable" identically, and `build-test.md` states the old rule
 and is corrected in the same commit.
 
+**`live_cpu` is what the device uses when no frozen result can serve it, and there are two such
+cases rather than one.** The first is legacy's: a result over the cap has no golden to compare
+against, so the device is held to a live cpu run instead. The second falls out of this mode and
+has no legacy counterpart — `.result.txt` holds one entry per query, authored by one mode, while
+the device runs at every mode the query enables. Where the rows are the same at every mode that
+is one golden serving five runs, which is the point of the single entry. Where they are not, it
+is one golden that only one of them can match: `scan-limit` at `bp-tp1-single` returns different
+rows from the `bp-tp4-sized` section, and `golden_exact` would fail on a correct device. So a
+query whose `cpu_oracle` is `data_fusion_subset` takes `live_cpu` on the device, compared against
+a cpu run at the *same* mode — where both walk one driver over one plan and the rows are
+determined again.
+
+Both conditions are derivable — one from the golden's own marker, one from the declaration two
+arguments to its left — so neither is a seventh argument, and both are asserted rather than
+trusted. A `golden_exact` where the cap or the subset oracle applies is a test that fails on
+correct behaviour; a `live_cpu` where neither does is a device run spending a live oracle on a
+comparison a committed file would have made faster and harder.
+
 A section can therefore turn from content into a marker, and back, as a result crosses the
 threshold. Nothing guards that transition and nothing should: at a fixed scale factor a result's
 size moves only when its answer moves, which is the thing every other check in the tier is
