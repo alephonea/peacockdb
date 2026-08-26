@@ -5,8 +5,12 @@
 
 pub use crate::executors::all_at_once_gpu_executor::{AllAtOnceGpuExecutor, GpuExecutor};
 
-/// Per-node GPU timing switch (benchmark mode) and the resolution floor of what it
-/// reports — see
-/// [`crate::executors::backend::gpu_node_executor::set_node_timing`] and
-/// [`crate::executors::backend::gpu_node_executor::measure_timing_floor_us`].
-pub use crate::executors::backend::gpu_node_executor::{measure_timing_floor_us, set_node_timing};
+/// Benchmark-mode instrumentation: the per-node timing switch, the resolution floor of
+/// what it reports, and the pooled device allocator those numbers should be taken under
+/// — see
+/// [`crate::executors::backend::gpu_node_executor::set_node_timing`],
+/// [`crate::executors::backend::gpu_node_executor::measure_timing_floor_us`] and
+/// [`crate::executors::backend::gpu_node_executor::install_rmm_pool`].
+pub use crate::executors::backend::gpu_node_executor::{
+    install_rmm_pool, measure_timing_floor_us, set_node_timing, RmmPool,
+};

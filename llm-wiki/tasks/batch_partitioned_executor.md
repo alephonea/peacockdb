@@ -2436,9 +2436,9 @@ two are different findings, and a record that cannot tell them apart measures no
 The record gains the mode and the tier — `<query>.<mode>.benchmark.txt` alongside the legacy
 `<query>.<mode>-<tp>-<tier>` — and keeps `build_profile`, `sync_floor_us`,
 `nodes_at_or_below_floor` and the rest, since they mean the same thing. It also carries which
-allocator measured the run: the pool lands with [#151](../tickets.md#t151) and
-[#148](../tickets.md#t148), and a number taken without one is not comparable with a number
-taken with one — which is the whole reason #151 exists.
+allocator measured the run: the pool landed with
+[#151](../archive/archived-tickets.md#t151), [#148](../tickets.md#t148) is still open, and a
+number taken without one is not comparable with a number taken with one.
 
 Case list as the correctness tiers use, so the measured set cannot drift from the verified
 one, and `test_ci_coverage` exempts the target explicitly because it asserts nothing.

@@ -89,6 +89,43 @@ typedef struct PeacockNodeStats {
   uint64_t time_us;
 } PeacockNodeStats;
 
+/// What peacock_install_rmm_pool() did. Values, not a bitfield.
+enum {
+  /// A pool is the current device resource.
+  PEACOCK_RMM_POOL_INSTALLED = 0,
+  /// The pool could not be built: the default resource, NOT on purpose.
+  PEACOCK_RMM_POOL_UNAVAILABLE = 1
+};
+
+/// Outcome of installing the pooled device allocator — sizes in bytes, 0 unless
+/// `state` is PEACOCK_RMM_POOL_INSTALLED.
+typedef struct PeacockRmmPoolInfo {
+  int32_t state;       ///< one of PEACOCK_RMM_POOL_*
+  int32_t integrated;  ///< 1 on an integrated part, which is sized differently
+  uint64_t free_bytes;
+  uint64_t initial_bytes;
+  uint64_t maximum_bytes;
+} PeacockRmmPoolInfo;
+
+/// Install rmm's pooled device resource for the current device (process-global,
+/// idempotent, NOT installed by default). Call before any GPU work.
+///
+/// Without it every cuDF intermediate is a cudaMalloc/cudaFree round trip. The
+/// C++ gtest binaries install the same pool from their main(); this entry point
+/// exists so `peacock_gpu_benchmarks` — a Rust target, which cannot include
+/// cpp/include/peacock/rmm_pool.hpp — measures the engine under the same
+/// allocator instead of producing numbers that are quietly compared with theirs.
+///
+/// The engine does NOT call this on its own behalf, so a shipping query is
+/// unaffected; making it self-installing is llm-wiki/tickets.md #148.
+///
+/// @param out_info  Filled with what actually happened. Required.
+/// @return 0 unless out_info is NULL — NOT non-zero on UNAVAILABLE, which still
+///         leaves a runnable default resource. Whether that is fatal is the
+///         caller's call, and for anything being timed it is: a time taken with a
+///         pool and one taken without differ by more than noise.
+int peacock_install_rmm_pool(PeacockRmmPoolInfo* out_info);
+
 /// Turn per-node timing on/off (process-global; off by default).
 ///
 /// Enabling it makes peacock_executor_execute_node synchronize the default stream at

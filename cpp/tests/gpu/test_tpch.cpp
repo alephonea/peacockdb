@@ -46,7 +46,7 @@
 #include <string>
 #include <vector>
 
-#include "rmm_pool.hpp"
+#include "peacock/rmm_pool.hpp"
 #include "tpch_golden.hpp"
 
 using namespace peacock_test;
@@ -768,6 +768,6 @@ TEST_F(TpchSf40, Q8SevenTableJoin) {
 // Same entry point as the other gtest binaries here (the conda cudf ships no gtest_main).
 int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);
-  peacock_test::install_rmm_pool();
+  peacock::install_rmm_pool();
   return RUN_ALL_TESTS();
 }
