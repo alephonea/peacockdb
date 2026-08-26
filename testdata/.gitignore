@@ -5,6 +5,14 @@
 /tpch.sf*/
 /tpcds.sf*/
 
-# Calibration records — measurement input for a fit, rewritten by every
-# benchmark run. The fitted result is what gets committed, not its input.
-/calibration/
+# Calibration records — measurement input for a fit. Ignored by default,
+# because a benchmark run rewrites records.tsv in place and the older formats
+# are kept beside it. The one collection worth keeping is named file by file
+# below, so a later run cannot turn into a commit by accident. fit.tsv is not
+# among them: it is derived, and a fit is cheap to redo from these.
+/calibration/*
+!/calibration/records-sf1.tsv
+!/calibration/records-sf40.tsv
+!/calibration/records-q9-nsys-sf40.tsv
+!/calibration/calls.tsv
+!/calibration/plots/
