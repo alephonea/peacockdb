@@ -365,6 +365,30 @@ pub async fn run_gpu_benchmark(
         runs.push((total_us, plan, stats));
     }
 
+    // Every measured run, in the order they ran, as calibration rows. Off unless
+    // PEACOCK_RECORD_PATH is set: the record is for a collection run, not for the
+    // committed .benchmark.txt, and the two must not start depending on each other.
+    //
+    // ALL of them, not the one chosen below. Reducing a node's ten times to one is an
+    // analysis step, and a collection that has already taken it cannot afterwards be
+    // asked how much the node varied — which is the first thing to look at when a
+    // coefficient does not fit. Here rather than after the sort, so the file's order is
+    // the order they ran in: there is no run-index column, and a repeat of the root's
+    // node_seq is what marks where one execution's rows end.
+    let meta = super::record::RunMeta {
+        source: "peacockdb",
+        dataset,
+        sf,
+        query,
+        label: &label,
+        timing_mode: TIMING_MODE,
+        build_profile: BUILD_PROFILE,
+        allocator: &allocator.to_string(),
+    };
+    for (_, plan, stats) in &runs {
+        super::record::append_records(plan, stats, &meta);
+    }
+
     runs.sort_by_key(|(total_us, _, _)| *total_us);
     let (total_us, plan, stats) = &runs[1]; // second minimum by total
 
@@ -378,24 +402,6 @@ pub async fn run_gpu_benchmark(
         ),
     )
     .unwrap();
-    // The same run, as calibration rows. Off unless PEACOCK_RECORD_PATH is
-    // set: the record is for a collection run, not for the committed .benchmark.txt,
-    // and the two must not start depending on each other. Sourced from the same
-    // second-minimum run the record above reports, so the two files never disagree.
-    super::record::append_records(
-        plan,
-        stats,
-        &super::record::RunMeta {
-            source: "peacockdb",
-            dataset,
-            sf,
-            query,
-            label: &label,
-            timing_mode: TIMING_MODE,
-            build_profile: BUILD_PROFILE,
-            allocator: &allocator.to_string(),
-        },
-    );
 
     eprintln!(
         "bench {dataset}/{query} [{label}]: total_us={total_us} \
