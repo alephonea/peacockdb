@@ -30,7 +30,7 @@ pub mod plan_text;
 pub mod recipe;
 pub mod schema;
 pub mod translate;
-pub(crate) mod validate;
+pub mod validate;
 
 #[cfg(not(feature = "rust-only"))]
 pub mod gpu_backend;

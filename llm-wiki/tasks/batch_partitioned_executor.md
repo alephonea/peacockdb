@@ -2628,9 +2628,9 @@ split into a second file only if it passes the 1000-line bar. The **tests** go i
 `test_cpu_batch_partitioned.rs`, not beside the mechanism: a `#[test]` under `tests/common/`
 compiles into every one of the 22 binaries that declare `mod common`, so it would run 22 times and
 be counted 22 times. A target of its own would avoid that and costs a `pipeline.yml` step and a
-`test_ci_coverage` entry, which is not worth it for two cases. Eleven
-fixtures each gain one line: the macro grows a form that runs the injected set as well as the five
-modes, so an enabled query reads `end_to_end_injected!(tpcds, q45)` and everything else is
+`test_ci_coverage` entry, which is not worth it for two cases. The eleven
+fixtures are declared as one list: `injected_queries!` expands it into both the `INJECTED` const
+and the fixtures, so a query leaves the set only by leaving the list, and everything else is
 unchanged. One thing in `peacockdb-core/src` changes, and only its visibility: `validate()` becomes `pub`.
 The driver validates nothing — `check_canonical_form` is limit positions and no more — so an
 injected tree would have run unchecked, and a rewrite that broke a node's requirements would have
@@ -2639,11 +2639,11 @@ quietly generating plans the planner would never emit. It is also what makes the
 refusal a demonstration rather than a prediction, since `validate()` is what names the node and
 the order it broke.
 
-The cases split by dataset rather than by subject. Five need none — the identity case, the
-selector's cover, the rebatcher refusal, the degenerate-hash emit and the dimension demonstration
-— and go in `tests/test_batch_partitioned_injection.rs` with its own `pipeline.yml` step and
-`test_ci_coverage` entry, so they run in seconds on any host. The two that need a query stay in
-the end-to-end file. A mechanism proof buried in a tier that takes minutes is one nobody runs
+The cases split by dataset rather than by subject. Four need none — the identity case, the
+selector's cover, the rebatcher refusal and the degenerate-hash emit — and go in
+`tests/test_batch_partitioned_injection.rs` with its own `pipeline.yml` step and
+`test_ci_coverage` entry, so they run in seconds on any host. The two that need a query — the dimension demonstration, which plans
+`nested-loop-join` over sf1, and the injected corpus set — stay in the end-to-end file. A mechanism proof buried in a tier that takes minutes is one nobody runs
 while iterating.
 
 **Measure before capping, one run at a time.** T17's seventeen queries at five modes are 85 runs in

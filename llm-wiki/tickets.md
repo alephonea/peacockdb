@@ -6,7 +6,7 @@ anchor that the cost widget links to. Device labels are `tp<N>-<tier>` (micro=10
 mini=2GiB, standard=12GiB).
 
 A ticket carries a **Priority** line only when it is not medium; medium is the default.
-New tickets take the next free number (currently 174). Finished and lapsed tickets move to
+New tickets take the next free number (currently 180). Finished and lapsed tickets move to
 `llm-wiki/archive/archived-tickets.md` (Done / Stale) — numbers are never reused, so an old
 reference still resolves there.
 
@@ -16,8 +16,8 @@ reference still resolves there.
 |---|--:|---|
 | [Critical correctness](#critical-correctness) | 15 | #166 #153 #80 #59 #46 #47 #60 #121 #122 #123 #118 #119 #120 #117 #41 |
 | [Blockers for disabled coverage](#blockers-for-disabled-coverage) | 19 | #169 #168 #158 #175 #173 #97 #23 #32 #65 #62 #91 #95 #57 #45 #63 #56 #55 #96 #143 |
-| [Performance / architecture](#performance--architecture) | 27 | #177 #170 #155 #154 #152 #150 #149 #148 #19 #16 #20 #71 #101 #73 #110 #75 #136 #137 #138 #139 #140 #141 #147 #146 #145 #144 #142 |
-| [Infrastructure / process](#infrastructure--process) | 26 | #176 #174 #167 #164 #163 #159 #160 #161 #162 #113 #114 #116 #126 #134 #133 #132 #131 #130 #129 #128 #127 #125 #13 #94 #69 #49 |
+| [Performance / architecture](#performance--architecture) | 28 | #179 #177 #170 #155 #154 #152 #150 #149 #148 #19 #16 #20 #71 #101 #73 #110 #75 #136 #137 #138 #139 #140 #141 #147 #146 #145 #144 #142 |
+| [Infrastructure / process](#infrastructure--process) | 27 | #178 #176 #174 #167 #164 #163 #159 #160 #161 #162 #113 #114 #116 #126 #134 #133 #132 #131 #130 #129 #128 #127 #125 #13 #94 #69 #49 |
 
 ## Critical correctness
 
@@ -353,6 +353,24 @@ whole-partition aggregate windows need a single batch (coalesce-all first), whil
 rank/dense_rank gaps of #32 carry over unchanged.
 
 ## Performance / architecture
+
+<a id="t179"></a>
+### #179 — nothing shows a rebatcher moving an enforced budget boundary
+
+Whether batch sizes can reach the accountant's binding pre-call check at all is open: two
+candidates failed structurally rather than by accident, so this is about the model, not a gap.
+
+`GpuCoalesceAllBatches` carries the largest estimate in none of the 120 `--- memory ---`
+sections at `bp-tp4-rowgroup` — `GpuEmitPartitions` in 77, `GpuJoin` in 20, `GpuUnload` in 12 —
+so a rebatcher grows a node beside the binding one. `nested-loop-join`'s coalescer is 115 bytes
+against a 2,679-byte join. Of the two queries carrying their largest at a loader,
+`tpch/nested-limits` does move its peak under `Rebatch::AboveSources` (4,915,680 to 8,000,480,
+the 1.63x its goldens predict) while its budget is peak+1 both times: `limit=28` means the
+modelled megabytes are never the transient that binds.
+
+A second thing falls out: `boundary()` in `test_cpu_batch_partitioned.rs` searches upward from
+the observed peak, so a query whose trip is below it reports an untested floor — the trip assert
+catches that rather than passing. Answering this needs a downward search, a different claim.
 
 <a id="t170"></a>
 <a id="t177"></a>
@@ -735,6 +753,21 @@ tripped, so something can branch on it, but there is nowhere to record into — 
 trip log, and `Underestimate` is the precedent for what one would look like. Related: #91.
 
 ## Infrastructure / process
+
+<a id="t178"></a>
+### #178 — two CI runs share the GPU host, and the pool is sized for one
+`gpu-tests` uses a per-run `REMOTE_DIR` so two runs do not overwrite each other's files, and
+nothing stops their test binaries running at the same time.
+
+Single-tenant GPU is an invariant this repo states and enforces *within* a process — GPU binaries
+run `--test-threads=1` because cuDF and RMM share one process-wide pool. Across runs it is enforced
+by nothing, and the RMM pool master installed makes the collision loud: two jobs overlapping by
+under two minutes gave `std::bad_alloc: out_of_memory` in `pool_memory_resource` on three sf40
+tests, at 14.38 GiB peak on a 139.7 GiB device — not a full device, two pools.
+
+It reads as a flaky GPU tier, which is the expensive way to meet it: the failure is in whichever
+run started second and re-running it alone passes. A concurrency group on the job, keyed on the
+host rather than the ref, is the fix.
 
 <a id="t176"></a>
 ### #176 — the CI coverage guard checks one direction only

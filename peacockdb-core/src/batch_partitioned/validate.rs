@@ -17,7 +17,11 @@ use super::nodes::{AggregateBody, GpuCrossJoin, GpuNestedLoopJoin, NodeRef, try_
 use super::schema::Schema;
 
 /// Post-order, so a child's complaint comes before its parent's.
-pub(super) fn validate(root: &dyn GpuNode) -> Result<(), PlanError> {
+///
+/// Public because the planner is not the only thing that builds a tree: a test that
+/// rewrites a planned one into a shape no planner emits needs the same check the planner
+/// ran, and the driver does not make it — [`check_canonical_form`] is all it asks for.
+pub fn validate(root: &dyn GpuNode) -> Result<(), PlanError> {
     if !matches!(root.kind(), NodeKind::Sink) {
         return Err(PlanError::Invalid(format!(
             "{}: a plan ends at the crossing back to the host — the planner roots it in \
