@@ -387,7 +387,7 @@ the offset half of both lowerings, at tp1 and tp4 alike. What it cannot reach is
 `GpuLimit` over more than one lane: a join between the two limits lets DataFusion push the
 interval into the scan, and this mode plans a limit-carrying source single-lane, while an
 aggregate between them loses the interval outright at tp4 ([#166](../tickets.md#t166)). So a
-multi-lane mid-plan limit is a case T11 constructs rather than canonizes.
+multi-lane mid-plan limit is a case T15 constructs rather than canonizes.
 
 ### The aggregate sequence
 
@@ -845,8 +845,11 @@ itself asking: with no key to co-locate on, both inputs must be one lane.
 **An interleave needs its branches to agree on lane count**, and they may not. `can_interleave`
 takes output lane p from lane p of each input, so a union whose branches carry different lane
 counts has no such correspondence and becomes a `GpuUnion` instead — interleaving would
-preserve a distribution the branches no longer share. tpcds q77 is the case: DataFusion hashes
-three branches into four lanes each, and the small-source rule puts the middle one on one lane.
+preserve a distribution the branches no longer share. tpcds q77 is the case: its store and web
+branches join on their channel key and stay four lanes hashed on it, while the catalog branch is
+`FROM cs, cr` — a cross join, which asks both its inputs onto one lane — so that branch arrives
+with one lane and no distribution at all. The union then declares 4+1+4, and the partial rollup
+above it runs in nine lanes rather than four.
 
 **Equal lane counts are not co-partitioning**, which is what the column's `no` hides.
 DataFusion picks `CollectLeft` for two small tables and emits no repartition at all, while
@@ -1126,6 +1129,42 @@ trait SourceExecutor<B: Backend>: Executor {
 }
 ```
 
+**A call can fail, and failing ends the query.** Every executor method returns
+`Result<(…, CallStats), BackendError>`, and `BackendError` carries a message and no kind,
+because there is one response to all of them: stop. The driver adds the node and lane it was
+calling and fails the query — no retry with a smaller batch, which is [#142](../tickets.md#t142)'s
+adaptive future and not this design.
+
+What the C ABI actually guarantees, since the rule follows from it.
+`peacock_executor_execute_node` calls `session.reset()` on any exception
+([`gpu_executor.cpp`](../../cpp/src/gpu_executor.cpp#L219)), dropping the plan and every
+resident intermediate — so after that failure no handle is usable, and the next call reports
+"no plan loaded" rather than misbehaving. `peacock_result_from_handle` does *not* reset, so a
+failed export leaves the session and its handles intact. And `peacock_handle_release` is
+null-guarded, which makes releasing a handle into a reset session a silent no-op rather than a
+fault.
+
+So the driver needs no separate teardown: on a failure it stops scheduling and releases what it
+holds, which keeps holds equal to releases. That is one line more than it sounds, and the line
+is not in the accountant — the early exit walks the queues, and the batch handed to the call
+that failed is not in a queue, it went into the call. **The failure site releases it**, where
+the successful path releases the same batch. The rest of the rule is about use rather than
+release: **no handle is touched after a failure** — no unload, no further call, no result read.
+
+A trip says which check produced it, as data rather than as words: `RunError::BudgetExceeded`
+carries the phase, and the sentence carries it too, for a reader. Today both phases end the
+query. Whether a pre-call trip should instead be recorded and the call allowed — the model is an
+estimate, and refusing on an estimate is a policy rather than a fact — is deliberately open; the
+type is what leaves room for it, and #142 is where the recourse question lives.
+
+`resident_bytes` and `scratch_bytes` stay infallible, and the line is between a method that does
+work and one that reports a number the executor already holds. That is forced rather than
+chosen: an accountant handed a failure instead of a figure has nothing to do with it — zero stops
+the enforcer enforcing, unbounded kills a query over a reporting hiccup, and skipping the check
+disables the guard silently. `CallStats` is the visible tell, since every fallible method returns
+one and neither of these does. A mock backend scripts a failure at a chosen call, which is how
+the path is tested without a GPU.
+
 **Illegal calls are unrepresentable rather than checked.** Every method that ends a
 protocol consumes `self`, so four run-time guards the prototype needed become
 compile errors: probing before `set_build`, calling `set_build` twice, probing after
@@ -1301,20 +1340,31 @@ planner that declines to split the phase.
 
 ## Drivers
 
-Two drivers, both single-threaded, **push-based**, deterministic, generic over `Backend`.
-Settled by the T0 prototype ([`scripts/exec_model/`](../../scripts/exec_model/README.md));
-what follows is that design, not a sketch of it.
+Two drivers in `batch_partitioned/driver/`, both single-threaded, push-based, deterministic
+and generic over `Backend`, with the schedule and the accounting as units of their own.
 
-- **`batch_partitioned_driver`** owns the tree, the queues, the schedule, the three
-  cross-lane categories (`PartitionEmitter`, `PartitionAccumulator`, `BatchForwarder`) and
-  the one node it special-cases, a `GpuUnload` carrying a limit.
-- **`batch_single_partition_driver`** drives one lane of one lane-scoped node — Source,
-  Exec, BatchAccumulator, Join, Unload. It is that executor instance's state machine: it
-  decides which call the lane's current input state calls for, makes exactly one call, and
-  reports the outputs plus whether the lane will ever produce again.
+| File | What it owns |
+|---|---|
+| `partitioned.rs` | the tree, the queues, the run loop, the three cross-lane categories (`PartitionEmitter`, `PartitionAccumulator`, `BatchForwarder`), and the row-range decision at a `GpuUnload` carrying a limit |
+| `single_partition.rs` | one lane of one lane-scoped node — Source, Exec, BatchAccumulator, Join, Unload — as that executor instance's state machine: which call the lane's input state calls for, one call, then the outputs and whether the lane can produce again |
+| `scheduler.rs` | which node runs next, from plain numbers: no backend, no batch, no executor |
+| `index.rs` | the tree as the schedule and the accountant see it — heights, pre-order subtree ranges, per-node category, executor slots |
+| `accounting.rs` | the resident total, the per-slot executor cache, the budget checks |
+| `mock.rs`, `plans.rs` | test-only, and outside `tests/` because both test suites share them: a scripted backend, and plan builders that reach shapes no query produces |
 
 A chunk is **one node's lane**, not a chain of them: min-height selection walks a batch up a
 chain node by node on its own, so a chain-walking driver would duplicate the scheduler.
+
+Three things the drivers refuse rather than absorb. A tree whose interval-carrying node feeds
+only the sink is not canonical — the planner puts that interval on `GpuUnload` — and
+`Driver::new` asks `validate.rs` rather than carrying its own copy of the rule, so a mock plan
+meets the same refusal a planned one does. A backend that returns executors of a different
+category than the node is fails where it was built, not at the first call that finds the wrong
+method — `NodeExecutors::category()` against `category_of` off the `NodeRef`
+registry. And an `emit` returning other than the plan's lane count is a run-time error, as
+the trait's own note says it must be. Both are `RunError`, which is where run-time failure
+lives now that `PlanError` is plan time only: a budget trip, a protocol violation, a backend
+that has no executor for a node.
 
 ### The scheduling rule
 
@@ -1326,6 +1376,26 @@ A node is **runnable** when any of its partitions can make progress: a source al
 and any other node can once that lane's inputs hold a batch or are known to be finished.
 Among all runnable nodes the driver takes the **smallest height**, breaking ties
 **leftmost**, and then runs **every lane** of that node.
+
+The unit that becomes ready is not always an output lane, which the schedule has to carry
+separately: a `PartitionAccumulator` has one output lane and becomes ready one *input* lane
+at a time, and an emitter reads a single input lane whatever it emits. Counting output lanes
+there gives a driver that never schedules a merge's later lanes.
+
+The schedule is maintained incrementally rather than rescanned: a rank order from
+(height, order) computed once, a ready bitset over it, per-node ready-lane counters, and hold
+counters — counters, not flags, since one node can sit in two joins' probe subtrees at once.
+What that costs is worth stating, since it is the reason for the shape. A pick is the lowest
+set bit — one word scan per 64 nodes. A step re-checks the node that ran and its parent, and
+nothing else, because nothing else can have changed: a node's readiness is a fact about its
+inputs, so consuming from a child does not move the child's own. Each join stamps its probe
+subtree once as the schedule is built and once as the hold lifts, and a satisfied limit stamps
+its subtree once and never lifts — so the holds are O(nodes) per join and per limit across the
+whole run rather than anything per step. The prototype instead re-derives the entire predicate
+every step: every node, every lane, and both hold chains to the root.
+
+A naive rescan survives as a test-only oracle, compared pick by pick over seeded random
+shapes, because an incremental schedule that disagrees with it is wrong by definition.
 
 That is the whole of it, and the push behaviour falls out rather than being programmed.
 The moment a node produces a batch its parent is runnable at a strictly lower height, so
@@ -1426,28 +1496,32 @@ export.
 
 ### The test surface
 
-**Flow and backpressure are a first-class test surface for both drivers**, exercised with
-mock operators behind a mock `Backend` impl (scripted batch counts, sizes, skew patterns,
-accumulator behaviour — no real executors). Each case asserts pull counts, queue bounds and
-batch/handle release:
+Both drivers are tested against a mock `Backend` — the third instantiation, in
+`driver/mock.rs` — whose operators are scripted rather than computed: batch counts and
+sizes per source, an `ExecRule`/`AccRule`/`EmitRule`/`JoinRule` per category, a miswired
+variant that returns the wrong executor kind, and instrumented and uninstrumented forms so
+`CallStats::scratch_bytes` is present in one and `None` in the other. Plans are built from
+the helpers in `driver/plans.rs`, not from sql, so a shape no query produces is one
+line.
 
-- skewed emit — starved lane, hot lane; every queue ≤ one batch;
-- accumulator-ended lane progress — one batch per visit, bytes in `resident_bytes()`;
-- merge-sorted over a skewed emit — no livelock, every step lands a batch or finalizes a
-  lane;
-- limit early exit as a release case — the subtree stops being scheduled, every in-flight
-  batch is dropped, and `unload` is never *called* for a batch outside the interval;
-- union with one child exhausted and one still producing;
-- two-phase join with emits on both sides — probe-side queues **empty**, not merely
-  bounded, until the build drains;
-- nested shuffles holding every bound simultaneously;
-- interleave per-lane child rotation;
-- determinism: two runs, identical batch traces.
+The tests assert calls, queue bounds and release rather than returned rows: a test on the
+rows passes just as well when the whole input was read and held.
+
+| Where | What it holds |
+|---|---|
+| `scheduler/tests.rs` | the pick is min height and ties break leftmost; a node is ready while any of its lanes is, and readiness comes and goes; a join holds its probe subtree from time zero and lifts only when every lane has left build; a node under two builds stays held when the inner one lifts; a join inside another's build subtree is not held; a limit's hold and a join's are independent; `LIMIT 0` is satisfied before a step; satisfying twice holds once; and the incremental schedule picks what a full rescan would, over seeded random shapes |
+| `tests/flow.rs` | a batch reaches the root before the next is produced; every lane of the chosen node runs; queues stay at one batch per lane with no cap; a dry lane does not stall its siblings; empty batches are carried and empty scatter outputs are dropped at the emit; probe-side queues stay **empty** until the build is set, transitively, with nested joins resolving outermost-first; both build-side protocol violations; merge, union, interleave and cross-lane accumulator routing; a join's finish pass reaching the root; two runs, identical traces |
+| `tests/limit.rs` | early exit and its release path; the skip prefix never unloaded; only straddling batches narrowed; the count taken across lanes, not per lane; zero fetch, offset with no fetch, skip past the end; the exit reaching through a shuffle; a mid-plan limit stopping its own subtree and holding nothing; a satisfied limit reporting done so the node above it can finish |
+| `single_partition/tests.rs` | the lane driver as a state machine, with no tree and no schedule: a source runs to exhaustion, exec is one call per batch, an accumulator emits only at done, a join sets build before it probes, a finished lane refuses another call, the executor is built on the first step rather than at construction, and `can_step` agreed with what `step` does over every category crossed with every input availability — an accepted state yields a call or a named violation, never a silence |
+| `tests/stress.rs` | one plan re-run at five shapes — one lane one batch, one lane many, four lanes one each, four lanes many, every key into one lane — each asserting rows delivered equals rows given, queues at one batch per lane, and holds equal releases; then the same five with a node the plan did not ask for injected above every source |
+| `tests/budget.rs` | the accountant's decisions at their boundary, every budget derived from an unbudgeted run's peak rather than chosen: equality completes and one byte below trips, naming the node the peak occurs at; a priced emission refuses the call before it runs; a silent model lets the same peak pass a budget nothing checked it against; and a limit above an accumulator saves nothing, while the same interval over the scan does |
+| `tests/failure.rs` | a backend failure at each call shape — a source step, a mid-chain exec, an emit, a join probe, and the two that consume their executor — each asserting the query fails with the node, the lane and the backend's own words, that scheduling stops, and that holds still equal releases across both release paths |
+| `accounting/tests.rs` | resident is in-flight plus executor state; the cached total tracks a live sum; forget on a consuming call; release without hold is an error; both checks trip, pre-call and post-call; the peak is a high-water mark; an under-predicting model is recorded with its magnitude and never enforced; an absent measurement is not an underestimate |
+| `tests/memory.rs` | the same properties through a whole run: a tight budget fails the query cleanly and a generous one records a peak; a consumed input stays accounted through its call; an accumulator's residency is visible while it holds rows; a join reports its build side while probing; one bound asserted at two partitionings, since a residency defect can be invisible at one |
 
 Both drivers take the resident-accounting hooks below and fail the query when the enforcer
-trips. An FFI error is query-fatal: the C++ side resets the whole session and every
-resident handle with it (`cpp/src/gpu_executor.cpp` ~L192) — there is no mid-flight retry
-with smaller batches (that is #142's adaptive future).
+trips. A backend failure ends it the same way and by the same path — the convention is with the
+[executor traits](#traits), since it is their return type that carries it.
 
 ## Memory accounting
 
@@ -1471,83 +1545,88 @@ Per call: pre-check `resident + scratch_bytes(n_rows, n_bytes)` against the budg
 model may consult `&self`, so accumulators can include their state); execute; then remove
 consumed inputs, add outputs at actual `byte_size()`, refresh the one executor's
 `resident_bytes()` delta, and post-check. The measured `CallStats.scratch_bytes` exists so model
-quality is observable: under-estimates are recorded with their magnitude. Both backends
+quality is observable: under-estimates are recorded with their magnitude. The three calls that
+consume their executor — `mark_done_and_fetch`, `finish_and_fetch`, an exhausted `next_batch` —
+skip the post-call residency read and forget the slot instead, a consumed executor holding
+nothing; the budget check still runs. `set_build` needs no such case, since the successor
+reports for the same slot. Both backends
 measure — the CPU directly, the GPU through RMM allocator hooks — so `None` means this run
 was not instrumented, not that the backend cannot report.
+
+Four things about `driver/accounting.rs` are load-bearing rather than incidental.
+
+- **The executor total is a cache refreshed one slot at a time, never a sum over live
+  executors.** A slot is a dense index per executor instance; the sum is what a prototype
+  reaches for, and it is also what would force the accountant to hold references to executors
+  the driver owns mutably.
+- **A batch's size is read once, when it is held, and the same figure is released.** An arrow
+  batch recomputes its size by walking every array, so a second read is a second chance to
+  disagree — and a released figure that differs from the held one drifts the total with nothing
+  going red.
+- **Holds and releases are counted, not netted.** A total back at zero is also what releasing
+  something never held would leave behind, so the pair is the check and the total is not. This
+  is the invariant on the early-exit path, where a satisfied limit ends the run with queues
+  still full and every one of those batches released rather than drained.
+- **A trip carries no names.** It is a slot and two figures until the driver formats a message
+  on the path that ends the query, so the check costs no formatting per call. A budget of `None`
+  accounts and reports without ever tripping, which is what the flow tests run under.
+- **The peak is an observation, and the checks are the enforcement.** They do not see the same
+  total, and T13 measured the gap: the peak is raised in `hold`, where a batch enters a queue,
+  while the post-check runs after the emitting executor's slot has been refreshed or forgotten.
+  A buffering node holds its state and its output alive together for the length of one call —
+  precisely what `cudf::concatenate` does — so its transient raises the peak and no check sees
+  it. A budget below a reported peak can therefore complete, which is a fact about where the
+  two numbers are taken and not a hole to be patched by re-ordering them: after the call, the
+  state really is gone.
+
+**What prices a transient is the pre-check, so pricing it is an obligation.** An accumulator's
+`scratch_bytes` on its emitting call must include the output it is about to build; the model may
+consult `&self`, which is what that permission is for. A model that returns zero there is not a
+cheap call, it is a guard switched off — and it fails open, since nothing goes red. The driver
+tests pin both halves: a priced emission refuses the call before it runs, and a silent one lets
+the same peak pass a budget it was never checked against.
 
 **Model ≥ measured is not an invariant.** `scratch_bytes` rests on the optimizer's
 cardinality figure for a join and on assumed selectivity for a filter, so it will sometimes
 come in low, and asserting otherwise would make the suite red for something that is not a
-defect. The enforcer's contract is "fail cleanly when the accounted peak exceeds budget",
-not "the budget is never exceeded" — the same class of guarantee as the legacy
-`ResidentEnforcer`.
+defect. The enforcer's contract is "fail cleanly when an accounted total at a check point
+exceeds budget", not "the budget is never exceeded" and not "the peak stays under it" — the
+same class of guarantee as the legacy `ResidentEnforcer`.
 
-### What the corpus rollout measured
+**Both checks end the query today**, and the pre-call one does so on an estimate rather than on
+a fact. Whether it should instead record and let the call proceed is open rather than settled:
+the error carries which check tripped, so something can branch on it, but there is nowhere to
+record into — `RunReport` has no trip log, and `Underestimate` is the precedent for what one
+would look like. [#142](../tickets.md#t142) holds that question with the other recourses.
 
-The T0 prototype now runs 22 TPC-H and 71 TPC-DS query texts through this node set, at
-three partition layouts and on both join backends, under a 2 GiB accountant — 558 runs over
-the sf1 tables (`scripts/exec_model/tests/`). The formula above survived that; the
-following is what it got wrong first, and every item is a property of the design rather
-than of the prototype, so the Rust implementation inherits all of it.
+### What the rollout left binding
 
-**An executor's residency is not one number.** `merged_scratch` prices an output row as
-`probe_row_bytes + build_row_bytes + 16`, and derives `build_row_bytes` by dividing the
-executor's residency by its build row count. That identity holds only while residency *is*
-the build side. Under #136 a `LEFT_SEMI`/`LEFT_ANTI`/`LEFT_MARK` join's residency also holds
-every probe batch's projected keys, waiting for the finish pass — so the division charges
-the accumulation to each output row. Measured on TPC-DS q37: a build side of **one row**,
-8.0 MB of accumulated keys, a 250k-row probe batch, and a modelled scratch of **2.0 TB** for
-a call whose entire query peaks at 11.5 MB. The enforcer refused the query at 13.8 GB
-against a 2 GiB budget — a correct plan, declined. The fix is an accessor for the build side
-alone (`RecipeJoin.build_bytes()`), which `scratch_bytes` divides by while `resident_bytes`
-goes on reporting the whole. The trait needs no change — the split is internal to the
-executor — but the rule it encodes is general: **`resident_bytes()` is a total for the
-enforcer to check, never a numerator for a per-row cost.** Anything that divides it wants
-the part that scales with build rows, and only the executor knows which part that is.
+The T0 prototype ran the whole corpus under a 2 GiB accountant — 558 runs, three layouts, both
+join backends — and the formula survived it. Four rules did not come out of the design and had
+to be measured; each one holds for the Rust implementation and the case behind it is in
+[`archive/designs.md`](../archive/designs.md).
 
-**The finish-pass accumulation is a residency term that grows with the probe side.** The
-estimator's `subtree_max_row_bytes` vocabulary charges a join in build-side terms, which is
-right for the hash table and wrong for this. A build-preserving join on the frozen surface
-holds key columns for every probe row it has seen — O(probe rows in the lane × key width),
-unbounded in the build side, and precisely the term that decides whether a plan fits. Plan
-time must charge it per lane, for all lanes live at once.
-
-**The CPU backend does not pay it, so it cannot be used to price it.** The pandas backend
-keeps "which build rows matched" as a boolean array over the build frame: free in-process,
-and exactly the thing that never crosses the C ABI. On q37 that is the difference between a
-6.0 MB peak and an 11.5 MB one, for the same plan and the same answer. A residency model
-calibrated on the CPU path will under-charge every build-preserving join on the GPU path.
-
-**A residency defect can be invisible at one layout.** q37 and q82 passed at
-`one_partition_one_batch` and failed at `default` and `many_small_partitions`: only a
-*streamed* probe accumulates, and a single-batch probe accumulates once and then finishes.
-Anything that asserts a memory bound has to run at more than one partitioning, or it is
-asserting about one shape of arrival.
-
-**The layout that avoids the accumulation is the expensive one.** Coalescing a probe into a
-single batch to skip the finish pass moves the cost into the batch: q3's peak goes from
-6.2 MB at `default` to 69.3 MB, q7's from 53.3 MB to 367.7 MB. Streaming a probe versus
-coalescing it is a residency trade and not a correctness one, and neither side is free —
-the planner needs both numbers to choose.
-
-**Build bytes are counted twice, and that is right.** #136 rebuilds and gathers against the
-build side on every probe call, so the same bytes are in the resident total and in each
-call's transient. `merged_scratch` returning `resident + …` rather than a delta is
-deliberate, not double counting.
-
-**Zero rows is not zero bytes, and a zero peak is a defect.** `merged_scratch` returns the
-residency unchanged for an empty batch: an empty lane still owes a typed batch, which costs
-schema and no rows. Every corpus run asserts `0 < peak <= budget` and `in_flight_bytes == 0`
-at the end for the matching reason — an accountant that finished at zero peak observed
-nothing, and a non-zero in-flight total means a batch was held and never released. Both
-checks are free and both have caught real breakage.
-
-**The measured-versus-modelled diagnostic has a hole exactly where it is needed.** Joins
-return `no_scratch()` on both backends, so `CallStats.scratch_bytes` is 0 for them,
-`Underestimate` never fires for the node whose model is least certain, and the 2 TB
-mis-pricing above passed the diagnostic in silence — what caught it was the enforcer
-tripping on a query that fits. On the GPU path joins are the first nodes that must be
-instrumented through the RMM hooks, not the last.
+- **`resident_bytes()` is a total for the enforcer to check, never a numerator for a per-row
+  cost.** Anything dividing it wants the part that scales with build rows, and only the
+  executor knows which part that is. This mispriced one call at 2.0 TB and declined a query
+  whose whole run peaked at 11.5 MB.
+- **A build-preserving join's residency grows with the probe side**, not the build side, since
+  it holds key columns for every probe row it has seen. Plan time must charge that per lane,
+  for all lanes live at once — and the CPU backend never pays it, so it cannot be used to
+  price it.
+- **A memory bound asserted at one partitioning is asserting about one shape of arrival.**
+  Only a streamed probe accumulates; a single-batch probe accumulates once and finishes. Two
+  corpus queries passed at one layout and failed at two others.
+- **Zero rows is not zero bytes, and a zero peak is a defect.** An empty lane still owes a
+  typed batch, which costs schema and no rows. Every run asserts a peak above zero and
+  `in_flight` back to zero at the end. `peak <= budget` is *not* among them, and T13 measured
+  why: the peak is observed where a batch is held, and the post-check runs after the emitting
+  executor's state has been forgotten, so a buffering node's transient — its state and its
+  output alive together, which is exactly what `cudf::concatenate` holds — raises the peak
+  without any check seeing it. What prices that transient is the pre-check, so an accumulator
+  **must** include the output it is about to build in its `scratch_bytes`; a silent model is a
+  guard switched off, not a cheap call. That obligation is T15's, and the driver tests pin both
+  halves of it.
 
 ## GPU execution through the frozen FFI
 
@@ -1569,7 +1648,15 @@ additive entry point:
 The translation layer therefore emits, alongside the `GpuNode` tree, a **recipe plan**: a
 structurally valid FlatBuffers plan in the legacy vocabulary whose nodes exist to be
 addressed by seq — the fbs is a menu of parameterized kernels, not the execution
-structure. The mapping:
+structure.
+
+A seq is therefore a construction input to every GPU executor, and where it comes from splits
+the work: in T10 the test hand-builds a one-node recipe plan per executor, which is what the
+C++ plan-executor suite already does and is enough to prove a kernel; the general mapping
+below, over a whole tree, is T14's. A GPU executor cannot be written before something hands
+it a seq, and nothing before T10 does.
+
+The mapping:
 
 | GpuNode | fb seqs emitted | driven as |
 |---|---|---|
@@ -1797,10 +1884,12 @@ printed together. A reader can then follow a reference without holding the child
 order in their head, and a name that disagrees with its ordinal is a visible defect rather
 than an invisible one.
 
-**Layout replaces the lane count.** `partitions=N` becomes the full `PartitionLayout` —
-lane count, batch layout, key distribution, sort order — because in this mode those decide
-what a parent may assume, and three of the four are invisible today. The per-partition
-sub-line gains `out_batches` beside its row and byte counts.
+**Layout replaces the lane count.** `partitions=N` becomes the whole `PartitionLayout`,
+because in this mode it decides what a parent may assume: `lanes=N, batches=single|multiple`
+on every node, plus `hashed_on=[…]` and `sorted_on=[…]` where the layout carries them.
+Those two print only when specified, so their absence is `NotSpecified` and reads as the
+fact it is. The execution goldens' per-partition sub-line gains `out_batches` beside its row
+and byte counts — that half arrives with T19, since nothing executes this mode yet.
 
 **Every node that carries a `fetch` prints it.** A merge that turns 80 rows into 10 must say
 so on its own line; today only `GpuSortExec` does, and the merge above it is silent (see
@@ -1811,12 +1900,13 @@ on the `GpuLimit` mid-plan, on the `GpuUnload` root-adjacent.
 **Types move into the plan golden, not the execution golden.** The declared output schema
 per node — `name:type` per column — is a plan fact, so it belongs beside the layout in
 `<mode>.plans.txt` and is not repeated per query in `.cpu.txt`, which stays a record of what
-execution produced. Printing it there is what makes the explicit casts legible (a
-`Decimal128(38, 6)` in a `final` expression means nothing without the state column's
-declared scale beside it) and it closes the second half of [#135](../archive/archived-tickets.md#t135): a
-node emitting the right column count in the wrong order is today invisible until the root,
-because per-node bytes are derived from the plan's schema on both engines and so agree by
-construction.
+execution produced. Printing it there is what makes the explicit casts legible: a
+`Decimal128(38, 6)` in a `final` expression means nothing without the state column's declared
+scale beside it. What it does not do is check anything — a golden records what the planner
+declared, and the declaration is exactly what a wrong type would move. The check that a
+reference's name matches the field at its position is what closed [#135](../archive/archived-tickets.md#t135)
+on the rust side; comparing a declared type against the expression that produces it is
+[#163](../tickets.md#t163), and the C++ half is [#164](../tickets.md#t164).
 
 Node names lose the `Exec` suffix, since these are not DataFusion nodes — `GpuLoadParquet`,
 `GpuAggregateBatches`, `GpuEmitPartitions` — and after the T1 rename the legacy vocabulary
@@ -1826,10 +1916,13 @@ What deliberately does not change: the indentation-as-tree shape, `output_rows` 
 `batches_to_sorted_str` result comparison.
 
 **Plan goldens** (5 modes: bp-tp1-single, bp-tp1-rowgroup, bp-tp4-single, bp-tp4-rowgroup,
-bp-tp4-sized):
-one file per mode holding all queries — `goldens/<bench>/<mode>.plans.txt` — because the
-per-query files would be small and numerous. Every node renders its `PartitionLayout`:
-count, batch layout, key distribution, sort order.
+bp-tp4-sized): one file per mode holding all queries — `goldens/<bench>/<mode>.plans.txt` —
+because the per-query files would be small and numerous. A query's section is `== <query>`
+followed by the tree and its `--- memory ---`, or by a single `refused:` line where the
+planner declined the shape and a `refused by datafusion:` one where DataFusion did. A
+refusal is a golden like any other: it names its ticket, the meta tier checks that the
+ticket exists, and the registry's cell for that mode has to agree with it in both
+directions.
 
 A parquet source renders its whole mapping as one nested structure on one line —
 `partition_groups=[[[0,1],[2,3]],[[4],[5,6,7]]]`, partitions outermost, batches within
@@ -1840,7 +1933,10 @@ partition — the balance bound, an oversized row group standing alone, a partit
 batches all came from one file region.
 
 **Estimates go in a `--- memory ---` section per query, not on the node line**, as the legacy
-`.plan.txt` already does. They churn where plan shapes do not — an estimator change, then
+`.plan.txt` already does. The section opens with the run's own inputs —
+`budget=…, accumulators=…, certain=…` — and then repeats the tree with one
+`estimated_max_resident_size` per node, so a number is always read against the shape it was
+computed for. They churn where plan shapes do not — an estimator change, then
 #19's statistics, then #147's refinement in flight — so on the node line every such change
 rewrites every line and a reader cannot tell a shape change from a number. In their own
 section the tree stays byte-identical and the diff says which it was. A section rather than a
@@ -1868,7 +1964,11 @@ of five where CPU execution is enabled.
 
 # Implementation plan
 
-Tasks in dependency order; each is one developer hand-off with its own proving tests.
+Tasks in dependency order, and the numbers now ascend with it. T13 is the one that does not:
+it landed early, because both drivers over a mock backend needed none of T9–T12, and it keeps
+its number because commits and reviews already name it. T11 and T12 were retired in the same
+renumbering — their work is T15 and T16 — so a number is never reused and an older reference
+still resolves. Each task is one developer hand-off with its own proving tests.
 Legacy tests stay green throughout — every task that touches shared code runs the
 affected legacy subsets (one query per mode/tier per binary plus the rust-only tier, per
 build-test.md).
@@ -2003,6 +2103,12 @@ fixed there rather than ticketed: `NestedLoopJoinExec`'s dropped projection, `Gp
 a key distribution instead of carrying one, and a non-exhaustive match that dropped the claim a
 mark join earns.
 
+~~**T13 — drivers and enforcer.**~~ (done). Both drivers over a mock `Backend` impl — the
+third instantiation, alongside CPU and GPU — with the schedule and the accountant as units of
+their own, and the accounting formula with its pre/post checks. What the task settled is in
+[Drivers](#drivers) and [Memory accounting](#memory-accounting); what it left for T14 is every
+real executor, since nothing here computes a row.
+
 **T9 — additive ABI.** The three approved symbols in `gpu_executor.cpp` + `peacock_gpu.h`,
 signatures as [GPU execution](#gpu-execution-through-the-frozen-ffi) gives them; any
 *further* surface change goes through a proposal to the human, per the constraint section.
@@ -2028,30 +2134,6 @@ plan carries the answer and the executor has only to produce it — one lane, on
 rows the node already holds. The translation layer maps it like any other source; the work
 is the executor, which is why it lands in this task rather than in T4.
 
-**T11 — accumulators.** `GpuCoalesceAllBatches`, `GpuAggregateBatches` (merge-only and
-finalizing),
-`GpuAccumulateBatchesAndSort`, `GpuMergeSortedPartitions`, and the mid-plan `GpuLimit`.
-Edge cases: zero batches, one batch, ties for the merge (partition-major stability), fetch
-interaction, large batch counts, gid-carrying aggregate merges. For the limit specifically:
-that `resident_bytes()` stays zero whatever the offset, that at most two batches per query
-are sliced, and that the scan stops — each asserted as a call or pull count, since a test
-on the rows returned passes just as well when the whole input was read and held.
-
-**T12 — partition ops and joins.** `GpuEmitPartitions` (per-batch scatter, N=3 and large
-N, empty outputs for skewed hashes), `GpuMergePartitions` round-robin rule,
-`GpuJoin` with `set_build`/`probe_and_fetch`/`finish_and_fetch`, plus cross and
-nested-loop joins on the same trait: the full capability matrix as a test table — per
-(type × layout): stream-vs-refuse, correctness vs the single-batch oracle, the GPU
-finish pass via key accumulation (#136), null_equals_null on the finish join.
-
-**T13 — drivers and enforcer.** Both drivers over a mock `Backend` impl — the third
-instantiation, alongside CPU and GPU; `batch_partitioned_driver` tested against a mocked
-single-partition driver; round-robin determinism cases; [the test
-surface](#the-test-surface) in full, with mock operators, each case asserting pull counts,
-queue bounds and batch release rather than returned rows. Plus the accounting formula with
-pre/post checks, enforcer trip ⇒ clean query failure, and FFI-error ⇒ query-fatal
-semantics.
-
 **T14 — recipe-plan serialization and GPU integration.** Re-check `avg`'s finalize casts
 here against a real GPU result: the denominator goes to `Decimal128(p, 0)` and the numerator
 to the declared type so cuDF's own divide scale lands where DataFusion declared it, and no
@@ -2060,7 +2142,60 @@ table implemented and unit-tested (expected seq sets and call patterns per node 
 driver-side stats folding across calls into `NodeMemoryStats`; first end-to-end queries
 on shad-gpu (scan → filter → aggregate; a join; a sort+limit), GPU vs CPU.
 
-**T15 — corpus shapes the benchmarks do not have.** The corpus is numeric-aggregate
+What lands here and what waits, now that this task sits before the accumulators and the
+joins: the mapping is a translation artifact — a `GpuNode` tree in, a recipe plan out — so it
+covers every node kind and is unit-testable against the plans T6 already canonized, with no
+executor in sight. The end-to-end half is bounded by what T10 built, so it is
+scan → filter → aggregate here; the join and the sort+limit follow their executors in T16 and
+T15 and prove the seq sequences the [capability matrix](#join-capability-matrix) spells out.
+
+`Driver::new` does not run the whole `validate()`, and that is settled rather than pending: it
+refuses the assumptions its own correctness rests on, the planner owns the rest, and a rule
+moves into `check_canonical_form` when a driver need is shown for it — as the limit-position
+rule did. Running everything would oblige every hand-built test plan to satisfy rules the
+driver does not depend on, which is how a mock stops being able to isolate anything, and on the
+real path it is a second gate on what `plan.rs` has already gated. A hand-built tree that the
+planner would refuse still fails with a `RunError::Protocol` naming the node, which is a
+diagnostic rather than a silence.
+
+**T15 — accumulators.** `GpuCoalesceAllBatches`, `GpuAggregateBatches` (merge-only and
+finalizing),
+`GpuAccumulateBatchesAndSort`, `GpuMergeSortedPartitions`, and the mid-plan `GpuLimit`.
+Edge cases: zero batches, one batch, ties for the merge (partition-major stability), fetch
+interaction, large batch counts, gid-carrying aggregate merges. For the limit specifically:
+that `resident_bytes()` stays zero whatever the offset, that at most two batches per query
+are sliced, and that the scan stops — each asserted as a call or pull count, since a test
+on the rows returned passes just as well when the whole input was read and held.
+
+**T16 — partition ops and joins.** `GpuEmitPartitions` (per-batch scatter, N=3 and large
+N, empty outputs for skewed hashes), `GpuMergePartitions` round-robin rule,
+`GpuJoin` with `set_build`/`probe_and_fetch`/`finish_and_fetch`, plus cross and
+nested-loop joins on the same trait: the full capability matrix as a test table — per
+(type × layout): stream-vs-refuse, correctness vs the single-batch oracle, the GPU
+finish pass via key accumulation (#136), null_equals_null on the finish join.
+
+**T17 — stress injection over real operators.** The Rust counterpart of the prototype's
+[`LayoutInjector`](../../scripts/exec_model/operators/injection.py): one query, re-run at every
+layout this mode can express, demanding the same answer each time. T13 asserted what mocks can
+assert — delivery, queue bounds, holds equal releases — and answer invariance is the half that
+needs operators which compute, which is why it lands here rather than there.
+
+Rebuild rather than edit, for the reason the prototype records: a node's partitioning is not a
+field. The source captured a row-group mapping at build time and every parent derived its layout
+from its child, so a rewrite re-runs the planner at a chosen `(target_partitions, batching,
+small_table_bytes)` and the shapes come out consistent. Over each: an injected
+`GpuCoalesceAllBatches` above every source — a real N-to-1 rebatcher, so arrival shape is
+genuinely perturbed — and sources emitting zero-row batches at a set probability. The oracle is
+the legacy CPU executor on the same query, which makes this two-engine correctness rather than a
+new expectation.
+
+Two rules the injector carries and this one must too: a join may be re-partitioned only when both
+sides are hash-partitioned on the join keys, since otherwise its lane count is load-bearing and
+splitting it joins matching slices; and a degenerate hash — every key into one lane — is a legal
+hash, because a shuffle's contract is co-location and nothing above it may depend on how evenly
+the lanes were loaded. No new dataset and no new queries: this runs what the corpus already has.
+
+**T18 — corpus shapes the benchmarks do not have.** The corpus is numeric-aggregate
 heavy, and this mode's risk sits in what it never sees: an audit of every `.cpu.txt` finds
 zero `OFFSET`s, zero `min`/`max` over a non-numeric column, and no query at all for several
 shapes the tickets already describe as unexercised. Add a small set of hand-written queries
@@ -2081,7 +2216,7 @@ Each query lands in `testdata/{tpch,tpcds}-queries/` with registry rows and gold
 the existing generators. Keep the set small: every query multiplies across enabled modes and
 tiers, which is why the corpus grew the way it did.
 
-**T16 — rollout.** New macros `cpu_batch_partitioned_result_test` /
+**T19 — rollout.** New macros `cpu_batch_partitioned_result_test` /
 `gpu_batch_partitioned_test`; the node renderer per [Node display](#node-display)
 (`name@ordinal` references, layout in place of the lane count, `fetch` and the aggregate
 lists wherever carried, schema in the plan golden only); `.cpu.txt`/`.cost.txt` wiring incl.
@@ -2091,7 +2226,7 @@ inventory tests; `pipeline.yml` steps (satisfying `test_ci_coverage`); widget ta
 the cost-column rule and the #143 plan ✗ cells. Then query-by-query enablement across the
 corpus, tickets filed per newly discovered blocker, as with the legacy rollout.
 
-**T17 — per-node benchmarks for the new mode.** Port `peacock_gpu_benchmarks` to the
+**T20 — per-node benchmarks for the new mode.** Port `peacock_gpu_benchmarks` to the
 batch-partitioned executor, keeping the protocol that makes its numbers comparable: one
 discarded warm-up, ten measured runs, the **2nd-smallest by `total_us`** reported whole, and
 the floor measured over 200 samples. The run counts stay compile-time constants

@@ -13,6 +13,7 @@ use super::executor::{
 };
 use super::forwarder::Forwarder;
 use super::node::GpuNode;
+use super::nodes::ExecutorCategory;
 
 pub trait Backend: Sized {
     /// GPU: the open `NodeSession`; CPU: ().
@@ -51,6 +52,24 @@ pub enum NodeExecutors<B: Backend> {
     BatchForwarder(Forwarder),
 }
 
+impl<B: Backend> NodeExecutors<B> {
+    /// What the returned set drives. The driver checks it against the node's own
+    /// category, so a backend wiring a node to the wrong trait fails where it was built
+    /// rather than at the first call that finds the wrong method.
+    pub fn category(&self) -> ExecutorCategory {
+        match self {
+            Self::Source(_) => ExecutorCategory::Source,
+            Self::Exec(_) => ExecutorCategory::Exec,
+            Self::BatchAccumulator(_) => ExecutorCategory::BatchAccumulator,
+            Self::PartitionAccumulator(_) => ExecutorCategory::PartitionAccumulator,
+            Self::PartitionEmitter(_) => ExecutorCategory::PartitionEmitter,
+            Self::Join(_) => ExecutorCategory::Join,
+            Self::Unload(_) => ExecutorCategory::Unload,
+            Self::BatchForwarder(_) => ExecutorCategory::BatchForwarder,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -58,7 +77,7 @@ mod tests {
     use crate::batch_partitioned::cpu_batch::CpuBatch;
     use crate::batch_partitioned::error::PlanError;
     use crate::batch_partitioned::executor::{
-        CallStats, Executor, LaneEvent, ProbingJoin, RowRange, SourceStep,
+        BackendError, CallResult, CallStats, Executor, LaneEvent, ProbingJoin, RowRange, SourceStep,
     };
     use crate::batch_partitioned::layout::NodeKind;
     use datafusion::arrow::array::RecordBatch;
@@ -110,25 +129,25 @@ mod tests {
             }
 
             impl SourceExecutor<$backend> for $ops {
-                fn next_batch(self) -> SourceStep<$backend> {
-                    SourceStep::Batch {
+                fn next_batch(self) -> Result<SourceStep<$backend>, BackendError> {
+                    Ok(SourceStep::Batch {
                         batch: $make,
                         stats: CallStats::default(),
                         source: self,
-                    }
+                    })
                 }
             }
             impl ExecExecutor<$backend> for $ops {
-                fn exec(&mut self, batch: $batch) -> ($batch, CallStats) {
-                    (batch, CallStats::default())
+                fn exec(&mut self, batch: $batch) -> CallResult<$batch> {
+                    Ok((batch, CallStats::default()))
                 }
             }
             impl BatchAccumulatorExecutor<$backend> for $ops {
-                fn accumulate_and_fetch(&mut self, batch: $batch) -> (Vec<$batch>, CallStats) {
-                    (vec![batch], CallStats::default())
+                fn accumulate_and_fetch(&mut self, batch: $batch) -> CallResult<Vec<$batch>> {
+                    Ok((vec![batch], CallStats::default()))
                 }
-                fn mark_done_and_fetch(self) -> (Vec<$batch>, CallStats) {
-                    (Vec::new(), CallStats::default())
+                fn mark_done_and_fetch(self) -> CallResult<Vec<$batch>> {
+                    Ok((Vec::new(), CallStats::default()))
                 }
             }
             impl PartitionAccumulatorExecutor<$backend> for $ops {
@@ -136,36 +155,36 @@ mod tests {
                     &mut self,
                     _partition: usize,
                     event: LaneEvent<$backend>,
-                ) -> (Vec<$batch>, CallStats) {
+                ) -> CallResult<Vec<$batch>> {
                     let out = match event {
                         LaneEvent::Batch(batch) => vec![batch],
                         LaneEvent::Done => Vec::new(),
                     };
-                    (out, CallStats::default())
+                    Ok((out, CallStats::default()))
                 }
             }
             impl PartitionEmitterExecutor<$backend> for $ops {
-                fn emit(&mut self, batch: $batch) -> (Vec<$batch>, CallStats) {
-                    (vec![batch], CallStats::default())
+                fn emit(&mut self, batch: $batch) -> CallResult<Vec<$batch>> {
+                    Ok((vec![batch], CallStats::default()))
                 }
             }
             impl JoinExecutor<$backend> for $ops {
                 type Probing = $probing;
-                fn set_build(self, _batch: $batch) -> ($probing, CallStats) {
-                    ($probing, CallStats::default())
+                fn set_build(self, _batch: $batch) -> CallResult<$probing> {
+                    Ok(($probing, CallStats::default()))
                 }
             }
             impl ProbingJoin<$backend> for $probing {
-                fn probe_and_fetch(&mut self, batch: $batch) -> (Vec<$batch>, CallStats) {
-                    (vec![batch], CallStats::default())
+                fn probe_and_fetch(&mut self, batch: $batch) -> CallResult<Vec<$batch>> {
+                    Ok((vec![batch], CallStats::default()))
                 }
-                fn finish_and_fetch(self) -> (Vec<$batch>, CallStats) {
-                    (Vec::new(), CallStats::default())
+                fn finish_and_fetch(self) -> CallResult<Vec<$batch>> {
+                    Ok((Vec::new(), CallStats::default()))
                 }
             }
             impl UnloadExecutor<$backend> for $ops {
-                fn unload(&mut self, _batch: $batch, _rows: RowRange) -> (CpuBatch, CallStats) {
-                    (empty_cpu_batch(), CallStats::default())
+                fn unload(&mut self, _batch: $batch, _rows: RowRange) -> CallResult<CpuBatch> {
+                    Ok((empty_cpu_batch(), CallStats::default()))
                 }
             }
 
@@ -212,10 +231,10 @@ mod tests {
 
     /// One build -> probe -> finish transition, written once for every backend.
     fn drive_join<B: Backend>(join: B::Join, build: B::Batch, probe: B::Batch) -> usize {
-        let (mut probing, _) = join.set_build(build);
-        let (probed, _) = probing.probe_and_fetch(probe);
+        let (mut probing, _) = join.set_build(build).expect("the build side is set");
+        let (probed, _) = probing.probe_and_fetch(probe).expect("probed");
         let held = probing.resident_bytes();
-        let (finished, _) = probing.finish_and_fetch();
+        let (finished, _) = probing.finish_and_fetch().expect("finished");
         held + probed
             .iter()
             .chain(finished.iter())
@@ -225,7 +244,7 @@ mod tests {
 
     /// One source step, written once for every backend.
     fn drive_source<B: Backend>(source: B::Source) -> usize {
-        match source.next_batch() {
+        match source.next_batch().expect("a step") {
             SourceStep::Batch { batch, .. } => batch.num_rows(),
             SourceStep::Exhausted => 0,
         }
