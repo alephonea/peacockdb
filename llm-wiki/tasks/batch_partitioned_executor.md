@@ -1850,7 +1850,23 @@ rows.
 
 The frozen-surface preference is a choice, not a law ([Scope](#scope-and-constraints)), and
 the join lowering is where its bill comes due — the join is the only operator whose state
-has to outlive a call. Five costs, each with the smallest unfreeze that removes it. They
+has to outlive a call. Five costs, each with the smallest unfreeze that removes it.
+
+**A sixth arrived with T17, and it is a different kind: three refusals, one wall.** Nothing on
+the surface makes a table out of nothing, so a collapse of no handles, a merge of no runs and a
+finish whose probe produced no keys each refuse by name ([#173](../tickets.md#t173)); a Right,
+Full or RightAnti lane whose build side was empty owes its probe rows padded and cannot make them
+([#175](../tickets.md#t175)); and `PlaceholderRowExec`, an aggregate DataFusion answers from
+parquet statistics, is a table of literals with no input at all ([#158](../tickets.md#t158)).
+The five above are costs — the engine runs and pays. These are shapes it declines, and two of
+them are reachable from the corpus today: tpcds q77 is out of the end-to-end list for the second,
+and `SELECT count(*) FROM nation` is the third.
+
+The unfreeze is one call — make a table of a schema and a literal row count — and it is the
+cheapest on this page after the fbs semantics change below. What makes it worth deciding rather
+than deferring is that a refusal here is not a slow path: the CPU can answer all three, so every
+one of them is a shape where implementing the obvious thing would make the oracle disagree with
+the engine it is checking. They
 are ordered by what they buy, and the last one is not an ABI matter at all. Deciding them
 is [#155](../tickets.md#t155), which exists because they overlap: three of the five are
 removed by more than one of the changes, so taken one at a time they buy the same thing
@@ -2403,7 +2419,9 @@ assertion is about one executor answering one call. That defers the whole class 
 read as call counts and pull counts — a limit holding nothing whatever the offset, at most two
 batches sliced per query, the scan stopping — to T17, which is where a driver exists to make them.
 `PlaceholderRowExec` ([#158](../tickets.md#t158)) waits for the same reason: it is a source, and a
-source proves itself by what the driver pulls from it.
+source proves itself by what the driver pulls from it. T17 then found it cannot be discharged at
+all while the surface is frozen — see the sixth entry under
+[What the frozen surface costs](#what-the-frozen-surface-costs-and-what-unfreezing-would-buy).
 
 **T17 — the whole path, under injection.** The first task in which SQL goes in and rows come out:
 planning, the recipes, the executors and both drivers running together, rather than each proved

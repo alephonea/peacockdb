@@ -16,8 +16,8 @@ reference still resolves there.
 |---|--:|---|
 | [Critical correctness](#critical-correctness) | 15 | #166 #153 #80 #59 #46 #47 #60 #121 #122 #123 #118 #119 #120 #117 #41 |
 | [Blockers for disabled coverage](#blockers-for-disabled-coverage) | 19 | #169 #168 #158 #175 #173 #97 #23 #32 #65 #62 #91 #95 #57 #45 #63 #56 #55 #96 #143 |
-| [Performance / architecture](#performance--architecture) | 26 | #170 #155 #154 #152 #150 #149 #148 #19 #16 #20 #71 #101 #73 #110 #75 #136 #137 #138 #139 #140 #141 #147 #146 #145 #144 #142 |
-| [Infrastructure / process](#infrastructure--process) | 27 | #174 #167 #164 #163 #159 #160 #161 #162 #113 #114 #116 #126 #134 #133 #132 #131 #130 #129 #128 #127 #172 #124 #125 #13 #94 #69 #49 |
+| [Performance / architecture](#performance--architecture) | 27 | #177 #170 #155 #154 #152 #150 #149 #148 #19 #16 #20 #71 #101 #73 #110 #75 #136 #137 #138 #139 #140 #141 #147 #146 #145 #144 #142 |
+| [Infrastructure / process](#infrastructure--process) | 28 | #176 #174 #167 #164 #163 #159 #160 #161 #162 #113 #114 #116 #126 #134 #133 #132 #131 #130 #129 #128 #127 #172 #124 #125 #13 #94 #69 #49 |
 
 ## Critical correctness
 
@@ -214,9 +214,11 @@ correctly; the batch-partitioned mode refuses it at plan time. A standing GPU ga
 not a new-mode regression — and no corpus query reaches it, since all 31 using `count(*)`
 carry a WHERE, GROUP BY or JOIN and the rule cannot fire.
 
-The fix is small and belongs to the new mode: the node is a **source that emits its constant
-rows**, so the executor has only to produce what the plan already holds — one lane, one
-batch. Scheduled into T17, with the driver: a source proves itself by what is pulled from it.
+The fix is small on the CPU and unavailable on a device: the node is a source of constant rows,
+and a table of literals made from no input is what the frozen surface has no call for — the same
+wall as [#173](#t173) and [#175](#t175). T17 was to have discharged it and did not: writing the
+CPU half alone makes the oracle answer a query the device refuses, and the oracle is what the
+device is checked against. Waits on the make-a-table-of-literals call all three want.
 Legacy would need the same node in the fbs to close its half,
 not worth doing for a shape neither benchmark has.
 
@@ -229,7 +231,10 @@ Owing the probe side means a call over a build table that does not exist, which 
 has no way to express — the same wall as [#173](#t173), reached from the join instead of the
 accumulator. Both backends refuse by name rather than inventing an answer.
 
-The corpus reaches it: q21 at bp-tp4-single has a lane whose build side is empty at four lanes.
+The corpus reaches it twice: q21 at bp-tp4-single, and tpcds q77, whose Right outer at four lanes
+gets no build side and owes its probe rows padded with NULLs. q77 is therefore out of the
+end-to-end list, with q2 carrying the union-that-cannot-interleave claim in its place — writing
+the CPU pad alone would make the oracle answer a query the device refuses.
 Unfreezing buys a pass-through of the probe side and the refusal goes.
 
 <a id="t173"></a>
@@ -350,6 +355,21 @@ rank/dense_rank gaps of #32 carry over unchanged.
 ## Performance / architecture
 
 <a id="t170"></a>
+<a id="t177"></a>
+### #177 — the finish join's intermediate is priced by the node's row, not by what it emits
+`schema_of` in `gpu_backend/join.rs` prices the finish join's output by the node's output schema.
+The finish emits the whole build side — plus the appended boolean for a mark join — so wherever the
+node carries a projection the resident model sees a narrower row than the device holds.
+
+It under-prices, which is the direction that matters: a budget that should refuse the call instead
+lets it run, and the failure arrives from the allocator rather than as the named refusal the
+accounting exists to produce. Pre-dates the narrowing project ([#175](#t175)'s neighbour work),
+which only makes it legible — before it, the finish emitted every build column and the node
+declared fewer, silently.
+
+Needs a device to check, which is why it is a ticket rather than T17's: a pricing fix nothing can
+run is a second guess on top of the first.
+
 ### #170 — a source whose lanes each hold one batch could say so, and three shortcuts would fire
 
 The loader declares `MultipleBatches` unconditionally
@@ -715,6 +735,20 @@ tripped, so something can branch on it, but there is nowhere to record into — 
 trip log, and `Underestimate` is the precedent for what one would look like. Related: #91.
 
 ## Infrastructure / process
+
+<a id="t176"></a>
+### #176 — the CI coverage guard checks one direction only
+`every_rust_test_target_is_named_by_ci` fails when a target exists that no workflow runs. Nothing
+fails when a workflow names a target that does not exist.
+
+That way round is not silent, but it is expensive and late: cargo errors inside the cuDF leg after
+the C++ build and the dataset generation, so a typo or a step added ahead of its test file costs a
+full run to discover. The case: a `--test test_cpu_batch_partitioned` step was added three commits
+before the file, and both legs went red on it.
+
+The converse is nearly free — `workspace_test_targets()` and the `--test` line parsing both exist,
+so it is one assertion that every target pipeline.yml names is in the workspace set. The exemption
+list already gets this treatment; the step lines do not.
 
 <a id="t174"></a>
 ### #174 — two clamps for one rule, and nothing compares them

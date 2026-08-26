@@ -45,6 +45,10 @@ pub enum ProjectRole {
     /// Build columns straight through, plus one typed NULL per probe column the join's
     /// projection keeps — what makes the anti join's output the joined schema.
     NullPad { nulls: usize },
+    /// The columns the node's projection keeps, out of what the finish emitted. No literal
+    /// in it: the build-side semi family's finish already emits the row, and a projection
+    /// only narrows it. Its absence was two engines answering with different columns.
+    Narrow,
 }
 
 /// The legacy node kinds this mode addresses, carrying the fields a reader cannot get
@@ -271,6 +275,7 @@ impl fmt::Display for FbKind {
             Self::Project(ProjectRole::NullPad { nulls }) => {
                 write!(f, "CudfProject{{build columns + {nulls} null}}")
             }
+            Self::Project(ProjectRole::Narrow) => write!(f, "CudfProject{{narrow}}"),
             Self::PlainProject => write!(f, "CudfProject"),
             Self::Aggregate { merge } => {
                 write!(

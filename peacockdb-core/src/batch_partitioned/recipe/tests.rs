@@ -680,6 +680,101 @@ fn a_finishing_joins_pad_project_emits_the_columns_the_node_declares() {
     );
 }
 
+/// `dim(k, label)` semi-joined to `fact(fk, v)`, keeping one build column. A semi join's
+/// output is the build side, so its projection only narrows — and publishing no call for
+/// that narrowing is what left the device emitting every build column while the CPU
+/// emitted what the node declared.
+fn projecting_semi_join(join_type: JoinType, kept: Vec<u32>, output: &[&str]) -> GpuJoin {
+    GpuJoin::new(
+        Given::input(BatchLayout::SingleBatch, &["k", "label"]),
+        Given::input(BatchLayout::MultipleBatches, &["fk", "v"]),
+        join_type,
+        vec![(0, 0)],
+        None,
+        Vec::new(),
+        false,
+        Some(kept),
+        columns_of(output),
+    )
+}
+
+#[test]
+fn a_projecting_semi_joins_recipe_narrows_what_its_finish_emitted() {
+    let node = projecting_semi_join(JoinType::LeftSemi, vec![1], &["label"]);
+    let (recipe, bytes) = written(&node);
+    let plan = flatbuffers::root::<fb::GpuPlan>(&bytes).expect("the buffer verifies");
+    assert_eq!(
+        recipe
+            .calls
+            .last()
+            .map(|call| call.target.map(|(_, kind)| kind)),
+        Some(Some(FbKind::Project(ProjectRole::Narrow))),
+        "the finish is followed by the project that cuts it down: {recipe}"
+    );
+    let seq = *recipe.seqs().last().expect("the narrow project is last");
+    let project = node_at(&plan, seq)
+        .and_then(|node| node.node_as_cudf_project())
+        .expect("the last seq is the narrow project");
+    let aliases: Vec<&str> = project.aliases().expect("named columns").iter().collect();
+    assert_eq!(
+        aliases,
+        vec!["label"],
+        "one column named, one column emitted"
+    );
+}
+
+/// A mark join's finish emits the build side AND the boolean it appends, so its projection
+/// indexes one column past the build side. The pad project would read that ordinal as a
+/// probe column and write a typed NULL where the mark belongs, which is why the narrowing
+/// project walks what the finish emitted rather than build-plus-probe.
+#[test]
+fn a_projecting_mark_joins_recipe_keeps_the_mark_as_a_column_and_not_as_a_null() {
+    let node = projecting_semi_join(JoinType::LeftMark, vec![1, 2], &["label", "mark"]);
+    let (recipe, bytes) = written(&node);
+    let plan = flatbuffers::root::<fb::GpuPlan>(&bytes).expect("the buffer verifies");
+    let seq = *recipe.seqs().last().expect("the narrow project is last");
+    let project = node_at(&plan, seq)
+        .and_then(|node| node.node_as_cudf_project())
+        .expect("the last seq is the narrow project");
+    let aliases: Vec<&str> = project.aliases().expect("named columns").iter().collect();
+    assert_eq!(aliases, vec!["label", "mark"]);
+    let exprs = project.exprs().expect("the project has expressions");
+    for position in 0..exprs.len() {
+        assert!(
+            exprs.get(position).node_as_column_ref().is_some(),
+            "column {position} of a narrowing project is a column, never a literal"
+        );
+    }
+}
+
+/// A semi join with no projection publishes no narrowing call: the finish already emits
+/// the row, and a project that keeps every column is a call for nothing.
+#[test]
+fn a_semi_join_that_narrows_nothing_publishes_no_project_after_its_finish() {
+    let node = GpuJoin::new(
+        Given::input(BatchLayout::SingleBatch, &["k", "label"]),
+        Given::input(BatchLayout::MultipleBatches, &["fk", "v"]),
+        JoinType::LeftSemi,
+        vec![(0, 0)],
+        None,
+        Vec::new(),
+        false,
+        None,
+        columns_of(&["k", "label"]),
+    );
+    let (recipe, _) = written(&node);
+    assert_eq!(
+        recipe
+            .calls
+            .last()
+            .map(|call| call.target.map(|(_, kind)| kind)),
+        Some(Some(FbKind::HashJoin {
+            join_type: JoinType::LeftSemi
+        })),
+        "the finish join is the last call: {recipe}"
+    );
+}
+
 /// One name for one column. The key project builds the accumulated keys table and names
 /// its columns; the finish join is its only reader, so the name it uses to read them has
 /// to be the name they were given.

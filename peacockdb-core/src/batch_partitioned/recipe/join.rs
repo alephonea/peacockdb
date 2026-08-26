@@ -6,6 +6,9 @@
 //! the planner and the estimator read, so the recipe cannot claim a pass they did not
 //! plan for.
 
+use std::sync::Arc;
+
+use datafusion::arrow::datatypes::{DataType, Field, Schema as ArrowSchema};
 use datafusion::common::JoinType;
 use flatbuffers::{FlatBufferBuilder, WIPOffset};
 
@@ -113,6 +116,19 @@ pub(super) fn hash_join(
         calls.push(Call::seq(
             seq,
             FbKind::Project(ProjectRole::NullPad { nulls }),
+            vec![Input::PriorOutput],
+            CallPattern::AtDone,
+        ));
+    } else if node.projection.is_some() {
+        // The build-side semi family's finish emits the row itself — build columns, and a
+        // mark for a mark join — so it needs a project only where the node narrows it.
+        // Publishing none left the device emitting every build column while the CPU
+        // emitted what the node declared, which is one shape answering two ways.
+        let emitted = finish_output(node, build);
+        let seq = writer.node(1, |b, kids| narrow_project(b, node, &emitted, kids))?;
+        calls.push(Call::seq(
+            seq,
+            FbKind::Project(ProjectRole::Narrow),
             vec![Input::PriorOutput],
             CallPattern::AtDone,
         ));
@@ -265,6 +281,42 @@ fn pad_project<'a>(
         let field = node_writer::field_at(probe, ordinal - build_width);
         exprs.push(node_writer::null_literal(b, field)?);
         names.push(b.create_string(field.name()));
+    }
+    Ok(node_writer::project_payload(b, exprs, names, kids[0]))
+}
+
+/// What the build-side semi family's finish emits, which is what a project above it
+/// indexes: the build side, and the boolean a mark join appends to it.
+fn finish_output(node: &GpuJoin, build: &Schema) -> Schema {
+    if node.join_type != JoinType::LeftMark {
+        return build.clone();
+    }
+    let mut fields: Vec<Field> = build
+        .fields
+        .fields()
+        .iter()
+        .map(|f| f.as_ref().clone())
+        .collect();
+    fields.push(Field::new("mark", DataType::Boolean, false));
+    Schema::new(Arc::new(ArrowSchema::new(fields)))
+}
+
+/// The node's projection over the finish's own output: column refs and nothing else.
+fn narrow_project<'a>(
+    b: &mut FlatBufferBuilder<'a>,
+    node: &GpuJoin,
+    emitted: &Schema,
+    kids: &[WIPOffset<fb::PlanNode<'a>>],
+) -> Result<Payload, PlanError> {
+    let kept = node
+        .projection
+        .as_ref()
+        .expect("a narrowing project is written only where the node projects");
+    let mut exprs = Vec::with_capacity(kept.len());
+    let mut names = Vec::with_capacity(kept.len());
+    for ordinal in kept {
+        exprs.push(column(b, *ordinal, emitted)?);
+        names.push(b.create_string(node_writer::field_at(emitted, *ordinal).name()));
     }
     Ok(node_writer::project_payload(b, exprs, names, kids[0]))
 }

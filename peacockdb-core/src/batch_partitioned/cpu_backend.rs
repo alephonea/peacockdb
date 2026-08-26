@@ -19,8 +19,9 @@ pub mod source;
 use std::sync::Arc;
 
 use datafusion::arrow::array::RecordBatch;
-use datafusion::arrow::compute::{cast, concat_batches};
+use datafusion::arrow::compute::{CastOptions, cast_with_options, concat_batches};
 use datafusion::arrow::datatypes::{DataType, Schema as ArrowSchema, SchemaRef};
+use datafusion::arrow::util::display::FormatOptions;
 use datafusion::execution::context::SessionContext;
 use datafusion::execution::{FunctionRegistry, TaskContext};
 use datafusion::logical_expr::AggregateUDF;
@@ -236,8 +237,20 @@ fn declared_as(batch: RecordBatch, declared: &SchemaRef) -> Result<RecordBatch, 
     let mut columns = batch.columns().to_vec();
     for (column, field) in columns.iter_mut().zip(declared.fields().iter()) {
         if widened_decimal(column.data_type(), field.data_type()) {
-            *column = cast(column, field.data_type()).map_err(|error| {
-                BackendError::new(format!("narrowing {} to its declared type: {error}", field.name()))
+            // Unsafe rather than safe casting, which is the whole point: arrow's safe cast
+            // turns a value that does not fit the declared precision into a NULL, and a
+            // NULL in a sum column is indistinguishable here from one the data had. The
+            // one input this call exists for is the one it would silently swallow.
+            let options = CastOptions {
+                safe: false,
+                format_options: FormatOptions::default(),
+            };
+            *column = cast_with_options(column, field.data_type(), &options).map_err(|error| {
+                BackendError::new(format!(
+                    "{} does not fit the {} the node declares: {error}",
+                    field.name(),
+                    field.data_type()
+                ))
             })?;
         }
     }
@@ -277,13 +290,10 @@ fn placeholder(schema: &ArrowSchema) -> Arc<dyn ExecutionPlan> {
 /// extra rows. A device never skips, so this is also what keeps the two engines' answers
 /// the same.
 pub(super) fn always_aggregating(ctx: Arc<TaskContext>) -> Arc<TaskContext> {
-    let config = ctx
-        .session_config()
-        .clone()
-        .set_usize(
-            "datafusion.execution.skip_partial_aggregation_probe_rows_threshold",
-            usize::MAX,
-        );
+    let config = ctx.session_config().clone().set_usize(
+        "datafusion.execution.skip_partial_aggregation_probe_rows_threshold",
+        usize::MAX,
+    );
     Arc::new(TaskContext::new(
         ctx.task_id(),
         ctx.session_id(),
@@ -453,7 +463,9 @@ fn check_state_layout(produced: &ArrowSchema, declared: &Schema) -> Result<(), P
         )));
     }
     for (position, (theirs, ours)) in produced.fields().iter().zip(ours.iter()).enumerate() {
-        if theirs.data_type() == ours.data_type() || widened_decimal(theirs.data_type(), ours.data_type()) {
+        if theirs.data_type() == ours.data_type()
+            || widened_decimal(theirs.data_type(), ours.data_type())
+        {
             continue;
         }
         return Err(PlanError::Invalid(format!(
@@ -467,14 +479,19 @@ fn check_state_layout(produced: &ArrowSchema, declared: &Schema) -> Result<(), P
     Ok(())
 }
 
-/// Whether the only difference is the precision a decimal sum gains per merge — the one
-/// mismatch [`in_the_declared_types`] casts away. Same scale, because a scale difference
-/// moves the point and is a different number, not a wider one.
+/// Whether the produced type is the declared one with the precision a decimal sum gains
+/// per merge — the one mismatch [`declared_as`] casts away.
+///
+/// Same scale, because a scale difference moves the point and is a different number rather
+/// than a wider one; and wider only, because narrower is not what a merge does and casting
+/// it up would be inventing precision the state never had.
 fn widened_decimal(produced: &DataType, declared: &DataType) -> bool {
-    matches!(
-        (produced, declared),
-        (DataType::Decimal128(_, theirs), DataType::Decimal128(_, ours)) if theirs == ours
-    )
+    match (produced, declared) {
+        (DataType::Decimal128(theirs, their_scale), DataType::Decimal128(ours, our_scale)) => {
+            their_scale == our_scale && theirs >= ours
+        }
+        _ => false,
+    }
 }
 
 fn lex_ordering(keys: &[ColumnOrder], input: &ArrowSchema) -> Result<LexOrdering, PlanError> {

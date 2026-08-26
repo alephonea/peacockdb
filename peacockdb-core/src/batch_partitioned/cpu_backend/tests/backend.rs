@@ -322,6 +322,38 @@ fn an_inner_joins_probe_is_charged_the_build_side_it_reads() {
     assert_eq!(probing.scratch_bytes(2, 64), build_bytes + 64);
 }
 
+/// The one input the narrowing cast exists for. Arrow's safe cast answers a value that
+/// does not fit with a NULL, and a NULL in a sum column cannot be told from one the data
+/// had — so this path uses the unsafe cast and the query ends instead.
+///
+/// Red with `safe: true`: the batch comes back with a NULL and no error at all.
+#[test]
+fn a_state_value_too_large_for_its_declared_precision_ends_the_query() {
+    use datafusion::arrow::array::Decimal128Array;
+    let wide = Arc::new(ArrowSchema::new(vec![Field::new(
+        "sum(v)",
+        DataType::Decimal128(38, 2),
+        true,
+    )]));
+    let declared = Arc::new(ArrowSchema::new(vec![Field::new(
+        "sum(v)",
+        DataType::Decimal128(5, 2),
+        true,
+    )]));
+    let column: ArrayRef = Arc::new(
+        Decimal128Array::from(vec![Some(123_456_789_i128)])
+            .with_precision_and_scale(38, 2)
+            .expect("a wide decimal"),
+    );
+    let batch = RecordBatch::try_new(wide, vec![column]).expect("one column");
+    let refused = super::super::declared_as(batch, &declared).expect_err("it does not fit");
+    assert!(
+        refused.message.contains("sum(v)") && refused.message.contains("Decimal128(5, 2)"),
+        "{}",
+        refused.message
+    );
+}
+
 fn semi_join(join_type: JoinType) -> GpuJoin {
     let output = match join_type {
         JoinType::LeftSemi => schema_of(&GROUPED),

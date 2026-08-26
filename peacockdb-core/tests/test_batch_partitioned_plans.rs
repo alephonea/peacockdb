@@ -363,7 +363,7 @@ const PAYLOAD_MODE: (&str, usize, BatchSizing) = ("bp-tp4-rowgroup", 4, BatchSiz
 ///
 /// So a query earns a place here by covering something no other query does. Adding one
 /// that covers nothing new adds lines no reader can check against anything.
-const PAYLOAD_QUERIES: [(&str, &str); 17] = [
+const PAYLOAD_QUERIES: [(&str, &str); 20] = [
     // Nested-loop join lives nowhere else in the corpus; the stddev query is the Welford
     // init, both merges and the finalize project; q13 is the outer join's finish pass.
     ("tpch", "q13"),
@@ -391,6 +391,13 @@ const PAYLOAD_QUERIES: [(&str, &str); 17] = [
     ("tpcds", "q61"),
     ("tpcds", "q87"),
     ("tpcds", "q45"),
+    // The build-side semi family twice over: with a narrowing project and without one.
+    // They are two call shapes because the projection is what publishes that call, and
+    // the ones already here happened to be projected — so the unprojected finish, which is
+    // what most of the corpus emits, was covered by nothing.
+    ("tpcds", "q16"),
+    ("tpcds", "q95"),
+    ("tpcds", "q10"),
     ("tpcds", "q41"),
     ("tpcds", "q5"),
     ("tpcds", "q91"),
