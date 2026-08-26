@@ -2749,6 +2749,30 @@ size moves only when its answer moves, which is the thing every other check in t
 already watching. The marker is there so the file says why a result is absent, not to absorb a
 size that oscillates.
 
+**A run that stopped early says so, on its own line.** A satisfied limit ends the run with work
+undone: lanes that were never pulled, row groups never read, batches produced and never consumed.
+Every one of those shows up in the annotations as a smaller number, and a smaller number with no
+stated cause is indistinguishable from a plan that produced less — which is the absent-versus-
+skipped confusion this tier exists to prevent, one level down. So each section opens with
+`early_exit=<node>@<ordinal>` naming the limit that was satisfied, or `early_exit=none`. Always
+present, never inferred from absence: a query that ran to completion is a fact the file states.
+It is stable, because [the determinism rules](#determinism-rules) pin the schedule — which
+batches were consumed before the limit was met is fixed for a plan.
+
+Beside it, `rows_skipped=N` on each node that has any: rows released without an unload call,
+which the driver already counts per node precisely because the rows returned look identical
+either way. It is the saving a limit buys, and the golden is where it becomes visible.
+
+**Two checks change shape under it, and both get stronger rather than weaker.** The loader
+identity — `batch_rows` having `partition_groups`' exact shape — is a plan-against-run
+comparison, and early exit is exactly when the run does less than the plan. Per lane it becomes a
+prefix: `batch_rows[j]` has at most as many entries as `partition_groups[j]`, aligned from the
+start because a scan reads its groups in order, and equal on any run whose marker says `none`.
+And the `in_rows` exceptions stop being permanent exemptions: a limit-satisfied node and an
+empty-build-side join may consume less than they were offered *when the marker says the run
+stopped early*, and must consume everything when it says `none`. A conditional weakening the
+file itself justifies, rather than two node kinds exempted for good.
+
 **Several test cases now write one file, and that is the task's one real hazard.** A whole-file
 write is last-writer-wins, which would drop every other query's section and leave a green run. So
 a regenerating write takes an advisory lock on the file, merges its section, and publishes by
