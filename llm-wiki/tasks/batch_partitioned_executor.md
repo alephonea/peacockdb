@@ -2826,16 +2826,24 @@ identity — `batch_rows` having `partition_groups`' exact shape — is a plan-a
 comparison, and early exit is exactly when the run does less than the plan. Per lane it becomes a
 prefix: `batch_rows[j]` has at most as many entries as `partition_groups[j]`, aligned from the
 start because a scan reads its groups in order, and equal on any run whose marker says `none`.
-And the `in_rows` equality holds at every node on any run whose marker says `none`, weakening to
-`<=` only where it names one. A conditional the file itself carries, rather than node kinds
-exempted for good — which is as well, since the two that looked like the exceptions are not.
+The `in_rows` identity needs no marker at all, because `abandoned` is rendered beside it. That was
+decided against a count rather than a hunch: keying the arithmetic on the marker would soften it
+to `<=` at every node of an early-exiting section, and 84 of 99 tpcds queries carry a `LIMIT` — of
+the 67 with a committed result golden, 35 return 100 rows or more, so the limit really fires. Half
+the bench, not a handful. The marker is also not precise enough to carry arithmetic: it is
+`any_satisfied()`, so a query returning exactly 100 rows sets it while consuming everything, and
+the weakening would apply where nothing was skipped.
 
-The exact law survives in the driver's own tests, where the report is in hand and the file is not:
-a third per-node, per-lane count of rows abandoned by `release_in_flight` closes it back into
-`emitted == consumed + abandoned` everywhere, under an early exit as much as a drain. That is a
-conservation check of the same kind as `in_flight_bytes` returning to zero and `holds == releases`,
-which the report already carries for the same reason — a batch that vanishes without being either
-consumed or abandoned is a defect no inequality can see. The goldens do not render it.
+So the conservation law does the work — `consumed + abandoned == emitted`, one statement over the
+file and over the report, rather than a law in the driver's tests and a weakening of it in the
+golden. Same family as `in_flight_bytes` returning to zero and `holds == releases`, which the
+report already carries: a batch that vanishes without being either consumed or abandoned is a
+defect no inequality can see. Deciding it now costs one optional field in a format gaining five;
+after T19 it costs regenerating eleven files per bench across a hundred queries.
+
+The marker keeps the two jobs it is good at: telling a reader the run stopped early, and keying
+the loader's prefix, which `abandoned` cannot close — a row group never read produced no batch to
+abandon.
 
 **Several test cases now write one file, and that is the task's one real hazard.** A whole-file
 write is last-writer-wins, which would drop every other query's section and leave a green run. So
@@ -3027,12 +3035,13 @@ cheap:
   total**: the index is the *child's* lane, so it lines up with that child's own `batch_rows`
   entry for entry. Indexing by the consuming node's lanes would make the identity checkable only
   in aggregate wherever the two counts differ, which is every emitter, merge and accumulator —
-  the nodes it is most worth checking. An equality, with the exceptions named rather than
-  softened away: a node whose limit is satisfied stops pulling, and a join with an empty build
-  side ends its lane with the probe's batches unconsumed ([#175](../tickets.md#t175) is the same
-  shape from the other side), so those two assert `in_rows <= out_rows` of the child and every
-  other node asserts equality. `<=` everywhere is the repair to refuse: it passes for almost
-  anything, and this is the identity most worth having;
+  the nodes it is most worth checking. An equality on every run, because the node renders
+  `abandoned` beside it — rows `release_in_flight` dropped, per lane, omitted where zero and so
+  absent from every node of every run that drained. The law is
+  `consumed + abandoned == the child's emitted`, with no marker in it and no `<=` anywhere. The
+  two exceptions this once named were measured and are both wrong: dropping a probe batch is
+  consuming it, and a satisfied limit falls short at whichever node the schedule stopped at rather
+  than at the limit;
 - on a loader, `batch_rows` has `partition_groups`' exact shape, which is the correspondence that
   nesting was chosen for;
 - the root's `out_rows` is the row count in `.result.txt`, which the oracle checked.
