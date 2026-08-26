@@ -3,10 +3,11 @@
 //! The handle is the whole value — no box, no vtable — and `Drop` releases it, which is
 //! what keeps a batch the driver abandons from leaking VRAM. A handle an FFI call
 //! consumed must skip that drop: C++ erased it, and releasing it again is a use of a
-//! dead handle. That boundary is owned by the helper the GPU backend will add (T9), not
-//! by callers.
+//! dead handle. [`GpuBatch::consume`] is that boundary, and the only place the release
+//! is skipped.
 
 use std::fmt;
+use std::mem::ManuallyDrop;
 
 use peacockdb_ffi::raw::{PeacockExecutor, peacock_handle_release};
 
@@ -42,6 +43,15 @@ impl GpuBatch {
 
     pub fn executor(&self) -> *mut PeacockExecutor {
         self.executor
+    }
+
+    /// Hand the handle to an FFI call that consumes it — a slice, or an executor call
+    /// taking it as an input. The batch is gone by move, and its release is skipped
+    /// because C++ has erased the registry entry: releasing again would be a use of a
+    /// dead handle. Every other way out of a `GpuBatch` runs `Drop`.
+    pub fn consume(self) -> (*mut PeacockExecutor, u64) {
+        let batch = ManuallyDrop::new(self);
+        (batch.executor, batch.handle)
     }
 }
 

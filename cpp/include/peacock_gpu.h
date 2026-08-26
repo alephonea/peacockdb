@@ -73,7 +73,9 @@ const char* peacock_last_error(peacock_executor_t* executor);
 // The Rust orchestrator drives ONE plan node at a time: load the plan once, then
 // call peacock_executor_execute_node per node (canonical post-order) with the child
 // output handles. Intermediates stay GPU-resident behind handles; Arrow IPC crosses
-// the boundary only once, at peacock_result_from_handle (root).
+// the boundary only at peacock_result_from_handle — once, at the root, for that walk,
+// and once per unloaded batch for a driver using the three per-batch entry points
+// below (a scan read per row-group subset, a sliced handle, a ranged export).
 // ---------------------------------------------------------------------------
 
 /// Actual per-node costs. Rust applies the shared ColAccum overhead (validity +
@@ -151,8 +153,16 @@ int peacock_executor_begin_plan(peacock_executor_t* executor,
                                 const uint8_t* plan_bytes, uint64_t plan_len,
                                 uint64_t* out_node_count);
 
+// FAILURE POLICY at the four doors below. The three that execute — execute_node,
+// execute_scan_rowgroups, slice_handle — end the query once work has begun: the loaded plan
+// goes, and every resident handle with it, which is what makes a release on the failure path
+// a no-op and keeps a driver's holds equal to its releases. Their validation arms are the
+// exception — a null out-param, no plan loaded, an empty row-group list — since those refuse
+// before any work and leave the session as it was. peacock_result_from_handle never ends a
+// query: it reads a handle and touches nothing.
+
 /// Execute the node at post-order `seq` with already-resident child output handles,
-/// storing each output partition as a new resident handle.
+/// storing each output partition as a new resident handle. A failure ends the query.
 ///
 /// Each child contributes a VECTOR of partition handles: `input_handles` is the
 /// flattened concatenation grouped by child, `input_child_counts[c]` is child c's
@@ -171,12 +181,41 @@ int peacock_executor_execute_node(peacock_executor_t* executor,
                                   uint64_t* out_count,
                                   PeacockNodeStats* out_stats);
 
-/// Materialize a resident handle to an Arrow IPC stream (called once, at root).
-/// Caller frees *out_ipc with peacock_result_free(). Empty result → *out_ipc_len==0.
-/// Does NOT release the handle.
+/// Execute the CudfScan at post-order `seq` reading exactly `row_groups[0..n)` rather
+/// than the list the plan node carries, and store its one output as a new resident
+/// handle — one call per batch for the batch-partitioned loader. `n == 0` is refused
+/// rather than read as "every group"; `out_stats` may be NULL; a failure ends the query.
+///
+/// Every OTHER field of the node still applies per call, and `limit` is the one that does
+/// not compose: each call sets it as the reader's row cap, so B calls answer B x limit
+/// rows, which is why a limit-carrying source is planned as one lane and one batch.
+/// @return 0 on success, non-zero on failure (a `seq` that is not a scan, an empty list,
+///         a row group the file does not have).
+int peacock_executor_execute_scan_rowgroups(peacock_executor_t* executor, uint64_t seq,
+                                            const uint32_t* row_groups, uint64_t n,
+                                            uint64_t* out_handle, PeacockNodeStats* out_stats);
+
+/// Copy rows [offset, offset+length) of `handle` into a new resident handle, CONSUMING
+/// `handle` as every operation on a resident table does. Range semantics as
+/// peacock_result_from_handle. Serves a mid-plan limit, whose kept rows feed further
+/// GPU work and so must stay a handle rather than become a result. A failure ends the
+/// query.
 /// @return 0 on success, non-zero on failure.
-int peacock_result_from_handle(peacock_executor_t* executor, uint64_t handle,
-                               uint8_t** out_ipc, uint64_t* out_ipc_len);
+int peacock_executor_slice_handle(peacock_executor_t* executor, uint64_t handle, uint64_t offset,
+                                  uint64_t length, uint64_t* out_handle);
+
+/// Materialize rows [offset, offset+length) of a resident handle to an Arrow IPC stream
+/// (called once per handle, at root). `length == UINT64_MAX` means to the end, which is
+/// what a caller wanting the whole table passes. An offset at or past the end, and any
+/// other range naming no rows of a non-empty table, is an empty result → *out_ipc_len==0
+/// and nothing to free; a range running past the end clamps to it rather than failing,
+/// because a limit's fetch legitimately overruns the batch it straddles. An EMPTY table
+/// still exports its schema, as whole-table callers have always received.
+/// Caller frees *out_ipc with peacock_result_free(). Does NOT release the handle, and a
+/// failure leaves the session standing.
+/// @return 0 on success, non-zero on failure.
+int peacock_result_from_handle(peacock_executor_t* executor, uint64_t handle, uint64_t offset,
+                               uint64_t length, uint8_t** out_ipc, uint64_t* out_ipc_len);
 
 /// Release a resident intermediate handle (idempotent).
 void peacock_handle_release(peacock_executor_t* executor, uint64_t handle);

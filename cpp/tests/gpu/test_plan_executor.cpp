@@ -1,6 +1,7 @@
 /// GPU tests for plan_executor: builds FlatBuffer plans programmatically and
 /// executes them against testdata/tpch.minimal/ Parquet files.
 
+#include "peacock_gpu.h"
 #include "plan_executor.h"
 #include "generated/gpu_plan_generated.h"
 
@@ -722,6 +723,291 @@ TEST(PlanExecutor, JoinProjectSort) {
   // ALGERIA is in AFRICA.
   auto first_region = get_string_value(result.table->view().column(1), 0);
   EXPECT_EQ(first_region, "AFRICA");
+}
+
+// ---------------------------------------------------------------------------
+// Reading a scan one row-group subset at a time, exporting a row range of a handle,
+// and slicing one. Value-level checks go through NodeSession, which is what the C
+// entry points are thin wrappers over; the entry points themselves are checked for
+// what they own (a refused empty list, the empty-export convention), and end to end
+// from Rust on the GPU host.
+// ---------------------------------------------------------------------------
+
+/// customer.parquet projected to `projection` — two row groups (122880 + 27120), the
+/// only committed fixture with more than one. Column 0 is c_custkey, the narrow one to
+/// read back; column 1 is c_name, the one with content bytes to charge for.
+static std::vector<uint8_t> customer_scan_plan(flatbuffers::FlatBufferBuilder& fbb,
+                                               const std::vector<uint32_t>& projection) {
+  auto path = fbb.CreateString(parquet_path("customer"));
+  auto paths = fbb.CreateVector(std::vector<flatbuffers::Offset<flatbuffers::String>>{path});
+  auto schema = make_schema(fbb, {
+                                     {"c_custkey", fb::DataType_Int64},
+                                     {"c_name", fb::DataType_Utf8View},
+                                     {"c_address", fb::DataType_Utf8View},
+                                     {"c_nationkey", fb::DataType_Int32},
+                                     {"c_phone", fb::DataType_Utf8View},
+                                     {"c_acctbal", fb::DataType_Decimal128},
+                                     {"c_mktsegment", fb::DataType_Utf8View},
+                                     {"c_comment", fb::DataType_Utf8View},
+                                 });
+  auto scan = fb::CreateCudfScan(fbb, paths, schema, fbb.CreateVector(projection));
+  return finish_plan(fbb, make_plan_node(fbb, fb::PlanNodeKind_CudfScan, scan.Union()));
+}
+
+static std::vector<int64_t> host_int64_column(const cudf::column_view& col) {
+  std::vector<int64_t> host(col.size());
+  cudaMemcpy(host.data(), col.data<int64_t>(), col.size() * sizeof(int64_t),
+             cudaMemcpyDeviceToHost);
+  return host;
+}
+
+static std::vector<int64_t> keys_of(const peacock::TableResult& result) {
+  return host_int64_column(result.table->view().column(0));
+}
+
+/// The C ABI over one loaded plan, released in the order the header requires.
+class CApiPlan {
+ public:
+  explicit CApiPlan(const std::vector<uint8_t>& plan) {
+    EXPECT_EQ(peacock_executor_create(/*gpu_memory_limit=*/0, &ex_), 0);
+    uint64_t nodes = 0;
+    EXPECT_EQ(peacock_executor_begin_plan(ex_, plan.data(), plan.size(), &nodes), 0);
+  }
+  ~CApiPlan() {
+    peacock_executor_end_plan(ex_);
+    peacock_executor_destroy(ex_);
+  }
+  peacock_executor_t* get() { return ex_; }
+  std::string last_error() { return peacock_last_error(ex_); }
+
+ private:
+  peacock_executor_t* ex_ = nullptr;
+};
+
+TEST(ScanRowGroups, SubsetsUnionToTheWholeScan) {
+  flatbuffers::FlatBufferBuilder fbb;
+  auto buf = customer_scan_plan(fbb, {0});
+  auto whole = keys_of(peacock::execute_plan(buf.data(), buf.size()));
+
+  peacock::NodeSession session(buf.data(), buf.size());
+  peacock::NodeStats first_stats{}, second_stats{};
+  std::vector<uint32_t> first{0}, second{1};
+  // The same seq, twice: the scan arm is stateless per call, which is what lets one
+  // node be a batch loader at all.
+  uint64_t h0 = session.execute_scan_rowgroups(0, first, &first_stats);
+  uint64_t h1 = session.execute_scan_rowgroups(0, second, &second_stats);
+
+  auto keys = keys_of(session.table_for(h0));
+  auto rest = keys_of(session.table_for(h1));
+  EXPECT_EQ(first_stats.rows, keys.size());
+  EXPECT_EQ(second_stats.rows, rest.size());
+  keys.insert(keys.end(), rest.begin(), rest.end());
+  EXPECT_EQ(keys, whole);
+}
+
+TEST(ScanRowGroups, ACallOnAnotherKindOfNodeSaysWhichKind) {
+  flatbuffers::FlatBufferBuilder fbb;
+  auto path = fbb.CreateString(parquet_path("region"));
+  auto paths = fbb.CreateVector(std::vector<flatbuffers::Offset<flatbuffers::String>>{path});
+  auto schema = make_schema(fbb, {
+                                     {"r_regionkey", fb::DataType_Int32},
+                                     {"r_name", fb::DataType_Utf8View},
+                                     {"r_comment", fb::DataType_Utf8View},
+                                 });
+  auto scan = fb::CreateCudfScan(fbb, paths, schema);
+  auto scan_node = make_plan_node(fbb, fb::PlanNodeKind_CudfScan, scan.Union());
+  auto cb = fb::CreateCudfCoalesceBatches(fbb, /*target_batch_size=*/8192, scan_node);
+  auto buf =
+      finish_plan(fbb, make_plan_node(fbb, fb::PlanNodeKind_CudfCoalesceBatches, cb.Union()));
+
+  peacock::NodeSession session(buf.data(), buf.size());
+  std::vector<uint32_t> groups{0};
+  try {
+    session.execute_scan_rowgroups(/*seq=*/1, groups, nullptr);
+    FAIL() << "a coalesce-batches seq was read as a scan";
+  } catch (const std::exception& e) {
+    EXPECT_NE(std::string(e.what()).find("CudfCoalesceBatches"), std::string::npos) << e.what();
+  }
+}
+
+TEST(ScanRowGroups, AnEmptyListIsRefused) {
+  flatbuffers::FlatBufferBuilder fbb, fbb2;
+  auto buf = customer_scan_plan(fbb, {0});
+  CApiPlan plan(buf);
+
+  std::vector<uint32_t> groups{0};  // a real pointer, and no groups to read
+  uint64_t handle = 0;
+  EXPECT_NE(peacock_executor_execute_scan_rowgroups(plan.get(), 0, groups.data(),
+                                                    /*n=*/0, &handle, nullptr),
+            0);
+  EXPECT_NE(plan.last_error().find("empty row-group list"), std::string::npos) << plan.last_error();
+
+  // And at the session, which is the layer a C++ caller meets first: one level down an
+  // empty override reads as "no override", so refusing here is what stops a caller who
+  // named a set from getting a whole-table read.
+  auto buf2 = customer_scan_plan(fbb2, {0});
+  peacock::NodeSession session(buf2.data(), buf2.size());
+  EXPECT_ANY_THROW(session.execute_scan_rowgroups(0, {}, nullptr));
+}
+
+TEST(ScanRowGroups, TheStatsCarryTheVarlenBytes) {
+  // The other two stats fields, which the one-column fixture cannot see: a string column
+  // is what varlen_content_bytes is for, and the accountant prices a batch from it — a
+  // zero there under-prices every string batch and the budget stops binding.
+  flatbuffers::FlatBufferBuilder fbb;
+  auto buf = customer_scan_plan(fbb, {0, 1});
+  peacock::NodeSession session(buf.data(), buf.size());
+
+  peacock::NodeStats stats{};
+  std::vector<uint32_t> groups{1};
+  uint64_t handle = session.execute_scan_rowgroups(0, groups, &stats);
+  const auto& table = session.table_for(handle).table->view();
+  EXPECT_EQ(stats.rows, static_cast<uint64_t>(table.num_rows()));
+  EXPECT_EQ(table.num_columns(), 2);
+  // c_name averages well over a byte per row, so any plausible reading clears the rows.
+  EXPECT_GT(stats.varlen_content_bytes, stats.rows);
+}
+
+TEST(ScanRowGroups, AnOutOfRangeIndexSaysWhichCall) {
+  flatbuffers::FlatBufferBuilder fbb;
+  auto buf = customer_scan_plan(fbb, {0});
+  peacock::NodeSession session(buf.data(), buf.size());
+
+  // customer.parquet has two row groups. cuDF refuses the tenth in its own words, which
+  // name neither the node nor the list — the rethrow is what makes a planner defect
+  // readable at the layer that produced the index.
+  std::vector<uint32_t> beyond{9};
+  try {
+    session.execute_scan_rowgroups(0, beyond, nullptr);
+    FAIL() << "an out-of-range row group was read as something";
+  } catch (const std::exception& e) {
+    const std::string said = e.what();
+    EXPECT_NE(said.find("seq 0"), std::string::npos) << said;
+    EXPECT_NE(said.find("[9]"), std::string::npos) << said;
+  }
+}
+
+TEST(RangedExport, TheRangesAreTheRowsNamed) {
+  flatbuffers::FlatBufferBuilder fbb;
+  auto buf = customer_scan_plan(fbb, {0});
+  CApiPlan plan(buf);
+
+  std::vector<uint32_t> groups{1};  // the smaller row group: 27120 rows
+  uint64_t handle = 0;
+  PeacockNodeStats stats{};
+  ASSERT_EQ(peacock_executor_execute_scan_rowgroups(plan.get(), 0, groups.data(), groups.size(),
+                                                    &handle, &stats),
+            0);
+  const uint64_t rows = stats.rows;
+  ASSERT_GT(rows, 100u);
+
+  auto export_range = [&](uint64_t offset, uint64_t length) {
+    uint8_t* ipc = nullptr;
+    uint64_t len = 0;
+    EXPECT_EQ(peacock_result_from_handle(plan.get(), handle, offset, length, &ipc, &len), 0);
+    std::vector<uint8_t> bytes;
+    if (len > 0) bytes.assign(ipc, ipc + len);
+    peacock_result_free(ipc);
+    return bytes;
+  };
+
+  // To-the-end is the whole table, which is what every legacy caller asks for.
+  EXPECT_EQ(export_range(0, UINT64_MAX), export_range(0, rows));
+  // A fetch running past the end clamps rather than failing — the straddling batch.
+  EXPECT_EQ(export_range(rows - 10, 1000), export_range(rows - 10, 10));
+  // An offset at or past the end ships nothing at all.
+  EXPECT_TRUE(export_range(rows, 10).empty());
+  EXPECT_TRUE(export_range(rows + 5, UINT64_MAX).empty());
+  EXPECT_TRUE(export_range(0, 0).empty());
+  // A range inside the table is neither of those, and differs from the whole.
+  auto head = export_range(0, 10);
+  EXPECT_FALSE(head.empty());
+  EXPECT_NE(head, export_range(0, rows));
+
+  // An EMPTY table is the other side of that rule and still exports its schema, which is
+  // what keeps whole-table callers' bytes what they always were. Consumes `handle`, so
+  // it goes last.
+  uint64_t empty = 0;
+  ASSERT_EQ(peacock_executor_slice_handle(plan.get(), handle, rows, 0, &empty), 0);
+  uint8_t* ipc = nullptr;
+  uint64_t len = 0;
+  EXPECT_EQ(peacock_result_from_handle(plan.get(), empty, 0, UINT64_MAX, &ipc, &len), 0);
+  EXPECT_GT(len, 0u);
+  peacock_result_free(ipc);
+
+  // A failed export leaves the session standing, unlike the node-shaped calls: it read a
+  // handle and touched nothing.
+  EXPECT_NE(peacock_result_from_handle(plan.get(), /*handle=*/999, 0, UINT64_MAX, &ipc, &len), 0);
+  EXPECT_EQ(peacock_result_from_handle(plan.get(), empty, 0, UINT64_MAX, &ipc, &len), 0);
+  peacock_result_free(ipc);
+}
+
+TEST(SliceHandle, KeepsTheRowsNamedAndConsumesItsInput) {
+  flatbuffers::FlatBufferBuilder fbb;
+  auto buf = customer_scan_plan(fbb, {0});
+  peacock::NodeSession session(buf.data(), buf.size());
+  std::vector<uint32_t> groups{1};
+
+  uint64_t whole = session.execute_scan_rowgroups(0, groups, nullptr);
+  auto keys = keys_of(session.table_for(whole));
+  const uint64_t rows = keys.size();
+
+  uint64_t head_handle = session.execute_scan_rowgroups(0, groups, nullptr);
+  uint64_t tail_handle = session.execute_scan_rowgroups(0, groups, nullptr);
+  uint64_t head = session.slice_handle(head_handle, 0, 100);
+  uint64_t tail = session.slice_handle(tail_handle, 100, UINT64_MAX);
+
+  auto sliced = keys_of(session.table_for(head));
+  auto rest = keys_of(session.table_for(tail));
+  EXPECT_EQ(sliced.size(), 100u);
+  EXPECT_EQ(rest.size(), rows - 100);
+  sliced.insert(sliced.end(), rest.begin(), rest.end());
+  EXPECT_EQ(sliced, keys);
+
+  // The input is gone: reading it and re-slicing it both fail, rather than the
+  // second consumer getting a table the first one owns.
+  EXPECT_ANY_THROW(session.table_for(head_handle));
+  EXPECT_ANY_THROW(session.slice_handle(head_handle, 0, 10));
+}
+
+TEST(SliceHandle, ClampsAndEmpties) {
+  flatbuffers::FlatBufferBuilder fbb;
+  auto buf = customer_scan_plan(fbb, {0});
+  peacock::NodeSession session(buf.data(), buf.size());
+  std::vector<uint32_t> groups{1};
+
+  uint64_t sized = session.execute_scan_rowgroups(0, groups, nullptr);
+  const uint64_t rows = session.table_for(sized).table->view().num_rows();
+
+  uint64_t past = session.slice_handle(sized, rows, 10);
+  // Empty but still a table: an empty slice keeps the columns, unlike the export,
+  // which has a caller-visible "no bytes" convention instead.
+  EXPECT_EQ(session.table_for(past).table->view().num_rows(), 0);
+  EXPECT_EQ(session.table_for(past).table->view().num_columns(), 1);
+  EXPECT_EQ(session.table_for(past).column_names[0], "c_custkey");
+
+  uint64_t whole = session.execute_scan_rowgroups(0, groups, nullptr);
+  uint64_t clamped = session.slice_handle(whole, rows - 10, 1000);
+  EXPECT_EQ(session.table_for(clamped).table->view().num_rows(), 10);
+}
+
+TEST(SliceHandle, AnUnknownHandleFails) {
+  flatbuffers::FlatBufferBuilder fbb;
+  auto buf = customer_scan_plan(fbb, {0});
+  CApiPlan plan(buf);
+
+  uint64_t out = 0;
+  EXPECT_NE(peacock_executor_slice_handle(plan.get(), /*handle=*/999, 0, 10, &out), 0);
+  EXPECT_NE(plan.last_error().find("unknown input handle"), std::string::npos) << plan.last_error();
+
+  // And the aftermath the driver leans on: the plan is gone with every handle it held,
+  // so a release on this path is a no-op rather than a use of a dead handle.
+  std::vector<uint32_t> groups{1};
+  uint64_t handle = 0;
+  EXPECT_NE(peacock_executor_execute_scan_rowgroups(plan.get(), 0, groups.data(), groups.size(),
+                                                    &handle, nullptr),
+            0);
+  EXPECT_NE(plan.last_error().find("no plan loaded"), std::string::npos) << plan.last_error();
 }
 
 int main(int argc, char** argv) {

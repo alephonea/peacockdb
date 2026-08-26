@@ -4,7 +4,7 @@ Code and tests are authoritative; this page maps them.
 
 ## Test categories
 
-**Grand total: 1472 test cases — Rust 1066, C++ 37, Python 369.** The Python figure includes the 93 corpus queries, which only a manual dispatch runs.
+**Grand total: 1506 test cases — Rust 1078, C++ 59, Python 369.** The Python figure includes the 93 corpus queries, which only a manual dispatch runs.
 
 **Runs** — `cpp-cpu` = pipeline.yml's cpp-cpu job, both cuDF legs · `cost-report` = the
 cost-report job · `shad-gpu` = CI GPU job on the remote host, `--test-threads=1` ·
@@ -28,6 +28,8 @@ and `2gpu` rows also runs locally; large CPU batches go to verda.
 | GPU exec, full_table tp1-standard (Rust) | one run asserts per-node rows+cost vs `.cpu.txt` AND the final result | [scan_limit](../peacockdb-core/tests/common/gpu_cases.inc#L29) | shad-gpu | 110 |
 | GPU exec, partitioned tp8-standard (Rust) | same on the real 8-way path, with per-partition asserts | [q6](../peacockdb-core/tests/common/gpu_cases.inc#L154) | shad-gpu | 17 |
 | GPU↔comet murmur3 (Rust) | the linchpin gate: both sides place every row in the same partition, bit-exact | [gpu_spark_partition_ids_match_comet_live](../peacockdb-core/tests/test_inc2_conformance.rs#L131) | shad-gpu | 10 |
+| Batch-partitioned ABI (Rust) | the three per-call symbols on a live GPU — a scan's row groups, an export range, a slice — and the release skipped exactly where a call consumed the handle | [test_gpu_abi](../peacockdb-core/tests/test_gpu_abi.rs) | shad-gpu | 4 |
+| GpuBatch surface (Rust) | what the batch reports, and that `consume` hands the handle over without releasing it. Needs no device: the release is null-guarded on the executor, so a CPU tier is its home | [test_gpu_batch](../peacockdb-core/tests/test_gpu_batch.rs) | cpp-cpu | 3 |
 | GPU all-at-once smoke (Rust) | whole-plan `peacock_execute` FFI; retires with [#110](tickets.md) | [scan_nation](../peacockdb-core/tests/test_gpu_executor_misc.rs#L18) | manual | 6 |
 | GPU per-node timing (Rust) | measures, asserts nothing: one `.benchmark.txt` per case, same list as the two GPU tiers ([`gpu_cases.inc`](../peacockdb-core/tests/common/gpu_cases.inc)) | [run_gpu_benchmark](../peacockdb-core/tests/peacock_gpu_benchmarks.rs) | manual | 127 |
 | Cost-model goldens (Rust) | `.cost.txt` derivation from `.cpu.txt` × `cost_model.conf` | [cost_goldens_match_and_total_is_byte_identical](../peacockdb-core/tests/test_cost_model.rs#L36) | cost-report | 2 |
@@ -39,9 +41,10 @@ and `2gpu` rows also runs locally; large CPU batches go to verda.
 | Plan goldens, bp-tp4-single (Rust) | 4 lanes, one batch per chunk — the shuffle shapes with batching inert; plan tree + `--- memory ---` per query, one file per bench | [tpch_bp_tp4_single](../peacockdb-core/tests/test_batch_partitioned_plans.rs) | cpp-cpu | 2 |
 | Plan goldens, bp-tp4-rowgroup (Rust) | 4 lanes at row-group granularity: lanes and many batches at once; plan tree + `--- memory ---` per query, one file per bench | [tpch_bp_tp4_rowgroup](../peacockdb-core/tests/test_batch_partitioned_plans.rs) | cpp-cpu | 2 |
 | Plan goldens, bp-tp4-sized (Rust) | 4 lanes, the estimator's target — **the only mode a budget tier moves**, recorded in-band; plan tree + `--- memory ---` per query, one file per bench | [tpch_bp_tp4_sized](../peacockdb-core/tests/test_batch_partitioned_plans.rs) | cpp-cpu | 2 |
-| Plan goldens, meta (Rust) | the registry and the goldens agree both ways; every mode has a golden and every golden a mode; every refusal in a golden names a ticket that exists | [the_registry_matches_the_goldens_in_both_directions](../peacockdb-core/tests/test_batch_partitioned_plans.rs) | cpp-cpu | 3 |
+| Plan goldens, meta (Rust) | the registry and the goldens agree both ways; every mode has a golden and every golden a mode; every refusal in a golden names a ticket that exists and carries no host path | [the_registry_matches_the_goldens_in_both_directions](../peacockdb-core/tests/test_batch_partitioned_plans.rs#L427) | cpp-cpu | 4 |
+| Plan goldens, comparator unit (Rust) | the differ must name what moved, what is missing and what is out of order — every other test in the file is a comparison through it | [a_section_that_moved_is_named_with_the_column_that_moved](../peacockdb-core/tests/test_batch_partitioned_plans.rs#L275) | cpp-cpu | 3 |
 | Registry ↔ CSV (Rust) | each `cost-registry.csv` mode column matches the tests that exist, both directions | [full_table_columns](../peacockdb-core/tests/test_cpu_full_table.rs#L313), [partitioned_gpu_column](../peacockdb-core/tests/test_gpu_partitioned.rs#L46) | cpp-cpu ×4, shad-gpu ×2 | 6 |
-| CI wiring guard (Rust) | every Rust target must be named by a CI step — CI does not glob | [every_rust_test_target_is_named_by_ci](../peacockdb-core/tests/test_ci_coverage.rs#L284) | cost-report | 2 |
+| CI wiring guard (Rust) | every Rust target must be named by a CI step — CI does not glob, and the three lists that decide where a GPU target runs must agree | [every_rust_test_target_is_named_by_ci](../peacockdb-core/tests/test_ci_coverage.rs#L323), [the_three_gpu_target_lists_agree](../peacockdb-core/tests/test_ci_coverage.rs#L419) | cost-report | 3 |
 | tp8 flip diagnostic (Rust) | prints would-be flips; a printer, no assertions | [diag_flip_audit](../peacockdb-core/tests/diag_flip_audit.rs#L135) | manual | 1 |
 | Lib unit (Rust) | config tiers, batch-size rule, resident model, and the batch-partitioned types, schema annotations, validation rules, and both drivers with the scheduler and the resident accountant over a mock backend | [tiers_are_strictly_increasing](../peacockdb-core/src/config.rs#L119), [nested_join_build_sides_stack](../peacockdb-core/src/resident.rs#L165) | cpp-cpu | 296 |
 | Doctest (Rust) | the `CpuExecutor` rustdoc example still compiles | [CpuExecutor example](../peacockdb-core/src/lib.rs#L166) | manual — unlisted, see [#128](tickets.md) | 1 |
@@ -51,18 +54,20 @@ and `2gpu` rows also runs locally; large CPU batches go to verda.
 | Exec-model prototype (Python) | the batch-partitioned scheduler over mock traits, plus pandas-backed operators checked against a single-shot oracle at five partitioning configs, both limit lowerings, the scalar expressions pinned to what `expr.cpp` does rather than what pandas defaults to, and every join mode run on two backends — one pandas, one emitting FlatBuffers nodes and interpreting them as the C++ does — no project code | [test_a_join_in_its_build_phase_holds_back_its_probe_subtree](../scripts/exec_model/tests/test_scheduling.py), [test_every_join_type_matches_the_oracle_on_both_backends](../scripts/exec_model/tests/test_join_capability.py) | cost-report | 216 |
 | Exec-model prototype, TPC-H plan shapes (Python) | the same drivers over real sf1 tables under a live resident budget, each plan re-run at every layout `LayoutInjector` can produce; needs the generated dataset, so it rides cpp-cpu rather than cost-report | [test_the_accumulator_is_what_makes_the_budget_bind](../scripts/exec_model/tests/test_tpch.py), [test_every_layout_gives_the_same_shuffled_join](../scripts/exec_model/tests/test_tpch.py) | cpp-cpu (25.02 leg) | 19 |
 | Exec-model corpus (Python) | every TPC-H query and every TPC-DS query the engine runs `full_table` that needs no window function, lowered by hand and run over whole sf1 tables at three layouts each — TPC-H against a pandas oracle per query, TPC-DS against DuckDB running the query's own text. Minutes, not seconds, so manual dispatch; `PCK_BACKEND=recipe` re-runs the whole set with every join going through the FlatBuffers emulation | [test_corpus_q21_suppliers_who_kept_orders_waiting](../scripts/exec_model/tests/test_tpch_corpus.py), [plans_tpcds.py](../scripts/exec_model/tests/plans_tpcds.py) | manual — exec-model-corpus.yml, 3 shards | 93 |
-| C++ CPU/FFI unit | decimal binop typing, AST routability, lifecycle; no GPU needed | [DecimalScale.BinopOutputType](../cpp/tests/cpu/test_executor.cpp#L26), [AstRouting.IsAstAble](../cpp/tests/cpu/test_executor.cpp#L81) | cpp-cpu (`ctest -L cpu`) + shad-gpu | 5 |
-| cuDF GPU smoke (C++) | the GPU is alive; the Spark-murmur3 kernel matches comet in C++ | [CudfGpu.SparkPartitionIdsMatchComet2ColWithNulls](../cpp/tests/gpu/test_cudf.cpp#L84) | shad-gpu | 3 |
-| Plan-executor (C++) | hand-built plan IR through the C++ executor, node by node | [PlanExecutor.HashJoinNationRegion](../cpp/tests/gpu/test_plan_executor.cpp#L255) | shad-gpu | 12 |
+| C++ CPU/FFI unit | decimal binop typing, AST routability, lifecycle, and the row-range clamp rule; no GPU needed | [DecimalScale.BinopOutputType](../cpp/tests/cpu/test_executor.cpp#L26), [AstRouting.IsAstAble](../cpp/tests/cpu/test_executor.cpp#L81) | cpp-cpu (`ctest -L cpu`) + shad-gpu | 11 |
+| cuDF GPU smoke (C++) | the GPU is alive; the Spark-murmur3 kernel matches comet in C++; the timing floor leaves the global switch as it found it | [CudfGpu.SparkPartitionIdsMatchComet2ColWithNulls](../cpp/tests/gpu/test_cudf.cpp#L84), [NodeTiming.FloorRestoresTheSwitch](../cpp/tests/gpu/test_cudf.cpp#L41) | shad-gpu | 5 |
+| Plan-executor (C++) | hand-built plan IR through the C++ executor, node by node, plus the per-call entry points at their contract edges (row-group override, export range, slice) | [PlanExecutor.HashJoinNationRegion](../cpp/tests/gpu/test_plan_executor.cpp#L255) | shad-gpu | 21 |
 | TPC-H sf40 bare-cuDF (C++) | hand-written cuDF pipelines vs DuckDB sf40; the benchmark vehicle | [TpchSf40.Q1GroupByAggregates](../cpp/tests/gpu/test_tpch.cpp#L216), [Q3JoinsGroupByTopN](../cpp/tests/gpu/test_tpch.cpp#L376) | shad-gpu (sf40 is a hard precondition) | 4 |
 | TPC-H+V sf40 bare-cuDF (C++) | the same for the vector-embedding queries | [TpchSf40.Q11VectorBruteForce](../cpp/tests/gpu/test_tpchv.cpp#L326) | shad-gpu | 4 |
+| TPC-H sf40 streamed (C++) | the same four queries and the same DuckDB goldens with nothing held resident — a chunked reader under a byte budget, so it answers whether the query fits rather than how fast the operators are | [TpchSf40Streamed.Q1Streamed](../cpp/tests/gpu/test_tpch_streamed.cpp#L337) | manual | 4 |
+| Per-operator cuDF timings (C++) | one operator at a time over real sf40 columns, so a query cost reads as a sum of parts; asserts row counts only, so a benchmark cannot time an empty column | [CudfNodes.OperatorTimings](../cpp/tests/gpu/test_cudf_nodes.cpp#L140) | manual | 1 |
 | Multi-GPU TPC-H (C++) | WorkerPool, hash_shuffle, per-device RMM pools across GPUs | [TpchSf40.Q3MultiGpu](../cpp/tests/gpu/test_multi_gpu_tpch.cpp#L460) | manual, 2gpu | 4 |
 | Multi-GPU TPC-H+V (C++) | the same for the vector queries | [TpchSf40.Q10VectorCustomerTopNMultiGpu](../cpp/tests/gpu/test_multi_gpu_tpchv.cpp#L920) | manual, 2gpu | 4 |
 | Multi-GPU basics (C++) | device-local streams + destruction on the owning worker | [BasicMultiGpu.CudfAndCuvsAcrossTwoGpus](../cpp/tests/gpu/test_basic_multi_gpu.cpp#L228) | manual, 2gpu | 1 |
 | Dataset validators (Python) | row counts / clustering / embedding stats over whatever dataset they are pointed at; each check tags itself `EXHAUSTIVE` or `SAMPLED` | [validate_tpch.py](../scripts/validate_tpch.py), [check_s3_datasets.py](../scripts/check_s3_datasets.py) | cpp-cpu (sf1) · validate-large (sf40/sf200) | n/a¹ |
 
 ¹ Data-driven — the check count depends on the dataset and SF, so these are excluded from
-the 891. Everything else in the repo that can be enumerated as a test case is counted.
+the 1506. Everything else in the repo that can be enumerated as a test case is counted.
 
 Notes
 
@@ -74,9 +79,11 @@ Notes
   (`full_table_tp1_standard`), so the golden filename is reconstructible from the call
   site. GPU result validation is `golden_exact` | `golden_approx` | `golden_approx_std` |
   `oracle` | `skip`.
-- One test is quarantined, not deleted: the tp8-standard `shuffle_stddev` GPU case
-  (#103), commented out in `test_gpu_partitioned.rs` with its goldens kept. It is not in
-  the counts above.
+- Five cases are commented out rather than deleted, and none is in the counts above. One is
+  quarantined for divergence: the tp8-standard `shuffle_stddev` GPU case (#103), at
+  `common/gpu_cases.inc:175`, with its goldens kept. The other four are blocked rather than
+  flaky — tpcds q27, q70, q72 and q86 at tp8-mini, on the DataFusion 46 upgrade (#23) — and
+  each carries its reason at `test_cpu_full_table.rs:174`.
 - Why the three `manual` Rust targets run nowhere. `test_gpu_executor_misc` needs the linked
   C++/CUDA executor, so the CPU tiers cannot build it — and it is not staged for the GPU
   job either, which is the part nobody chose deliberately: it drives the all-at-once
@@ -230,12 +237,13 @@ cost-report ──► deploy-pages (master push only)          s3-datasets
   releases and would move every plan golden), then the CPU rust tiers:
   `test_plan_serialiser`, `test_query_plan`, `test_cpu_full_table`,
   `test_cpu_executor_misc`, `test_cpu_oom`, `test_node_executor`, `test_query_plan_misc`,
-  `test_cpu_partitioned`, `test_batch_partitioned_plans`, `peacockdb-ffi --test test_ffi`,
+  `test_cpu_partitioned`, `test_batch_partitioned_plans`, `test_gpu_batch` (which links the
+  FFI but touches no device), `peacockdb-ffi --test test_ffi`,
   plus rust-only `test_plan_bytes` and `--lib`. Build and run are separate steps whose env blocks must
   stay byte-identical, or the run step recompiles.
 - **cpp-build-2502** — builds the 25.02 C++ side, bundles the Arrow/Parquet runtime libs,
-  and stages `test_gpu_full_table`, `test_gpu_partitioned`, `test_inc2_conformance` as the
-  `cpp-install-25.02` artifact. Separate from cpp-cpu so the GPU job can start without
+  and stages `test_gpu_full_table`, `test_gpu_partitioned`, `test_inc2_conformance` and
+  `test_gpu_abi` as the `cpp-install-25.02` artifact. Separate from cpp-cpu so the GPU job can start without
   waiting for the CPU tests.
 - **gpu-tests** (needs cpp-build-2502) — ssh to **shad-gpu** into a per-run `REMOTE_DIR`:
   rsync artifact + testdata, patch the binaries for glibc 2.35, generate sf1 on the host

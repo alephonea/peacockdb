@@ -1366,6 +1366,10 @@ the trait's own note says it must be. Both are `RunError`, which is where run-ti
 lives now that `PlanError` is plan time only: a budget trip, a protocol violation, a backend
 that has no executor for a node.
 
+`Driver::new` runs the rules its own correctness rests on rather than the whole of `validate()`:
+the planner owns the rest, and a rule moves into `check_canonical_form` when a driver need is
+shown for it, as the limit-position rule did.
+
 ### The scheduling rule
 
 Every node carries a **height** (distance to the root, root = 0) and an **order**
@@ -1685,12 +1689,17 @@ skip/fetch are frozen per seq, so every batch would be truncated to the same bou
 (two batches → 2× the limit), and the right bound for the last batch is a runtime value
 no frozen node can carry. Legacy never sees this because a legacy partition is one batch.
 
-**A scan carrying a pushed-down limit plans one lane.** Where DataFusion can push the bound
-all the way into the source it erases the limit node — `SELECT * FROM nation LIMIT 3` is a
-`ParquetExec{limit: 3}` and nothing above it. DataFusion is safe because its scan is one
+**A scan carrying a pushed-down limit plans one lane and one batch.** Where DataFusion can push
+the bound all the way into the source it erases the limit node — `SELECT * FROM nation LIMIT 3`
+is a `ParquetExec{limit: 3}` and nothing above it. DataFusion is safe because its scan is one
 partition; our lane count is our own decision, so four lanes each honouring `limit=3` answer
-with twelve rows. One lane makes the loader's own limit the whole answer. Same shape as the
-small-table rule, and no new node.
+with twelve rows. The batch count is the same defect one level down, and the ABI is what makes
+it one: `CudfScan.limit` becomes `set_num_rows` on every `execute_scan_rowgroups` call
+(`cpp/src/operators/scan.cpp` ~L61), so B batches answer with B × limit rows, exactly as a
+frozen `GpuLimit` node would. One lane and one batch make the loader's own limit the whole
+answer, and the limit bounds what that batch reads, so a source is never sized by more than
+what was asked of it. Same shape as the small-table rule, and no new node. The corpus case is
+`scan-limit`, whose plan is a bare scan at ten rows with nothing above it.
 
 **Root-adjacent** (feeding only `GpuUnload` — the common case) **there is no limit node**.
 `skip`/`fetch` become properties of `GpuUnload`, which is where they belong: a limit over a
@@ -2109,7 +2118,7 @@ their own, and the accounting formula with its pre/post checks. What the task se
 [Drivers](#drivers) and [Memory accounting](#memory-accounting); what it left for T14 is every
 real executor, since nothing here computes a row.
 
-**T9 — additive ABI.** The three approved symbols in `gpu_executor.cpp` + `peacock_gpu.h`,
+~~**T9 — additive ABI.**~~ (done). The three approved symbols in `gpu_executor.cpp` + `peacock_gpu.h`,
 signatures as [GPU execution](#gpu-execution-through-the-frozen-ffi) gives them; any
 *further* surface change goes through a proposal to the human, per the constraint section.
 Rust bindings for all three; `GpuBatch` handle plumbing (session ref, `Drop` release,
@@ -2120,6 +2129,14 @@ past-the-end range; the same for slicing, plus that the input handle is released
 double-slicing it fails; Rust FFI smoke on shad-gpu. The range plumbing reaches
 `UnloadExecutor::unload(batch, rows)`, so the trait's second argument lands here rather
 than in T10.
+
+Landed with two shapes worth knowing. The row range is one function, `clamp_row_range`, that
+the export and the slice share, so the two cannot disagree about an overrun; and the row-group
+override reaches `execute_scan` as a `cudf::host_span`, so the node's own vector and a caller's
+array take one path. `RowRange` and `unload(batch, rows)` were already in from T13, so the
+trait needed nothing. One test moved tier against the list above: two IPC streams do not
+concatenate, so "the ranges are the whole" is asserted in `test_gpu_abi`, where arrow-rs decodes
+them, and the gtest holds the contract edges instead.
 
 **T10 — Exec executors, CPU and GPU.** Filter, project, per-batch sort, aggregate
 (partial/single), unload (`GpuBatch → CpuBatch`, honouring the row range). Reuse legacy operator code by extracting
@@ -2148,15 +2165,6 @@ covers every node kind and is unit-testable against the plans T6 already canoniz
 executor in sight. The end-to-end half is bounded by what T10 built, so it is
 scan → filter → aggregate here; the join and the sort+limit follow their executors in T16 and
 T15 and prove the seq sequences the [capability matrix](#join-capability-matrix) spells out.
-
-`Driver::new` does not run the whole `validate()`, and that is settled rather than pending: it
-refuses the assumptions its own correctness rests on, the planner owns the rest, and a rule
-moves into `check_canonical_form` when a driver need is shown for it — as the limit-position
-rule did. Running everything would oblige every hand-built test plan to satisfy rules the
-driver does not depend on, which is how a mock stops being able to isolate anything, and on the
-real path it is a second gate on what `plan.rs` has already gated. A hand-built tree that the
-planner would refuse still fails with a `RunError::Protocol` naming the node, which is a
-diagnostic rather than a silence.
 
 **T15 — accumulators.** `GpuCoalesceAllBatches`, `GpuAggregateBatches` (merge-only and
 finalizing),

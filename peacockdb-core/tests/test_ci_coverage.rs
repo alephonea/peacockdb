@@ -39,6 +39,7 @@ const INTENTIONALLY_NOT_IN_CI: &[(&str, Exemption)] = &[
     ("test_gpu_full_table", Exemption::GpuJob),
     ("test_gpu_partitioned", Exemption::GpuJob),
     ("test_inc2_conformance", Exemption::GpuJob),
+    ("test_gpu_abi", Exemption::GpuJob),
     ("test_gpu_executor_misc", Exemption::NotRun(
         "needs the linked C++/CUDA executor; not built in the CPU tiers and not staged \
          for the GPU job",
@@ -141,6 +142,38 @@ fn gpu_job_staged_targets() -> BTreeSet<String> {
         .unwrap_or("")
         .split_whitespace()
         .map(str::to_string)
+        .collect()
+}
+
+/// The GPU test binaries `scripts/build-test-shadgpu.sh` stages, from its `RUST_TESTS`
+/// array — what a developer's own run ships to the host.
+fn shadgpu_staged_targets() -> BTreeSet<String> {
+    let text = std::fs::read_to_string(repo_root().join("scripts/build-test-shadgpu.sh"))
+        .expect("read build-test-shadgpu.sh");
+    let start = text.find("RUST_TESTS=(").expect(
+        "build-test-shadgpu.sh has no RUST_TESTS=( array — the staging list was renamed, \
+         and the check that it matches CI now rests on a list that does not exist",
+    ) + "RUST_TESTS=(".len();
+    let end = start + text[start..].find(')').expect("unterminated RUST_TESTS array");
+    text[start..end].split_whitespace().map(str::to_string).collect()
+}
+
+/// The targets `scripts/build-test.sh` treats as needing a device at run time, from its
+/// `gpu_runtime_targets()` heredoc, as `(crate, target)`. That set is SUBTRACTED from the
+/// CPU modes and matched WHOLE against `<crate>:<target>`, so the crate is kept rather than
+/// discarded: a line with the wrong crate subtracts nothing, and the target it names then
+/// runs on a machine with no GPU.
+fn gpu_runtime_targets() -> BTreeSet<(String, String)> {
+    let text = std::fs::read_to_string(repo_root().join("scripts/build-test.sh"))
+        .expect("read build-test.sh");
+    let start = text.find("<<'GPUSET'").expect(
+        "build-test.sh has no GPUSET heredoc — gpu_runtime_targets() was renamed or \
+         reshaped, and both the mode ladder and this check depend on its contents",
+    ) + "<<'GPUSET'".len();
+    let end = start + text[start..].find("\nGPUSET").expect("unterminated GPUSET heredoc");
+    text[start..end]
+        .lines()
+        .filter_map(|l| l.trim().split_once(':').map(|(c, t)| (c.to_string(), t.to_string())))
         .collect()
 }
 
@@ -376,4 +409,71 @@ fn every_rust_test_target_is_named_by_ci() {
         "INTENTIONALLY_NOT_IN_CI names targets that no longer exist — remove them:\n  {}",
         stale.join("\n  ")
     );
+}
+
+/// Three committed lists name the GPU test binaries — pipeline.yml's staging array,
+/// build-test-shadgpu.sh's `RUST_TESTS`, and build-test.sh's `gpu_runtime_targets()` —
+/// each read by a different runner, so a target in one and not the others is invisible in
+/// exactly the direction that matters. The third is the dangerous one: the CPU modes are
+/// built by SUBTRACTING it, whole-line, so an entry with the wrong crate or a stale target
+/// name subtracts nothing and a file-gated GPU test RUNS on a host with no device.
+///
+/// Not checked: a target exempted as `NotRun` may be absent from `gpu_runtime_targets()`
+/// with nothing red. No file says "needs a device" — that is what the hand-declared set is
+/// for, and `test_gpu_executor_misc` is that shape today.
+#[test]
+fn the_three_gpu_target_lists_agree() {
+    let ci = gpu_job_staged_targets();
+    let dev = shadgpu_staged_targets();
+    let runtime = gpu_runtime_targets();
+
+    assert_eq!(
+        ci, dev,
+        "pipeline.yml's gpu-tests staging array and build-test-shadgpu.sh's RUST_TESTS \
+         name different sets. A developer's run then proves a different set from the \
+         merge gate's, in whichever direction the lists disagree."
+    );
+
+    // The heredoc is the only one of the three that names a crate, so it is the only one
+    // that can be wrong about it — and it lists the same tests/ tree workspace_test_targets
+    // reads, which is what makes a bad prefix or a renamed file checkable here at all.
+    let on_disk = workspace_test_targets();
+    let unmatched: Vec<String> = runtime.difference(&on_disk).map(qualified).collect();
+    assert!(
+        unmatched.is_empty(),
+        "gpu_runtime_targets() names entries that no workspace test target matches: \
+         {unmatched:?}\nbuild-test.sh matches those lines whole against `<crate>:<target>`, so \
+         each subtracts nothing — either the crate is wrong or the test file was renamed, and \
+         the target it means to hold back now runs on a CPU-only host."
+    );
+
+    // The other two lists are bare names, and every target they carry is peacockdb-core's,
+    // so that is what a bare name means when set against the crate-qualified heredoc.
+    let ci_qualified: BTreeSet<(String, String)> =
+        ci.iter().map(|t| ("peacockdb-core".to_string(), t.clone())).collect();
+
+    let unsubtracted: Vec<String> = ci_qualified.difference(&runtime).map(qualified).collect();
+    assert!(
+        unsubtracted.is_empty(),
+        "CI stages these for the GPU host, but build-test.sh's gpu_runtime_targets() does \
+         not name them: {unsubtracted:?}\nThat set is subtracted to build the CPU modes, \
+         so each of these is currently both skipped by --gpu and RUN on a CPU-only host."
+    );
+
+    let exempt: BTreeSet<&str> = INTENTIONALLY_NOT_IN_CI.iter().map(|(n, _)| *n).collect();
+    let orphaned: Vec<String> = runtime
+        .difference(&ci_qualified)
+        .filter(|(_, t)| !exempt.contains(t.as_str()))
+        .map(qualified)
+        .collect();
+    assert!(
+        orphaned.is_empty(),
+        "gpu_runtime_targets() names these, no CI staging step runs them, and no \
+         INTENTIONALLY_NOT_IN_CI entry says that is deliberate: {orphaned:?}"
+    );
+}
+
+/// The `<crate>:<target>` form build-test.sh matches on, for failure messages.
+fn qualified((krate, target): &(String, String)) -> String {
+    format!("{krate}:{target}")
 }

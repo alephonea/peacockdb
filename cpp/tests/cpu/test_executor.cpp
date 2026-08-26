@@ -143,6 +143,33 @@ TEST(NodeTiming, SwitchRoundTrips) {
   EXPECT_FALSE(peacock::node_timing_enabled());
 }
 
+// The row range every per-batch caller's bounds go through, on the tier that needs no
+// device: it is arithmetic, and reaching it through a scan on the GPU host is the long
+// way round to a case that cannot fail there for a reason worth knowing.
+TEST(ClampRowRange, ToTheEndSentinel) {
+  EXPECT_EQ(peacock::clamp_row_range(0, UINT64_MAX, 100), std::make_pair(0, 100));
+  EXPECT_EQ(peacock::clamp_row_range(40, UINT64_MAX, 100), std::make_pair(40, 100));
+}
+
+TEST(ClampRowRange, PastTheEndClamps) {
+  EXPECT_EQ(peacock::clamp_row_range(90, 1000, 100), std::make_pair(90, 100));
+  EXPECT_EQ(peacock::clamp_row_range(0, 100, 100), std::make_pair(0, 100));
+}
+
+TEST(ClampRowRange, AtOrPastTheEndIsEmpty) {
+  EXPECT_EQ(peacock::clamp_row_range(100, 10, 100), std::make_pair(100, 100));
+  EXPECT_EQ(peacock::clamp_row_range(500, UINT64_MAX, 100), std::make_pair(100, 100));
+  EXPECT_EQ(peacock::clamp_row_range(0, 0, 100), std::make_pair(0, 0));
+  EXPECT_EQ(peacock::clamp_row_range(0, UINT64_MAX, 0), std::make_pair(0, 0));
+}
+
+TEST(ClampRowRange, TheSentinelDoesNotOverflow) {
+  // The reason the length is taken against the rows REMAINING rather than added to the
+  // offset: offset + UINT64_MAX wraps, and the wrapped end lands inside the table.
+  EXPECT_EQ(peacock::clamp_row_range(1, UINT64_MAX, 100), std::make_pair(1, 100));
+  EXPECT_EQ(peacock::clamp_row_range(UINT64_MAX, UINT64_MAX, 100), std::make_pair(100, 100));
+}
+
 int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);
   return RUN_ALL_TESTS();

@@ -309,6 +309,7 @@ gpu_runtime_targets() {
   cat <<'GPUSET'
 peacockdb-core:test_gpu_full_table
 peacockdb-core:test_gpu_partitioned
+peacockdb-core:test_gpu_abi
 peacockdb-core:test_inc2_conformance
 peacockdb-core:test_gpu_executor_misc
 GPUSET

@@ -539,7 +539,7 @@ the whole function.
 
 | Node | What steers it | The cuDF it becomes |
 |---|---|---|
-| [`CudfScan`](../flatbuffers/gpu_plan.fbs#L317) | `file_paths`, `projection`, `row_groups` (pruning survivors) or `batches[p]` (this partition's slice of them), `limit`; `batch_size` **is read by nobody** (#132) | [`scan.cpp#L83`](../cpp/src/operators/scan.cpp#L83) — `cudf::io::read_parquet(opts)`, with `.columns(projected)`, `set_row_groups(...)` and `set_num_rows(limit)` set on `opts` first |
+| [`CudfScan`](../flatbuffers/gpu_plan.fbs#L317) | `file_paths`, `projection`, `row_groups` (pruning survivors) or `batches[p]` (this partition's slice of them), or a list the call supplies instead of either (`execute_scan_rowgroups`, which is how one node loads a batch at a time), `limit`; `batch_size` **is read by nobody** (#132) | [`scan.cpp#L83`](../cpp/src/operators/scan.cpp#L83) — `cudf::io::read_parquet(opts)`, with `.columns(projected)`, `set_row_groups(...)` and `set_num_rows(limit)` set on `opts` first |
 | [`CudfFilter`](../flatbuffers/gpu_plan.fbs#L346) | `predicate`, `projection` | [`filter.cpp#L25`](../cpp/src/operators/filter.cpp#L25) — `cudf::compute_column(tv, predicate)` for the mask, then `cudf::apply_boolean_mask(tv, mask->view())` |
 | [`CudfProject`](../flatbuffers/gpu_plan.fbs#L358) | `exprs`, `aliases` | [`project.cpp#L49`](../cpp/src/operators/project.cpp#L49) — `cudf::compute_column(tv, ast)` per AST-able expr; a bare `ColumnRef` is a column copy, and LIKE/CASE/scalar functions take `build_column` instead |
 | [`CudfAggregate`](../flatbuffers/gpu_plan.fbs#L375) | `mode` (Partial/Final/FinalPartitioned), `group_exprs`, `aggr_funcs` (each with its out decimal scale and `distinct`), `grouping_sets`, `mergeable_agg_state`, `aggr_input_schema` | [`aggregate.cpp#L666`](../cpp/src/operators/aggregate.cpp#L666) — `gb.aggregate(requests)` over [`groupby{keys, null_policy::INCLUDE}`](../cpp/src/operators/aggregate.cpp#L435); with no group keys it is [`cudf::reduce`](../cpp/src/operators/aggregate.cpp#L258) to one row |
@@ -890,10 +890,22 @@ int  peacock_executor_execute_node(peacock_executor_t* executor, uint64_t seq,
                                    const uint64_t* input_child_counts, uint64_t n_children,
                                    uint64_t* out_handles, uint64_t out_cap,
                                    uint64_t* out_count, PeacockNodeStats* out_stats);
-int  peacock_result_from_handle(peacock_executor_t* executor, uint64_t handle,
-                                uint8_t** out_ipc, uint64_t* out_ipc_len);
 void peacock_handle_release(peacock_executor_t* executor, uint64_t handle);
 void peacock_executor_end_plan(peacock_executor_t* executor);
+
+/* per-call entry points: what a driver decides per call — a batch's row groups, a
+   limit's bounds — cannot ride a plan node, whose fields are constants.
+   A row range is [offset, offset+length), UINT64_MAX meaning to the end, an offset
+   past the end empty and an overrun clamped. */
+int  peacock_executor_execute_scan_rowgroups(peacock_executor_t* executor, uint64_t seq,
+                                             const uint32_t* row_groups, uint64_t n,
+                                             uint64_t* out_handle,
+                                             PeacockNodeStats* out_stats);
+int  peacock_executor_slice_handle(peacock_executor_t* executor, uint64_t handle,
+                                   uint64_t offset, uint64_t length, uint64_t* out_handle);
+int  peacock_result_from_handle(peacock_executor_t* executor, uint64_t handle,
+                                uint64_t offset, uint64_t length,
+                                uint8_t** out_ipc, uint64_t* out_ipc_len);
 
 /* benchmark instrumentation: process-global, off by default. Enabling it makes
    execute_node synchronize the default stream at every measurement boundary, so
@@ -932,6 +944,12 @@ class NodeSession {
                     const uint64_t* input_child_counts, size_t n_children,
                     uint64_t* out_handles, size_t out_cap, size_t* out_count,
                     NodeStats* out_stats);
+
+  // The scan's row groups and the slice's bounds are per-call values, so they are
+  // arguments here rather than fields of the node addressed by seq.
+  uint64_t execute_scan_rowgroups(uint64_t seq, cudf::host_span<const uint32_t> row_groups,
+                                  NodeStats* out_stats);
+  uint64_t slice_handle(uint64_t handle, uint64_t offset, uint64_t length);
 
   const TableResult& table_for(uint64_t handle) const;
   void release(uint64_t handle);
@@ -1051,7 +1069,7 @@ Both node-by-node backends keep intermediates alive behind opaque `u64` handles,
 neither side is that a class. In C++ it is two fields inside the private
 [`NodeSession::Impl`](../cpp/src/node_session.cpp#L70) —
 `std::unordered_map<uint64_t, TableResult> registry` and `uint64_t next_handle = 1` — with
-allocation, lookup, consume-on-read and erase written inline at each of the sixteen sites
+allocation, lookup, consume-on-read and erase written inline at each of the twenty-two sites
 that touch them. The Rust CPU backend has the twin arrangement — a
 `HashMap<u64, Vec<RecordBatch>>` plus `next_handle`, allocated by
 [`store`](../peacockdb-core/src/executors/backend/cpu_node_executor.rs#L291).

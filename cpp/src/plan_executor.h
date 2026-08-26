@@ -1,10 +1,12 @@
 #pragma once
 
 #include <cudf/table/table.hpp>
+#include <cudf/utilities/span.hpp>
 
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace peacock {
@@ -76,6 +78,15 @@ TableResult execute_plan(const uint8_t* plan_bytes, uint64_t plan_len);
 /// Σ var-length content bytes over a table's columns (see `NodeStats`).
 uint64_t varlen_content_bytes(const cudf::table_view& table);
 
+/// The half-open row range `[offset, offset+length)` names in a table of `num_rows`,
+/// with `length == UINT64_MAX` meaning to the end.
+///
+/// An offset at or past the end gives an empty range, and a range running past the end
+/// clamps to it — neither throws, because the caller is a limit interval whose fetch
+/// legitimately overruns the batch it straddles.
+std::pair<cudf::size_type, cudf::size_type> clamp_row_range(uint64_t offset, uint64_t length,
+                                                            cudf::size_type num_rows);
+
 /// Node-by-node execution session: parses a plan once and drives ONE node at a
 /// time given already-resident child inputs, keeping intermediates resident in a
 /// handle registry. Used by the unified CPU/GPU node-executor interface; the
@@ -106,6 +117,18 @@ class NodeSession {
                     const uint64_t* input_child_counts, size_t n_children,
                     uint64_t* out_handles, size_t out_cap, size_t* out_count,
                     NodeStats* out_stats);
+
+  /// Execute the `CudfScan` at post-order `seq` reading exactly `row_groups` rather
+  /// than the list the node carries, and register its one output table. Throws naming
+  /// the kind when `seq` is any other node — this entry point has no generic arm to
+  /// fall back to. `out_stats` may be null.
+  uint64_t execute_scan_rowgroups(uint64_t seq, cudf::host_span<const uint32_t> row_groups,
+                                  NodeStats* out_stats);
+
+  /// Rows `[offset, offset+length)` of `handle` copied into a new owning handle
+  /// (`clamp_row_range` for the edges). The input handle is CONSUMED, as every
+  /// operation on a resident table is.
+  uint64_t slice_handle(uint64_t handle, uint64_t offset, uint64_t length);
 
   /// Borrow the resident table behind `handle` (for materialization at root).
   const TableResult& table_for(uint64_t handle) const;

@@ -265,8 +265,16 @@ impl NodeExecutor for GpuNodeExecutor {
         for &handle in handles {
             let mut out_ptr: *mut u8 = std::ptr::null_mut();
             let mut out_len: u64 = 0;
+            // The whole handle: a root materialization has no row interval to apply.
             let rc = unsafe {
-                peacock_result_from_handle(self.executor, handle, &mut out_ptr, &mut out_len)
+                peacock_result_from_handle(
+                    self.executor,
+                    handle,
+                    0,
+                    u64::MAX,
+                    &mut out_ptr,
+                    &mut out_len,
+                )
             };
             if rc != 0 {
                 return Err(last_error(self.executor, "peacock_result_from_handle"));

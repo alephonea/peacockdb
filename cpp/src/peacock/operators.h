@@ -7,6 +7,8 @@
 #include "peacock/plan_types.h"
 #include "plan_executor.h"
 
+#include <cudf/utilities/span.hpp>
+
 #include <vector>
 
 namespace peacock {
@@ -29,8 +31,10 @@ struct NodeInputs {
 //
 // Default argument on the DECLARATION only -- repeating it on the definition is a
 // hard error.
+// The override is a caller array rather than the node's own vector because the
+// per-batch loader supplies one; EMPTY means "no override".
 TableResult execute_scan(const fb::CudfScan* scan,
-                         const flatbuffers::Vector<uint32_t>* row_groups_override = nullptr);
+                         cudf::host_span<const uint32_t> row_groups_override = {});
 TableResult execute_filter(const fb::CudfFilter* filter, NodeInputs* in);
 TableResult execute_project(const fb::CudfProject* proj, NodeInputs* in);
 TableResult execute_aggregate(const fb::CudfAggregate* agg, NodeInputs* in);

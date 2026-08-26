@@ -594,13 +594,16 @@ fn assert_sorted_str_approx(golden: &str, actual: &str, tol: f64, query: &str) {
         }
         parts[1..parts.len() - 1].iter().map(|c| c.trim().to_string()).collect()
     }
-    // (header lines [0..3], data rows as cells). Header/border must match exactly.
+    // Column NAMES and the data rows as cells — never the borders. Arrow sizes each column
+    // to its widest printed cell, so the ascii art encodes the values this comparator exists
+    // not to compare bit-for-bit: one digit more in a float moved a border by a dash and
+    // failed the test a line before the tolerance that allows it was reached.
     fn parse(s: &str) -> (Vec<String>, Vec<Vec<String>>) {
         let lines: Vec<&str> = s.lines().collect();
         if lines.len() <= 4 {
-            return (lines.iter().map(|l| l.to_string()).collect(), vec![]);
+            return (lines.get(1).map(|l| split_cells(l)).unwrap_or_default(), vec![]);
         }
-        let header = lines[..3].iter().map(|l| l.to_string()).collect();
+        let header = split_cells(lines[1]);
         let data = lines[3..lines.len() - 1].iter().map(|l| split_cells(l)).collect();
         (header, data)
     }
