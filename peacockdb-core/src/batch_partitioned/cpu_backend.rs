@@ -10,9 +10,11 @@
 //! from under that block, which is what a driver has to leave room for (T17).
 
 pub mod accumulate;
+pub mod backend;
 pub mod emit;
 pub mod join;
 mod merge_m2;
+pub mod source;
 
 use std::sync::Arc;
 

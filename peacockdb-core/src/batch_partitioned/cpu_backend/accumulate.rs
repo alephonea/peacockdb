@@ -150,6 +150,10 @@ pub struct Coalesce {
 }
 
 impl Coalesce {
+    pub fn held(&self) -> &[RecordBatch] {
+        &self.held
+    }
+
     fn accumulate_and_fetch(&mut self, batch: CpuBatch) -> CallResult<Vec<CpuBatch>> {
         self.held.push(batch.into_record_batch());
         Ok((Vec::new(), CallStats::default()))
@@ -179,6 +183,10 @@ pub struct SortedRuns {
 }
 
 impl SortedRuns {
+    pub fn held(&self) -> &[RecordBatch] {
+        &self.held
+    }
+
     fn accumulate_and_fetch(&mut self, batch: CpuBatch) -> CallResult<Vec<CpuBatch>> {
         self.held.push(batch.into_record_batch());
         Ok((Vec::new(), CallStats::default()))
@@ -232,6 +240,11 @@ impl CpuPartitionAccumulator {
             schema: Arc::new(input.clone()),
             ctx,
         })
+    }
+
+    /// What each lane is holding, for the accounting the driver sums.
+    pub fn per_lane(&self) -> impl Iterator<Item = &[RecordBatch]> {
+        self.per_lane.iter().map(|lane| lane.as_slice())
     }
 
     pub fn accumulate_and_fetch(
@@ -310,7 +323,7 @@ impl AggregateBatches {
         self.compactions
     }
 
-    fn held_bytes(&self) -> usize {
+    pub fn held_bytes(&self) -> usize {
         self.state
             .as_ref()
             .map(RecordBatch::get_array_memory_size)

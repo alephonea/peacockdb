@@ -12,11 +12,13 @@ mod common;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+use peacockdb_core::batch_partitioned::node::GpuNode;
 use peacockdb_core::batch_partitioned::plan::{BatchSizing, PlanKnobs, plan_batch_partitioned};
 use peacockdb_core::batch_partitioned::plan_text::{
     Payloads, render_plan, render_plan_memory, render_plan_recipes,
 };
 use peacockdb_core::batch_partitioned::recipe::{attach_recipes, check_seq_kinds, depth, node_at};
+use peacockdb_core::batch_partitioned::{ExecutorCategory, category_of};
 use peacockdb_core::config::MemoryLimit;
 use peacockdb_core::generated::gpu_plan_generated::peacock::plan as fb;
 
@@ -1299,4 +1301,107 @@ fn merge(
     for (kind, set) in from {
         into.entry(kind).or_default().extend(set);
     }
+}
+
+/// The driver's numbering and the recipe list's are the same numbering.
+///
+/// `PlanIndex` numbers pre-order for the schedule and records each node's children-first
+/// position beside it; `attach_recipes` numbers children-first and stores a recipe at that
+/// position. Two walks, two files, one at plan time and one at run time — and a backend
+/// looks a recipe up by the number the index handed it. Nothing else compares them, which
+/// is [#134](../../llm-wiki/tickets.md#t134)'s shape one boundary in.
+///
+/// Two claims, and the first is what the second rests on: the position the index recorded
+/// is the node's own, against a children-first walk written here rather than the one under
+/// test; and the recipe standing at that position is present exactly where the node makes
+/// calls. Checked over the corpus rather than a fixture: every numbering agrees on a tree
+/// with one child per node, and they part company at the first node with two.
+#[tokio::test]
+async fn the_index_and_the_recipes_number_the_same_nodes_the_same_way() {
+    // Four lanes at row-group granularity: lanes and many batches at once, which is the
+    // mode whose trees branch most.
+    let mode = mode("bp-tp4-rowgroup", 4, BatchSizing::OneBatchPerRowGroup);
+    let mut checked = 0;
+    for dataset in ["tpch", "tpcds"] {
+        let ctx = peacockdb_core::register_tables_for(
+            peacockdb_core::build_session_state(mode.knobs.target_partitions),
+            &data_dir_for(dataset, "1"),
+        )
+        .await
+        .expect("register the tables");
+        for (_, path) in queries(dataset) {
+            let sql = std::fs::read_to_string(&path).expect("the query text");
+            let Ok(frame) = ctx.sql(&sql).await else {
+                continue;
+            };
+            let Ok(plan) = frame.create_physical_plan().await else {
+                continue;
+            };
+            let Ok((tree, _)) = plan_batch_partitioned(&plan, mode.knobs) else {
+                continue;
+            };
+            let Ok(recipes) = attach_recipes(tree.as_ref()) else {
+                continue;
+            };
+            let positions =
+                peacockdb_core::batch_partitioned::driver::post_order_of_every_node(tree.as_ref())
+                    .expect("the plan indexes");
+            let mut nodes = Vec::new();
+            collect(tree.as_ref(), &mut nodes);
+            let mut children_first = Vec::new();
+            addresses_children_first(tree.as_ref(), &mut children_first);
+            assert_eq!(positions.len(), nodes.len());
+            assert_eq!(
+                recipes.nodes(),
+                nodes.len(),
+                "the recipe list holds one entry per node of the tree"
+            );
+            for (node, position) in nodes.iter().zip(&positions) {
+                assert_eq!(
+                    children_first.get(*position).copied(),
+                    Some(address_of(*node)),
+                    "{} was numbered {position}, which is where a children-first walk puts \
+                     another node",
+                    node.name()
+                );
+                let makes_calls = category_of(*node) != ExecutorCategory::BatchForwarder;
+                assert_eq!(
+                    recipes.get(*position).is_some(),
+                    makes_calls,
+                    "{} sits at {position} in the index's numbering, and the recipe there \
+                     is {}",
+                    node.name(),
+                    match recipes.get(*position) {
+                        Some(_) => "some other node's",
+                        None => "absent where this node makes calls",
+                    }
+                );
+            }
+            checked += 1;
+        }
+    }
+    assert!(checked > 100, "only {checked} plans reached the check");
+}
+
+/// The tree in the index's own order, so the pairing above is against an independent walk
+/// rather than against the walk under test.
+fn collect<'a>(node: &'a dyn GpuNode, into: &mut Vec<&'a dyn GpuNode>) {
+    into.push(node);
+    for child in node.children() {
+        collect(child, into);
+    }
+}
+
+/// The same tree children-first, which is the numbering the recipes are addressed by.
+fn addresses_children_first(node: &dyn GpuNode, into: &mut Vec<usize>) {
+    for child in node.children() {
+        addresses_children_first(child, into);
+    }
+    into.push(address_of(node));
+}
+
+/// A node's identity as a number. Only the data half of the trait-object pointer is taken:
+/// the vtable half is not stable across casts, and identity is what is being compared.
+fn address_of(node: &dyn GpuNode) -> usize {
+    node as *const dyn GpuNode as *const () as usize
 }

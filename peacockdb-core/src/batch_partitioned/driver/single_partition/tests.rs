@@ -25,6 +25,7 @@ fn slot() -> Slot {
 /// A site over a real node of the right kind, since `executors_for` reads the node.
 fn site<'a>(script: &'a Script, node: &'a dyn GpuNode) -> LaneSite<'a, Mock> {
     LaneSite {
+        post_order: 0,
         ctx: script,
         category: crate::batch_partitioned::nodes::category_of(node),
         node,

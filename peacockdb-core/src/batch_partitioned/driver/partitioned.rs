@@ -272,6 +272,7 @@ impl<'a, B: Backend> Driver<'a, B> {
                 ctx: self.ctx,
                 node: gpu_node,
                 category,
+                post_order: self.index.nodes[node].post_order,
                 lane,
                 slot: self.slot(node, lane),
             };
@@ -648,8 +649,8 @@ impl<'a, B: Backend> Driver<'a, B> {
                 continue;
             }
             let indexed = &self.index.nodes[node];
-            let executors =
-                B::executors_for(self.ctx, indexed.node, 0).map_err(RunError::Backend)?;
+            let executors = B::executors_for(self.ctx, indexed.node, indexed.post_order, 0)
+                .map_err(RunError::Backend)?;
             let NodeExecutors::BatchForwarder(forwarder) = executors else {
                 return Err(RunError::Backend(PlanError::Invalid(format!(
                     "{}: the backend built a {:?} executor for a routing node",
@@ -716,7 +717,8 @@ impl<'a, B: Backend> Driver<'a, B> {
             return Ok(());
         }
         let indexed = &self.index.nodes[node];
-        let executors = B::executors_for(self.ctx, indexed.node, 0).map_err(RunError::Backend)?;
+        let executors = B::executors_for(self.ctx, indexed.node, indexed.post_order, 0)
+            .map_err(RunError::Backend)?;
         if executors.category() != indexed.category {
             return Err(RunError::Backend(PlanError::Invalid(format!(
                 "{}: the backend built a {:?} executor for a {:?} node",

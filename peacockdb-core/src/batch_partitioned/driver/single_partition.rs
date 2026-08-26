@@ -74,6 +74,8 @@ pub(crate) struct LaneSite<'a, B: Backend> {
     pub ctx: &'a B::Context,
     pub node: &'a dyn GpuNode,
     pub category: ExecutorCategory,
+    /// The node's children-first position, which is what a recipe is addressed by.
+    pub post_order: usize,
     pub lane: usize,
     pub slot: Slot,
 }
@@ -367,7 +369,8 @@ impl<B: Backend> LaneDriver<B> {
 
     fn build(&mut self, site: &LaneSite<'_, B>) -> Result<(), RunError> {
         let executors =
-            B::executors_for(site.ctx, site.node, site.lane).map_err(RunError::Backend)?;
+            B::executors_for(site.ctx, site.node, site.post_order, site.lane)
+                .map_err(RunError::Backend)?;
         if executors.category() != site.category {
             return Err(RunError::Backend(PlanError::Invalid(format!(
                 "{}: the backend built a {:?} executor for a {:?} node",

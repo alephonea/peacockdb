@@ -5,7 +5,6 @@
 //! expected answer is hand-computed.
 
 use super::*;
-use datafusion::execution::context::SessionContext;
 use crate::batch_partitioned::cpu_backend::accumulate::{CpuAccumulator, CpuPartitionAccumulator};
 use crate::batch_partitioned::executor::LaneEvent;
 use crate::batch_partitioned::node::RowInterval;
@@ -15,6 +14,7 @@ use crate::batch_partitioned::nodes::{
 };
 use datafusion::arrow::array::Float64Array;
 use datafusion::arrow::datatypes::UInt64Type;
+use datafusion::execution::context::SessionContext;
 
 /// A lane's worth of arrivals through one accumulator, and what it answered with at done.
 fn drive(mut accumulator: CpuAccumulator, arrivals: Vec<CpuBatch>) -> Vec<CpuBatch> {
@@ -49,18 +49,6 @@ fn values_of(batch: &CpuBatch) -> Vec<i64> {
         .collect()
 }
 
-fn keys_of(batch: &CpuBatch) -> Vec<String> {
-    let record = batch.record_batch();
-    let column = record
-        .column(0)
-        .as_any()
-        .downcast_ref::<StringArray>()
-        .expect("the key column");
-    (0..record.num_rows())
-        .map(|row| column.value(row).to_string())
-        .collect()
-}
-
 fn coalesce() -> CpuAccumulator {
     let node = GpuCoalesceAllBatches::new(Given::of(&GROUPED));
     CpuAccumulator::coalesce(&node, &schema_of(&GROUPED).fields)
@@ -91,7 +79,11 @@ fn a_coalesce_that_received_nothing_emits_nothing() {
 fn spilling_sort(ascending: bool, fetch: Option<usize>) -> CpuAccumulator {
     let config = datafusion::prelude::SessionConfig::new()
         .set_u64("datafusion.execution.sort_in_place_threshold_bytes", 0);
-    sort_with(ascending, fetch, SessionContext::new_with_config(config).task_ctx())
+    sort_with(
+        ascending,
+        fetch,
+        SessionContext::new_with_config(config).task_ctx(),
+    )
 }
 
 fn accumulating_sort(ascending: bool, fetch: Option<usize>) -> CpuAccumulator {
@@ -710,10 +702,9 @@ async fn an_accumulating_sort_answers_from_under_a_blocked_worker() {
             grouped(values.iter().map(|_| Some("k")).collect(), values)
         })
         .collect();
-    let answered =
-        tokio::task::spawn_blocking(move || drive(accumulating_sort(true, None), arrivals))
-            .await
-            .expect("the sort finishes rather than deadlocking under its own spawn");
+    let answered = tokio::task::spawn_blocking(move || drive(spilling_sort(true, None), arrivals))
+        .await
+        .expect("the sort finishes rather than deadlocking under its own spawn");
     let values = values_of(&answered[0]);
     assert_eq!(values.len(), ROWS);
     assert!(

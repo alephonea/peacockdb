@@ -10,6 +10,7 @@ mod flow;
 mod limit;
 mod memory;
 mod stress;
+mod wiring;
 
 use super::mock::{Mock, Script};
 use super::partitioned::{Driver, RunReport};

@@ -194,6 +194,26 @@ pub struct CpuProbingJoin {
 }
 
 impl CpuProbingJoin {
+    /// The build side, resident from `set_build` until the call that consumes it.
+    pub fn build_bytes(&self) -> usize {
+        self.build.get_array_memory_size()
+    }
+
+    /// The probe keys a finishing type keeps until its finish pass runs (#136).
+    pub fn accumulated_bytes(&self) -> usize {
+        self.accumulated
+            .iter()
+            .map(RecordBatch::get_array_memory_size)
+            .sum()
+    }
+
+    /// Whether a probe call reads the build side at all. False for the build-side semi
+    /// family, whose probe call is the key project alone — and the accounting has to know,
+    /// because a transient charged for a read that never happens refuses work that fits.
+    pub fn probe_reads_build(&self) -> bool {
+        self.calls.per_call.is_some()
+    }
+
     pub fn probe_and_fetch(&mut self, batch: CpuBatch) -> CallResult<Vec<CpuBatch>> {
         let batch = batch.into_record_batch();
         if let Some(keys) = &self.calls.keys {

@@ -1109,7 +1109,7 @@ trait Executor {
 // category. The driver is generic over it, so the GPU path monomorphizes: no vtable and
 // no allocation for a batch, no selector object at run time.
 trait Backend: Sized {
-    type Context;          // GPU: the open NodeSession; CPU: ()
+    type Context;          // GPU: the session pointer and the recipe plan; CPU: a TaskContext
     type Batch: Batch;
     type Source: SourceExecutor<Self>;
     type Exec: ExecExecutor<Self>;
@@ -1278,12 +1278,14 @@ enum NodeExecutors<B: Backend> {
     // GpuMergePartitions, GpuUnion, GpuInterleave — routing only, no backend
     BatchForwarder(Forwarder),
 }
-// Backend::executors_for(ctx: &Self::Context, node: &dyn GpuNode, lane: usize)
-//   -> Result<NodeExecutors<B>, PlanError>. A fresh instance set per call, so the driver
-//   instantiates per lane; `lane` is needed because a loader's lane picks its own row
-//   groups out of the partitioner's mapping. It returns a Result because this match is
-//   where "does this backend implement this node" is answered, and that question has a
-//   no — a GPU window (#32) is the standing case.
+// Backend::executors_for(ctx: &Self::Context, node: &dyn GpuNode, post_order: usize,
+//   lane: usize) -> Result<NodeExecutors<B>, PlanError>. A fresh instance set per call, so
+//   the driver instantiates per lane; `lane` is needed because a loader's lane picks its own
+//   row groups out of the partitioner's mapping. `post_order` is how a GPU executor finds
+//   its node's recipe, which is keyed that way because the FFI addresses nodes that way —
+//   neither `&dyn GpuNode` nor an identity map is an address. It returns a Result because
+//   this match is where "does this backend implement this node" is answered, and that
+//   question has a no — a GPU window (#32) is the standing case.
 
 // Routes whole batches into a new lane numbering; never touches rows, never buffers.
 // No CPU/GPU backends and no CallStats — routing is driver work, and a batch's bytes
@@ -2399,12 +2401,28 @@ T21: a second engine of our own agrees with us wherever we are consistently wron
 this task runs, the finalize expression it evaluates is the one we also send to the device. The
 one independent implementation in reach is the one that decomposed the aggregate differently.
 
-Ten to fifteen queries, chosen to be interesting rather than representative, and between them
-covering the [join capability matrix](#join-capability-matrix): every join type this mode claims,
-crossed with the layouts that make each one stream or refuse. The matrix is emulated on synthetic
-data in the executors task, where each type is one executor answering one call; here it is planned
-from SQL and run through the drivers, which is the first time a type's claim is tested as the thing
-a user gets rather than as the thing an operator returns.
+Queries chosen to be interesting rather than representative, over the sf1 corpus text, and
+between them covering the [join capability matrix](#join-capability-matrix): every join type this
+mode claims, crossed with the layouts that make each one stream or refuse. The matrix is emulated
+on synthetic data in the executors task, where each type is one executor answering one call; here
+it is planned from SQL and run through the drivers, which is the first time a type's claim is
+tested as the thing a user gets rather than as the thing an operator returns.
+
+Four shapes are not join cells, so no join cover reaches them, and each is named by the query that
+carries it:
+
+| Shape | Query | Why that one |
+|---|---|---|
+| union lowered to an interleave | tpcds q33, q56, q60 or q66 | the claim is output lane p from lane p of each branch, so it needs four lanes; q14 also interleaves and is the trap, since its is `lanes=1` |
+| union that cannot interleave | tpcds q77 | its branches disagree on lane count — 4+1+4, and the golden says `lanes=9` — which is the case [Node set](#node-set) argues in prose and nothing executes |
+| both row-interval lowerings | tpch nested-limits | the root-adjacent interval becomes `GpuUnload`'s skip/fetch and the mid-plan one a `GpuLimit` over the scan; the only `OFFSET`s in either corpus, and it has no `.cpu.txt`, so this is its first execution |
+| a merge with state worth merging | tpch shuffle-stddev | `GpuAggregateBatches` rides in most of the join queries as a sum; this is the Welford init, both merges and the finalize project |
+
+Nested-loop Left is the one matrix cell no corpus query reaches, and its shape — a single-batch
+probe, since #136's finish trick accumulates keys and a predicate join has none — is reachable
+from no other row, so this task writes the query. The other uncovered cells stand: an Inner with
+`null_equals_null` (the flag rides an INTERSECT lowering, and every corpus INTERSECT lands as a
+semi form) and the three plan-time refusals, which a corpus query cannot provoke by construction.
 
 Each query is re-run under injection, several modes rather than one, with the same answer demanded
 every time. The prototype's [`LayoutInjector`](../../scripts/exec_model/operators/injection.py) is
@@ -2436,6 +2454,19 @@ and the snapshotted children, and the three counts a category changes: `ready_la
 partition accumulator owes, and `slot_base` where it is lane-scoped against where it is not. Each
 of those is wrong far from where it shows.
 
+**Two numberings meet in the driver, and one walk should compute both.** `PlanIndex` is
+pre-order — a subtree is a contiguous range, which is what every hold rests on — and a recipe is
+keyed by post-order, because that is how the FFI addresses a node. So the index records each
+node's post-order position beside its pre-order one, from the walk it already makes, and
+`executors_for` takes it. What must not happen is a third derivation: `attach_recipes` numbers at
+plan time and the index numbers at run time, so a test asserts the two agree over the corpus —
+[#134](../tickets.md#t134) is the same pair one boundary over, and it is unchecked there.
+
+A source executor is this task's to write, and so is the answer to a lane with no build batch: a
+`set_build` that never happens because `GpuCoalesceAllBatches` emitted nothing is a driver
+decision, not an executor one, and T16 left it here deliberately (the finish's own zero-key answer
+is already settled).
+
 The row range the driver hands an unload is asserted before the call. `clamp_row_range` absorbs
 an offset past the end and a length past it, because a C ABI has to be total — but
 `RowInterval::range_of` cannot produce either, so the tolerance can only be reached by a driver
@@ -2462,36 +2493,78 @@ parking those behind tickets would leave the path unproven in exactly the way th
 end. T21 is the precedent: it was meant to be one test file and it found four defects, each a
 rule held by a doc comment with nothing reading it, and one guard that could not go red.
 
-**T18 — corpus shapes the benchmarks do not have.** The corpus is numeric-aggregate
-heavy, and this mode's risk sits in what it never sees: an audit of every `.cpu.txt` finds
-zero `OFFSET`s, zero `min`/`max` over a non-numeric column, and no query at all for several
-shapes the tickets already describe as unexercised. Add a small set of hand-written queries
-over the **existing** tables — no new dataset, no new scale factor — each justified by
-naming the feature it reaches and the ticket or code path that cares:
+**T18 — corpus shapes the benchmarks do not have, and goldens that stop multiplying by
+query.** Two halves. The corpus is numeric-aggregate heavy, and this mode's risk sits in what
+it never sees: an audit of every `.cpu.txt` finds zero `OFFSET`s, zero `min`/`max` over a
+non-numeric column, and no query at all for several shapes the tickets already describe as
+unexercised. Add a small set of hand-written queries over the **existing** tables — no new
+dataset, no new scale factor — each justified by naming the feature it reaches and the ticket
+or code path that cares. Where a query needs engine work to run at all, that work is this
+task's too:
 
 | Query shape | Why it is worth a query |
 |---|---|
-| `ORDER BY … LIMIT n OFFSET m` | every `GpuGlobalLimitExec` in the corpus has `skip=0`, so the offset half of both lowerings — the released prefix, the two straddling slices, and a pure offset that never satisfies — runs only in synthetic tests |
-| `min`/`max` over a string or date column | zero uses today; the merge is a string reduce, and nothing exercises one |
-| a join on a nullable key | [#59](../tickets.md#t59) and [#80](../tickets.md#t80) both record that no corpus query has one, and this mode adds [#137](../tickets.md#t137)'s skew on top — every all-null key lands in one lane |
-| a shuffle keyed on a decimal | [#95](../tickets.md#t95)'s kernel throws on decimal keys; the batched mode shuffles more often than legacy, so this stops being latent |
-| two `DISTINCT` arguments over different expressions | [#144](../tickets.md#t144)'s plan-time refusal has nothing to refuse today |
+| `ORDER BY … LIMIT n OFFSET m` | every `GpuGlobalLimitExec` in the corpus has `skip=0`, so the offset half of both lowerings — the released prefix, the two straddling slices, and a pure offset that never satisfies — runs only in synthetic tests. T17 executes `nested-limits`, so what is left here is the legacy tiers; shape it away from [#166](../tickets.md#t166)'s two droppers, an outer limit above an aggregate and a limit inside a `UNION ALL` branch |
+| `min`/`max` over a string or date column | zero uses today; the merge is a string reduce, and nothing exercises one. Needs nothing new: `aggregates.rs` decomposes `Min`/`Max` without reference to type, and the generic reduce arm takes the input's |
+| a join on a nullable key | [#59](../tickets.md#t59) and [#80](../tickets.md#t80) both record that no corpus query has one, and this mode adds [#137](../tickets.md#t137)'s skew on top — every all-null key lands in one lane. #137's planner half comes with it: the translation inserts `GpuFilter(<key> IS NOT NULL)` under the feeding `GpuEmitPartitions`, on the sides whose unmatched rows are never emitted. Expect the query red on the anti-join's three-valued logic until #80 |
+| a shuffle keyed on a decimal | [#95](../tickets.md#t95)'s kernel throws on decimal keys; the batched mode shuffles more often than legacy, so this stops being latent. The largest item here, and not a query: dispatch by logical precision (≤18 → the low 8 LE bytes of the int128, >18 → the raw 16), the precision threaded through the partition FFI, and the murmur3 conformance gate extended to cover it — that gate is what makes CPU and GPU place a row in the same lane, so a decimal key it does not cover is a key the two engines may disagree on silently |
+| two `DISTINCT` arguments over different expressions | [#144](../tickets.md#t144) has no refusal of its own — `translate/aggregate.rs` refuses every distinct aggregate naming [#62](../tickets.md#t62) — so the translator learns to tell the two shapes apart and the query provokes a refusal that names its own ticket. A refusal pointing at the wrong ticket sends its reader to the wrong fix |
 | a wide `SELECT DISTINCT` | dedup whose state is the whole row rather than a few keys — the compaction threshold's worst case, where nothing merges and the doubling has to earn its keep |
-| `LIKE` with a non-prefix pattern | 21 `LIKE`s exist and all are simple; the non-prefix form is a different cuDF path |
 
 Each query lands in `testdata/{tpch,tpcds}-queries/` with registry rows and goldens through
 the existing generators. Keep the set small: every query multiplies across enabled modes and
-tiers, which is why the corpus grew the way it did.
+tiers, which is why the corpus grew the way it did — and which is the other half of this task.
+
+**Goldens stop being one file per query.** Today each query carries its own `.cpu.txt`,
+`.cost.txt` and `.result.txt` per mode, which is how `testdata/goldens/` reached 271 files for
+tpch.sf1 and 625 for tpcds.sf1. This mode's goldens take the shape the plan goldens already
+took: one `.cpu.txt` and one `.cost.txt` **per mode**, and one `.result.txt`
+across all modes, each holding every query one after another in `== <query>` sections. The
+comparator is the plan goldens' own — it names what moved, what is missing and what is out of
+order, and it has unit tests — so this is a second caller rather than a second differ.
+
+A test case is still one query. That is the whole difficulty: several test cases now write one
+file, cargo runs them in parallel, and a whole-file write is last-writer-wins, which drops every
+other query's section and leaves a green run. So a write merges by section, and it is the same
+class of defect as the `canonical_root` race — two threads in one binary reaching one path.
+
+**Partial regeneration follows from that, and is the part to get right.** A filtered run
+regenerates only the sections its test cases produced and leaves the rest as they are. The
+distinction that must survive is between a section absent because its test did not run and a
+section absent because the query stopped planning: collapse the two and a filtered regen deletes
+coverage silently, which is exactly what a golden exists to prevent. `PCK_TEST_FILTER` already
+scopes runs this way, so the mechanism has a user before it has a second one.
+
+Three rules the files carry:
+
+- **`.result.txt` is written from the last mode enabled in the run.** The modes are supposed to
+  agree on results, so which one wrote it should not matter — and where it does, that is the
+  divergence the file exists to catch. So the section records which mode produced it; otherwise
+  the disagreement is invisible in the artifact that would have shown it.
+- **A result over 256 KB is marked in place, not dropped.** Today the file is deleted above that
+  size and the GPU test falls back to a live oracle, which reads as "no golden" and as "golden
+  not applicable" identically. The section stays and carries the marker, so the reason is in the
+  file. `build-test.md` says the old rule and is corrected in the same commit.
+- **`.cost.txt` stays a pure function of its `.cpu.txt` and `cost_model.conf`.** `test_cost_model`
+  re-derives every one, so the derivation is per section after the reshaping, not per file.
+
+**The registry the widget will read is this task's; the widget is T19's.** Splitting them that way
+keeps the rows honest — the registry is what the inventory tests check, and a table that renders
+before anything verifies its rows is a table nobody can trust.
 
 **T19 — rollout.** New macros `cpu_batch_partitioned_result_test` /
 `gpu_batch_partitioned_test`; the node renderer per [Node display](#node-display)
 (`name@ordinal` references, layout in place of the lane count, `fetch` and the aggregate
 lists wherever carried, schema in the plan golden only); `.cpu.txt`/`.cost.txt` wiring incl.
 `cost_model.conf` entries for the new node names; `batch-info.cpu.txt` for ~10 queries;
-registry columns +
-inventory tests; `pipeline.yml` steps (satisfying `test_ci_coverage`); widget tables with
+`pipeline.yml` steps (satisfying `test_ci_coverage`); widget tables with
 the cost-column rule and the #143 plan ✗ cells. Then query-by-query enablement across the
 corpus, tickets filed per newly discovered blocker, as with the legacy rollout.
+
+That sweep is where T17's `nested-loop-left-join` gets its GPU columns. They ship `na` because
+T17 could not commit a device run, which is [#116](../tickets.md#t116)'s shape — a cell with no
+coverage and no blocker — so the reason is recorded here rather than left for a reader to
+reconstruct from an empty column.
 
 **T20 — per-node benchmarks for the new mode.** Port `peacock_gpu_benchmarks` to the
 batch-partitioned executor, keeping the protocol that makes its numbers comparable: one

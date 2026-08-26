@@ -9,6 +9,7 @@
 
 mod accounting;
 mod index;
+pub use index::post_order_of_every_node;
 #[cfg(test)]
 mod mock;
 mod partitioned;
