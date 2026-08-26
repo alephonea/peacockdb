@@ -690,6 +690,12 @@ jobs:
       - name: Cost goldens match plan-golden regeneration (Rust)
         run: cargo test --features rust-only -p peacockdb-core --test test_cost_model
 
+      # The one reader of the golden text format, against strings rather than files:
+      # no dataset, no executor, so it belongs beside the cost model in this tier.
+      # Every other golden assertion in the tree is a comparison through it.
+      - name: The golden text format, read back (Rust)
+        run: cargo test --features rust-only -p peacockdb-core --test test_golden_format
+
       # The injection mechanism against itself: the plan rebuild is identity per arm
       # and per field, and the selector's output is a cover rather than a prefix.
       # Reads no parquet — the plans are hand-built and the four cases are the ones

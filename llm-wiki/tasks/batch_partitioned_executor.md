@@ -2931,10 +2931,15 @@ regexp says a line looks like a line. What is wanted is whether the numbers mean
 the format carries the same quantity more than once by design, so the checks are arithmetic and
 cheap:
 
-- a node's `out_rows` is the sum of its `batch_rows` lanes, and `out_bytes` of its `batch_bytes`;
+- a node's `out_rows` is the sum of its `batch_rows` lanes, and `out_bytes` of its `batch_bytes`.
+  A batch is counted where it enters a queue, so a scatter output dropped for being empty is not
+  one — the sums are unaffected either way, and the batch count then means what flowed;
 - the lane count of those lists is the `lanes=N` on the node line;
-- a node's `in_rows` for child *k* totals that child's `out_rows` — across lanes rather than per
-  lane, since an emitter redistributes them. An equality, with the exceptions named rather than
+- a node's `in_rows` for child *k* equals that child's `out_rows`, **per lane and not only in
+  total**: the index is the *child's* lane, so it lines up with that child's own `batch_rows`
+  entry for entry. Indexing by the consuming node's lanes would make the identity checkable only
+  in aggregate wherever the two counts differ, which is every emitter, merge and accumulator —
+  the nodes it is most worth checking. An equality, with the exceptions named rather than
   softened away: a node whose limit is satisfied stops pulling, and a join with an empty build
   side ends its lane with the probe's batches unconsumed ([#175](../tickets.md#t175) is the same
   shape from the other side), so those two assert `in_rows <= out_rows` of the child and every
