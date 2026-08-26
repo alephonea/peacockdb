@@ -2695,9 +2695,11 @@ them. One macro writing into two binaries is the reason the mode arguments are s
 can be enabled on the CPU at four modes and on a device at one.
 
 **The oracle keywords already exist and are taken unchanged.** `cpu_oracle` is
-`data_fusion_exact | data_fusion_approximate`: the same oracle either way — plain DataFusion at
-`target_partitions = 1` — differing only in a 1e-12 relative tolerance for queries whose sole
-divergence is float summation reassociation. `gpu_oracle` is
+`data_fusion_exact | data_fusion_approximate | data_fusion_subset`: one oracle, plain DataFusion
+at `target_partitions = 1`, asked three ways — the whole answer, the whole answer at a 1e-12
+relative tolerance where the sole divergence is float summation reassociation, and the count and
+containment alone where the SQL does not determine which rows (see the unordered `LIMIT` below).
+The third is new; the first two are legacy's, unchanged. `gpu_oracle` is
 `golden_exact | golden_approx | golden_approx_std | live_cpu | skip`: the frozen result compared
 exactly, at 1e-12, at 1e-11 where cuDF's variance diverges further than the convention allows,
 against a live CPU run where the result is too large to commit, and not at all for a query whose
@@ -2728,7 +2730,12 @@ a decision, and a format that renders them alike loses the only artifact that co
 apart.
 
 **`.result.txt` is one entry per query**, keyed by the query alone. The modes are supposed to
-agree on results, so the run takes the last enabled mode's — `bp-tp4-sized` for most queries. The
+agree on results, so one of them authors it: the last mode the query declares in the fixed
+sequence of five — `bp-tp4-sized` for most. Its authority comes from the declaration and not from
+what happened to run, which is what keeps it well defined under a filtered regeneration. A run
+that does not include the authoritative mode leaves the section untouched; it is the one golden
+whose key carries no mode, so it is the one a partial regen could otherwise re-author from a mode
+that is not the authority, with the body's own line moving to say so and nobody reading it. The
 section still records which mode produced it: the key carries no mode because there is one entry,
 and the body names one because where the modes disagree, that disagreement is what the file exists
 to make visible. A result at or above `RESULT_GOLDEN_MAX_BYTES` (256 KB) keeps its section and
@@ -2830,7 +2837,9 @@ infra. What this task does touch in `peacockdb-core/src` is the goldens' own sur
 else — the node renderer per [Node display](#node-display) (`name@ordinal` references, layout in
 place of the lane count, `fetch` and the aggregate lists wherever carried, schema in the plan
 golden only), the per-batch line below, `cost_model.conf` entries for all eighteen node kinds at
-once rather than as each is first seen, and
+once rather than as each is first seen — held there by a case red on a nineteenth, derived from
+the exhaustive `as_node_ref` the way the writer's field cover is, since entered-at-once is a
+moment and T19's "no `cost_model.conf`" rule needs a property — and
 per-node emitted rows and bytes on `RunReport` — the one thing the engine does not already
 report. Everything else the
 comparison needs is there: `Batch` gives rows and bytes on both backends, the device's coming
@@ -2925,7 +2934,12 @@ cheap:
 - a node's `out_rows` is the sum of its `batch_rows` lanes, and `out_bytes` of its `batch_bytes`;
 - the lane count of those lists is the `lanes=N` on the node line;
 - a node's `in_rows` for child *k* totals that child's `out_rows` — across lanes rather than per
-  lane, since an emitter redistributes them;
+  lane, since an emitter redistributes them. An equality, with the exceptions named rather than
+  softened away: a node whose limit is satisfied stops pulling, and a join with an empty build
+  side ends its lane with the probe's batches unconsumed ([#175](../tickets.md#t175) is the same
+  shape from the other side), so those two assert `in_rows <= out_rows` of the child and every
+  other node asserts equality. `<=` everywhere is the repair to refuse: it passes for almost
+  anything, and this is the identity most worth having;
 - on a loader, `batch_rows` has `partition_groups`' exact shape, which is the correspondence that
   nesting was chosen for;
 - the root's `out_rows` is the row count in `.result.txt`, which the oracle checked.
@@ -2983,14 +2997,19 @@ gives one answer byte for byte, so a section here is stable at every mode. What 
 explicitly do not promise is agreement *across* plans — tp1 and tp4 may return different rows
 where the SQL does not determine which, which is what an unordered `LIMIT` is.
 
-So the mode is fine and the comparison is what has to change: DataFusion single-stream is not an
-authority on which ten rows a four-lane plan should return. The query runs, the cpu authors the
-section and the result, and the device is held to them — which is a real check rather than a
-weakened one, because both engines walk one driver over one plan with emission order pinned, so
-disagreeing means one of them broke the schedule. That is a third `cpu_oracle` value and it does
-not exist yet: alongside `data_fusion_exact` and `data_fusion_approximate`, one meaning the
-golden is the contract and DataFusion is not consulted. Naming it in the same enum is what keeps
-the choice visible per query instead of inferred from a missing argument.
+So the mode is fine and the comparison is what narrows: DataFusion single-stream is not an
+authority on *which* ten rows a four-lane plan returns. It is still an authority on the rest, and
+an unordered `LIMIT n` determines more than it looks — the count is `min(n, |unlimited|)`, and
+the rows are a sub-multiset of the unlimited query's result. Both are asked of the session that
+already runs, neither needs the two plans to agree on which rows, and together they catch what a
+frozen golden cannot: a limit dropped, an offset ignored, rows invented, the wrong table sliced.
+
+That is the third `cpu_oracle` value, and it is named for what it checks rather than for what it
+declines to — the count and the containment, against `data_fusion_exact`'s whole answer. So no
+query's answer is frozen with no external check, `scan-limit` included. The device is held to the
+cpu's section on top of that, which is a real check rather than a fallback: both engines walk one
+driver over one plan with emission order pinned, so disagreeing means one of them broke the
+schedule.
 
 Two limits to state with it. An *ordered* `LIMIT` with ties at the boundary is not covered:
 neither `sort_unstable_by` nor cuDF's `sorted_order` is stable, so which tied row survives is
