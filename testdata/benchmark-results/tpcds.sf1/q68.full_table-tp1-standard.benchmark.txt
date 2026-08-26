@@ -1,40 +1,44 @@
-GpuSortExec: expr=[c_last_name@0 ASC, ss_ticket_number@4 ASC], fetch=100, time_us=1670
-  GpuProjectExec: expr=[c_last_name@6 as c_last_name, c_first_name@5 as c_first_name, ca_city@7 as ca_city, bought_city@1 as bought_city, ss_ticket_number@0 as ss_ticket_number, extended_price@2 as extended_price, extended_tax@4 as extended_tax, list_price@3 as list_price], time_us=363
+GpuSortExec: expr=[c_last_name@0 ASC, ss_ticket_number@4 ASC], fetch=100, time_us=1267
+  GpuProjectExec: expr=[c_last_name@6 as c_last_name, c_first_name@5 as c_first_name, ca_city@7 as ca_city, bought_city@1 as bought_city, ss_ticket_number@0 as ss_ticket_number, extended_price@2 as extended_price, extended_tax@4 as extended_tax, list_price@3 as list_price], time_us=238
     GpuCoalesceBatchesExec, time_us=1
-      GpuHashJoinExec: join_type=Inner, on=[(c_current_addr_sk@5, ca_address_sk@0)], filter=bought_city@0 != ca_city@1, projection=[0, 1, 2, 3, 4, 6, 7, 9], time_us=2285
-        GpuProjectExec: expr=[ss_ticket_number@3 as ss_ticket_number, bought_city@4 as bought_city, extended_price@5 as extended_price, list_price@6 as list_price, extended_tax@7 as extended_tax, c_current_addr_sk@0 as c_current_addr_sk, c_first_name@1 as c_first_name, c_last_name@2 as c_last_name], time_us=347
+      GpuHashJoinExec: join_type=Inner, on=[(c_current_addr_sk@5, ca_address_sk@0)], filter=bought_city@0 != ca_city@1, projection=[0, 1, 2, 3, 4, 6, 7, 9], time_us=1321
+        GpuProjectExec: expr=[ss_ticket_number@3 as ss_ticket_number, bought_city@4 as bought_city, extended_price@5 as extended_price, list_price@6 as list_price, extended_tax@7 as extended_tax, c_current_addr_sk@0 as c_current_addr_sk, c_first_name@1 as c_first_name, c_last_name@2 as c_last_name], time_us=187
           GpuCoalesceBatchesExec, time_us=1
-            GpuHashJoinExec: join_type=Inner, on=[(c_customer_sk@0, ss_customer_sk@1)], projection=[1, 2, 3, 4, 6, 7, 8, 9], time_us=1562
-              GpuScanExec: table=customer, projections=[c_customer_sk, c_current_addr_sk, c_first_name, c_last_name], time_us=30356
-              GpuProjectExec: expr=[ss_ticket_number@0 as ss_ticket_number, ss_customer_sk@1 as ss_customer_sk, ca_city@3 as bought_city, sum(store_sales.ss_ext_sales_price)@4 as extended_price, sum(store_sales.ss_ext_list_price)@5 as list_price, sum(store_sales.ss_ext_tax)@6 as extended_tax], time_us=205
-                GpuAggregateExec: group_by=[ss_ticket_number, ss_customer_sk, ss_addr_sk, ca_city], aggr=[sum(store_sales.ss_ext_sales_price), sum(store_sales.ss_ext_list_price), sum(store_sales.ss_ext_tax)], time_us=2669
-                  GpuProjectExec: expr=[ss_customer_sk@1 as ss_customer_sk, ss_addr_sk@2 as ss_addr_sk, ss_ticket_number@3 as ss_ticket_number, ss_ext_sales_price@4 as ss_ext_sales_price, ss_ext_list_price@5 as ss_ext_list_price, ss_ext_tax@6 as ss_ext_tax, ca_city@0 as ca_city], time_us=201
+            GpuHashJoinExec: join_type=Inner, on=[(c_customer_sk@0, ss_customer_sk@1)], projection=[1, 2, 3, 4, 6, 7, 8, 9], time_us=823
+              GpuScanExec: table=customer, projections=[c_customer_sk, c_current_addr_sk, c_first_name, c_last_name], time_us=29107
+              GpuProjectExec: expr=[ss_ticket_number@0 as ss_ticket_number, ss_customer_sk@1 as ss_customer_sk, ca_city@3 as bought_city, sum(store_sales.ss_ext_sales_price)@4 as extended_price, sum(store_sales.ss_ext_list_price)@5 as list_price, sum(store_sales.ss_ext_tax)@6 as extended_tax], time_us=92
+                GpuAggregateExec: group_by=[ss_ticket_number, ss_customer_sk, ss_addr_sk, ca_city], aggr=[sum(store_sales.ss_ext_sales_price), sum(store_sales.ss_ext_list_price), sum(store_sales.ss_ext_tax)], time_us=2164
+                  GpuProjectExec: expr=[ss_customer_sk@1 as ss_customer_sk, ss_addr_sk@2 as ss_addr_sk, ss_ticket_number@3 as ss_ticket_number, ss_ext_sales_price@4 as ss_ext_sales_price, ss_ext_list_price@5 as ss_ext_list_price, ss_ext_tax@6 as ss_ext_tax, ca_city@0 as ca_city], time_us=97
                     GpuCoalesceBatchesExec, time_us=1
-                      GpuHashJoinExec: join_type=Inner, on=[(ca_address_sk@0, ss_addr_sk@1)], projection=[1, 2, 3, 4, 5, 6, 7], time_us=1104
-                        GpuScanExec: table=customer_address, projections=[ca_address_sk, ca_city], time_us=14600
+                      GpuHashJoinExec: join_type=Inner, on=[(ca_address_sk@0, ss_addr_sk@1)], projection=[1, 2, 3, 4, 5, 6, 7], time_us=581
+                        GpuScanExec: table=customer_address, projections=[ca_address_sk, ca_city], time_us=13863
                         GpuCoalesceBatchesExec, time_us=1
-                          GpuHashJoinExec: join_type=Inner, on=[(hd_demo_sk@0, ss_hdemo_sk@1)], projection=[1, 3, 4, 5, 6, 7], time_us=872
+                          GpuHashJoinExec: join_type=Inner, on=[(hd_demo_sk@0, ss_hdemo_sk@1)], projection=[1, 3, 4, 5, 6, 7], time_us=353
                             GpuCoalesceBatchesExec, time_us=1
-                              GpuFilterExec: predicate=hd_dep_count@1 = 4 OR hd_vehicle_count@2 = 3, projection=[0], time_us=298
-                                GpuScanExec: table=household_demographics, projections=[hd_demo_sk, hd_dep_count, hd_vehicle_count], time_us=2683
+                              GpuFilterExec: predicate=hd_dep_count@1 = 4 OR hd_vehicle_count@2 = 3, projection=[0], time_us=160
+                                GpuScanExec: table=household_demographics, projections=[hd_demo_sk, hd_dep_count, hd_vehicle_count], time_us=2275
                             GpuCoalesceBatchesExec, time_us=1
-                              GpuHashJoinExec: join_type=Inner, on=[(s_store_sk@0, ss_store_sk@3)], projection=[1, 2, 3, 5, 6, 7, 8], time_us=1727
+                              GpuHashJoinExec: join_type=Inner, on=[(s_store_sk@0, ss_store_sk@3)], projection=[1, 2, 3, 5, 6, 7, 8], time_us=380
                                 GpuCoalesceBatchesExec, time_us=1
-                                  GpuFilterExec: predicate=s_city@1 = Fairview OR s_city@1 = Midway, projection=[0], time_us=699
-                                    GpuScanExec: table=store, projections=[s_store_sk, s_city], time_us=1282
+                                  GpuFilterExec: predicate=s_city@1 = Fairview OR s_city@1 = Midway, projection=[0], time_us=451
+                                    GpuScanExec: table=store, projections=[s_store_sk, s_city], time_us=899
                                 GpuCoalesceBatchesExec, time_us=1
-                                  GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ss_sold_date_sk@0)], projection=[2, 3, 4, 5, 6, 7, 8, 9], time_us=2459
+                                  GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ss_sold_date_sk@0)], projection=[2, 3, 4, 5, 6, 7, 8, 9], time_us=744
                                     GpuCoalesceBatchesExec, time_us=1
-                                      GpuFilterExec: predicate=d_dom@2 >= 1 AND d_dom@2 <= 2 AND (d_year@1 = 1999 OR d_year@1 = 2000 OR d_year@1 = 2001), projection=[0], time_us=384
-                                        GpuScanExec: table=date_dim, projections=[d_date_sk, d_year, d_dom], time_us=17564
-                                    GpuScanExec: table=store_sales, projections=[ss_sold_date_sk, ss_customer_sk, ss_hdemo_sk, ss_addr_sk, ss_store_sk, ss_ticket_number, ss_ext_sales_price, ss_ext_list_price, ss_ext_tax], time_us=36751
-        GpuScanExec: table=customer_address, projections=[ca_address_sk, ca_city], time_us=15329
+                                      GpuFilterExec: predicate=d_dom@2 >= 1 AND d_dom@2 <= 2 AND (d_year@1 = 1999 OR d_year@1 = 2000 OR d_year@1 = 2001), projection=[0], time_us=210
+                                        GpuScanExec: table=date_dim, projections=[d_date_sk, d_year, d_dom], time_us=17170
+                                    GpuScanExec: table=store_sales, projections=[ss_sold_date_sk, ss_customer_sk, ss_hdemo_sk, ss_addr_sk, ss_store_sk, ss_ticket_number, ss_ext_sales_price, ss_ext_list_price, ss_ext_tax], time_us=31863
+        GpuScanExec: table=customer_address, projections=[ca_address_sk, ca_city], time_us=14028
 
 # sync_floor_us = cost of the measurement itself (empty timed region: clock + cudaStreamSynchronize on an idle stream). Each node time INCLUDES one PER OUTPUT PARTITION, since a node line is the Σ over its partitions; a node at or below its own floor (sync_floor_us x partitions) is unresolved, not cheap. Do not subtract it.
 # nodes_total_us = Σ of the per-node times above; total_us = the whole query, end to end (parse + plan + serialize + node walk + materialize)
 # build_profile = how the harness itself was compiled. total_us MINUS nodes_total_us is that Rust; records from different profiles are not comparable on it. Node times are device work and barely move.
+# allocator = the rmm device resource the node times were taken under. Without a pool every cuDF intermediate is a cudaMalloc/cudaFree round trip, charged to the node that allocated it — so it inflates the largest-output nodes hardest and moves the PROFILE, not only the scale. Records under different allocators are not comparable, node for node or in total.
+# shared_work_charged_to = which p<k> sub-line carries work a node does once for all of its output partitions. A hash repartition concatenates its input and scatters it in a single operation, and that time is billed to p0 — so p0 standing far above its siblings is the accounting, not skew. Sub-lines sum to their node line either way. Written whether or not this plan has a repartition.
 build_profile=benchmarks opt-level=3
+allocator=rmm-pool initial=113.4GiB max=126.7GiB of 133.4GiB free on a discrete device
+shared_work_charged_to=p0
 sync_floor_us=1
 nodes_at_or_below_floor=9/31
-nodes_total_us=135419
-total_us=145011
+nodes_total_us=118282
+total_us=127644

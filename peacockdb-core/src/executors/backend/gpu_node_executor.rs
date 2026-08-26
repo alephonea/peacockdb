@@ -25,11 +25,85 @@ use datafusion::error::DataFusionError;
 
 use peacockdb_ffi::raw::{
     peacock_executor_begin_plan, peacock_executor_end_plan, peacock_executor_execute_node,
-    peacock_handle_release, peacock_last_error, peacock_result_free, peacock_result_from_handle,
-    peacock_measure_timing_floor_us, peacock_set_node_timing, PeacockExecutor, PeacockNodeStats,
+    peacock_handle_release, peacock_install_rmm_pool, peacock_last_error, peacock_result_free,
+    peacock_result_from_handle, peacock_measure_timing_floor_us, peacock_set_node_timing,
+    PeacockExecutor, PeacockNodeStats, PeacockRmmPoolInfo, PEACOCK_RMM_POOL_INSTALLED,
 };
 
 use crate::cpu_executor::logical_size_from_schema;
+
+/// Which device allocator a measurement was taken under — the outcome of
+/// [`install_rmm_pool`], not the request.
+///
+/// cuDF routes every intermediate through rmm's current device resource, and the
+/// difference between a pool and rmm's default (a `cudaMalloc`/`cudaFree` per
+/// allocation) is far larger than run-to-run noise — worst on exactly the nodes with
+/// the largest outputs. So `Unavailable` does not describe a slower run to be recorded
+/// and compared; it describes a run whose times mean nothing, and the benchmark harness
+/// refuses it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RmmPool {
+    /// A pooled resource is installed. Sizes are what it was actually built with.
+    Pool { integrated: bool, free_bytes: u64, initial_bytes: u64, maximum_bytes: u64 },
+    /// The pool could not be built — typically a neighbour holding the device when the
+    /// reservation was computed — so rmm's default resource is in place and nobody
+    /// chose that.
+    Unavailable,
+}
+
+impl std::fmt::Display for RmmPool {
+    /// The `allocator=` line of a benchmark record. One line, no spaces around `=`,
+    /// sizes in GiB because that is the unit the sizing rule is written in.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        const GIB: f64 = 1073741824.0;
+        match *self {
+            RmmPool::Pool { integrated, free_bytes, initial_bytes, maximum_bytes } => write!(
+                f,
+                "rmm-pool initial={:.1}GiB max={:.1}GiB of {:.1}GiB free on {} device",
+                initial_bytes as f64 / GIB,
+                maximum_bytes as f64 / GIB,
+                free_bytes as f64 / GIB,
+                if integrated { "an integrated" } else { "a discrete" },
+            ),
+            RmmPool::Unavailable => {
+                write!(f, "rmm-default (pool unavailable), cudaMalloc per allocation")
+            }
+        }
+    }
+}
+
+/// Install the pooled device allocator and report what happened.
+///
+/// Idempotent, and the idempotency lives in C++ (`peacock::install_rmm_pool`) rather
+/// than behind a `OnceLock` here, so the process has exactly one guard no matter which
+/// side calls first — the gtest binaries call it from `main()`, this path calls it per
+/// case. A second call rebuilding the pool would drop a resource that live allocations
+/// still point into; the benchmark target, 127 `#[test]` functions sharing one process,
+/// is precisely the shape that would find that.
+///
+/// Must run before any GPU work. Cheap to call again afterwards — it returns the first
+/// call's outcome — which is why the caller can just ask for the label at write time.
+///
+/// The engine does not install this for itself: a shipping query still allocates the
+/// expensive way, and `gpu_memory_limit` is still accepted and ignored. Changing that is
+/// `llm-wiki/tickets.md` #148, and it is a decision about the product rather than about
+/// measurement, which is why this entry point exists in the meantime.
+pub fn install_rmm_pool() -> RmmPool {
+    let mut info = PeacockRmmPoolInfo::default();
+    // Non-zero only for a null pointer, which cannot happen here.
+    let _ = unsafe { peacock_install_rmm_pool(&mut info) };
+    match info.state {
+        PEACOCK_RMM_POOL_INSTALLED => RmmPool::Pool {
+            integrated: info.integrated != 0,
+            free_bytes: info.free_bytes,
+            initial_bytes: info.initial_bytes,
+            maximum_bytes: info.maximum_bytes,
+        },
+        // Includes any state a newer C++ side might add: an unrecognised outcome is not
+        // an installed pool, and treating it as one is the mistake that matters.
+        _ => RmmPool::Unavailable,
+    }
+}
 
 /// Turn per-node GPU timing on or off (process-global, OFF by default).
 ///

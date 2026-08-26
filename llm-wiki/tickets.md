@@ -14,9 +14,9 @@ reference still resolves there.
 
 | Section | Open | Tickets |
 |---|--:|---|
-| [Critical correctness](#critical-correctness) | 16 | #166 #153 #103 #80 #59 #46 #47 #60 #121 #122 #123 #118 #119 #120 #117 #41 |
+| [Critical correctness](#critical-correctness) | 16 | #103 #166 #153 #80 #59 #46 #47 #60 #121 #122 #123 #118 #119 #120 #117 #41 |
 | [Blockers for disabled coverage](#blockers-for-disabled-coverage) | 15 | #158 #97 #23 #32 #65 #62 #91 #95 #57 #45 #63 #56 #55 #96 #143 |
-| [Performance / architecture](#performance--architecture) | 26 | #155 #154 #152 #151 #150 #149 #148 #147 #146 #145 #19 #16 #20 #71 #101 #73 #110 #75 #136 #137 #138 #139 #140 #141 #144 #142 |
+| [Performance / architecture](#performance--architecture) | 25 | #155 #154 #152 #150 #149 #148 #19 #16 #20 #71 #101 #73 #110 #75 #136 #137 #138 #139 #140 #141 #147 #146 #145 #144 #142 |
 | [Infrastructure / process](#infrastructure--process) | 25 | #167 #164 #163 #159 #160 #161 #162 #113 #114 #116 #126 #134 #133 #132 #131 #130 #129 #128 #127 #124 #125 #13 #94 #69 #49 |
 
 ## Critical correctness
@@ -342,23 +342,6 @@ Whether the copy is tolerable is answerable from the goldens: each join's two
 build_bytes` against one probe stream. Take the ratio on **bytes, not rows** — tpch q3 is 24:1
 by rows and 73:1 by bytes. Decide before T16, under [#155](#t155).
 
-<a id="t151"></a>
-### #151 — the per-node benchmarks measure the engine with no RMM pool
-`peacock_gpu_benchmarks` times the engine through the FFI and the engine installs no device
-resource ([#148](#t148)), so every intermediate is a `cudaMalloc`/`cudaFree` inside `time_us`.
-
-The C++ gtest binaries stopped measuring that — `cpp/tests/gpu/rmm_pool.hpp` installs a pooled
-resource in `main()`, `PEACOCK_RMM_POOL=0` turns it off — so the tree's two families of numbers
-are taken under different allocators, and the per-node records charge a node for the default
-resource worst where its output is largest. Fix by landing #148, so the benchmark inherits the
-shipping engine's pool; failing that, an install hook sharing `rmm_pool.hpp`'s sizing rule.
-Either way the record must name its allocator beside `build_profile` and `sync_floor_us`.
-
-The committed records' shape is current (all 127 verified 2026-08-14); their values are not —
-they predate the scatter's timed region, whose stream sync barriered execution as well as
-costing a floor. Re-running put 66 of 88 repartition nodes faster, median -2.5%, and nothing
-asserts the records, so nothing is red.
-
 <a id="t150"></a>
 ### #150 — store the embedding columns uncompressed; Snappy costs a third of a vector query to save 3%
 The sf40 embedding columns are written SNAPPY and do not compress: `ps_image_embedding`
@@ -401,13 +384,15 @@ intermediate takes rmm's default: a `cudaMalloc`/`cudaFree` driver round trip ea
 
 Measured: TPC-H q1 over sf40 whole-table on GB10 is 76.5 s execute (2nd-min of 5, all runs
 inside [75.4, 78.8], so steady state) against 3.9 s streamed through bounded batches for the
-same answer. The gap was fixed twice already, in `multi_gpu.cpp` and `rmm_pool.hpp`; the engine
-is the only one of the three that ships. The second half is the same fix: `gpu_memory_limit` is
-documented as a bound, stored at `gpu_executor.cpp:99` and never read — the #132 shape one level
-up — and a pool's `maximum` IS that bound. Care: install per device before any cuDF call, tear
-down on the owning thread (`set_per_device_resource(id, nullptr)` misses the ref map), and size
-by host kind, an integrated part's reservation sharing the page cache's pool. Tests: the GPU
-tiers stay byte-identical, plus a case asserting a small limit is honoured.
+same answer. The gap was fixed three times already — `multi_gpu.cpp`, the gtest mains and the
+benchmark harness, the last two sharing `cpp/include/peacock/rmm_pool.hpp`
+([#151](archive/archived-tickets.md#t151)); the engine is the only one of the four that ships.
+The second half is the same fix: `gpu_memory_limit` is documented as a bound, stored at
+`gpu_executor.cpp:99` and never read — the #132 shape one level up — and a pool's `maximum` IS
+that bound. Care: install per device before any cuDF call, tear down on the owning thread
+(`set_per_device_resource(id, nullptr)` misses the ref map), and size by host kind, an
+integrated part's reservation sharing the page cache's pool. Tests: the GPU tiers stay
+byte-identical, plus a case asserting a small limit is honoured.
 
 <a id="t19"></a>
 ### #19 — Stats propagation: 55 TPC-DS hash joins blind to cardinality

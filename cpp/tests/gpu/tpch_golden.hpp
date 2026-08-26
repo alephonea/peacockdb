@@ -16,7 +16,7 @@
 #include <cuda_runtime.h>
 #include <gtest/gtest.h>
 
-#include "rmm_pool.hpp"
+#include "peacock/rmm_pool.hpp"
 
 
 #include <chrono>
@@ -161,7 +161,7 @@ inline int32_t days_since_epoch(int y, unsigned m, unsigned d) {
 class TpchSf40 : public ::testing::Test {
  protected:
   void SetUp() override {
-    begin_peak_scope();
+    peacock::begin_peak_scope();
     const auto dir = data_dir();
     if (!file_exists(dir + "/lineitem.parquet")) {
       GTEST_SKIP() << "\n"
@@ -179,8 +179,8 @@ class TpchSf40 : public ::testing::Test {
     // Read the peak BEFORE popping — the pop discards this test's scope.
     std::fprintf(stderr, "[gpu-mem] device total %.1f GiB; peak used by this test %.2f GiB (%s)\n",
                  total_ / 1073741824.0, peak_bytes() / 1073741824.0,
-                 peak_allocated_bytes() ? "allocator high-water" : "free-memory delta");
-    end_peak_scope();
+                 peacock::peak_allocated_bytes() ? "allocator high-water" : "free-memory delta");
+    peacock::end_peak_scope();
   }
 
   // call after the memory-heaviest step
@@ -193,7 +193,7 @@ class TpchSf40 : public ::testing::Test {
   // high-water mark is the only honest answer, and it is also the better one: it counts
   // what the query asked for rather than what the allocator reserved.
   void note_peak() {
-    if (peak_allocated_bytes()) return;  // tracked by the allocator; nothing to sample
+    if (peacock::peak_allocated_bytes()) return;  // tracked by the allocator; nothing to sample
     size_t free_now = 0, total = 0;
     cudaMemGetInfo(&free_now, &total);
     size_t used = free_before_ > free_now ? free_before_ - free_now : 0;
@@ -201,7 +201,7 @@ class TpchSf40 : public ::testing::Test {
   }
 
   size_t peak_bytes() const {
-    const size_t tracked = peak_allocated_bytes();
+    const size_t tracked = peacock::peak_allocated_bytes();
     return tracked ? tracked : peak_used_;
   }
 

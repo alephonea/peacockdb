@@ -1,5 +1,6 @@
 #include "peacock_gpu.h"
 #include "peacock/partitioning.hpp"
+#include "peacock/rmm_pool.hpp"
 #include "plan_executor.h"
 
 #include <cudf/copying.hpp>
@@ -103,6 +104,37 @@ const char* peacock_gpu_version() {
 // ---------------------------------------------------------------------------
 // Benchmark instrumentation
 // ---------------------------------------------------------------------------
+
+int peacock_install_rmm_pool(PeacockRmmPoolInfo* out_info) {
+  if (!out_info) return 1;
+
+  // install_rmm_pool() is idempotent and already degrades to the default resource on a
+  // failed reservation, so there is nothing here that can throw in the ordinary case. The
+  // catch is for the extraordinary one — and it returns UNAVAILABLE rather than an error
+  // code for the reason argued on the declaration: no pool is a slower run, not a dead one.
+  peacock::RmmPoolStatus status;
+  try {
+    status = peacock::install_rmm_pool();
+  } catch (const std::exception& e) {
+    std::fprintf(stderr, "[peacock_install_rmm_pool] error: %s\n", e.what());
+  } catch (...) {
+    std::fprintf(stderr, "[peacock_install_rmm_pool] unknown exception\n");
+  }
+
+  switch (status.state) {
+    case peacock::RmmPoolStatus::State::Installed:
+      out_info->state = PEACOCK_RMM_POOL_INSTALLED;
+      break;
+    case peacock::RmmPoolStatus::State::Unavailable:
+      out_info->state = PEACOCK_RMM_POOL_UNAVAILABLE;
+      break;
+  }
+  out_info->integrated = status.integrated ? 1 : 0;
+  out_info->free_bytes = static_cast<uint64_t>(status.free_bytes);
+  out_info->initial_bytes = static_cast<uint64_t>(status.initial_bytes);
+  out_info->maximum_bytes = static_cast<uint64_t>(status.maximum_bytes);
+  return 0;
+}
 
 void peacock_set_node_timing(int enable) { peacock::set_node_timing(enable != 0); }
 

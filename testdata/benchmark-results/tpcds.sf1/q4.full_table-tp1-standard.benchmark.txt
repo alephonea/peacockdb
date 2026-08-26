@@ -1,101 +1,105 @@
-GpuSortExec: expr=[customer_id@0 ASC, customer_first_name@1 ASC, customer_last_name@2 ASC, customer_preferred_cust_flag@3 ASC], fetch=100, time_us=1159
+GpuSortExec: expr=[customer_id@0 ASC, customer_first_name@1 ASC, customer_last_name@2 ASC, customer_preferred_cust_flag@3 ASC], fetch=100, time_us=820
   GpuCoalesceBatchesExec, time_us=1
-    GpuHashJoinExec: join_type=Inner, on=[(customer_id@0, customer_id@0)], filter=CASE WHEN year_total@0 > Some(0),24,6 THEN year_total@1 / year_total@0 END > CASE WHEN year_total@2 > Some(0),24,6 THEN year_total@3 / year_total@2 END, projection=[1, 2, 3, 4], time_us=3786
+    GpuHashJoinExec: join_type=Inner, on=[(customer_id@0, customer_id@0)], filter=CASE WHEN year_total@0 > Some(0),24,6 THEN year_total@1 / year_total@0 END > CASE WHEN year_total@2 > Some(0),24,6 THEN year_total@3 / year_total@2 END, projection=[1, 2, 3, 4], time_us=2401
       GpuCoalesceBatchesExec, time_us=1
-        GpuHashJoinExec: join_type=Inner, on=[(customer_id@0, customer_id@0)], projection=[0, 1, 2, 3, 4, 5, 6, 8], time_us=1898
+        GpuHashJoinExec: join_type=Inner, on=[(customer_id@0, customer_id@0)], projection=[0, 1, 2, 3, 4, 5, 6, 8], time_us=1143
           GpuCoalesceBatchesExec, time_us=1
-            GpuHashJoinExec: join_type=Inner, on=[(customer_id@0, customer_id@0)], filter=CASE WHEN year_total@2 > Some(0),24,6 THEN year_total@3 / year_total@2 END > CASE WHEN year_total@0 > Some(0),24,6 THEN year_total@1 / year_total@0 END, projection=[0, 2, 3, 4, 5, 7, 9], time_us=4060
+            GpuHashJoinExec: join_type=Inner, on=[(customer_id@0, customer_id@0)], filter=CASE WHEN year_total@2 > Some(0),24,6 THEN year_total@3 / year_total@2 END > CASE WHEN year_total@0 > Some(0),24,6 THEN year_total@1 / year_total@0 END, projection=[0, 2, 3, 4, 5, 7, 9], time_us=2475
               GpuCoalesceBatchesExec, time_us=1
-                GpuHashJoinExec: join_type=Inner, on=[(customer_id@0, customer_id@0)], projection=[0, 1, 2, 3, 4, 5, 6, 8], time_us=1971
+                GpuHashJoinExec: join_type=Inner, on=[(customer_id@0, customer_id@0)], projection=[0, 1, 2, 3, 4, 5, 6, 8], time_us=1191
                   GpuCoalesceBatchesExec, time_us=1
-                    GpuHashJoinExec: join_type=Inner, on=[(customer_id@0, customer_id@0)], time_us=1239
-                      GpuProjectExec: expr=[c_customer_id@0 as customer_id, sum(store_sales.ss_ext_list_price - store_sales.ss_ext_wholesale_cost - store_sales.ss_ext_discount_amt + store_sales.ss_ext_sales_price / Int64(2))@1 as year_total], time_us=98
+                    GpuHashJoinExec: join_type=Inner, on=[(customer_id@0, customer_id@0)], time_us=769
+                      GpuProjectExec: expr=[c_customer_id@0 as customer_id, sum(store_sales.ss_ext_list_price - store_sales.ss_ext_wholesale_cost - store_sales.ss_ext_discount_amt + store_sales.ss_ext_sales_price / Int64(2))@1 as year_total], time_us=62
                         GpuCoalesceBatchesExec, time_us=1
-                          GpuFilterExec: predicate=sum(store_sales.ss_ext_list_price - store_sales.ss_ext_wholesale_cost - store_sales.ss_ext_discount_amt + store_sales.ss_ext_sales_price / Int64(2))@1 > Some(0),24,6, time_us=299
-                            GpuProjectExec: expr=[c_customer_id@0 as c_customer_id, sum(store_sales.ss_ext_list_price - store_sales.ss_ext_wholesale_cost - store_sales.ss_ext_discount_amt + store_sales.ss_ext_sales_price / Int64(2))@8 as sum(store_sales.ss_ext_list_price - store_sales.ss_ext_wholesale_cost - store_sales.ss_ext_discount_amt + store_sales.ss_ext_sales_price / Int64(2))], time_us=245
-                              GpuAggregateExec: group_by=[c_customer_id, c_first_name, c_last_name, c_preferred_cust_flag, c_birth_country, c_login, c_email_address, d_year], aggr=[sum(store_sales.ss_ext_list_price - store_sales.ss_ext_wholesale_cost - store_sales.ss_ext_discount_amt + store_sales.ss_ext_sales_price / Int64(2))], time_us=14138
-                                GpuProjectExec: expr=[c_customer_id@1 as c_customer_id, c_first_name@2 as c_first_name, c_last_name@3 as c_last_name, c_preferred_cust_flag@4 as c_preferred_cust_flag, c_birth_country@5 as c_birth_country, c_login@6 as c_login, c_email_address@7 as c_email_address, ss_ext_discount_amt@8 as ss_ext_discount_amt, ss_ext_sales_price@9 as ss_ext_sales_price, ss_ext_wholesale_cost@10 as ss_ext_wholesale_cost, ss_ext_list_price@11 as ss_ext_list_price, d_year@0 as d_year], time_us=1908
+                          GpuFilterExec: predicate=sum(store_sales.ss_ext_list_price - store_sales.ss_ext_wholesale_cost - store_sales.ss_ext_discount_amt + store_sales.ss_ext_sales_price / Int64(2))@1 > Some(0),24,6, time_us=177
+                            GpuProjectExec: expr=[c_customer_id@0 as c_customer_id, sum(store_sales.ss_ext_list_price - store_sales.ss_ext_wholesale_cost - store_sales.ss_ext_discount_amt + store_sales.ss_ext_sales_price / Int64(2))@8 as sum(store_sales.ss_ext_list_price - store_sales.ss_ext_wholesale_cost - store_sales.ss_ext_discount_amt + store_sales.ss_ext_sales_price / Int64(2))], time_us=69
+                              GpuAggregateExec: group_by=[c_customer_id, c_first_name, c_last_name, c_preferred_cust_flag, c_birth_country, c_login, c_email_address, d_year], aggr=[sum(store_sales.ss_ext_list_price - store_sales.ss_ext_wholesale_cost - store_sales.ss_ext_discount_amt + store_sales.ss_ext_sales_price / Int64(2))], time_us=11592
+                                GpuProjectExec: expr=[c_customer_id@1 as c_customer_id, c_first_name@2 as c_first_name, c_last_name@3 as c_last_name, c_preferred_cust_flag@4 as c_preferred_cust_flag, c_birth_country@5 as c_birth_country, c_login@6 as c_login, c_email_address@7 as c_email_address, ss_ext_discount_amt@8 as ss_ext_discount_amt, ss_ext_sales_price@9 as ss_ext_sales_price, ss_ext_wholesale_cost@10 as ss_ext_wholesale_cost, ss_ext_list_price@11 as ss_ext_list_price, d_year@0 as d_year], time_us=492
                                   GpuCoalesceBatchesExec, time_us=1
-                                    GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ss_sold_date_sk@7)], projection=[1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13], time_us=7478
+                                    GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ss_sold_date_sk@7)], projection=[1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13], time_us=2376
                                       GpuCoalesceBatchesExec, time_us=1
-                                        GpuFilterExec: predicate=d_year@1 = 2001, time_us=215
-                                          GpuScanExec: table=date_dim, projections=[d_date_sk, d_year], time_us=17760
-                                      GpuCoalesceBatchesExec, time_us=2
-                                        GpuHashJoinExec: join_type=Inner, on=[(c_customer_sk@0, ss_customer_sk@1)], projection=[1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13], time_us=9785
-                                          GpuScanExec: table=customer, projections=[c_customer_sk, c_customer_id, c_first_name, c_last_name, c_preferred_cust_flag, c_birth_country, c_login, c_email_address], time_us=117703
-                                          GpuScanExec: table=store_sales, projections=[ss_sold_date_sk, ss_customer_sk, ss_ext_discount_amt, ss_ext_sales_price, ss_ext_wholesale_cost, ss_ext_list_price], time_us=23641
-                      GpuProjectExec: expr=[c_customer_id@0 as customer_id, c_first_name@1 as customer_first_name, c_last_name@2 as customer_last_name, c_preferred_cust_flag@3 as customer_preferred_cust_flag, sum(store_sales.ss_ext_list_price - store_sales.ss_ext_wholesale_cost - store_sales.ss_ext_discount_amt + store_sales.ss_ext_sales_price / Int64(2))@8 as year_total], time_us=437
-                        GpuAggregateExec: group_by=[c_customer_id, c_first_name, c_last_name, c_preferred_cust_flag, c_birth_country, c_login, c_email_address, d_year], aggr=[sum(store_sales.ss_ext_list_price - store_sales.ss_ext_wholesale_cost - store_sales.ss_ext_discount_amt + store_sales.ss_ext_sales_price / Int64(2))], time_us=13847
-                          GpuProjectExec: expr=[c_customer_id@1 as c_customer_id, c_first_name@2 as c_first_name, c_last_name@3 as c_last_name, c_preferred_cust_flag@4 as c_preferred_cust_flag, c_birth_country@5 as c_birth_country, c_login@6 as c_login, c_email_address@7 as c_email_address, ss_ext_discount_amt@8 as ss_ext_discount_amt, ss_ext_sales_price@9 as ss_ext_sales_price, ss_ext_wholesale_cost@10 as ss_ext_wholesale_cost, ss_ext_list_price@11 as ss_ext_list_price, d_year@0 as d_year], time_us=2001
+                                        GpuFilterExec: predicate=d_year@1 = 2001, time_us=129
+                                          GpuScanExec: table=date_dim, projections=[d_date_sk, d_year], time_us=16886
+                                      GpuCoalesceBatchesExec, time_us=1
+                                        GpuHashJoinExec: join_type=Inner, on=[(c_customer_sk@0, ss_customer_sk@1)], projection=[1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13], time_us=4713
+                                          GpuScanExec: table=customer, projections=[c_customer_sk, c_customer_id, c_first_name, c_last_name, c_preferred_cust_flag, c_birth_country, c_login, c_email_address], time_us=114808
+                                          GpuScanExec: table=store_sales, projections=[ss_sold_date_sk, ss_customer_sk, ss_ext_discount_amt, ss_ext_sales_price, ss_ext_wholesale_cost, ss_ext_list_price], time_us=20320
+                      GpuProjectExec: expr=[c_customer_id@0 as customer_id, c_first_name@1 as customer_first_name, c_last_name@2 as customer_last_name, c_preferred_cust_flag@3 as customer_preferred_cust_flag, sum(store_sales.ss_ext_list_price - store_sales.ss_ext_wholesale_cost - store_sales.ss_ext_discount_amt + store_sales.ss_ext_sales_price / Int64(2))@8 as year_total], time_us=215
+                        GpuAggregateExec: group_by=[c_customer_id, c_first_name, c_last_name, c_preferred_cust_flag, c_birth_country, c_login, c_email_address, d_year], aggr=[sum(store_sales.ss_ext_list_price - store_sales.ss_ext_wholesale_cost - store_sales.ss_ext_discount_amt + store_sales.ss_ext_sales_price / Int64(2))], time_us=11001
+                          GpuProjectExec: expr=[c_customer_id@1 as c_customer_id, c_first_name@2 as c_first_name, c_last_name@3 as c_last_name, c_preferred_cust_flag@4 as c_preferred_cust_flag, c_birth_country@5 as c_birth_country, c_login@6 as c_login, c_email_address@7 as c_email_address, ss_ext_discount_amt@8 as ss_ext_discount_amt, ss_ext_sales_price@9 as ss_ext_sales_price, ss_ext_wholesale_cost@10 as ss_ext_wholesale_cost, ss_ext_list_price@11 as ss_ext_list_price, d_year@0 as d_year], time_us=482
                             GpuCoalesceBatchesExec, time_us=1
-                              GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ss_sold_date_sk@7)], projection=[1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13], time_us=7540
+                              GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ss_sold_date_sk@7)], projection=[1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13], time_us=2350
                                 GpuCoalesceBatchesExec, time_us=1
-                                  GpuFilterExec: predicate=d_year@1 = 2002, time_us=227
-                                    GpuScanExec: table=date_dim, projections=[d_date_sk, d_year], time_us=17459
-                                GpuCoalesceBatchesExec, time_us=2
-                                  GpuHashJoinExec: join_type=Inner, on=[(c_customer_sk@0, ss_customer_sk@1)], projection=[1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13], time_us=9708
-                                    GpuScanExec: table=customer, projections=[c_customer_sk, c_customer_id, c_first_name, c_last_name, c_preferred_cust_flag, c_birth_country, c_login, c_email_address], time_us=115849
-                                    GpuScanExec: table=store_sales, projections=[ss_sold_date_sk, ss_customer_sk, ss_ext_discount_amt, ss_ext_sales_price, ss_ext_wholesale_cost, ss_ext_list_price], time_us=23295
-                  GpuProjectExec: expr=[c_customer_id@0 as customer_id, sum(catalog_sales.cs_ext_list_price - catalog_sales.cs_ext_wholesale_cost - catalog_sales.cs_ext_discount_amt + catalog_sales.cs_ext_sales_price / Int64(2))@1 as year_total], time_us=141
+                                  GpuFilterExec: predicate=d_year@1 = 2002, time_us=132
+                                    GpuScanExec: table=date_dim, projections=[d_date_sk, d_year], time_us=17005
+                                GpuCoalesceBatchesExec, time_us=1
+                                  GpuHashJoinExec: join_type=Inner, on=[(c_customer_sk@0, ss_customer_sk@1)], projection=[1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13], time_us=4689
+                                    GpuScanExec: table=customer, projections=[c_customer_sk, c_customer_id, c_first_name, c_last_name, c_preferred_cust_flag, c_birth_country, c_login, c_email_address], time_us=117903
+                                    GpuScanExec: table=store_sales, projections=[ss_sold_date_sk, ss_customer_sk, ss_ext_discount_amt, ss_ext_sales_price, ss_ext_wholesale_cost, ss_ext_list_price], time_us=20161
+                  GpuProjectExec: expr=[c_customer_id@0 as customer_id, sum(catalog_sales.cs_ext_list_price - catalog_sales.cs_ext_wholesale_cost - catalog_sales.cs_ext_discount_amt + catalog_sales.cs_ext_sales_price / Int64(2))@1 as year_total], time_us=62
                     GpuCoalesceBatchesExec, time_us=1
-                      GpuFilterExec: predicate=sum(catalog_sales.cs_ext_list_price - catalog_sales.cs_ext_wholesale_cost - catalog_sales.cs_ext_discount_amt + catalog_sales.cs_ext_sales_price / Int64(2))@1 > Some(0),24,6, time_us=350
-                        GpuProjectExec: expr=[c_customer_id@0 as c_customer_id, sum(catalog_sales.cs_ext_list_price - catalog_sales.cs_ext_wholesale_cost - catalog_sales.cs_ext_discount_amt + catalog_sales.cs_ext_sales_price / Int64(2))@8 as sum(catalog_sales.cs_ext_list_price - catalog_sales.cs_ext_wholesale_cost - catalog_sales.cs_ext_discount_amt + catalog_sales.cs_ext_sales_price / Int64(2))], time_us=309
-                          GpuAggregateExec: group_by=[c_customer_id, c_first_name, c_last_name, c_preferred_cust_flag, c_birth_country, c_login, c_email_address, d_year], aggr=[sum(catalog_sales.cs_ext_list_price - catalog_sales.cs_ext_wholesale_cost - catalog_sales.cs_ext_discount_amt + catalog_sales.cs_ext_sales_price / Int64(2))], time_us=12768
-                            GpuProjectExec: expr=[c_customer_id@1 as c_customer_id, c_first_name@2 as c_first_name, c_last_name@3 as c_last_name, c_preferred_cust_flag@4 as c_preferred_cust_flag, c_birth_country@5 as c_birth_country, c_login@6 as c_login, c_email_address@7 as c_email_address, cs_ext_discount_amt@8 as cs_ext_discount_amt, cs_ext_sales_price@9 as cs_ext_sales_price, cs_ext_wholesale_cost@10 as cs_ext_wholesale_cost, cs_ext_list_price@11 as cs_ext_list_price, d_year@0 as d_year], time_us=1582
+                      GpuFilterExec: predicate=sum(catalog_sales.cs_ext_list_price - catalog_sales.cs_ext_wholesale_cost - catalog_sales.cs_ext_discount_amt + catalog_sales.cs_ext_sales_price / Int64(2))@1 > Some(0),24,6, time_us=217
+                        GpuProjectExec: expr=[c_customer_id@0 as c_customer_id, sum(catalog_sales.cs_ext_list_price - catalog_sales.cs_ext_wholesale_cost - catalog_sales.cs_ext_discount_amt + catalog_sales.cs_ext_sales_price / Int64(2))@8 as sum(catalog_sales.cs_ext_list_price - catalog_sales.cs_ext_wholesale_cost - catalog_sales.cs_ext_discount_amt + catalog_sales.cs_ext_sales_price / Int64(2))], time_us=68
+                          GpuAggregateExec: group_by=[c_customer_id, c_first_name, c_last_name, c_preferred_cust_flag, c_birth_country, c_login, c_email_address, d_year], aggr=[sum(catalog_sales.cs_ext_list_price - catalog_sales.cs_ext_wholesale_cost - catalog_sales.cs_ext_discount_amt + catalog_sales.cs_ext_sales_price / Int64(2))], time_us=10371
+                            GpuProjectExec: expr=[c_customer_id@1 as c_customer_id, c_first_name@2 as c_first_name, c_last_name@3 as c_last_name, c_preferred_cust_flag@4 as c_preferred_cust_flag, c_birth_country@5 as c_birth_country, c_login@6 as c_login, c_email_address@7 as c_email_address, cs_ext_discount_amt@8 as cs_ext_discount_amt, cs_ext_sales_price@9 as cs_ext_sales_price, cs_ext_wholesale_cost@10 as cs_ext_wholesale_cost, cs_ext_list_price@11 as cs_ext_list_price, d_year@0 as d_year], time_us=457
                               GpuCoalesceBatchesExec, time_us=1
-                                GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, cs_sold_date_sk@7)], projection=[1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13], time_us=6343
+                                GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, cs_sold_date_sk@7)], projection=[1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13], time_us=2018
                                   GpuCoalesceBatchesExec, time_us=1
-                                    GpuFilterExec: predicate=d_year@1 = 2001, time_us=244
-                                      GpuScanExec: table=date_dim, projections=[d_date_sk, d_year], time_us=17360
+                                    GpuFilterExec: predicate=d_year@1 = 2001, time_us=130
+                                      GpuScanExec: table=date_dim, projections=[d_date_sk, d_year], time_us=16957
                                   GpuCoalesceBatchesExec, time_us=1
-                                    GpuHashJoinExec: join_type=Inner, on=[(c_customer_sk@0, cs_bill_customer_sk@1)], projection=[1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13], time_us=7757
-                                      GpuScanExec: table=customer, projections=[c_customer_sk, c_customer_id, c_first_name, c_last_name, c_preferred_cust_flag, c_birth_country, c_login, c_email_address], time_us=115394
-                                      GpuScanExec: table=catalog_sales, projections=[cs_sold_date_sk, cs_bill_customer_sk, cs_ext_discount_amt, cs_ext_sales_price, cs_ext_wholesale_cost, cs_ext_list_price], time_us=14830
-              GpuProjectExec: expr=[c_customer_id@0 as customer_id, sum(catalog_sales.cs_ext_list_price - catalog_sales.cs_ext_wholesale_cost - catalog_sales.cs_ext_discount_amt + catalog_sales.cs_ext_sales_price / Int64(2))@8 as year_total], time_us=315
-                GpuAggregateExec: group_by=[c_customer_id, c_first_name, c_last_name, c_preferred_cust_flag, c_birth_country, c_login, c_email_address, d_year], aggr=[sum(catalog_sales.cs_ext_list_price - catalog_sales.cs_ext_wholesale_cost - catalog_sales.cs_ext_discount_amt + catalog_sales.cs_ext_sales_price / Int64(2))], time_us=12639
-                  GpuProjectExec: expr=[c_customer_id@1 as c_customer_id, c_first_name@2 as c_first_name, c_last_name@3 as c_last_name, c_preferred_cust_flag@4 as c_preferred_cust_flag, c_birth_country@5 as c_birth_country, c_login@6 as c_login, c_email_address@7 as c_email_address, cs_ext_discount_amt@8 as cs_ext_discount_amt, cs_ext_sales_price@9 as cs_ext_sales_price, cs_ext_wholesale_cost@10 as cs_ext_wholesale_cost, cs_ext_list_price@11 as cs_ext_list_price, d_year@0 as d_year], time_us=1635
+                                    GpuHashJoinExec: join_type=Inner, on=[(c_customer_sk@0, cs_bill_customer_sk@1)], projection=[1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13], time_us=3209
+                                      GpuScanExec: table=customer, projections=[c_customer_sk, c_customer_id, c_first_name, c_last_name, c_preferred_cust_flag, c_birth_country, c_login, c_email_address], time_us=117207
+                                      GpuScanExec: table=catalog_sales, projections=[cs_sold_date_sk, cs_bill_customer_sk, cs_ext_discount_amt, cs_ext_sales_price, cs_ext_wholesale_cost, cs_ext_list_price], time_us=12957
+              GpuProjectExec: expr=[c_customer_id@0 as customer_id, sum(catalog_sales.cs_ext_list_price - catalog_sales.cs_ext_wholesale_cost - catalog_sales.cs_ext_discount_amt + catalog_sales.cs_ext_sales_price / Int64(2))@8 as year_total], time_us=69
+                GpuAggregateExec: group_by=[c_customer_id, c_first_name, c_last_name, c_preferred_cust_flag, c_birth_country, c_login, c_email_address, d_year], aggr=[sum(catalog_sales.cs_ext_list_price - catalog_sales.cs_ext_wholesale_cost - catalog_sales.cs_ext_discount_amt + catalog_sales.cs_ext_sales_price / Int64(2))], time_us=10540
+                  GpuProjectExec: expr=[c_customer_id@1 as c_customer_id, c_first_name@2 as c_first_name, c_last_name@3 as c_last_name, c_preferred_cust_flag@4 as c_preferred_cust_flag, c_birth_country@5 as c_birth_country, c_login@6 as c_login, c_email_address@7 as c_email_address, cs_ext_discount_amt@8 as cs_ext_discount_amt, cs_ext_sales_price@9 as cs_ext_sales_price, cs_ext_wholesale_cost@10 as cs_ext_wholesale_cost, cs_ext_list_price@11 as cs_ext_list_price, d_year@0 as d_year], time_us=476
                     GpuCoalesceBatchesExec, time_us=1
-                      GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, cs_sold_date_sk@7)], projection=[1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13], time_us=6421
+                      GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, cs_sold_date_sk@7)], projection=[1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13], time_us=1972
                         GpuCoalesceBatchesExec, time_us=1
-                          GpuFilterExec: predicate=d_year@1 = 2002, time_us=239
-                            GpuScanExec: table=date_dim, projections=[d_date_sk, d_year], time_us=17431
+                          GpuFilterExec: predicate=d_year@1 = 2002, time_us=131
+                            GpuScanExec: table=date_dim, projections=[d_date_sk, d_year], time_us=17023
                         GpuCoalesceBatchesExec, time_us=1
-                          GpuHashJoinExec: join_type=Inner, on=[(c_customer_sk@0, cs_bill_customer_sk@1)], projection=[1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13], time_us=7881
-                            GpuScanExec: table=customer, projections=[c_customer_sk, c_customer_id, c_first_name, c_last_name, c_preferred_cust_flag, c_birth_country, c_login, c_email_address], time_us=115605
-                            GpuScanExec: table=catalog_sales, projections=[cs_sold_date_sk, cs_bill_customer_sk, cs_ext_discount_amt, cs_ext_sales_price, cs_ext_wholesale_cost, cs_ext_list_price], time_us=14706
-          GpuProjectExec: expr=[c_customer_id@0 as customer_id, sum(web_sales.ws_ext_list_price - web_sales.ws_ext_wholesale_cost - web_sales.ws_ext_discount_amt + web_sales.ws_ext_sales_price / Int64(2))@1 as year_total], time_us=103
+                          GpuHashJoinExec: join_type=Inner, on=[(c_customer_sk@0, cs_bill_customer_sk@1)], projection=[1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13], time_us=3183
+                            GpuScanExec: table=customer, projections=[c_customer_sk, c_customer_id, c_first_name, c_last_name, c_preferred_cust_flag, c_birth_country, c_login, c_email_address], time_us=115341
+                            GpuScanExec: table=catalog_sales, projections=[cs_sold_date_sk, cs_bill_customer_sk, cs_ext_discount_amt, cs_ext_sales_price, cs_ext_wholesale_cost, cs_ext_list_price], time_us=12736
+          GpuProjectExec: expr=[c_customer_id@0 as customer_id, sum(web_sales.ws_ext_list_price - web_sales.ws_ext_wholesale_cost - web_sales.ws_ext_discount_amt + web_sales.ws_ext_sales_price / Int64(2))@1 as year_total], time_us=62
             GpuCoalesceBatchesExec, time_us=1
-              GpuFilterExec: predicate=sum(web_sales.ws_ext_list_price - web_sales.ws_ext_wholesale_cost - web_sales.ws_ext_discount_amt + web_sales.ws_ext_sales_price / Int64(2))@1 > Some(0),24,6, time_us=463
-                GpuProjectExec: expr=[c_customer_id@0 as c_customer_id, sum(web_sales.ws_ext_list_price - web_sales.ws_ext_wholesale_cost - web_sales.ws_ext_discount_amt + web_sales.ws_ext_sales_price / Int64(2))@8 as sum(web_sales.ws_ext_list_price - web_sales.ws_ext_wholesale_cost - web_sales.ws_ext_discount_amt + web_sales.ws_ext_sales_price / Int64(2))], time_us=178
-                  GpuAggregateExec: group_by=[c_customer_id, c_first_name, c_last_name, c_preferred_cust_flag, c_birth_country, c_login, c_email_address, d_year], aggr=[sum(web_sales.ws_ext_list_price - web_sales.ws_ext_wholesale_cost - web_sales.ws_ext_discount_amt + web_sales.ws_ext_sales_price / Int64(2))], time_us=12209
-                    GpuProjectExec: expr=[c_customer_id@1 as c_customer_id, c_first_name@2 as c_first_name, c_last_name@3 as c_last_name, c_preferred_cust_flag@4 as c_preferred_cust_flag, c_birth_country@5 as c_birth_country, c_login@6 as c_login, c_email_address@7 as c_email_address, ws_ext_discount_amt@8 as ws_ext_discount_amt, ws_ext_sales_price@9 as ws_ext_sales_price, ws_ext_wholesale_cost@10 as ws_ext_wholesale_cost, ws_ext_list_price@11 as ws_ext_list_price, d_year@0 as d_year], time_us=1131
+              GpuFilterExec: predicate=sum(web_sales.ws_ext_list_price - web_sales.ws_ext_wholesale_cost - web_sales.ws_ext_discount_amt + web_sales.ws_ext_sales_price / Int64(2))@1 > Some(0),24,6, time_us=213
+                GpuProjectExec: expr=[c_customer_id@0 as c_customer_id, sum(web_sales.ws_ext_list_price - web_sales.ws_ext_wholesale_cost - web_sales.ws_ext_discount_amt + web_sales.ws_ext_sales_price / Int64(2))@8 as sum(web_sales.ws_ext_list_price - web_sales.ws_ext_wholesale_cost - web_sales.ws_ext_discount_amt + web_sales.ws_ext_sales_price / Int64(2))], time_us=68
+                  GpuAggregateExec: group_by=[c_customer_id, c_first_name, c_last_name, c_preferred_cust_flag, c_birth_country, c_login, c_email_address, d_year], aggr=[sum(web_sales.ws_ext_list_price - web_sales.ws_ext_wholesale_cost - web_sales.ws_ext_discount_amt + web_sales.ws_ext_sales_price / Int64(2))], time_us=10375
+                    GpuProjectExec: expr=[c_customer_id@1 as c_customer_id, c_first_name@2 as c_first_name, c_last_name@3 as c_last_name, c_preferred_cust_flag@4 as c_preferred_cust_flag, c_birth_country@5 as c_birth_country, c_login@6 as c_login, c_email_address@7 as c_email_address, ws_ext_discount_amt@8 as ws_ext_discount_amt, ws_ext_sales_price@9 as ws_ext_sales_price, ws_ext_wholesale_cost@10 as ws_ext_wholesale_cost, ws_ext_list_price@11 as ws_ext_list_price, d_year@0 as d_year], time_us=424
                       GpuCoalesceBatchesExec, time_us=1
-                        GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ws_sold_date_sk@7)], projection=[1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13], time_us=4851
+                        GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ws_sold_date_sk@7)], projection=[1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13], time_us=1714
                           GpuCoalesceBatchesExec, time_us=1
-                            GpuFilterExec: predicate=d_year@1 = 2001, time_us=217
-                              GpuScanExec: table=date_dim, projections=[d_date_sk, d_year], time_us=17347
-                          GpuCoalesceBatchesExec, time_us=2
-                            GpuHashJoinExec: join_type=Inner, on=[(c_customer_sk@0, ws_bill_customer_sk@1)], projection=[1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13], time_us=6826
-                              GpuScanExec: table=customer, projections=[c_customer_sk, c_customer_id, c_first_name, c_last_name, c_preferred_cust_flag, c_birth_country, c_login, c_email_address], time_us=115389
-                              GpuScanExec: table=web_sales, projections=[ws_sold_date_sk, ws_bill_customer_sk, ws_ext_discount_amt, ws_ext_sales_price, ws_ext_wholesale_cost, ws_ext_list_price], time_us=12203
-      GpuProjectExec: expr=[c_customer_id@0 as customer_id, sum(web_sales.ws_ext_list_price - web_sales.ws_ext_wholesale_cost - web_sales.ws_ext_discount_amt + web_sales.ws_ext_sales_price / Int64(2))@8 as year_total], time_us=285
-        GpuAggregateExec: group_by=[c_customer_id, c_first_name, c_last_name, c_preferred_cust_flag, c_birth_country, c_login, c_email_address, d_year], aggr=[sum(web_sales.ws_ext_list_price - web_sales.ws_ext_wholesale_cost - web_sales.ws_ext_discount_amt + web_sales.ws_ext_sales_price / Int64(2))], time_us=12168
-          GpuProjectExec: expr=[c_customer_id@1 as c_customer_id, c_first_name@2 as c_first_name, c_last_name@3 as c_last_name, c_preferred_cust_flag@4 as c_preferred_cust_flag, c_birth_country@5 as c_birth_country, c_login@6 as c_login, c_email_address@7 as c_email_address, ws_ext_discount_amt@8 as ws_ext_discount_amt, ws_ext_sales_price@9 as ws_ext_sales_price, ws_ext_wholesale_cost@10 as ws_ext_wholesale_cost, ws_ext_list_price@11 as ws_ext_list_price, d_year@0 as d_year], time_us=1104
+                            GpuFilterExec: predicate=d_year@1 = 2001, time_us=127
+                              GpuScanExec: table=date_dim, projections=[d_date_sk, d_year], time_us=16932
+                          GpuCoalesceBatchesExec, time_us=1
+                            GpuHashJoinExec: join_type=Inner, on=[(c_customer_sk@0, ws_bill_customer_sk@1)], projection=[1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13], time_us=2366
+                              GpuScanExec: table=customer, projections=[c_customer_sk, c_customer_id, c_first_name, c_last_name, c_preferred_cust_flag, c_birth_country, c_login, c_email_address], time_us=116583
+                              GpuScanExec: table=web_sales, projections=[ws_sold_date_sk, ws_bill_customer_sk, ws_ext_discount_amt, ws_ext_sales_price, ws_ext_wholesale_cost, ws_ext_list_price], time_us=11149
+      GpuProjectExec: expr=[c_customer_id@0 as customer_id, sum(web_sales.ws_ext_list_price - web_sales.ws_ext_wholesale_cost - web_sales.ws_ext_discount_amt + web_sales.ws_ext_sales_price / Int64(2))@8 as year_total], time_us=72
+        GpuAggregateExec: group_by=[c_customer_id, c_first_name, c_last_name, c_preferred_cust_flag, c_birth_country, c_login, c_email_address, d_year], aggr=[sum(web_sales.ws_ext_list_price - web_sales.ws_ext_wholesale_cost - web_sales.ws_ext_discount_amt + web_sales.ws_ext_sales_price / Int64(2))], time_us=10465
+          GpuProjectExec: expr=[c_customer_id@1 as c_customer_id, c_first_name@2 as c_first_name, c_last_name@3 as c_last_name, c_preferred_cust_flag@4 as c_preferred_cust_flag, c_birth_country@5 as c_birth_country, c_login@6 as c_login, c_email_address@7 as c_email_address, ws_ext_discount_amt@8 as ws_ext_discount_amt, ws_ext_sales_price@9 as ws_ext_sales_price, ws_ext_wholesale_cost@10 as ws_ext_wholesale_cost, ws_ext_list_price@11 as ws_ext_list_price, d_year@0 as d_year], time_us=410
             GpuCoalesceBatchesExec, time_us=1
-              GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ws_sold_date_sk@7)], projection=[1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13], time_us=4894
+              GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ws_sold_date_sk@7)], projection=[1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13], time_us=1711
                 GpuCoalesceBatchesExec, time_us=1
-                  GpuFilterExec: predicate=d_year@1 = 2002, time_us=274
-                    GpuScanExec: table=date_dim, projections=[d_date_sk, d_year], time_us=17385
+                  GpuFilterExec: predicate=d_year@1 = 2002, time_us=129
+                    GpuScanExec: table=date_dim, projections=[d_date_sk, d_year], time_us=16959
                 GpuCoalesceBatchesExec, time_us=1
-                  GpuHashJoinExec: join_type=Inner, on=[(c_customer_sk@0, ws_bill_customer_sk@1)], projection=[1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13], time_us=6726
-                    GpuScanExec: table=customer, projections=[c_customer_sk, c_customer_id, c_first_name, c_last_name, c_preferred_cust_flag, c_birth_country, c_login, c_email_address], time_us=115606
-                    GpuScanExec: table=web_sales, projections=[ws_sold_date_sk, ws_bill_customer_sk, ws_ext_discount_amt, ws_ext_sales_price, ws_ext_wholesale_cost, ws_ext_list_price], time_us=12263
+                  GpuHashJoinExec: join_type=Inner, on=[(c_customer_sk@0, ws_bill_customer_sk@1)], projection=[1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13], time_us=2341
+                    GpuScanExec: table=customer, projections=[c_customer_sk, c_customer_id, c_first_name, c_last_name, c_preferred_cust_flag, c_birth_country, c_login, c_email_address], time_us=115007
+                    GpuScanExec: table=web_sales, projections=[ws_sold_date_sk, ws_bill_customer_sk, ws_ext_discount_amt, ws_ext_sales_price, ws_ext_wholesale_cost, ws_ext_list_price], time_us=10842
 
 # sync_floor_us = cost of the measurement itself (empty timed region: clock + cudaStreamSynchronize on an idle stream). Each node time INCLUDES one PER OUTPUT PARTITION, since a node line is the Σ over its partitions; a node at or below its own floor (sync_floor_us x partitions) is unresolved, not cheap. Do not subtract it.
 # nodes_total_us = Σ of the per-node times above; total_us = the whole query, end to end (parse + plan + serialize + node walk + materialize)
 # build_profile = how the harness itself was compiled. total_us MINUS nodes_total_us is that Rust; records from different profiles are not comparable on it. Node times are device work and barely move.
+# allocator = the rmm device resource the node times were taken under. Without a pool every cuDF intermediate is a cudaMalloc/cudaFree round trip, charged to the node that allocated it — so it inflates the largest-output nodes hardest and moves the PROFILE, not only the scale. Records under different allocators are not comparable, node for node or in total.
+# shared_work_charged_to = which p<k> sub-line carries work a node does once for all of its output partitions. A hash repartition concatenates its input and scatters it in a single operation, and that time is billed to p0 — so p0 standing far above its siblings is the accounting, not skew. Sub-lines sum to their node line either way. Written whether or not this plan has a repartition.
 build_profile=benchmarks opt-level=3
+allocator=rmm-pool initial=113.4GiB max=126.7GiB of 133.4GiB free on a discrete device
+shared_work_charged_to=p0
 sync_floor_us=1
-nodes_at_or_below_floor=23/92
-nodes_total_us=1093347
-total_us=1146961
+nodes_at_or_below_floor=26/92
+nodes_total_us=997460
+total_us=1048791

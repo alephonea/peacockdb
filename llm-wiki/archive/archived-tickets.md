@@ -23,6 +23,50 @@ the report rather than emitting one that goes nowhere.
 
 ## Done
 
+<a id="t151"></a>
+### #151 — the per-node benchmarks measured the engine with no RMM pool
+
+`peacock_gpu_benchmarks` times the engine through the FFI, and the engine installs no device
+resource ([#148](../tickets.md#t148)) — so every intermediate it allocated was a
+`cudaMalloc`/`cudaFree` round trip, and a node's `time_us` included that. The C++ gtest binaries had stopped
+measuring it, so the two families of numbers in the tree were taken under different
+allocators, and the per-node records charged a node for the default resource — worst exactly
+where its output is largest.
+
+**Landed as the fallback, not the fix.** [#148](../tickets.md#t148) stays open on its own
+terms: it also makes a shipping query faster, and it carries a second decision about
+`gpu_memory_limit`. Instead:
+
+- The sizing rule moved to `cpp/include/peacock/rmm_pool.hpp`, shared rather than copied —
+  `multi_gpu.cpp` takes its 85/95 from the same constants. Header-only, because four gtest
+  targets link `cudf::cudf` and gtest but not `peacock_gpu`.
+- `peacock_install_rmm_pool` reports the OUTCOME, not success: a pool, or a pool that could
+  not be built. Before it a failed reservation was indistinguishable from an ordinary run.
+- It lives in `libpeacock_gpu.so` though no shipping query calls it. A test-only shim DSO
+  would leave production untouched, but the build sets no `-fvisibility=hidden`, so rmm's
+  current-device-resource state could be duplicated across DSOs — a green run that fixes
+  nothing.
+- Idempotency is in C++ alone, not a Rust `OnceLock`: one guard, on the side that owns the
+  resource. Rebuilding would drop a resource live allocations still point into, and 127
+  `#[test]`s in one process is the shape that finds it.
+- Records carry `allocator=` beside `build_profile=` and `sync_floor_us=`, and the harness
+  asserts both before it measures anything: a time taken without a pool, or from a
+  non-release build, is an invalid comparison, so it is refused rather than written.
+
+**Re-swept, all 127 records, every one faster**: median -9.6% on `total_us`. The move is not
+uniform, which is the whole point — `GpuScanExec` -5.3% (parquet read, few intermediates)
+against `GpuProjectExec` -53%, `GpuHashJoinExec` -51%, `GpuFilterExec` -46%,
+`GpuAggregateExec` -30%. The old records were wrong about the SHAPE of a plan's cost, not
+only its scale.
+
+They were also stale for the smaller second reason this ticket carried — measured before the
+scatter stopped opening a timed region of its own — so a part of that move is not the
+allocator. Measured then at -2.5% median on repartition nodes and -0.6% on whole records, it
+cannot account for -50% on joins. Both halves are now settled by one sweep.
+
+**Done.** The pool is now the only way the benchmarks run — there is no switch to turn it
+off and no outcome but a pool that the harness will record.
+
 <a id="t135"></a>
 ### #135 — Column ordinals are enforced only by cuDF's `at()` and the final result
 Every column reference in the IR is an ordinal into the child's output table, and almost nothing
