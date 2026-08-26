@@ -17,7 +17,7 @@ reference still resolves there.
 | [Critical correctness](#critical-correctness) | 15 | #166 #153 #80 #59 #46 #47 #60 #121 #122 #123 #118 #119 #120 #117 #41 |
 | [Blockers for disabled coverage](#blockers-for-disabled-coverage) | 19 | #169 #168 #158 #175 #173 #97 #23 #32 #65 #62 #91 #95 #57 #45 #63 #56 #55 #96 #143 |
 | [Performance / architecture](#performance--architecture) | 27 | #177 #170 #155 #154 #152 #150 #149 #148 #19 #16 #20 #71 #101 #73 #110 #75 #136 #137 #138 #139 #140 #141 #147 #146 #145 #144 #142 |
-| [Infrastructure / process](#infrastructure--process) | 28 | #176 #174 #167 #164 #163 #159 #160 #161 #162 #113 #114 #116 #126 #134 #133 #132 #131 #130 #129 #128 #127 #172 #124 #125 #13 #94 #69 #49 |
+| [Infrastructure / process](#infrastructure--process) | 26 | #176 #174 #167 #164 #163 #159 #160 #161 #162 #113 #114 #116 #126 #134 #133 #132 #131 #130 #129 #128 #127 #125 #13 #94 #69 #49 |
 
 ## Critical correctness
 
@@ -1006,26 +1006,6 @@ the test suite references. Same shape as the binary orphans that `--delete` just
 state on a remote host no provisioning path owns, so nobody can say whether it is stale
 or load-bearing. Not deleted, because something outside this repo may read it. Establish
 what wrote them and either bring them under the sweep or remove them.
-
-<a id="t172"></a>
-### #172 — test_batch_partitioned_plans.rs is over the 1000-line bar
-`peacockdb-core/tests/test_batch_partitioned_plans.rs` is 1300 lines against
-coding-style.md's "under 1000". It was 599 at master and crossed the bar mid-chain, at
-1045; T21's writer comparison put it 300 over. The natural seam is that comparison and its
-fbs parsing — `fbs_offset_fields`, `fields_set`, `written_fields`, `WRITER_DIFFERENCES` and
-the test over them, which read a schema and two writers and share nothing with the golden
-assert/compare helpers around them. [#124](#t124) is the precedent: pre-existing, accepted
-at its size, and cut when someone is in the file for another reason.
-
-<a id="t124"></a>
-### #124 — common/mod.rs is over the 1000-line bar
-`peacockdb-core/tests/common/mod.rs` is 1359 lines against coding-style.md's "under 1000".
-Pre-existing, and each refactor has moved it the right way while leaving it over:
-`common/exec_mode.rs` first, then `common/benchmark.rs` (the GPU benchmark harness, 294
-lines, split out as it was written rather than after). The obvious next extraction is
-~250 lines of `macro_rules!` into `common/macros.rs` — which no longer suffices on its
-own, so whoever takes this should expect a second cut, most likely the golden
-assert/compare helpers. Accepted at 1359 for now.
 
 <a id="t125"></a>
 ### #125 — `elsewhere` parameter in assert_registry_matches_csv is dead
