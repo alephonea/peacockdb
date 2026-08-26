@@ -1,33 +1,33 @@
-GpuSortExec: expr=[sum_sales@6 - avg_monthly_sales@7 ASC NULLS LAST, s_store_name@3 ASC NULLS LAST, i_category@0 ASC NULLS LAST, i_class@1 ASC NULLS LAST, i_brand@2 ASC NULLS LAST, s_company_name@4 ASC NULLS LAST, d_moy@5 ASC NULLS LAST, sum_sales@6 ASC NULLS LAST, avg_monthly_sales@7 ASC NULLS LAST], fetch=100, setup_us=0 submit_us=1229 device_us=1228
+GpuSortExec: expr=[sum_sales@6 - avg_monthly_sales@7 ASC NULLS LAST, s_store_name@3 ASC NULLS LAST, i_category@0 ASC NULLS LAST, i_class@1 ASC NULLS LAST, i_brand@2 ASC NULLS LAST, s_company_name@4 ASC NULLS LAST, d_moy@5 ASC NULLS LAST, sum_sales@6 ASC NULLS LAST, avg_monthly_sales@7 ASC NULLS LAST], fetch=100, setup_us=0 submit_us=1245 device_us=1244
   GpuProjectExec: expr=[i_category@0 as i_category, i_class@1 as i_class, i_brand@2 as i_brand, s_store_name@3 as s_store_name, s_company_name@4 as s_company_name, d_moy@5 as d_moy, sum(store_sales.ss_sales_price)@6 as sum_sales, avg(sum(store_sales.ss_sales_price)) PARTITION BY [item.i_category, item.i_brand, store.s_store_name, store.s_company_name] ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING@7 as avg_monthly_sales], setup_us=0 submit_us=271 device_us=270
     GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-      GpuFilterExec: predicate=CASE WHEN avg(sum(store_sales.ss_sales_price)) PARTITION BY [item.i_category, item.i_brand, store.s_store_name, store.s_company_name] ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING@7 != Some(0),21,6 THEN abs(sum(store_sales.ss_sales_price)@6 - avg(sum(store_sales.ss_sales_price)) PARTITION BY [item.i_category, item.i_brand, store.s_store_name, store.s_company_name] ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING@7) / avg(sum(store_sales.ss_sales_price)) PARTITION BY [item.i_category, item.i_brand, store.s_store_name, store.s_company_name] ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING@7 END > Some(1000000000),32,10, setup_us=2 submit_us=1032 device_us=1031
-        GpuWindowExec: wdw=[avg(sum(store_sales.ss_sales_price)) PARTITION BY [item.i_category, item.i_brand, store.s_store_name, store.s_company_name] ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING], setup_us=0 submit_us=748 device_us=747
-          GpuSortExec: expr=[i_category@0 ASC NULLS LAST, i_brand@2 ASC NULLS LAST, s_store_name@3 ASC NULLS LAST, s_company_name@4 ASC NULLS LAST], setup_us=2 submit_us=3095 device_us=3094
-            GpuAggregateExec: group_by=[i_category, i_class, i_brand, s_store_name, s_company_name, d_moy], aggr=[sum(store_sales.ss_sales_price)], setup_us=3 submit_us=7558 device_us=7557
-              GpuProjectExec: expr=[i_brand@2 as i_brand, i_class@3 as i_class, i_category@4 as i_category, ss_sales_price@5 as ss_sales_price, d_moy@6 as d_moy, s_store_name@0 as s_store_name, s_company_name@1 as s_company_name], setup_us=0 submit_us=268 device_us=267
+      GpuFilterExec: predicate=CASE WHEN avg(sum(store_sales.ss_sales_price)) PARTITION BY [item.i_category, item.i_brand, store.s_store_name, store.s_company_name] ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING@7 != Some(0),21,6 THEN abs(sum(store_sales.ss_sales_price)@6 - avg(sum(store_sales.ss_sales_price)) PARTITION BY [item.i_category, item.i_brand, store.s_store_name, store.s_company_name] ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING@7) / avg(sum(store_sales.ss_sales_price)) PARTITION BY [item.i_category, item.i_brand, store.s_store_name, store.s_company_name] ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING@7 END > Some(1000000000),32,10, setup_us=2 submit_us=1028 device_us=1027
+        GpuWindowExec: wdw=[avg(sum(store_sales.ss_sales_price)) PARTITION BY [item.i_category, item.i_brand, store.s_store_name, store.s_company_name] ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING], setup_us=0 submit_us=750 device_us=749
+          GpuSortExec: expr=[i_category@0 ASC NULLS LAST, i_brand@2 ASC NULLS LAST, s_store_name@3 ASC NULLS LAST, s_company_name@4 ASC NULLS LAST], setup_us=2 submit_us=3078 device_us=3077
+            GpuAggregateExec: group_by=[i_category, i_class, i_brand, s_store_name, s_company_name, d_moy], aggr=[sum(store_sales.ss_sales_price)], setup_us=2 submit_us=7566 device_us=7565
+              GpuProjectExec: expr=[i_brand@2 as i_brand, i_class@3 as i_class, i_category@4 as i_category, ss_sales_price@5 as ss_sales_price, d_moy@6 as d_moy, s_store_name@0 as s_store_name, s_company_name@1 as s_company_name], setup_us=0 submit_us=263 device_us=262
                 GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                  GpuHashJoinExec: join_type=Inner, on=[(s_store_sk@0, ss_store_sk@3)], projection=[1, 2, 3, 4, 5, 7, 8], setup_us=1 submit_us=1035 device_us=1034
-                    GpuScanExec: table=store, projections=[s_store_sk, s_store_name, s_company_name], setup_us=3 submit_us=932 device_us=928
-                    GpuProjectExec: expr=[i_brand@1 as i_brand, i_class@2 as i_class, i_category@3 as i_category, ss_store_sk@4 as ss_store_sk, ss_sales_price@5 as ss_sales_price, d_moy@0 as d_moy], setup_us=0 submit_us=174 device_us=173
+                  GpuHashJoinExec: join_type=Inner, on=[(s_store_sk@0, ss_store_sk@3)], projection=[1, 2, 3, 4, 5, 7, 8], setup_us=1 submit_us=1022 device_us=1021
+                    GpuScanExec: table=store, projections=[s_store_sk, s_store_name, s_company_name], setup_us=2 submit_us=945 device_us=939
+                    GpuProjectExec: expr=[i_brand@1 as i_brand, i_class@2 as i_class, i_category@3 as i_category, ss_store_sk@4 as ss_store_sk, ss_sales_price@5 as ss_sales_price, d_moy@0 as d_moy], setup_us=0 submit_us=173 device_us=172
                       GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                        GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ss_sold_date_sk@3)], projection=[1, 2, 3, 4, 6, 7], setup_us=0 submit_us=777 device_us=776
+                        GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ss_sold_date_sk@3)], projection=[1, 2, 3, 4, 6, 7], setup_us=1 submit_us=787 device_us=786
                           GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                            GpuFilterExec: predicate=d_year@1 = 1999, projection=[0, 2], setup_us=8 submit_us=140 device_us=139
-                              GpuScanExec: table=date_dim, projections=[d_date_sk, d_year, d_moy], setup_us=2 submit_us=17015 device_us=17014
+                            GpuFilterExec: predicate=d_year@1 = 1999, projection=[0, 2], setup_us=9 submit_us=144 device_us=143
+                              GpuScanExec: table=date_dim, projections=[d_date_sk, d_year, d_moy], setup_us=2 submit_us=17111 device_us=17110
                           GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                            GpuHashJoinExec: join_type=Inner, on=[(i_item_sk@0, ss_item_sk@1)], projection=[1, 2, 3, 4, 6, 7], setup_us=2 submit_us=1347 device_us=1346
+                            GpuHashJoinExec: join_type=Inner, on=[(i_item_sk@0, ss_item_sk@1)], projection=[1, 2, 3, 4, 6, 7], setup_us=3 submit_us=1360 device_us=1359
                               GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                                GpuFilterExec: predicate=(i_category@3 = Books OR i_category@3 = Electronics OR i_category@3 = Sports) AND (i_class@2 = computers OR i_class@2 = stereo OR i_class@2 = football) OR (i_category@3 = Men OR i_category@3 = Jewelry OR i_category@3 = Women) AND (i_class@2 = shirts OR i_class@2 = birdal OR i_class@2 = dresses), setup_us=1 submit_us=2487 device_us=2486
-                                  GpuScanExec: table=item, projections=[i_item_sk, i_brand, i_class, i_category], setup_us=2 submit_us=5892 device_us=5891
-                              GpuScanExec: table=store_sales, projections=[ss_sold_date_sk, ss_item_sk, ss_store_sk, ss_sales_price], setup_us=2 submit_us=11741 device_us=11740
+                                GpuFilterExec: predicate=(i_category@3 = Books OR i_category@3 = Electronics OR i_category@3 = Sports) AND (i_class@2 = computers OR i_class@2 = stereo OR i_class@2 = football) OR (i_category@3 = Men OR i_category@3 = Jewelry OR i_category@3 = Women) AND (i_class@2 = shirts OR i_class@2 = birdal OR i_class@2 = dresses), setup_us=2 submit_us=2481 device_us=2480
+                                  GpuScanExec: table=item, projections=[i_item_sk, i_brand, i_class, i_category], setup_us=2 submit_us=5895 device_us=5894
+                              GpuScanExec: table=store_sales, projections=[ss_sold_date_sk, ss_item_sk, ss_store_sk, ss_sales_price], setup_us=2 submit_us=11800 device_us=11799
 
 # timing_mode = how the numbers were taken, and what they MEAN. sync: the region ends in a cudaStreamSynchronize, so submit_us contains the device execution and device_us is 0. events: no explicit drain, and CUDA events bracket the device work as device_us. submit_us is NOT launch cost in either mode — cuDF and rmm synchronize internally, so the host waits for most of what it submits and submit_us tracks device_us closely. Only total_us is comparable across the two.
 # setup_us = host time before the node's first device touch (flatbuffer decode, handle lookups, AST build) — the prologue bare cuDF has no analogue for, which is why it is fitted as its own constant. submit_us / device_us: see timing_mode.
 # sync_floor_us = cost of the SYNC measurement itself (empty timed region: clock + cudaStreamSynchronize on an idle stream). Measured in both modes: under sync it is the resolution floor every node time INCLUDES, once PER OUTPUT PARTITION; under events it is the per-region stall that is no longer paid. Do not subtract it.
 # nodes_total_us = Σ setup_us + Σ submit_us, the HOST side of the walk. nodes_device_us is deliberately NOT added to it — the host ran while the device did, so the two are concurrent spans of the same clock. Device regions are on one stream in program order, so nodes_device_us is disjoint and <= total_us; the gap is stream idle, i.e. the device waiting through host prologue. total_us = the whole query, end to end (parse + plan + serialize + node walk + materialize).
-# build_profile = how the harness itself was compiled. total_us MINUS nodes_total_us is that Rust; records from different profiles are not comparable on it. Node times are device work and barely move.
-# allocator = the rmm device resource the node times were taken under. Without a pool every cuDF intermediate is a cudaMalloc/cudaFree round trip, charged to the node that allocated it — so it inflates the largest-output nodes hardest and moves the PROFILE, not only the scale. Records under different allocators are not comparable, node for node or in total.
+# build_profile = how the harness itself was compiled. Always a release build; total_us MINUS nodes_total_us is that Rust, and node times are device work and barely move.
+# allocator = the rmm device resource the node times were taken under. Always a pool: with rmm's default every cuDF intermediate is a cudaMalloc/cudaFree round trip charged to the node that allocated it, which moves the PROFILE and not only the scale. The sizes vary with free memory when the pool was built.
 # shared_work_charged_to = which p<k> sub-line carries work a node does once for all of its output partitions. A hash repartition concatenates its input and scatters it in a single operation, and that time is billed to p0 — so p0 standing far above its siblings is the accounting, not skew. Sub-lines sum to their node line either way. Written whether or not this plan has a repartition.
 build_profile=benchmarks opt-level=3
 allocator=rmm-pool initial=118.3GiB max=132.3GiB of 139.2GiB free on a discrete device
@@ -35,8 +35,8 @@ shared_work_charged_to=p0
 timing_mode=events
 sync_floor_us=1
 nodes_at_or_below_floor=6/23
-nodes_setup_us=28
-nodes_submit_us=55741
-nodes_device_us=55721
-nodes_total_us=55769
-total_us=65594
+nodes_setup_us=30
+nodes_submit_us=55919
+nodes_device_us=55897
+nodes_total_us=55949
+total_us=66051

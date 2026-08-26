@@ -1,46 +1,46 @@
 GpuProjectExec: expr=[order count@0 as order count, total shipping cost@1 as total shipping cost, total net profit@2 as total net profit], setup_us=0 submit_us=14 device_us=13
-  GpuProjectExec: expr=[count(alias1)@0 as order count, sum(alias2)@1 as total shipping cost, sum(alias3)@2 as total net profit, count(alias1)@0 as count(DISTINCT ws1.ws_order_number)], setup_us=0 submit_us=20 device_us=20
+  GpuProjectExec: expr=[count(alias1)@0 as order count, sum(alias2)@1 as total shipping cost, sum(alias3)@2 as total net profit, count(alias1)@0 as count(DISTINCT ws1.ws_order_number)], setup_us=0 submit_us=18 device_us=17
     GpuGlobalLimitExec: skip=0, fetch=100, setup_us=0 submit_us=0 device_us=0
-      GpuAggregateExec: group_by=[], aggr=[count(alias1), sum(alias2), sum(alias3)], setup_us=0 submit_us=381 device_us=381
-        GpuAggregateExec: group_by=[alias1], aggr=[alias2, alias3], setup_us=1 submit_us=347 device_us=346
+      GpuAggregateExec: group_by=[], aggr=[count(alias1), sum(alias2), sum(alias3)], setup_us=0 submit_us=396 device_us=395
+        GpuAggregateExec: group_by=[alias1], aggr=[alias2, alias3], setup_us=1 submit_us=361 device_us=360
           GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-            GpuHashJoinExec: join_type=LeftSemi, on=[(ws_order_number@0, wr_order_number@0)], setup_us=0 submit_us=439 device_us=320
+            GpuHashJoinExec: join_type=LeftSemi, on=[(ws_order_number@0, wr_order_number@0)], setup_us=0 submit_us=445 device_us=325
               GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                GpuHashJoinExec: join_type=LeftSemi, on=[(ws_order_number@0, ws_order_number@0)], setup_us=0 submit_us=299 device_us=279
+                GpuHashJoinExec: join_type=LeftSemi, on=[(ws_order_number@0, ws_order_number@0)], setup_us=0 submit_us=303 device_us=285
                   GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                    GpuHashJoinExec: join_type=Inner, on=[(web_site_sk@0, ws_web_site_sk@0)], projection=[2, 3, 4], setup_us=0 submit_us=279 device_us=278
+                    GpuHashJoinExec: join_type=Inner, on=[(web_site_sk@0, ws_web_site_sk@0)], projection=[2, 3, 4], setup_us=0 submit_us=273 device_us=272
                       GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
                         GpuFilterExec: predicate=web_company_name@1 = pri, projection=[0], setup_us=1 submit_us=311 device_us=310
-                          GpuScanExec: table=web_site, projections=[web_site_sk, web_company_name], setup_us=3 submit_us=942 device_us=937
+                          GpuScanExec: table=web_site, projections=[web_site_sk, web_company_name], setup_us=2 submit_us=969 device_us=964
                       GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                        GpuHashJoinExec: join_type=Inner, on=[(ca_address_sk@0, ws_ship_addr_sk@0)], projection=[2, 3, 4, 5], setup_us=0 submit_us=307 device_us=305
+                        GpuHashJoinExec: join_type=Inner, on=[(ca_address_sk@0, ws_ship_addr_sk@0)], projection=[2, 3, 4, 5], setup_us=0 submit_us=324 device_us=323
                           GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                            GpuFilterExec: predicate=ca_state@1 = IL, projection=[0], setup_us=1 submit_us=306 device_us=305
-                              GpuScanExec: table=customer_address, projections=[ca_address_sk, ca_state], setup_us=1 submit_us=14412 device_us=14411
+                            GpuFilterExec: predicate=ca_state@1 = IL, projection=[0], setup_us=1 submit_us=314 device_us=313
+                              GpuScanExec: table=customer_address, projections=[ca_address_sk, ca_state], setup_us=1 submit_us=14438 device_us=14436
                           GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                            GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ws_ship_date_sk@0)], projection=[2, 3, 4, 5, 6], setup_us=1 submit_us=450 device_us=449
+                            GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, ws_ship_date_sk@0)], projection=[2, 3, 4, 5, 6], setup_us=1 submit_us=475 device_us=474
                               GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                                GpuFilterExec: predicate=d_date@1 >= 1999-02-01 AND d_date@1 <= 1999-04-02, projection=[0], setup_us=15 submit_us=135 device_us=134
-                                  GpuScanExec: table=date_dim, projections=[d_date_sk, d_date], setup_us=2 submit_us=17916 device_us=17915
-                              GpuScanExec: table=web_sales, projections=[ws_ship_date_sk, ws_ship_addr_sk, ws_web_site_sk, ws_order_number, ws_ext_ship_cost, ws_net_profit], setup_us=8 submit_us=11620 device_us=11619
+                                GpuFilterExec: predicate=d_date@1 >= 1999-02-01 AND d_date@1 <= 1999-04-02, projection=[0], setup_us=17 submit_us=160 device_us=159
+                                  GpuScanExec: table=date_dim, projections=[d_date_sk, d_date], setup_us=2 submit_us=18126 device_us=18125
+                              GpuScanExec: table=web_sales, projections=[ws_ship_date_sk, ws_ship_addr_sk, ws_web_site_sk, ws_order_number, ws_ext_ship_cost, ws_net_profit], setup_us=5 submit_us=11626 device_us=11625
                   GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                    GpuHashJoinExec: join_type=Inner, on=[(ws_order_number@1, ws_order_number@1)], filter=ws_warehouse_sk@1 != ws_warehouse_sk@0, projection=[1], setup_us=1 submit_us=2312 device_us=2334
-                      GpuScanExec: table=web_sales, projections=[ws_warehouse_sk, ws_order_number], setup_us=3 submit_us=6380 device_us=6380
-                      GpuScanExec: table=web_sales, projections=[ws_warehouse_sk, ws_order_number], setup_us=3 submit_us=6494 device_us=6493
+                    GpuHashJoinExec: join_type=Inner, on=[(ws_order_number@1, ws_order_number@1)], filter=ws_warehouse_sk@1 != ws_warehouse_sk@0, projection=[1], setup_us=1 submit_us=2332 device_us=2355
+                      GpuScanExec: table=web_sales, projections=[ws_warehouse_sk, ws_order_number], setup_us=3 submit_us=6428 device_us=6427
+                      GpuScanExec: table=web_sales, projections=[ws_warehouse_sk, ws_order_number], setup_us=3 submit_us=6384 device_us=6383
               GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                GpuHashJoinExec: join_type=Inner, on=[(wr_order_number@0, ws_order_number@0)], projection=[0], setup_us=0 submit_us=2158 device_us=2261
-                  GpuScanExec: table=web_returns, projections=[wr_order_number], setup_us=2 submit_us=11427 device_us=11426
+                GpuHashJoinExec: join_type=Inner, on=[(wr_order_number@0, ws_order_number@0)], projection=[0], setup_us=0 submit_us=2155 device_us=2259
+                  GpuScanExec: table=web_returns, projections=[wr_order_number], setup_us=2 submit_us=11443 device_us=11442
                   GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                    GpuHashJoinExec: join_type=Inner, on=[(ws_order_number@1, ws_order_number@1)], filter=ws_warehouse_sk@1 != ws_warehouse_sk@0, projection=[1], setup_us=1 submit_us=2314 device_us=2338
-                      GpuScanExec: table=web_sales, projections=[ws_warehouse_sk, ws_order_number], setup_us=7 submit_us=6852 device_us=6850
-                      GpuScanExec: table=web_sales, projections=[ws_warehouse_sk, ws_order_number], setup_us=3 submit_us=6325 device_us=6323
+                    GpuHashJoinExec: join_type=Inner, on=[(ws_order_number@1, ws_order_number@1)], filter=ws_warehouse_sk@1 != ws_warehouse_sk@0, projection=[1], setup_us=1 submit_us=2323 device_us=2347
+                      GpuScanExec: table=web_sales, projections=[ws_warehouse_sk, ws_order_number], setup_us=3 submit_us=6951 device_us=6950
+                      GpuScanExec: table=web_sales, projections=[ws_warehouse_sk, ws_order_number], setup_us=3 submit_us=6348 device_us=6346
 
 # timing_mode = how the numbers were taken, and what they MEAN. sync: the region ends in a cudaStreamSynchronize, so submit_us contains the device execution and device_us is 0. events: no explicit drain, and CUDA events bracket the device work as device_us. submit_us is NOT launch cost in either mode — cuDF and rmm synchronize internally, so the host waits for most of what it submits and submit_us tracks device_us closely. Only total_us is comparable across the two.
 # setup_us = host time before the node's first device touch (flatbuffer decode, handle lookups, AST build) — the prologue bare cuDF has no analogue for, which is why it is fitted as its own constant. submit_us / device_us: see timing_mode.
 # sync_floor_us = cost of the SYNC measurement itself (empty timed region: clock + cudaStreamSynchronize on an idle stream). Measured in both modes: under sync it is the resolution floor every node time INCLUDES, once PER OUTPUT PARTITION; under events it is the per-region stall that is no longer paid. Do not subtract it.
 # nodes_total_us = Σ setup_us + Σ submit_us, the HOST side of the walk. nodes_device_us is deliberately NOT added to it — the host ran while the device did, so the two are concurrent spans of the same clock. Device regions are on one stream in program order, so nodes_device_us is disjoint and <= total_us; the gap is stream idle, i.e. the device waiting through host prologue. total_us = the whole query, end to end (parse + plan + serialize + node walk + materialize).
-# build_profile = how the harness itself was compiled. total_us MINUS nodes_total_us is that Rust; records from different profiles are not comparable on it. Node times are device work and barely move.
-# allocator = the rmm device resource the node times were taken under. Without a pool every cuDF intermediate is a cudaMalloc/cudaFree round trip, charged to the node that allocated it — so it inflates the largest-output nodes hardest and moves the PROFILE, not only the scale. Records under different allocators are not comparable, node for node or in total.
+# build_profile = how the harness itself was compiled. Always a release build; total_us MINUS nodes_total_us is that Rust, and node times are device work and barely move.
+# allocator = the rmm device resource the node times were taken under. Always a pool: with rmm's default every cuDF intermediate is a cudaMalloc/cudaFree round trip charged to the node that allocated it, which moves the PROFILE and not only the scale. The sizes vary with free memory when the pool was built.
 # shared_work_charged_to = which p<k> sub-line carries work a node does once for all of its output partitions. A hash repartition concatenates its input and scatters it in a single operation, and that time is billed to p0 — so p0 standing far above its siblings is the accounting, not skew. Sub-lines sum to their node line either way. Written whether or not this plan has a repartition.
 build_profile=benchmarks opt-level=3
 allocator=rmm-pool initial=118.3GiB max=132.3GiB of 139.2GiB free on a discrete device
@@ -48,8 +48,8 @@ shared_work_charged_to=p0
 timing_mode=events
 sync_floor_us=1
 nodes_at_or_below_floor=12/36
-nodes_setup_us=53
-nodes_submit_us=92440
-nodes_device_us=92427
-nodes_total_us=92493
-total_us=101347
+nodes_setup_us=47
+nodes_submit_us=92917
+nodes_device_us=92905
+nodes_total_us=92964
+total_us=102062

@@ -1,27 +1,27 @@
-GpuSortExec: expr=[i_category@2 ASC, i_class@3 ASC, i_item_id@0 ASC, i_item_desc@1 ASC, revenueratio@6 ASC], fetch=100, setup_us=1 submit_us=2195 device_us=2194
-  GpuProjectExec: expr=[i_item_id@0 as i_item_id, i_item_desc@1 as i_item_desc, i_category@2 as i_category, i_class@3 as i_class, i_current_price@4 as i_current_price, sum(catalog_sales.cs_ext_sales_price)@5 as itemrevenue, CAST(sum(catalog_sales.cs_ext_sales_price)@5 AS Float64) * 100 / CAST(sum(sum(catalog_sales.cs_ext_sales_price)) PARTITION BY [item.i_class] ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING@6 AS Float64) as revenueratio], setup_us=0 submit_us=290 device_us=289
-    GpuWindowExec: wdw=[sum(sum(catalog_sales.cs_ext_sales_price)) PARTITION BY [item.i_class] ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING], setup_us=0 submit_us=811 device_us=810
-      GpuSortExec: expr=[i_class@3 ASC NULLS LAST], setup_us=1 submit_us=795 device_us=794
-        GpuAggregateExec: group_by=[i_item_id, i_item_desc, i_category, i_class, i_current_price], aggr=[sum(catalog_sales.cs_ext_sales_price)], setup_us=3 submit_us=5235 device_us=5234
+GpuSortExec: expr=[i_category@2 ASC, i_class@3 ASC, i_item_id@0 ASC, i_item_desc@1 ASC, revenueratio@6 ASC], fetch=100, setup_us=1 submit_us=2199 device_us=2198
+  GpuProjectExec: expr=[i_item_id@0 as i_item_id, i_item_desc@1 as i_item_desc, i_category@2 as i_category, i_class@3 as i_class, i_current_price@4 as i_current_price, sum(catalog_sales.cs_ext_sales_price)@5 as itemrevenue, CAST(sum(catalog_sales.cs_ext_sales_price)@5 AS Float64) * 100 / CAST(sum(sum(catalog_sales.cs_ext_sales_price)) PARTITION BY [item.i_class] ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING@6 AS Float64) as revenueratio], setup_us=0 submit_us=295 device_us=294
+    GpuWindowExec: wdw=[sum(sum(catalog_sales.cs_ext_sales_price)) PARTITION BY [item.i_class] ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING], setup_us=0 submit_us=823 device_us=823
+      GpuSortExec: expr=[i_class@3 ASC NULLS LAST], setup_us=1 submit_us=794 device_us=794
+        GpuAggregateExec: group_by=[i_item_id, i_item_desc, i_category, i_class, i_current_price], aggr=[sum(catalog_sales.cs_ext_sales_price)], setup_us=3 submit_us=5188 device_us=5187
           GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-            GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, cs_sold_date_sk@0)], projection=[2, 3, 4, 5, 6, 7], setup_us=1 submit_us=970 device_us=969
+            GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, cs_sold_date_sk@0)], projection=[2, 3, 4, 5, 6, 7], setup_us=1 submit_us=980 device_us=979
               GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                GpuFilterExec: predicate=d_date@1 >= 1999-02-22 AND d_date@1 <= 1999-03-24, projection=[0], setup_us=15 submit_us=139 device_us=137
-                  GpuScanExec: table=date_dim, projections=[d_date_sk, d_date], setup_us=3 submit_us=17383 device_us=17379
-              GpuProjectExec: expr=[cs_sold_date_sk@5 as cs_sold_date_sk, cs_ext_sales_price@6 as cs_ext_sales_price, i_item_id@0 as i_item_id, i_item_desc@1 as i_item_desc, i_current_price@2 as i_current_price, i_class@3 as i_class, i_category@4 as i_category], setup_us=0 submit_us=292 device_us=291
+                GpuFilterExec: predicate=d_date@1 >= 1999-02-22 AND d_date@1 <= 1999-03-24, projection=[0], setup_us=17 submit_us=142 device_us=141
+                  GpuScanExec: table=date_dim, projections=[d_date_sk, d_date], setup_us=2 submit_us=17397 device_us=17390
+              GpuProjectExec: expr=[cs_sold_date_sk@5 as cs_sold_date_sk, cs_ext_sales_price@6 as cs_ext_sales_price, i_item_id@0 as i_item_id, i_item_desc@1 as i_item_desc, i_current_price@2 as i_current_price, i_class@3 as i_class, i_category@4 as i_category], setup_us=0 submit_us=310 device_us=309
                 GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                  GpuHashJoinExec: join_type=Inner, on=[(i_item_sk@0, cs_item_sk@1)], projection=[1, 2, 3, 4, 5, 6, 8], setup_us=2 submit_us=1568 device_us=1567
+                  GpuHashJoinExec: join_type=Inner, on=[(i_item_sk@0, cs_item_sk@1)], projection=[1, 2, 3, 4, 5, 6, 8], setup_us=2 submit_us=1604 device_us=1603
                     GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                      GpuFilterExec: predicate=i_category@5 = Sports OR i_category@5 = Books OR i_category@5 = Home, setup_us=2 submit_us=868 device_us=866
-                        GpuScanExec: table=item, projections=[i_item_sk, i_item_id, i_item_desc, i_current_price, i_class, i_category], setup_us=2 submit_us=45584 device_us=45583
-                    GpuScanExec: table=catalog_sales, projections=[cs_sold_date_sk, cs_item_sk, cs_ext_sales_price], setup_us=6 submit_us=10890 device_us=10889
+                      GpuFilterExec: predicate=i_category@5 = Sports OR i_category@5 = Books OR i_category@5 = Home, setup_us=2 submit_us=871 device_us=870
+                        GpuScanExec: table=item, projections=[i_item_sk, i_item_id, i_item_desc, i_current_price, i_class, i_category], setup_us=2 submit_us=45638 device_us=45637
+                    GpuScanExec: table=catalog_sales, projections=[cs_sold_date_sk, cs_item_sk, cs_ext_sales_price], setup_us=7 submit_us=11055 device_us=11054
 
 # timing_mode = how the numbers were taken, and what they MEAN. sync: the region ends in a cudaStreamSynchronize, so submit_us contains the device execution and device_us is 0. events: no explicit drain, and CUDA events bracket the device work as device_us. submit_us is NOT launch cost in either mode — cuDF and rmm synchronize internally, so the host waits for most of what it submits and submit_us tracks device_us closely. Only total_us is comparable across the two.
 # setup_us = host time before the node's first device touch (flatbuffer decode, handle lookups, AST build) — the prologue bare cuDF has no analogue for, which is why it is fitted as its own constant. submit_us / device_us: see timing_mode.
 # sync_floor_us = cost of the SYNC measurement itself (empty timed region: clock + cudaStreamSynchronize on an idle stream). Measured in both modes: under sync it is the resolution floor every node time INCLUDES, once PER OUTPUT PARTITION; under events it is the per-region stall that is no longer paid. Do not subtract it.
 # nodes_total_us = Σ setup_us + Σ submit_us, the HOST side of the walk. nodes_device_us is deliberately NOT added to it — the host ran while the device did, so the two are concurrent spans of the same clock. Device regions are on one stream in program order, so nodes_device_us is disjoint and <= total_us; the gap is stream idle, i.e. the device waiting through host prologue. total_us = the whole query, end to end (parse + plan + serialize + node walk + materialize).
-# build_profile = how the harness itself was compiled. total_us MINUS nodes_total_us is that Rust; records from different profiles are not comparable on it. Node times are device work and barely move.
-# allocator = the rmm device resource the node times were taken under. Without a pool every cuDF intermediate is a cudaMalloc/cudaFree round trip, charged to the node that allocated it — so it inflates the largest-output nodes hardest and moves the PROFILE, not only the scale. Records under different allocators are not comparable, node for node or in total.
+# build_profile = how the harness itself was compiled. Always a release build; total_us MINUS nodes_total_us is that Rust, and node times are device work and barely move.
+# allocator = the rmm device resource the node times were taken under. Always a pool: with rmm's default every cuDF intermediate is a cudaMalloc/cudaFree round trip charged to the node that allocated it, which moves the PROFILE and not only the scale. The sizes vary with free memory when the pool was built.
 # shared_work_charged_to = which p<k> sub-line carries work a node does once for all of its output partitions. A hash repartition concatenates its input and scatters it in a single operation, and that time is billed to p0 — so p0 standing far above its siblings is the accounting, not skew. Sub-lines sum to their node line either way. Written whether or not this plan has a repartition.
 build_profile=benchmarks opt-level=3
 allocator=rmm-pool initial=118.3GiB max=132.3GiB of 139.2GiB free on a discrete device
@@ -29,8 +29,8 @@ shared_work_charged_to=p0
 timing_mode=events
 sync_floor_us=1
 nodes_at_or_below_floor=4/17
-nodes_setup_us=36
-nodes_submit_us=87020
-nodes_device_us=87002
-nodes_total_us=87056
-total_us=92804
+nodes_setup_us=38
+nodes_submit_us=87296
+nodes_device_us=87279
+nodes_total_us=87334
+total_us=93147

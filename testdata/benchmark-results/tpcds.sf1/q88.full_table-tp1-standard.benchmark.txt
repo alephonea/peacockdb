@@ -1,175 +1,175 @@
-GpuProjectExec: expr=[h8_30_to_9@1 as h8_30_to_9, h9_to_9_30@2 as h9_to_9_30, h9_30_to_10@3 as h9_30_to_10, h10_to_10_30@4 as h10_to_10_30, h10_30_to_11@5 as h10_30_to_11, h11_to_11_30@6 as h11_to_11_30, h11_30_to_12@7 as h11_30_to_12, h12_to_12_30@0 as h12_to_12_30], setup_us=0 submit_us=30 device_us=29
+GpuProjectExec: expr=[h8_30_to_9@1 as h8_30_to_9, h9_to_9_30@2 as h9_to_9_30, h9_30_to_10@3 as h9_30_to_10, h10_to_10_30@4 as h10_to_10_30, h10_30_to_11@5 as h10_30_to_11, h11_to_11_30@6 as h11_to_11_30, h11_30_to_12@7 as h11_30_to_12, h12_to_12_30@0 as h12_to_12_30], setup_us=0 submit_us=37 device_us=36
   GpuCrossJoinExec, setup_us=0 submit_us=32 device_us=31
     GpuProjectExec: expr=[count(*)@0 as h12_to_12_30], setup_us=0 submit_us=6 device_us=5
-      GpuAggregateExec: group_by=[], aggr=[count(*)], setup_us=0 submit_us=85 device_us=84
+      GpuAggregateExec: group_by=[], aggr=[count(*)], setup_us=0 submit_us=84 device_us=84
         GpuProjectExec: expr=[], setup_us=0 submit_us=48 device_us=47
           GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-            GpuHashJoinExec: join_type=Inner, on=[(s_store_sk@0, ss_store_sk@0)], setup_us=0 submit_us=207 device_us=206
+            GpuHashJoinExec: join_type=Inner, on=[(s_store_sk@0, ss_store_sk@0)], setup_us=0 submit_us=206 device_us=205
               GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                GpuFilterExec: predicate=s_store_name@1 = ese, projection=[0], setup_us=1 submit_us=304 device_us=303
-                  GpuScanExec: table=store, projections=[s_store_sk, s_store_name], setup_us=2 submit_us=832 device_us=827
+                GpuFilterExec: predicate=s_store_name@1 = ese, projection=[0], setup_us=1 submit_us=320 device_us=319
+                  GpuScanExec: table=store, projections=[s_store_sk, s_store_name], setup_us=2 submit_us=875 device_us=869
               GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                GpuHashJoinExec: join_type=Inner, on=[(t_time_sk@0, ss_sold_time_sk@0)], projection=[2], setup_us=0 submit_us=370 device_us=369
+                GpuHashJoinExec: join_type=Inner, on=[(t_time_sk@0, ss_sold_time_sk@0)], projection=[2], setup_us=0 submit_us=355 device_us=353
                   GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                    GpuFilterExec: predicate=t_hour@1 = 12 AND t_minute@2 < 30, projection=[0], setup_us=15 submit_us=145 device_us=144
-                      GpuScanExec: table=time_dim, projections=[t_time_sk, t_hour, t_minute], setup_us=1 submit_us=19738 device_us=19737
+                    GpuFilterExec: predicate=t_hour@1 = 12 AND t_minute@2 < 30, projection=[0], setup_us=17 submit_us=145 device_us=144
+                      GpuScanExec: table=time_dim, projections=[t_time_sk, t_hour, t_minute], setup_us=1 submit_us=19793 device_us=19792
                   GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                    GpuHashJoinExec: join_type=Inner, on=[(hd_demo_sk@0, ss_hdemo_sk@1)], projection=[1, 3], setup_us=1 submit_us=895 device_us=896
+                    GpuHashJoinExec: join_type=Inner, on=[(hd_demo_sk@0, ss_hdemo_sk@1)], projection=[1, 3], setup_us=1 submit_us=891 device_us=897
                       GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
                         GpuFilterExec: predicate=hd_dep_count@1 = 4 AND hd_vehicle_count@2 <= 6 OR hd_dep_count@1 = 2 AND hd_vehicle_count@2 <= 4 OR hd_dep_count@1 = 0 AND hd_vehicle_count@2 <= 2, projection=[0], setup_us=43 submit_us=172 device_us=171
-                          GpuScanExec: table=household_demographics, projections=[hd_demo_sk, hd_dep_count, hd_vehicle_count], setup_us=2 submit_us=2284 device_us=2283
-                      GpuScanExec: table=store_sales, projections=[ss_sold_time_sk, ss_hdemo_sk, ss_store_sk], setup_us=2 submit_us=18237 device_us=18236
-    GpuProjectExec: expr=[h8_30_to_9@1 as h8_30_to_9, h9_to_9_30@2 as h9_to_9_30, h9_30_to_10@3 as h9_30_to_10, h10_to_10_30@4 as h10_to_10_30, h10_30_to_11@5 as h10_30_to_11, h11_to_11_30@6 as h11_to_11_30, h11_30_to_12@0 as h11_30_to_12], setup_us=0 submit_us=26 device_us=26
-      GpuCrossJoinExec, setup_us=0 submit_us=28 device_us=27
+                          GpuScanExec: table=household_demographics, projections=[hd_demo_sk, hd_dep_count, hd_vehicle_count], setup_us=2 submit_us=2310 device_us=2309
+                      GpuScanExec: table=store_sales, projections=[ss_sold_time_sk, ss_hdemo_sk, ss_store_sk], setup_us=2 submit_us=18323 device_us=18322
+    GpuProjectExec: expr=[h8_30_to_9@1 as h8_30_to_9, h9_to_9_30@2 as h9_to_9_30, h9_30_to_10@3 as h9_30_to_10, h10_to_10_30@4 as h10_to_10_30, h10_30_to_11@5 as h10_30_to_11, h11_to_11_30@6 as h11_to_11_30, h11_30_to_12@0 as h11_30_to_12], setup_us=0 submit_us=27 device_us=26
+      GpuCrossJoinExec, setup_us=0 submit_us=27 device_us=26
         GpuProjectExec: expr=[count(*)@0 as h11_30_to_12], setup_us=0 submit_us=6 device_us=5
           GpuAggregateExec: group_by=[], aggr=[count(*)], setup_us=0 submit_us=84 device_us=83
-            GpuProjectExec: expr=[], setup_us=0 submit_us=47 device_us=46
+            GpuProjectExec: expr=[], setup_us=0 submit_us=47 device_us=47
               GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                GpuHashJoinExec: join_type=Inner, on=[(s_store_sk@0, ss_store_sk@0)], setup_us=0 submit_us=206 device_us=205
+                GpuHashJoinExec: join_type=Inner, on=[(s_store_sk@0, ss_store_sk@0)], setup_us=0 submit_us=208 device_us=207
                   GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                    GpuFilterExec: predicate=s_store_name@1 = ese, projection=[0], setup_us=1 submit_us=303 device_us=302
-                      GpuScanExec: table=store, projections=[s_store_sk, s_store_name], setup_us=2 submit_us=776 device_us=775
+                    GpuFilterExec: predicate=s_store_name@1 = ese, projection=[0], setup_us=1 submit_us=304 device_us=303
+                      GpuScanExec: table=store, projections=[s_store_sk, s_store_name], setup_us=2 submit_us=779 device_us=777
                   GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                    GpuHashJoinExec: join_type=Inner, on=[(t_time_sk@0, ss_sold_time_sk@0)], projection=[2], setup_us=0 submit_us=371 device_us=367
+                    GpuHashJoinExec: join_type=Inner, on=[(t_time_sk@0, ss_sold_time_sk@0)], projection=[2], setup_us=0 submit_us=364 device_us=363
                       GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                        GpuFilterExec: predicate=t_hour@1 = 11 AND t_minute@2 >= 30, projection=[0], setup_us=15 submit_us=140 device_us=139
-                          GpuScanExec: table=time_dim, projections=[t_time_sk, t_hour, t_minute], setup_us=1 submit_us=19763 device_us=19762
+                        GpuFilterExec: predicate=t_hour@1 = 11 AND t_minute@2 >= 30, projection=[0], setup_us=16 submit_us=143 device_us=142
+                          GpuScanExec: table=time_dim, projections=[t_time_sk, t_hour, t_minute], setup_us=1 submit_us=19753 device_us=19752
                       GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                        GpuHashJoinExec: join_type=Inner, on=[(hd_demo_sk@0, ss_hdemo_sk@1)], projection=[1, 3], setup_us=1 submit_us=892 device_us=899
+                        GpuHashJoinExec: join_type=Inner, on=[(hd_demo_sk@0, ss_hdemo_sk@1)], projection=[1, 3], setup_us=1 submit_us=908 device_us=910
                           GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                            GpuFilterExec: predicate=hd_dep_count@1 = 4 AND hd_vehicle_count@2 <= 6 OR hd_dep_count@1 = 2 AND hd_vehicle_count@2 <= 4 OR hd_dep_count@1 = 0 AND hd_vehicle_count@2 <= 2, projection=[0], setup_us=43 submit_us=174 device_us=173
-                              GpuScanExec: table=household_demographics, projections=[hd_demo_sk, hd_dep_count, hd_vehicle_count], setup_us=1 submit_us=2284 device_us=2283
-                          GpuScanExec: table=store_sales, projections=[ss_sold_time_sk, ss_hdemo_sk, ss_store_sk], setup_us=2 submit_us=17997 device_us=17996
-        GpuProjectExec: expr=[h8_30_to_9@1 as h8_30_to_9, h9_to_9_30@2 as h9_to_9_30, h9_30_to_10@3 as h9_30_to_10, h10_to_10_30@4 as h10_to_10_30, h10_30_to_11@5 as h10_30_to_11, h11_to_11_30@0 as h11_to_11_30], setup_us=0 submit_us=23 device_us=23
-          GpuCrossJoinExec, setup_us=0 submit_us=23 device_us=23
-            GpuProjectExec: expr=[count(*)@0 as h11_to_11_30], setup_us=0 submit_us=6 device_us=6
+                            GpuFilterExec: predicate=hd_dep_count@1 = 4 AND hd_vehicle_count@2 <= 6 OR hd_dep_count@1 = 2 AND hd_vehicle_count@2 <= 4 OR hd_dep_count@1 = 0 AND hd_vehicle_count@2 <= 2, projection=[0], setup_us=43 submit_us=172 device_us=171
+                              GpuScanExec: table=household_demographics, projections=[hd_demo_sk, hd_dep_count, hd_vehicle_count], setup_us=2 submit_us=2271 device_us=2270
+                          GpuScanExec: table=store_sales, projections=[ss_sold_time_sk, ss_hdemo_sk, ss_store_sk], setup_us=2 submit_us=18055 device_us=18054
+        GpuProjectExec: expr=[h8_30_to_9@1 as h8_30_to_9, h9_to_9_30@2 as h9_to_9_30, h9_30_to_10@3 as h9_30_to_10, h10_to_10_30@4 as h10_to_10_30, h10_30_to_11@5 as h10_30_to_11, h11_to_11_30@0 as h11_to_11_30], setup_us=0 submit_us=25 device_us=25
+          GpuCrossJoinExec, setup_us=0 submit_us=25 device_us=24
+            GpuProjectExec: expr=[count(*)@0 as h11_to_11_30], setup_us=0 submit_us=7 device_us=6
               GpuAggregateExec: group_by=[], aggr=[count(*)], setup_us=0 submit_us=84 device_us=83
-                GpuProjectExec: expr=[], setup_us=0 submit_us=47 device_us=46
+                GpuProjectExec: expr=[], setup_us=0 submit_us=48 device_us=47
                   GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                    GpuHashJoinExec: join_type=Inner, on=[(s_store_sk@0, ss_store_sk@0)], setup_us=0 submit_us=207 device_us=206
+                    GpuHashJoinExec: join_type=Inner, on=[(s_store_sk@0, ss_store_sk@0)], setup_us=0 submit_us=209 device_us=208
                       GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                        GpuFilterExec: predicate=s_store_name@1 = ese, projection=[0], setup_us=0 submit_us=302 device_us=301
-                          GpuScanExec: table=store, projections=[s_store_sk, s_store_name], setup_us=2 submit_us=766 device_us=765
+                        GpuFilterExec: predicate=s_store_name@1 = ese, projection=[0], setup_us=1 submit_us=303 device_us=301
+                          GpuScanExec: table=store, projections=[s_store_sk, s_store_name], setup_us=2 submit_us=775 device_us=774
                       GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                        GpuHashJoinExec: join_type=Inner, on=[(t_time_sk@0, ss_sold_time_sk@0)], projection=[2], setup_us=0 submit_us=365 device_us=362
+                        GpuHashJoinExec: join_type=Inner, on=[(t_time_sk@0, ss_sold_time_sk@0)], projection=[2], setup_us=0 submit_us=372 device_us=370
                           GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                            GpuFilterExec: predicate=t_hour@1 = 11 AND t_minute@2 < 30, projection=[0], setup_us=15 submit_us=143 device_us=142
-                              GpuScanExec: table=time_dim, projections=[t_time_sk, t_hour, t_minute], setup_us=1 submit_us=19745 device_us=19744
+                            GpuFilterExec: predicate=t_hour@1 = 11 AND t_minute@2 < 30, projection=[0], setup_us=16 submit_us=144 device_us=143
+                              GpuScanExec: table=time_dim, projections=[t_time_sk, t_hour, t_minute], setup_us=2 submit_us=19772 device_us=19770
                           GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                            GpuHashJoinExec: join_type=Inner, on=[(hd_demo_sk@0, ss_hdemo_sk@1)], projection=[1, 3], setup_us=1 submit_us=892 device_us=899
+                            GpuHashJoinExec: join_type=Inner, on=[(hd_demo_sk@0, ss_hdemo_sk@1)], projection=[1, 3], setup_us=1 submit_us=894 device_us=899
                               GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                                GpuFilterExec: predicate=hd_dep_count@1 = 4 AND hd_vehicle_count@2 <= 6 OR hd_dep_count@1 = 2 AND hd_vehicle_count@2 <= 4 OR hd_dep_count@1 = 0 AND hd_vehicle_count@2 <= 2, projection=[0], setup_us=43 submit_us=173 device_us=172
-                                  GpuScanExec: table=household_demographics, projections=[hd_demo_sk, hd_dep_count, hd_vehicle_count], setup_us=1 submit_us=2267 device_us=2266
-                              GpuScanExec: table=store_sales, projections=[ss_sold_time_sk, ss_hdemo_sk, ss_store_sk], setup_us=2 submit_us=18176 device_us=18175
-            GpuProjectExec: expr=[h8_30_to_9@1 as h8_30_to_9, h9_to_9_30@2 as h9_to_9_30, h9_30_to_10@3 as h9_30_to_10, h10_to_10_30@4 as h10_to_10_30, h10_30_to_11@0 as h10_30_to_11], setup_us=0 submit_us=20 device_us=19
-              GpuCrossJoinExec, setup_us=0 submit_us=22 device_us=21
+                                GpuFilterExec: predicate=hd_dep_count@1 = 4 AND hd_vehicle_count@2 <= 6 OR hd_dep_count@1 = 2 AND hd_vehicle_count@2 <= 4 OR hd_dep_count@1 = 0 AND hd_vehicle_count@2 <= 2, projection=[0], setup_us=43 submit_us=170 device_us=169
+                                  GpuScanExec: table=household_demographics, projections=[hd_demo_sk, hd_dep_count, hd_vehicle_count], setup_us=2 submit_us=2261 device_us=2260
+                              GpuScanExec: table=store_sales, projections=[ss_sold_time_sk, ss_hdemo_sk, ss_store_sk], setup_us=2 submit_us=18070 device_us=18069
+            GpuProjectExec: expr=[h8_30_to_9@1 as h8_30_to_9, h9_to_9_30@2 as h9_to_9_30, h9_30_to_10@3 as h9_30_to_10, h10_to_10_30@4 as h10_to_10_30, h10_30_to_11@0 as h10_30_to_11], setup_us=0 submit_us=21 device_us=20
+              GpuCrossJoinExec, setup_us=0 submit_us=21 device_us=20
                 GpuProjectExec: expr=[count(*)@0 as h10_30_to_11], setup_us=0 submit_us=6 device_us=5
                   GpuAggregateExec: group_by=[], aggr=[count(*)], setup_us=0 submit_us=85 device_us=84
-                    GpuProjectExec: expr=[], setup_us=0 submit_us=48 device_us=47
+                    GpuProjectExec: expr=[], setup_us=0 submit_us=47 device_us=47
                       GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                        GpuHashJoinExec: join_type=Inner, on=[(s_store_sk@0, ss_store_sk@0)], setup_us=0 submit_us=210 device_us=209
+                        GpuHashJoinExec: join_type=Inner, on=[(s_store_sk@0, ss_store_sk@0)], setup_us=0 submit_us=217 device_us=216
                           GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                            GpuFilterExec: predicate=s_store_name@1 = ese, projection=[0], setup_us=1 submit_us=308 device_us=306
-                              GpuScanExec: table=store, projections=[s_store_sk, s_store_name], setup_us=2 submit_us=790 device_us=789
+                            GpuFilterExec: predicate=s_store_name@1 = ese, projection=[0], setup_us=1 submit_us=301 device_us=300
+                              GpuScanExec: table=store, projections=[s_store_sk, s_store_name], setup_us=2 submit_us=786 device_us=785
                           GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                            GpuHashJoinExec: join_type=Inner, on=[(t_time_sk@0, ss_sold_time_sk@0)], projection=[2], setup_us=0 submit_us=386 device_us=383
+                            GpuHashJoinExec: join_type=Inner, on=[(t_time_sk@0, ss_sold_time_sk@0)], projection=[2], setup_us=0 submit_us=364 device_us=363
                               GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                                GpuFilterExec: predicate=t_hour@1 = 10 AND t_minute@2 >= 30, projection=[0], setup_us=15 submit_us=139 device_us=139
-                                  GpuScanExec: table=time_dim, projections=[t_time_sk, t_hour, t_minute], setup_us=1 submit_us=19732 device_us=19731
+                                GpuFilterExec: predicate=t_hour@1 = 10 AND t_minute@2 >= 30, projection=[0], setup_us=15 submit_us=142 device_us=141
+                                  GpuScanExec: table=time_dim, projections=[t_time_sk, t_hour, t_minute], setup_us=1 submit_us=19749 device_us=19748
                               GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                                GpuHashJoinExec: join_type=Inner, on=[(hd_demo_sk@0, ss_hdemo_sk@1)], projection=[1, 3], setup_us=1 submit_us=903 device_us=910
+                                GpuHashJoinExec: join_type=Inner, on=[(hd_demo_sk@0, ss_hdemo_sk@1)], projection=[1, 3], setup_us=1 submit_us=892 device_us=896
                                   GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                                    GpuFilterExec: predicate=hd_dep_count@1 = 4 AND hd_vehicle_count@2 <= 6 OR hd_dep_count@1 = 2 AND hd_vehicle_count@2 <= 4 OR hd_dep_count@1 = 0 AND hd_vehicle_count@2 <= 2, projection=[0], setup_us=43 submit_us=175 device_us=174
-                                      GpuScanExec: table=household_demographics, projections=[hd_demo_sk, hd_dep_count, hd_vehicle_count], setup_us=1 submit_us=2272 device_us=2271
-                                  GpuScanExec: table=store_sales, projections=[ss_sold_time_sk, ss_hdemo_sk, ss_store_sk], setup_us=2 submit_us=18001 device_us=17999
-                GpuProjectExec: expr=[h8_30_to_9@1 as h8_30_to_9, h9_to_9_30@2 as h9_to_9_30, h9_30_to_10@3 as h9_30_to_10, h10_to_10_30@0 as h10_to_10_30], setup_us=0 submit_us=18 device_us=17
-                  GpuCrossJoinExec, setup_us=0 submit_us=17 device_us=17
-                    GpuProjectExec: expr=[count(*)@0 as h10_to_10_30], setup_us=0 submit_us=6 device_us=5
-                      GpuAggregateExec: group_by=[], aggr=[count(*)], setup_us=0 submit_us=85 device_us=84
-                        GpuProjectExec: expr=[], setup_us=0 submit_us=49 device_us=48
+                                    GpuFilterExec: predicate=hd_dep_count@1 = 4 AND hd_vehicle_count@2 <= 6 OR hd_dep_count@1 = 2 AND hd_vehicle_count@2 <= 4 OR hd_dep_count@1 = 0 AND hd_vehicle_count@2 <= 2, projection=[0], setup_us=44 submit_us=172 device_us=171
+                                      GpuScanExec: table=household_demographics, projections=[hd_demo_sk, hd_dep_count, hd_vehicle_count], setup_us=2 submit_us=2268 device_us=2267
+                                  GpuScanExec: table=store_sales, projections=[ss_sold_time_sk, ss_hdemo_sk, ss_store_sk], setup_us=2 submit_us=18012 device_us=18011
+                GpuProjectExec: expr=[h8_30_to_9@1 as h8_30_to_9, h9_to_9_30@2 as h9_to_9_30, h9_30_to_10@3 as h9_30_to_10, h10_to_10_30@0 as h10_to_10_30], setup_us=0 submit_us=17 device_us=17
+                  GpuCrossJoinExec, setup_us=0 submit_us=18 device_us=17
+                    GpuProjectExec: expr=[count(*)@0 as h10_to_10_30], setup_us=0 submit_us=6 device_us=6
+                      GpuAggregateExec: group_by=[], aggr=[count(*)], setup_us=0 submit_us=84 device_us=83
+                        GpuProjectExec: expr=[], setup_us=0 submit_us=47 device_us=46
                           GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                            GpuHashJoinExec: join_type=Inner, on=[(s_store_sk@0, ss_store_sk@0)], setup_us=0 submit_us=217 device_us=216
+                            GpuHashJoinExec: join_type=Inner, on=[(s_store_sk@0, ss_store_sk@0)], setup_us=0 submit_us=210 device_us=209
                               GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                                GpuFilterExec: predicate=s_store_name@1 = ese, projection=[0], setup_us=1 submit_us=302 device_us=301
-                                  GpuScanExec: table=store, projections=[s_store_sk, s_store_name], setup_us=2 submit_us=784 device_us=782
+                                GpuFilterExec: predicate=s_store_name@1 = ese, projection=[0], setup_us=1 submit_us=304 device_us=303
+                                  GpuScanExec: table=store, projections=[s_store_sk, s_store_name], setup_us=2 submit_us=779 device_us=778
                               GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                                GpuHashJoinExec: join_type=Inner, on=[(t_time_sk@0, ss_sold_time_sk@0)], projection=[2], setup_us=0 submit_us=363 device_us=360
+                                GpuHashJoinExec: join_type=Inner, on=[(t_time_sk@0, ss_sold_time_sk@0)], projection=[2], setup_us=0 submit_us=375 device_us=370
                                   GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                                    GpuFilterExec: predicate=t_hour@1 = 10 AND t_minute@2 < 30, projection=[0], setup_us=15 submit_us=141 device_us=140
-                                      GpuScanExec: table=time_dim, projections=[t_time_sk, t_hour, t_minute], setup_us=1 submit_us=19756 device_us=19755
+                                    GpuFilterExec: predicate=t_hour@1 = 10 AND t_minute@2 < 30, projection=[0], setup_us=16 submit_us=143 device_us=142
+                                      GpuScanExec: table=time_dim, projections=[t_time_sk, t_hour, t_minute], setup_us=1 submit_us=19788 device_us=19787
                                   GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                                    GpuHashJoinExec: join_type=Inner, on=[(hd_demo_sk@0, ss_hdemo_sk@1)], projection=[1, 3], setup_us=1 submit_us=895 device_us=901
+                                    GpuHashJoinExec: join_type=Inner, on=[(hd_demo_sk@0, ss_hdemo_sk@1)], projection=[1, 3], setup_us=1 submit_us=894 device_us=902
                                       GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                                        GpuFilterExec: predicate=hd_dep_count@1 = 4 AND hd_vehicle_count@2 <= 6 OR hd_dep_count@1 = 2 AND hd_vehicle_count@2 <= 4 OR hd_dep_count@1 = 0 AND hd_vehicle_count@2 <= 2, projection=[0], setup_us=42 submit_us=180 device_us=180
-                                          GpuScanExec: table=household_demographics, projections=[hd_demo_sk, hd_dep_count, hd_vehicle_count], setup_us=1 submit_us=2268 device_us=2267
-                                      GpuScanExec: table=store_sales, projections=[ss_sold_time_sk, ss_hdemo_sk, ss_store_sk], setup_us=2 submit_us=18177 device_us=18176
-                    GpuProjectExec: expr=[h8_30_to_9@1 as h8_30_to_9, h9_to_9_30@2 as h9_to_9_30, h9_30_to_10@0 as h9_30_to_10], setup_us=0 submit_us=15 device_us=14
-                      GpuCrossJoinExec, setup_us=0 submit_us=13 device_us=12
+                                        GpuFilterExec: predicate=hd_dep_count@1 = 4 AND hd_vehicle_count@2 <= 6 OR hd_dep_count@1 = 2 AND hd_vehicle_count@2 <= 4 OR hd_dep_count@1 = 0 AND hd_vehicle_count@2 <= 2, projection=[0], setup_us=42 submit_us=169 device_us=168
+                                          GpuScanExec: table=household_demographics, projections=[hd_demo_sk, hd_dep_count, hd_vehicle_count], setup_us=1 submit_us=2270 device_us=2268
+                                      GpuScanExec: table=store_sales, projections=[ss_sold_time_sk, ss_hdemo_sk, ss_store_sk], setup_us=2 submit_us=18194 device_us=18193
+                    GpuProjectExec: expr=[h8_30_to_9@1 as h8_30_to_9, h9_to_9_30@2 as h9_to_9_30, h9_30_to_10@0 as h9_30_to_10], setup_us=0 submit_us=13 device_us=12
+                      GpuCrossJoinExec, setup_us=0 submit_us=14 device_us=13
                         GpuProjectExec: expr=[count(*)@0 as h9_30_to_10], setup_us=0 submit_us=6 device_us=5
                           GpuAggregateExec: group_by=[], aggr=[count(*)], setup_us=0 submit_us=84 device_us=83
-                            GpuProjectExec: expr=[], setup_us=0 submit_us=48 device_us=47
+                            GpuProjectExec: expr=[], setup_us=0 submit_us=47 device_us=47
                               GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                                GpuHashJoinExec: join_type=Inner, on=[(s_store_sk@0, ss_store_sk@0)], setup_us=0 submit_us=206 device_us=205
+                                GpuHashJoinExec: join_type=Inner, on=[(s_store_sk@0, ss_store_sk@0)], setup_us=0 submit_us=205 device_us=204
                                   GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                                    GpuFilterExec: predicate=s_store_name@1 = ese, projection=[0], setup_us=1 submit_us=316 device_us=315
-                                      GpuScanExec: table=store, projections=[s_store_sk, s_store_name], setup_us=2 submit_us=780 device_us=779
+                                    GpuFilterExec: predicate=s_store_name@1 = ese, projection=[0], setup_us=1 submit_us=320 device_us=319
+                                      GpuScanExec: table=store, projections=[s_store_sk, s_store_name], setup_us=2 submit_us=800 device_us=799
                                   GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                                    GpuHashJoinExec: join_type=Inner, on=[(t_time_sk@0, ss_sold_time_sk@0)], projection=[2], setup_us=0 submit_us=355 device_us=353
+                                    GpuHashJoinExec: join_type=Inner, on=[(t_time_sk@0, ss_sold_time_sk@0)], projection=[2], setup_us=0 submit_us=356 device_us=355
                                       GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                                        GpuFilterExec: predicate=t_hour@1 = 9 AND t_minute@2 >= 30, projection=[0], setup_us=15 submit_us=148 device_us=147
-                                          GpuScanExec: table=time_dim, projections=[t_time_sk, t_hour, t_minute], setup_us=1 submit_us=19786 device_us=19785
+                                        GpuFilterExec: predicate=t_hour@1 = 9 AND t_minute@2 >= 30, projection=[0], setup_us=17 submit_us=147 device_us=146
+                                          GpuScanExec: table=time_dim, projections=[t_time_sk, t_hour, t_minute], setup_us=1 submit_us=19784 device_us=19783
                                       GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                                        GpuHashJoinExec: join_type=Inner, on=[(hd_demo_sk@0, ss_hdemo_sk@1)], projection=[1, 3], setup_us=1 submit_us=889 device_us=893
+                                        GpuHashJoinExec: join_type=Inner, on=[(hd_demo_sk@0, ss_hdemo_sk@1)], projection=[1, 3], setup_us=1 submit_us=888 device_us=893
                                           GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                                            GpuFilterExec: predicate=hd_dep_count@1 = 4 AND hd_vehicle_count@2 <= 6 OR hd_dep_count@1 = 2 AND hd_vehicle_count@2 <= 4 OR hd_dep_count@1 = 0 AND hd_vehicle_count@2 <= 2, projection=[0], setup_us=42 submit_us=169 device_us=168
-                                              GpuScanExec: table=household_demographics, projections=[hd_demo_sk, hd_dep_count, hd_vehicle_count], setup_us=2 submit_us=2251 device_us=2250
-                                          GpuScanExec: table=store_sales, projections=[ss_sold_time_sk, ss_hdemo_sk, ss_store_sk], setup_us=2 submit_us=18016 device_us=18015
-                        GpuCrossJoinExec, setup_us=0 submit_us=16 device_us=16
+                                            GpuFilterExec: predicate=hd_dep_count@1 = 4 AND hd_vehicle_count@2 <= 6 OR hd_dep_count@1 = 2 AND hd_vehicle_count@2 <= 4 OR hd_dep_count@1 = 0 AND hd_vehicle_count@2 <= 2, projection=[0], setup_us=42 submit_us=172 device_us=171
+                                              GpuScanExec: table=household_demographics, projections=[hd_demo_sk, hd_dep_count, hd_vehicle_count], setup_us=1 submit_us=2278 device_us=2277
+                                          GpuScanExec: table=store_sales, projections=[ss_sold_time_sk, ss_hdemo_sk, ss_store_sk], setup_us=2 submit_us=18194 device_us=18193
+                        GpuCrossJoinExec, setup_us=0 submit_us=13 device_us=12
                           GpuProjectExec: expr=[count(*)@0 as h8_30_to_9], setup_us=0 submit_us=6 device_us=6
                             GpuAggregateExec: group_by=[], aggr=[count(*)], setup_us=0 submit_us=84 device_us=83
                               GpuProjectExec: expr=[], setup_us=0 submit_us=47 device_us=46
                                 GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                                  GpuHashJoinExec: join_type=Inner, on=[(s_store_sk@0, ss_store_sk@0)], setup_us=0 submit_us=208 device_us=207
+                                  GpuHashJoinExec: join_type=Inner, on=[(s_store_sk@0, ss_store_sk@0)], setup_us=0 submit_us=205 device_us=204
                                     GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
                                       GpuFilterExec: predicate=s_store_name@1 = ese, projection=[0], setup_us=1 submit_us=319 device_us=318
-                                        GpuScanExec: table=store, projections=[s_store_sk, s_store_name], setup_us=2 submit_us=772 device_us=771
+                                        GpuScanExec: table=store, projections=[s_store_sk, s_store_name], setup_us=2 submit_us=773 device_us=772
                                     GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                                      GpuHashJoinExec: join_type=Inner, on=[(t_time_sk@0, ss_sold_time_sk@0)], projection=[2], setup_us=0 submit_us=357 device_us=354
+                                      GpuHashJoinExec: join_type=Inner, on=[(t_time_sk@0, ss_sold_time_sk@0)], projection=[2], setup_us=0 submit_us=358 device_us=357
                                         GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                                          GpuFilterExec: predicate=t_hour@1 = 8 AND t_minute@2 >= 30, projection=[0], setup_us=15 submit_us=148 device_us=147
-                                            GpuScanExec: table=time_dim, projections=[t_time_sk, t_hour, t_minute], setup_us=1 submit_us=19736 device_us=19735
+                                          GpuFilterExec: predicate=t_hour@1 = 8 AND t_minute@2 >= 30, projection=[0], setup_us=23 submit_us=144 device_us=142
+                                            GpuScanExec: table=time_dim, projections=[t_time_sk, t_hour, t_minute], setup_us=1 submit_us=19756 device_us=19755
                                         GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                                          GpuHashJoinExec: join_type=Inner, on=[(hd_demo_sk@0, ss_hdemo_sk@1)], projection=[1, 3], setup_us=1 submit_us=911 device_us=916
+                                          GpuHashJoinExec: join_type=Inner, on=[(hd_demo_sk@0, ss_hdemo_sk@1)], projection=[1, 3], setup_us=1 submit_us=895 device_us=901
                                             GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                                              GpuFilterExec: predicate=hd_dep_count@1 = 4 AND hd_vehicle_count@2 <= 6 OR hd_dep_count@1 = 2 AND hd_vehicle_count@2 <= 4 OR hd_dep_count@1 = 0 AND hd_vehicle_count@2 <= 2, projection=[0], setup_us=43 submit_us=171 device_us=170
-                                                GpuScanExec: table=household_demographics, projections=[hd_demo_sk, hd_dep_count, hd_vehicle_count], setup_us=1 submit_us=2269 device_us=2267
-                                            GpuScanExec: table=store_sales, projections=[ss_sold_time_sk, ss_hdemo_sk, ss_store_sk], setup_us=2 submit_us=18139 device_us=18138
+                                              GpuFilterExec: predicate=hd_dep_count@1 = 4 AND hd_vehicle_count@2 <= 6 OR hd_dep_count@1 = 2 AND hd_vehicle_count@2 <= 4 OR hd_dep_count@1 = 0 AND hd_vehicle_count@2 <= 2, projection=[0], setup_us=42 submit_us=168 device_us=167
+                                                GpuScanExec: table=household_demographics, projections=[hd_demo_sk, hd_dep_count, hd_vehicle_count], setup_us=1 submit_us=2270 device_us=2269
+                                            GpuScanExec: table=store_sales, projections=[ss_sold_time_sk, ss_hdemo_sk, ss_store_sk], setup_us=2 submit_us=18050 device_us=18049
                           GpuProjectExec: expr=[count(*)@0 as h9_to_9_30], setup_us=0 submit_us=6 device_us=5
-                            GpuAggregateExec: group_by=[], aggr=[count(*)], setup_us=0 submit_us=84 device_us=83
-                              GpuProjectExec: expr=[], setup_us=0 submit_us=46 device_us=46
+                            GpuAggregateExec: group_by=[], aggr=[count(*)], setup_us=0 submit_us=85 device_us=84
+                              GpuProjectExec: expr=[], setup_us=0 submit_us=47 device_us=46
                                 GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                                  GpuHashJoinExec: join_type=Inner, on=[(s_store_sk@0, ss_store_sk@0)], setup_us=0 submit_us=206 device_us=205
+                                  GpuHashJoinExec: join_type=Inner, on=[(s_store_sk@0, ss_store_sk@0)], setup_us=0 submit_us=203 device_us=202
                                     GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                                      GpuFilterExec: predicate=s_store_name@1 = ese, projection=[0], setup_us=1 submit_us=303 device_us=302
-                                        GpuScanExec: table=store, projections=[s_store_sk, s_store_name], setup_us=2 submit_us=774 device_us=773
+                                      GpuFilterExec: predicate=s_store_name@1 = ese, projection=[0], setup_us=1 submit_us=306 device_us=305
+                                        GpuScanExec: table=store, projections=[s_store_sk, s_store_name], setup_us=2 submit_us=788 device_us=787
                                     GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                                      GpuHashJoinExec: join_type=Inner, on=[(t_time_sk@0, ss_sold_time_sk@0)], projection=[2], setup_us=0 submit_us=373 device_us=370
+                                      GpuHashJoinExec: join_type=Inner, on=[(t_time_sk@0, ss_sold_time_sk@0)], projection=[2], setup_us=0 submit_us=374 device_us=372
                                         GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                                          GpuFilterExec: predicate=t_hour@1 = 9 AND t_minute@2 < 30, projection=[0], setup_us=15 submit_us=143 device_us=142
-                                            GpuScanExec: table=time_dim, projections=[t_time_sk, t_hour, t_minute], setup_us=1 submit_us=20180 device_us=20179
+                                          GpuFilterExec: predicate=t_hour@1 = 9 AND t_minute@2 < 30, projection=[0], setup_us=16 submit_us=142 device_us=141
+                                            GpuScanExec: table=time_dim, projections=[t_time_sk, t_hour, t_minute], setup_us=1 submit_us=20125 device_us=20124
                                         GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                                          GpuHashJoinExec: join_type=Inner, on=[(hd_demo_sk@0, ss_hdemo_sk@1)], projection=[1, 3], setup_us=1 submit_us=886 device_us=893
+                                          GpuHashJoinExec: join_type=Inner, on=[(hd_demo_sk@0, ss_hdemo_sk@1)], projection=[1, 3], setup_us=1 submit_us=907 device_us=912
                                             GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                                              GpuFilterExec: predicate=hd_dep_count@1 = 4 AND hd_vehicle_count@2 <= 6 OR hd_dep_count@1 = 2 AND hd_vehicle_count@2 <= 4 OR hd_dep_count@1 = 0 AND hd_vehicle_count@2 <= 2, projection=[0], setup_us=41 submit_us=173 device_us=172
-                                                GpuScanExec: table=household_demographics, projections=[hd_demo_sk, hd_dep_count, hd_vehicle_count], setup_us=1 submit_us=2284 device_us=2283
-                                            GpuScanExec: table=store_sales, projections=[ss_sold_time_sk, ss_hdemo_sk, ss_store_sk], setup_us=2 submit_us=17983 device_us=17982
+                                              GpuFilterExec: predicate=hd_dep_count@1 = 4 AND hd_vehicle_count@2 <= 6 OR hd_dep_count@1 = 2 AND hd_vehicle_count@2 <= 4 OR hd_dep_count@1 = 0 AND hd_vehicle_count@2 <= 2, projection=[0], setup_us=43 submit_us=173 device_us=173
+                                                GpuScanExec: table=household_demographics, projections=[hd_demo_sk, hd_dep_count, hd_vehicle_count], setup_us=1 submit_us=2298 device_us=2297
+                                            GpuScanExec: table=store_sales, projections=[ss_sold_time_sk, ss_hdemo_sk, ss_store_sk], setup_us=2 submit_us=18128 device_us=18126
 
 # timing_mode = how the numbers were taken, and what they MEAN. sync: the region ends in a cudaStreamSynchronize, so submit_us contains the device execution and device_us is 0. events: no explicit drain, and CUDA events bracket the device work as device_us. submit_us is NOT launch cost in either mode — cuDF and rmm synchronize internally, so the host waits for most of what it submits and submit_us tracks device_us closely. Only total_us is comparable across the two.
 # setup_us = host time before the node's first device touch (flatbuffer decode, handle lookups, AST build) — the prologue bare cuDF has no analogue for, which is why it is fitted as its own constant. submit_us / device_us: see timing_mode.
 # sync_floor_us = cost of the SYNC measurement itself (empty timed region: clock + cudaStreamSynchronize on an idle stream). Measured in both modes: under sync it is the resolution floor every node time INCLUDES, once PER OUTPUT PARTITION; under events it is the per-region stall that is no longer paid. Do not subtract it.
 # nodes_total_us = Σ setup_us + Σ submit_us, the HOST side of the walk. nodes_device_us is deliberately NOT added to it — the host ran while the device did, so the two are concurrent spans of the same clock. Device regions are on one stream in program order, so nodes_device_us is disjoint and <= total_us; the gap is stream idle, i.e. the device waiting through host prologue. total_us = the whole query, end to end (parse + plan + serialize + node walk + materialize).
-# build_profile = how the harness itself was compiled. total_us MINUS nodes_total_us is that Rust; records from different profiles are not comparable on it. Node times are device work and barely move.
-# allocator = the rmm device resource the node times were taken under. Without a pool every cuDF intermediate is a cudaMalloc/cudaFree round trip, charged to the node that allocated it — so it inflates the largest-output nodes hardest and moves the PROFILE, not only the scale. Records under different allocators are not comparable, node for node or in total.
+# build_profile = how the harness itself was compiled. Always a release build; total_us MINUS nodes_total_us is that Rust, and node times are device work and barely move.
+# allocator = the rmm device resource the node times were taken under. Always a pool: with rmm's default every cuDF intermediate is a cudaMalloc/cudaFree round trip charged to the node that allocated it, which moves the PROFILE and not only the scale. The sizes vary with free memory when the pool was built.
 # shared_work_charged_to = which p<k> sub-line carries work a node does once for all of its output partitions. A hash repartition concatenates its input and scatters it in a single operation, and that time is billed to p0 — so p0 standing far above its siblings is the accounting, not skew. Sub-lines sum to their node line either way. Written whether or not this plan has a repartition.
 build_profile=benchmarks opt-level=3
 allocator=rmm-pool initial=118.3GiB max=132.3GiB of 139.2GiB free on a discrete device
@@ -177,8 +177,8 @@ shared_work_charged_to=p0
 timing_mode=events
 sync_floor_us=1
 nodes_at_or_below_floor=48/165
-nodes_setup_us=525
-nodes_submit_us=345762
-nodes_device_us=345685
-nodes_total_us=346287
-total_us=370345
+nodes_setup_us=547
+nodes_submit_us=346263
+nodes_device_us=346186
+nodes_total_us=346810
+total_us=370888

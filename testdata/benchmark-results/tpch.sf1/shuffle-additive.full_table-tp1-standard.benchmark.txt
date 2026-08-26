@@ -1,13 +1,13 @@
 GpuProjectExec: expr=[l_returnflag@0 as l_returnflag, l_linestatus@1 as l_linestatus, count(*)@2 as cnt, sum(lineitem.l_quantity)@3 as sum_qty, sum(lineitem.l_extendedprice)@4 as sum_base_price], setup_us=0 submit_us=116 device_us=115
-  GpuAggregateExec: group_by=[l_returnflag, l_linestatus], aggr=[count(*), sum(lineitem.l_quantity), sum(lineitem.l_extendedprice)], setup_us=3 submit_us=5467 device_us=5466
-    GpuScanExec: table=lineitem, projections=[l_quantity, l_extendedprice, l_returnflag, l_linestatus], setup_us=2 submit_us=33654 device_us=33649
+  GpuAggregateExec: group_by=[l_returnflag, l_linestatus], aggr=[count(*), sum(lineitem.l_quantity), sum(lineitem.l_extendedprice)], setup_us=2 submit_us=5501 device_us=5499
+    GpuScanExec: table=lineitem, projections=[l_quantity, l_extendedprice, l_returnflag, l_linestatus], setup_us=2 submit_us=34071 device_us=34066
 
 # timing_mode = how the numbers were taken, and what they MEAN. sync: the region ends in a cudaStreamSynchronize, so submit_us contains the device execution and device_us is 0. events: no explicit drain, and CUDA events bracket the device work as device_us. submit_us is NOT launch cost in either mode — cuDF and rmm synchronize internally, so the host waits for most of what it submits and submit_us tracks device_us closely. Only total_us is comparable across the two.
 # setup_us = host time before the node's first device touch (flatbuffer decode, handle lookups, AST build) — the prologue bare cuDF has no analogue for, which is why it is fitted as its own constant. submit_us / device_us: see timing_mode.
 # sync_floor_us = cost of the SYNC measurement itself (empty timed region: clock + cudaStreamSynchronize on an idle stream). Measured in both modes: under sync it is the resolution floor every node time INCLUDES, once PER OUTPUT PARTITION; under events it is the per-region stall that is no longer paid. Do not subtract it.
 # nodes_total_us = Σ setup_us + Σ submit_us, the HOST side of the walk. nodes_device_us is deliberately NOT added to it — the host ran while the device did, so the two are concurrent spans of the same clock. Device regions are on one stream in program order, so nodes_device_us is disjoint and <= total_us; the gap is stream idle, i.e. the device waiting through host prologue. total_us = the whole query, end to end (parse + plan + serialize + node walk + materialize).
-# build_profile = how the harness itself was compiled. total_us MINUS nodes_total_us is that Rust; records from different profiles are not comparable on it. Node times are device work and barely move.
-# allocator = the rmm device resource the node times were taken under. Without a pool every cuDF intermediate is a cudaMalloc/cudaFree round trip, charged to the node that allocated it — so it inflates the largest-output nodes hardest and moves the PROFILE, not only the scale. Records under different allocators are not comparable, node for node or in total.
+# build_profile = how the harness itself was compiled. Always a release build; total_us MINUS nodes_total_us is that Rust, and node times are device work and barely move.
+# allocator = the rmm device resource the node times were taken under. Always a pool: with rmm's default every cuDF intermediate is a cudaMalloc/cudaFree round trip charged to the node that allocated it, which moves the PROFILE and not only the scale. The sizes vary with free memory when the pool was built.
 # shared_work_charged_to = which p<k> sub-line carries work a node does once for all of its output partitions. A hash repartition concatenates its input and scatters it in a single operation, and that time is billed to p0 — so p0 standing far above its siblings is the accounting, not skew. Sub-lines sum to their node line either way. Written whether or not this plan has a repartition.
 build_profile=benchmarks opt-level=3
 allocator=rmm-pool initial=118.3GiB max=132.3GiB of 139.2GiB free on a discrete device
@@ -15,8 +15,8 @@ shared_work_charged_to=p0
 timing_mode=events
 sync_floor_us=1
 nodes_at_or_below_floor=0/3
-nodes_setup_us=5
-nodes_submit_us=39237
-nodes_device_us=39230
-nodes_total_us=39242
-total_us=40528
+nodes_setup_us=4
+nodes_submit_us=39688
+nodes_device_us=39680
+nodes_total_us=39692
+total_us=41029

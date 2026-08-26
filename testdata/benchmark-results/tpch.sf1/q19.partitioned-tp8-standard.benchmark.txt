@@ -1,15 +1,15 @@
-GpuProjectExec: expr=[sum(lineitem.l_extendedprice * Int64(1) - lineitem.l_discount)@0 as revenue], setup_us=0 submit_us=6 device_us=5
+GpuProjectExec: expr=[sum(lineitem.l_extendedprice * Int64(1) - lineitem.l_discount)@0 as revenue], setup_us=0 submit_us=6 device_us=6
   GpuAggregateExec: group_by=[], aggr=[sum(lineitem.l_extendedprice * Int64(1) - lineitem.l_discount)], setup_us=0 submit_us=168 device_us=167
     GpuCoalescePartitionsExec, setup_us=0 submit_us=26 device_us=26
-      GpuAggregateExec: group_by=[], aggr=[sum(lineitem.l_extendedprice * Int64(1) - lineitem.l_discount)], setup_us=0 submit_us=1803 device_us=1795
-        p0: setup_us=0 submit_us=257 device_us=256
-        p1: setup_us=0 submit_us=225 device_us=224
-        p2: setup_us=0 submit_us=221 device_us=220
-        p3: setup_us=0 submit_us=222 device_us=221
-        p4: setup_us=0 submit_us=220 device_us=219
-        p5: setup_us=0 submit_us=218 device_us=217
-        p6: setup_us=0 submit_us=218 device_us=217
-        p7: setup_us=0 submit_us=222 device_us=221
+      GpuAggregateExec: group_by=[], aggr=[sum(lineitem.l_extendedprice * Int64(1) - lineitem.l_discount)], setup_us=0 submit_us=1805 device_us=1798
+        p0: setup_us=0 submit_us=263 device_us=262
+        p1: setup_us=0 submit_us=222 device_us=221
+        p2: setup_us=0 submit_us=219 device_us=218
+        p3: setup_us=0 submit_us=221 device_us=220
+        p4: setup_us=0 submit_us=219 device_us=218
+        p5: setup_us=0 submit_us=220 device_us=219
+        p6: setup_us=0 submit_us=220 device_us=219
+        p7: setup_us=0 submit_us=221 device_us=221
         GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
           p0: setup_us=0 submit_us=0 device_us=0
           p1: setup_us=0 submit_us=0 device_us=0
@@ -19,15 +19,15 @@ GpuProjectExec: expr=[sum(lineitem.l_extendedprice * Int64(1) - lineitem.l_disco
           p5: setup_us=0 submit_us=0 device_us=0
           p6: setup_us=0 submit_us=0 device_us=0
           p7: setup_us=0 submit_us=0 device_us=0
-          GpuHashJoinExec: join_type=Inner, on=[(p_partkey@0, l_partkey@0)], filter=p_brand@1 = Brand#12 AND (p_container@3 = SM CASE OR p_container@3 = SM BOX OR p_container@3 = SM PACK OR p_container@3 = SM PKG) AND l_quantity@0 >= Some(100),15,2 AND l_quantity@0 <= Some(1100),15,2 AND p_size@2 <= 5 OR p_brand@1 = Brand#23 AND (p_container@3 = MED BAG OR p_container@3 = MED BOX OR p_container@3 = MED PKG OR p_container@3 = MED PACK) AND l_quantity@0 >= Some(1000),15,2 AND l_quantity@0 <= Some(2000),15,2 AND p_size@2 <= 10 OR p_brand@1 = Brand#34 AND (p_container@3 = LG CASE OR p_container@3 = LG BOX OR p_container@3 = LG PACK OR p_container@3 = LG PKG) AND l_quantity@0 >= Some(2000),15,2 AND l_quantity@0 <= Some(3000),15,2 AND p_size@2 <= 15, projection=[6, 7], setup_us=2 submit_us=23738 device_us=23730
-            p0: setup_us=1 submit_us=3031 device_us=3030
-            p1: setup_us=1 submit_us=2947 device_us=2946
-            p2: setup_us=0 submit_us=2961 device_us=2960
-            p3: setup_us=0 submit_us=2968 device_us=2967
-            p4: setup_us=0 submit_us=2960 device_us=2959
-            p5: setup_us=0 submit_us=2950 device_us=2949
-            p6: setup_us=0 submit_us=2962 device_us=2961
-            p7: setup_us=0 submit_us=2959 device_us=2958
+          GpuHashJoinExec: join_type=Inner, on=[(p_partkey@0, l_partkey@0)], filter=p_brand@1 = Brand#12 AND (p_container@3 = SM CASE OR p_container@3 = SM BOX OR p_container@3 = SM PACK OR p_container@3 = SM PKG) AND l_quantity@0 >= Some(100),15,2 AND l_quantity@0 <= Some(1100),15,2 AND p_size@2 <= 5 OR p_brand@1 = Brand#23 AND (p_container@3 = MED BAG OR p_container@3 = MED BOX OR p_container@3 = MED PKG OR p_container@3 = MED PACK) AND l_quantity@0 >= Some(1000),15,2 AND l_quantity@0 <= Some(2000),15,2 AND p_size@2 <= 10 OR p_brand@1 = Brand#34 AND (p_container@3 = LG CASE OR p_container@3 = LG BOX OR p_container@3 = LG PACK OR p_container@3 = LG PKG) AND l_quantity@0 >= Some(2000),15,2 AND l_quantity@0 <= Some(3000),15,2 AND p_size@2 <= 15, projection=[6, 7], setup_us=6 submit_us=23699 device_us=23691
+            p0: setup_us=2 submit_us=3026 device_us=3025
+            p1: setup_us=1 submit_us=2969 device_us=2968
+            p2: setup_us=1 submit_us=2981 device_us=2980
+            p3: setup_us=0 submit_us=2983 device_us=2982
+            p4: setup_us=1 submit_us=2914 device_us=2913
+            p5: setup_us=0 submit_us=2943 device_us=2942
+            p6: setup_us=0 submit_us=2940 device_us=2939
+            p7: setup_us=1 submit_us=2943 device_us=2942
             GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
               p0: setup_us=0 submit_us=0 device_us=0
               p1: setup_us=0 submit_us=0 device_us=0
@@ -37,25 +37,25 @@ GpuProjectExec: expr=[sum(lineitem.l_extendedprice * Int64(1) - lineitem.l_disco
               p5: setup_us=0 submit_us=0 device_us=0
               p6: setup_us=0 submit_us=0 device_us=0
               p7: setup_us=0 submit_us=0 device_us=0
-              GpuRepartitionExec: partitioning=Hash([p_partkey@0], 8), input_partitions=1, setup_us=0 submit_us=925 device_us=925
-                p0: setup_us=0 submit_us=329 device_us=329
-                p1: setup_us=0 submit_us=86 device_us=86
-                p2: setup_us=0 submit_us=84 device_us=84
-                p3: setup_us=0 submit_us=86 device_us=86
-                p4: setup_us=0 submit_us=84 device_us=84
-                p5: setup_us=0 submit_us=84 device_us=84
-                p6: setup_us=0 submit_us=83 device_us=83
-                p7: setup_us=0 submit_us=89 device_us=89
-                GpuCoalescePartitionsExec, setup_us=0 submit_us=122 device_us=123
+              GpuRepartitionExec: partitioning=Hash([p_partkey@0], 8), input_partitions=1, setup_us=0 submit_us=925 device_us=926
+                p0: setup_us=0 submit_us=327 device_us=327
+                p1: setup_us=0 submit_us=88 device_us=88
+                p2: setup_us=0 submit_us=89 device_us=89
+                p3: setup_us=0 submit_us=84 device_us=84
+                p4: setup_us=0 submit_us=85 device_us=85
+                p5: setup_us=0 submit_us=84 device_us=85
+                p6: setup_us=0 submit_us=84 device_us=84
+                p7: setup_us=0 submit_us=84 device_us=84
+                GpuCoalescePartitionsExec, setup_us=0 submit_us=121 device_us=121
                   GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
                     p0: setup_us=0 submit_us=0 device_us=0
                     p1: setup_us=0 submit_us=0 device_us=0
-                    GpuFilterExec: predicate=(p_brand@1 = Brand#12 AND (p_container@3 = SM CASE OR p_container@3 = SM BOX OR p_container@3 = SM PACK OR p_container@3 = SM PKG) AND p_size@2 <= 5 OR p_brand@1 = Brand#23 AND (p_container@3 = MED BAG OR p_container@3 = MED BOX OR p_container@3 = MED PKG OR p_container@3 = MED PACK) AND p_size@2 <= 10 OR p_brand@1 = Brand#34 AND (p_container@3 = LG CASE OR p_container@3 = LG BOX OR p_container@3 = LG PACK OR p_container@3 = LG PKG) AND p_size@2 <= 15) AND p_size@2 >= 1, setup_us=3 submit_us=6639 device_us=6637
-                      p0: setup_us=2 submit_us=3333 device_us=3332
-                      p1: setup_us=1 submit_us=3306 device_us=3305
-                      GpuScanExec: table=part, projections=[p_partkey, p_brand, p_size, p_container], setup_us=4 submit_us=50484 device_us=50477
-                        p0: setup_us=2 submit_us=30993 device_us=30987
-                        p1: setup_us=2 submit_us=19491 device_us=19490
+                    GpuFilterExec: predicate=(p_brand@1 = Brand#12 AND (p_container@3 = SM CASE OR p_container@3 = SM BOX OR p_container@3 = SM PACK OR p_container@3 = SM PKG) AND p_size@2 <= 5 OR p_brand@1 = Brand#23 AND (p_container@3 = MED BAG OR p_container@3 = MED BOX OR p_container@3 = MED PKG OR p_container@3 = MED PACK) AND p_size@2 <= 10 OR p_brand@1 = Brand#34 AND (p_container@3 = LG CASE OR p_container@3 = LG BOX OR p_container@3 = LG PACK OR p_container@3 = LG PKG) AND p_size@2 <= 15) AND p_size@2 >= 1, setup_us=3 submit_us=6621 device_us=6620
+                      p0: setup_us=2 submit_us=3325 device_us=3325
+                      p1: setup_us=1 submit_us=3296 device_us=3295
+                      GpuScanExec: table=part, projections=[p_partkey, p_brand, p_size, p_container], setup_us=4 submit_us=50692 device_us=50685
+                        p0: setup_us=2 submit_us=31065 device_us=31060
+                        p1: setup_us=2 submit_us=19627 device_us=19625
             GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
               p0: setup_us=0 submit_us=0 device_us=0
               p1: setup_us=0 submit_us=0 device_us=0
@@ -65,16 +65,16 @@ GpuProjectExec: expr=[sum(lineitem.l_extendedprice * Int64(1) - lineitem.l_disco
               p5: setup_us=0 submit_us=0 device_us=0
               p6: setup_us=0 submit_us=0 device_us=0
               p7: setup_us=0 submit_us=0 device_us=0
-              GpuRepartitionExec: partitioning=Hash([l_partkey@0], 8), input_partitions=1, setup_us=0 submit_us=252 device_us=252
-                p0: setup_us=0 submit_us=137 device_us=138
-                p1: setup_us=0 submit_us=16 device_us=16
-                p2: setup_us=0 submit_us=16 device_us=16
-                p3: setup_us=0 submit_us=16 device_us=17
-                p4: setup_us=0 submit_us=17 device_us=16
-                p5: setup_us=0 submit_us=16 device_us=16
-                p6: setup_us=0 submit_us=18 device_us=18
-                p7: setup_us=0 submit_us=16 device_us=15
-                GpuCoalescePartitionsExec, setup_us=0 submit_us=100 device_us=101
+              GpuRepartitionExec: partitioning=Hash([l_partkey@0], 8), input_partitions=1, setup_us=0 submit_us=251 device_us=251
+                p0: setup_us=0 submit_us=142 device_us=142
+                p1: setup_us=0 submit_us=15 device_us=15
+                p2: setup_us=0 submit_us=16 device_us=17
+                p3: setup_us=0 submit_us=17 device_us=16
+                p4: setup_us=0 submit_us=16 device_us=16
+                p5: setup_us=0 submit_us=15 device_us=15
+                p6: setup_us=0 submit_us=15 device_us=15
+                p7: setup_us=0 submit_us=15 device_us=15
+                GpuCoalescePartitionsExec, setup_us=0 submit_us=103 device_us=104
                   GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
                     p0: setup_us=0 submit_us=0 device_us=0
                     p1: setup_us=0 submit_us=0 device_us=0
@@ -84,31 +84,31 @@ GpuProjectExec: expr=[sum(lineitem.l_extendedprice * Int64(1) - lineitem.l_disco
                     p5: setup_us=0 submit_us=0 device_us=0
                     p6: setup_us=0 submit_us=0 device_us=0
                     p7: setup_us=0 submit_us=0 device_us=0
-                    GpuFilterExec: predicate=(l_quantity@1 >= Some(100),15,2 AND l_quantity@1 <= Some(1100),15,2 OR l_quantity@1 >= Some(1000),15,2 AND l_quantity@1 <= Some(2000),15,2 OR l_quantity@1 >= Some(2000),15,2 AND l_quantity@1 <= Some(3000),15,2) AND (l_shipmode@5 = AIR OR l_shipmode@5 = AIR REG) AND l_shipinstruct@4 = DELIVER IN PERSON, projection=[0, 1, 2, 3], setup_us=7 submit_us=13272 device_us=13262
-                      p0: setup_us=3 submit_us=1718 device_us=1717
-                      p1: setup_us=1 submit_us=1642 device_us=1640
-                      p2: setup_us=1 submit_us=1658 device_us=1657
-                      p3: setup_us=1 submit_us=1639 device_us=1638
-                      p4: setup_us=0 submit_us=1655 device_us=1654
-                      p5: setup_us=1 submit_us=1618 device_us=1616
-                      p6: setup_us=0 submit_us=1658 device_us=1657
-                      p7: setup_us=0 submit_us=1684 device_us=1683
-                      GpuScanExec: table=lineitem, projections=[l_partkey, l_quantity, l_extendedprice, l_discount, l_shipinstruct, l_shipmode], setup_us=16 submit_us=247583 device_us=247578
-                        p0: setup_us=2 submit_us=30320 device_us=30320
-                        p1: setup_us=2 submit_us=30935 device_us=30934
-                        p2: setup_us=2 submit_us=31044 device_us=31044
-                        p3: setup_us=2 submit_us=30996 device_us=30995
-                        p4: setup_us=2 submit_us=31140 device_us=31139
-                        p5: setup_us=2 submit_us=31013 device_us=31012
-                        p6: setup_us=2 submit_us=31029 device_us=31028
-                        p7: setup_us=2 submit_us=31106 device_us=31106
+                    GpuFilterExec: predicate=(l_quantity@1 >= Some(100),15,2 AND l_quantity@1 <= Some(1100),15,2 OR l_quantity@1 >= Some(1000),15,2 AND l_quantity@1 <= Some(2000),15,2 OR l_quantity@1 >= Some(2000),15,2 AND l_quantity@1 <= Some(3000),15,2) AND (l_shipmode@5 = AIR OR l_shipmode@5 = AIR REG) AND l_shipinstruct@4 = DELIVER IN PERSON, projection=[0, 1, 2, 3], setup_us=5 submit_us=13330 device_us=13322
+                      p0: setup_us=2 submit_us=1732 device_us=1731
+                      p1: setup_us=1 submit_us=1633 device_us=1632
+                      p2: setup_us=0 submit_us=1644 device_us=1643
+                      p3: setup_us=0 submit_us=1652 device_us=1651
+                      p4: setup_us=1 submit_us=1665 device_us=1664
+                      p5: setup_us=0 submit_us=1661 device_us=1660
+                      p6: setup_us=1 submit_us=1653 device_us=1652
+                      p7: setup_us=0 submit_us=1690 device_us=1689
+                      GpuScanExec: table=lineitem, projections=[l_partkey, l_quantity, l_extendedprice, l_discount, l_shipinstruct, l_shipmode], setup_us=17 submit_us=248512 device_us=248504
+                        p0: setup_us=2 submit_us=30496 device_us=30496
+                        p1: setup_us=2 submit_us=30938 device_us=30937
+                        p2: setup_us=3 submit_us=31391 device_us=31390
+                        p3: setup_us=2 submit_us=31122 device_us=31121
+                        p4: setup_us=2 submit_us=31139 device_us=31137
+                        p5: setup_us=2 submit_us=31194 device_us=31193
+                        p6: setup_us=2 submit_us=31139 device_us=31138
+                        p7: setup_us=2 submit_us=31093 device_us=31092
 
 # timing_mode = how the numbers were taken, and what they MEAN. sync: the region ends in a cudaStreamSynchronize, so submit_us contains the device execution and device_us is 0. events: no explicit drain, and CUDA events bracket the device work as device_us. submit_us is NOT launch cost in either mode — cuDF and rmm synchronize internally, so the host waits for most of what it submits and submit_us tracks device_us closely. Only total_us is comparable across the two.
 # setup_us = host time before the node's first device touch (flatbuffer decode, handle lookups, AST build) — the prologue bare cuDF has no analogue for, which is why it is fitted as its own constant. submit_us / device_us: see timing_mode.
 # sync_floor_us = cost of the SYNC measurement itself (empty timed region: clock + cudaStreamSynchronize on an idle stream). Measured in both modes: under sync it is the resolution floor every node time INCLUDES, once PER OUTPUT PARTITION; under events it is the per-region stall that is no longer paid. Do not subtract it.
 # nodes_total_us = Σ setup_us + Σ submit_us, the HOST side of the walk. nodes_device_us is deliberately NOT added to it — the host ran while the device did, so the two are concurrent spans of the same clock. Device regions are on one stream in program order, so nodes_device_us is disjoint and <= total_us; the gap is stream idle, i.e. the device waiting through host prologue. total_us = the whole query, end to end (parse + plan + serialize + node walk + materialize).
-# build_profile = how the harness itself was compiled. total_us MINUS nodes_total_us is that Rust; records from different profiles are not comparable on it. Node times are device work and barely move.
-# allocator = the rmm device resource the node times were taken under. Without a pool every cuDF intermediate is a cudaMalloc/cudaFree round trip, charged to the node that allocated it — so it inflates the largest-output nodes hardest and moves the PROFILE, not only the scale. Records under different allocators are not comparable, node for node or in total.
+# build_profile = how the harness itself was compiled. Always a release build; total_us MINUS nodes_total_us is that Rust, and node times are device work and barely move.
+# allocator = the rmm device resource the node times were taken under. Always a pool: with rmm's default every cuDF intermediate is a cudaMalloc/cudaFree round trip charged to the node that allocated it, which moves the PROFILE and not only the scale. The sizes vary with free memory when the pool was built.
 # shared_work_charged_to = which p<k> sub-line carries work a node does once for all of its output partitions. A hash repartition concatenates its input and scatters it in a single operation, and that time is billed to p0 — so p0 standing far above its siblings is the accounting, not skew. Sub-lines sum to their node line either way. Written whether or not this plan has a repartition.
 build_profile=benchmarks opt-level=3
 allocator=rmm-pool initial=118.3GiB max=132.3GiB of 139.2GiB free on a discrete device
@@ -116,8 +116,8 @@ shared_work_charged_to=p0
 timing_mode=events
 sync_floor_us=1
 nodes_at_or_below_floor=5/18
-nodes_setup_us=32
-nodes_submit_us=345118
-nodes_device_us=345078
-nodes_total_us=345150
-total_us=354681
+nodes_setup_us=35
+nodes_submit_us=346259
+nodes_device_us=346221
+nodes_total_us=346294
+total_us=355760

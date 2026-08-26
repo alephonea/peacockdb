@@ -1,31 +1,31 @@
-GpuSortPreservingMergeExec: [nation@0 ASC NULLS LAST, o_year@1 DESC], setup_us=0 submit_us=1088 device_us=1087
-  GpuSortExec: expr=[nation@0 ASC NULLS LAST, o_year@1 DESC], setup_us=1 submit_us=2097 device_us=2089
-    p0: setup_us=1 submit_us=281 device_us=279
-    p1: setup_us=0 submit_us=282 device_us=281
-    p2: setup_us=0 submit_us=272 device_us=271
-    p3: setup_us=0 submit_us=301 device_us=300
-    p4: setup_us=0 submit_us=209 device_us=208
-    p5: setup_us=0 submit_us=265 device_us=265
+GpuSortPreservingMergeExec: [nation@0 ASC NULLS LAST, o_year@1 DESC], setup_us=1 submit_us=1110 device_us=1109
+  GpuSortExec: expr=[nation@0 ASC NULLS LAST, o_year@1 DESC], setup_us=1 submit_us=2099 device_us=2093
+    p0: setup_us=1 submit_us=286 device_us=285
+    p1: setup_us=0 submit_us=284 device_us=283
+    p2: setup_us=0 submit_us=270 device_us=269
+    p3: setup_us=0 submit_us=300 device_us=300
+    p4: setup_us=0 submit_us=208 device_us=207
+    p5: setup_us=0 submit_us=264 device_us=264
     p6: setup_us=0 submit_us=213 device_us=212
     p7: setup_us=0 submit_us=274 device_us=273
-    GpuProjectExec: expr=[nation@0 as nation, o_year@1 as o_year, sum(profit.amount)@2 as sum_profit], setup_us=0 submit_us=242 device_us=236
-      p0: setup_us=0 submit_us=30 device_us=29
-      p1: setup_us=0 submit_us=30 device_us=30
-      p2: setup_us=0 submit_us=35 device_us=34
-      p3: setup_us=0 submit_us=30 device_us=30
-      p4: setup_us=0 submit_us=30 device_us=28
-      p5: setup_us=0 submit_us=28 device_us=27
-      p6: setup_us=0 submit_us=29 device_us=29
-      p7: setup_us=0 submit_us=30 device_us=29
-      GpuAggregateExec: group_by=[nation, o_year], aggr=[sum(profit.amount)], setup_us=0 submit_us=2953 device_us=2946
-        p0: setup_us=0 submit_us=399 device_us=398
-        p1: setup_us=0 submit_us=377 device_us=377
-        p2: setup_us=0 submit_us=367 device_us=366
-        p3: setup_us=0 submit_us=416 device_us=415
+    GpuProjectExec: expr=[nation@0 as nation, o_year@1 as o_year, sum(profit.amount)@2 as sum_profit], setup_us=0 submit_us=241 device_us=235
+      p0: setup_us=0 submit_us=32 device_us=31
+      p1: setup_us=0 submit_us=30 device_us=29
+      p2: setup_us=0 submit_us=30 device_us=29
+      p3: setup_us=0 submit_us=31 device_us=31
+      p4: setup_us=0 submit_us=29 device_us=28
+      p5: setup_us=0 submit_us=30 device_us=29
+      p6: setup_us=0 submit_us=30 device_us=30
+      p7: setup_us=0 submit_us=29 device_us=28
+      GpuAggregateExec: group_by=[nation, o_year], aggr=[sum(profit.amount)], setup_us=0 submit_us=2955 device_us=2948
+        p0: setup_us=0 submit_us=401 device_us=399
+        p1: setup_us=0 submit_us=376 device_us=375
+        p2: setup_us=0 submit_us=365 device_us=365
+        p3: setup_us=0 submit_us=412 device_us=411
         p4: setup_us=0 submit_us=323 device_us=322
-        p5: setup_us=0 submit_us=362 device_us=361
-        p6: setup_us=0 submit_us=320 device_us=319
-        p7: setup_us=0 submit_us=389 device_us=388
+        p5: setup_us=0 submit_us=365 device_us=365
+        p6: setup_us=0 submit_us=322 device_us=321
+        p7: setup_us=0 submit_us=391 device_us=390
         GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
           p0: setup_us=0 submit_us=0 device_us=0
           p1: setup_us=0 submit_us=0 device_us=0
@@ -35,34 +35,34 @@ GpuSortPreservingMergeExec: [nation@0 ASC NULLS LAST, o_year@1 DESC], setup_us=0
           p5: setup_us=0 submit_us=0 device_us=0
           p6: setup_us=0 submit_us=0 device_us=0
           p7: setup_us=0 submit_us=0 device_us=0
-          GpuRepartitionExec: partitioning=Hash([nation@0, o_year@1], 8), input_partitions=1, setup_us=0 submit_us=556 device_us=557
-            p0: setup_us=0 submit_us=219 device_us=219
-            p1: setup_us=0 submit_us=50 device_us=50
-            p2: setup_us=0 submit_us=50 device_us=50
-            p3: setup_us=0 submit_us=47 device_us=47
-            p4: setup_us=0 submit_us=47 device_us=48
-            p5: setup_us=0 submit_us=47 device_us=47
-            p6: setup_us=0 submit_us=48 device_us=48
-            p7: setup_us=0 submit_us=48 device_us=48
-            GpuCoalescePartitionsExec, setup_us=0 submit_us=112 device_us=111
-              GpuAggregateExec: group_by=[nation, o_year], aggr=[sum(profit.amount)], setup_us=1 submit_us=10493 device_us=10485
-                p0: setup_us=1 submit_us=1325 device_us=1324
-                p1: setup_us=0 submit_us=1821 device_us=1820
-                p2: setup_us=0 submit_us=1221 device_us=1220
-                p3: setup_us=0 submit_us=1469 device_us=1468
-                p4: setup_us=0 submit_us=6 device_us=5
-                p5: setup_us=0 submit_us=1656 device_us=1655
-                p6: setup_us=0 submit_us=1277 device_us=1276
-                p7: setup_us=0 submit_us=1718 device_us=1717
-                GpuProjectExec: expr=[n_name@0 as nation, date_part(YEAR, o_orderdate@5) as o_year, l_extendedprice@2 * (Some(1),20,0 - l_discount@3) - ps_supplycost@4 * l_quantity@1 as amount], setup_us=0 submit_us=1038 device_us=1051
-                  p0: setup_us=0 submit_us=159 device_us=167
-                  p1: setup_us=0 submit_us=148 device_us=150
-                  p2: setup_us=0 submit_us=146 device_us=146
-                  p3: setup_us=0 submit_us=140 device_us=142
+          GpuRepartitionExec: partitioning=Hash([nation@0, o_year@1], 8), input_partitions=1, setup_us=0 submit_us=566 device_us=566
+            p0: setup_us=0 submit_us=220 device_us=220
+            p1: setup_us=0 submit_us=55 device_us=54
+            p2: setup_us=0 submit_us=54 device_us=53
+            p3: setup_us=0 submit_us=51 device_us=51
+            p4: setup_us=0 submit_us=47 device_us=47
+            p5: setup_us=0 submit_us=47 device_us=48
+            p6: setup_us=0 submit_us=46 device_us=46
+            p7: setup_us=0 submit_us=46 device_us=47
+            GpuCoalescePartitionsExec, setup_us=0 submit_us=104 device_us=105
+              GpuAggregateExec: group_by=[nation, o_year], aggr=[sum(profit.amount)], setup_us=2 submit_us=10472 device_us=10464
+                p0: setup_us=2 submit_us=1348 device_us=1347
+                p1: setup_us=0 submit_us=1824 device_us=1823
+                p2: setup_us=0 submit_us=1215 device_us=1214
+                p3: setup_us=0 submit_us=1459 device_us=1458
+                p4: setup_us=0 submit_us=7 device_us=6
+                p5: setup_us=0 submit_us=1636 device_us=1635
+                p6: setup_us=0 submit_us=1272 device_us=1271
+                p7: setup_us=0 submit_us=1711 device_us=1710
+                GpuProjectExec: expr=[n_name@0 as nation, date_part(YEAR, o_orderdate@5) as o_year, l_extendedprice@2 * (Some(1),20,0 - l_discount@3) - ps_supplycost@4 * l_quantity@1 as amount], setup_us=0 submit_us=1067 device_us=1071
+                  p0: setup_us=0 submit_us=177 device_us=176
+                  p1: setup_us=0 submit_us=159 device_us=163
+                  p2: setup_us=0 submit_us=145 device_us=144
+                  p3: setup_us=0 submit_us=143 device_us=145
                   p4: setup_us=0 submit_us=14 device_us=13
-                  p5: setup_us=0 submit_us=148 device_us=148
-                  p6: setup_us=0 submit_us=140 device_us=141
-                  p7: setup_us=0 submit_us=143 device_us=144
+                  p5: setup_us=0 submit_us=143 device_us=143
+                  p6: setup_us=0 submit_us=145 device_us=145
+                  p7: setup_us=0 submit_us=141 device_us=142
                   GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
                     p0: setup_us=0 submit_us=0 device_us=0
                     p1: setup_us=0 submit_us=0 device_us=0
@@ -72,15 +72,15 @@ GpuSortPreservingMergeExec: [nation@0 ASC NULLS LAST, o_year@1 DESC], setup_us=0
                     p5: setup_us=0 submit_us=0 device_us=0
                     p6: setup_us=0 submit_us=0 device_us=0
                     p7: setup_us=0 submit_us=0 device_us=0
-                    GpuHashJoinExec: join_type=Inner, on=[(n_nationkey@0, s_nationkey@3)], projection=[1, 2, 3, 4, 6, 7], setup_us=1 submit_us=2742 device_us=2734
-                      p0: setup_us=1 submit_us=404 device_us=403
-                      p1: setup_us=0 submit_us=390 device_us=389
-                      p2: setup_us=0 submit_us=378 device_us=377
-                      p3: setup_us=0 submit_us=387 device_us=386
-                      p4: setup_us=0 submit_us=29 device_us=28
-                      p5: setup_us=0 submit_us=378 device_us=377
-                      p6: setup_us=0 submit_us=385 device_us=384
-                      p7: setup_us=0 submit_us=391 device_us=390
+                    GpuHashJoinExec: join_type=Inner, on=[(n_nationkey@0, s_nationkey@3)], projection=[1, 2, 3, 4, 6, 7], setup_us=2 submit_us=2764 device_us=2759
+                      p0: setup_us=1 submit_us=411 device_us=410
+                      p1: setup_us=0 submit_us=396 device_us=396
+                      p2: setup_us=0 submit_us=375 device_us=374
+                      p3: setup_us=1 submit_us=385 device_us=384
+                      p4: setup_us=0 submit_us=30 device_us=29
+                      p5: setup_us=0 submit_us=385 device_us=385
+                      p6: setup_us=0 submit_us=394 device_us=394
+                      p7: setup_us=0 submit_us=388 device_us=387
                       GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
                         p0: setup_us=0 submit_us=0 device_us=0
                         p1: setup_us=0 submit_us=0 device_us=0
@@ -90,16 +90,16 @@ GpuSortPreservingMergeExec: [nation@0 ASC NULLS LAST, o_year@1 DESC], setup_us=0
                         p5: setup_us=0 submit_us=0 device_us=0
                         p6: setup_us=0 submit_us=0 device_us=0
                         p7: setup_us=0 submit_us=0 device_us=0
-                        GpuRepartitionExec: partitioning=Hash([n_nationkey@0], 8), input_partitions=1, setup_us=0 submit_us=1200 device_us=1191
-                          p0: setup_us=0 submit_us=344 device_us=343
-                          p1: setup_us=0 submit_us=135 device_us=133
-                          p2: setup_us=0 submit_us=133 device_us=132
-                          p3: setup_us=0 submit_us=132 device_us=131
+                        GpuRepartitionExec: partitioning=Hash([n_nationkey@0], 8), input_partitions=1, setup_us=0 submit_us=1197 device_us=1189
+                          p0: setup_us=0 submit_us=362 device_us=361
+                          p1: setup_us=0 submit_us=130 device_us=129
+                          p2: setup_us=0 submit_us=131 device_us=130
+                          p3: setup_us=0 submit_us=129 device_us=128
                           p4: setup_us=0 submit_us=60 device_us=59
-                          p5: setup_us=0 submit_us=135 device_us=134
-                          p6: setup_us=0 submit_us=132 device_us=131
-                          p7: setup_us=0 submit_us=129 device_us=128
-                          GpuScanExec: table=nation, projections=[n_nationkey, n_name], setup_us=2 submit_us=810 device_us=806
+                          p5: setup_us=0 submit_us=129 device_us=128
+                          p6: setup_us=0 submit_us=128 device_us=127
+                          p7: setup_us=0 submit_us=128 device_us=127
+                          GpuScanExec: table=nation, projections=[n_nationkey, n_name], setup_us=1 submit_us=811 device_us=806
                       GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
                         p0: setup_us=0 submit_us=0 device_us=0
                         p1: setup_us=0 submit_us=0 device_us=0
@@ -109,25 +109,25 @@ GpuSortPreservingMergeExec: [nation@0 ASC NULLS LAST, o_year@1 DESC], setup_us=0
                         p5: setup_us=0 submit_us=0 device_us=0
                         p6: setup_us=0 submit_us=0 device_us=0
                         p7: setup_us=0 submit_us=0 device_us=0
-                        GpuRepartitionExec: partitioning=Hash([s_nationkey@3], 8), input_partitions=1, setup_us=0 submit_us=346 device_us=348
-                          p0: setup_us=0 submit_us=202 device_us=235
-                          p1: setup_us=0 submit_us=23 device_us=18
-                          p2: setup_us=0 submit_us=25 device_us=17
-                          p3: setup_us=0 submit_us=24 device_us=20
+                        GpuRepartitionExec: partitioning=Hash([s_nationkey@3], 8), input_partitions=1, setup_us=0 submit_us=346 device_us=345
+                          p0: setup_us=0 submit_us=206 device_us=232
+                          p1: setup_us=0 submit_us=25 device_us=18
+                          p2: setup_us=0 submit_us=22 device_us=16
+                          p3: setup_us=0 submit_us=22 device_us=19
                           p4: setup_us=0 submit_us=5 device_us=1
-                          p5: setup_us=0 submit_us=22 device_us=18
-                          p6: setup_us=0 submit_us=22 device_us=20
-                          p7: setup_us=0 submit_us=23 device_us=19
-                          GpuCoalescePartitionsExec, setup_us=0 submit_us=152 device_us=155
-                            GpuProjectExec: expr=[l_quantity@1 as l_quantity, l_extendedprice@2 as l_extendedprice, l_discount@3 as l_discount, s_nationkey@4 as s_nationkey, ps_supplycost@5 as ps_supplycost, o_orderdate@0 as o_orderdate], setup_us=0 submit_us=199 device_us=195
-                              p0: setup_us=0 submit_us=25 device_us=24
-                              p1: setup_us=0 submit_us=23 device_us=23
-                              p2: setup_us=0 submit_us=25 device_us=24
-                              p3: setup_us=0 submit_us=24 device_us=24
-                              p4: setup_us=0 submit_us=23 device_us=22
-                              p5: setup_us=0 submit_us=24 device_us=24
+                          p5: setup_us=0 submit_us=22 device_us=19
+                          p6: setup_us=0 submit_us=22 device_us=21
+                          p7: setup_us=0 submit_us=22 device_us=19
+                          GpuCoalescePartitionsExec, setup_us=0 submit_us=152 device_us=154
+                            GpuProjectExec: expr=[l_quantity@1 as l_quantity, l_extendedprice@2 as l_extendedprice, l_discount@3 as l_discount, s_nationkey@4 as s_nationkey, ps_supplycost@5 as ps_supplycost, o_orderdate@0 as o_orderdate], setup_us=0 submit_us=200 device_us=194
+                              p0: setup_us=0 submit_us=26 device_us=25
+                              p1: setup_us=0 submit_us=26 device_us=25
+                              p2: setup_us=0 submit_us=24 device_us=24
+                              p3: setup_us=0 submit_us=24 device_us=23
+                              p4: setup_us=0 submit_us=25 device_us=24
+                              p5: setup_us=0 submit_us=24 device_us=23
                               p6: setup_us=0 submit_us=24 device_us=24
-                              p7: setup_us=0 submit_us=31 device_us=30
+                              p7: setup_us=0 submit_us=27 device_us=26
                               GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
                                 p0: setup_us=0 submit_us=0 device_us=0
                                 p1: setup_us=0 submit_us=0 device_us=0
@@ -137,15 +137,15 @@ GpuSortPreservingMergeExec: [nation@0 ASC NULLS LAST, o_year@1 DESC], setup_us=0
                                 p5: setup_us=0 submit_us=0 device_us=0
                                 p6: setup_us=0 submit_us=0 device_us=0
                                 p7: setup_us=0 submit_us=0 device_us=0
-                                GpuHashJoinExec: join_type=Inner, on=[(o_orderkey@0, l_orderkey@0)], projection=[1, 3, 4, 5, 6, 7], setup_us=0 submit_us=1747 device_us=1742
-                                  p0: setup_us=0 submit_us=220 device_us=219
-                                  p1: setup_us=0 submit_us=217 device_us=216
-                                  p2: setup_us=0 submit_us=212 device_us=211
-                                  p3: setup_us=0 submit_us=212 device_us=212
-                                  p4: setup_us=0 submit_us=225 device_us=225
-                                  p5: setup_us=0 submit_us=225 device_us=224
-                                  p6: setup_us=0 submit_us=220 device_us=219
-                                  p7: setup_us=0 submit_us=216 device_us=216
+                                GpuHashJoinExec: join_type=Inner, on=[(o_orderkey@0, l_orderkey@0)], projection=[1, 3, 4, 5, 6, 7], setup_us=0 submit_us=1744 device_us=1736
+                                  p0: setup_us=0 submit_us=227 device_us=226
+                                  p1: setup_us=0 submit_us=219 device_us=218
+                                  p2: setup_us=0 submit_us=219 device_us=218
+                                  p3: setup_us=0 submit_us=215 device_us=214
+                                  p4: setup_us=0 submit_us=214 device_us=213
+                                  p5: setup_us=0 submit_us=213 device_us=212
+                                  p6: setup_us=0 submit_us=214 device_us=213
+                                  p7: setup_us=0 submit_us=223 device_us=222
                                   GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
                                     p0: setup_us=0 submit_us=0 device_us=0
                                     p1: setup_us=0 submit_us=0 device_us=0
@@ -155,25 +155,25 @@ GpuSortPreservingMergeExec: [nation@0 ASC NULLS LAST, o_year@1 DESC], setup_us=0
                                     p5: setup_us=0 submit_us=0 device_us=0
                                     p6: setup_us=0 submit_us=0 device_us=0
                                     p7: setup_us=0 submit_us=0 device_us=0
-                                    GpuRepartitionExec: partitioning=Hash([o_orderkey@0], 8), input_partitions=1, setup_us=0 submit_us=420 device_us=464
-                                      p0: setup_us=0 submit_us=344 device_us=391
-                                      p1: setup_us=0 submit_us=11 device_us=10
-                                      p2: setup_us=0 submit_us=11 device_us=11
+                                    GpuRepartitionExec: partitioning=Hash([o_orderkey@0], 8), input_partitions=1, setup_us=0 submit_us=423 device_us=466
+                                      p0: setup_us=0 submit_us=349 device_us=393
+                                      p1: setup_us=0 submit_us=11 device_us=11
+                                      p2: setup_us=0 submit_us=11 device_us=10
                                       p3: setup_us=0 submit_us=11 device_us=10
-                                      p4: setup_us=0 submit_us=11 device_us=10
+                                      p4: setup_us=0 submit_us=10 device_us=10
                                       p5: setup_us=0 submit_us=10 device_us=11
                                       p6: setup_us=0 submit_us=11 device_us=11
-                                      p7: setup_us=0 submit_us=11 device_us=10
-                                      GpuCoalescePartitionsExec, setup_us=0 submit_us=63 device_us=73
-                                        GpuScanExec: table=orders, projections=[o_orderkey, o_orderdate], setup_us=9 submit_us=179660 device_us=179650
-                                          p0: setup_us=1 submit_us=25362 device_us=25361
-                                          p1: setup_us=2 submit_us=24835 device_us=24834
-                                          p2: setup_us=1 submit_us=24784 device_us=24782
-                                          p3: setup_us=1 submit_us=24757 device_us=24756
-                                          p4: setup_us=1 submit_us=24796 device_us=24795
-                                          p5: setup_us=1 submit_us=24817 device_us=24815
-                                          p6: setup_us=1 submit_us=24578 device_us=24577
-                                          p7: setup_us=1 submit_us=5731 device_us=5730
+                                      p7: setup_us=0 submit_us=10 device_us=10
+                                      GpuCoalescePartitionsExec, setup_us=0 submit_us=63 device_us=72
+                                        GpuScanExec: table=orders, projections=[o_orderkey, o_orderdate], setup_us=10 submit_us=179356 device_us=179345
+                                          p0: setup_us=1 submit_us=25446 device_us=25445
+                                          p1: setup_us=2 submit_us=24718 device_us=24716
+                                          p2: setup_us=2 submit_us=24719 device_us=24718
+                                          p3: setup_us=1 submit_us=24799 device_us=24798
+                                          p4: setup_us=1 submit_us=24722 device_us=24721
+                                          p5: setup_us=1 submit_us=24613 device_us=24611
+                                          p6: setup_us=1 submit_us=24593 device_us=24591
+                                          p7: setup_us=1 submit_us=5746 device_us=5745
                                   GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
                                     p0: setup_us=0 submit_us=0 device_us=0
                                     p1: setup_us=0 submit_us=0 device_us=0
@@ -183,25 +183,25 @@ GpuSortPreservingMergeExec: [nation@0 ASC NULLS LAST, o_year@1 DESC], setup_us=0
                                     p5: setup_us=0 submit_us=0 device_us=0
                                     p6: setup_us=0 submit_us=0 device_us=0
                                     p7: setup_us=0 submit_us=0 device_us=0
-                                    GpuRepartitionExec: partitioning=Hash([l_orderkey@0], 8), input_partitions=1, setup_us=0 submit_us=344 device_us=355
-                                      p0: setup_us=0 submit_us=189 device_us=224
-                                      p1: setup_us=0 submit_us=22 device_us=17
-                                      p2: setup_us=0 submit_us=22 device_us=19
+                                    GpuRepartitionExec: partitioning=Hash([l_orderkey@0], 8), input_partitions=1, setup_us=0 submit_us=345 device_us=355
+                                      p0: setup_us=0 submit_us=190 device_us=225
+                                      p1: setup_us=0 submit_us=22 device_us=18
+                                      p2: setup_us=0 submit_us=21 device_us=17
                                       p3: setup_us=0 submit_us=24 device_us=19
-                                      p4: setup_us=0 submit_us=21 device_us=18
-                                      p5: setup_us=0 submit_us=21 device_us=20
-                                      p6: setup_us=0 submit_us=22 device_us=19
-                                      p7: setup_us=0 submit_us=23 device_us=19
-                                      GpuCoalescePartitionsExec, setup_us=0 submit_us=149 device_us=152
-                                        GpuProjectExec: expr=[l_orderkey@1 as l_orderkey, l_quantity@2 as l_quantity, l_extendedprice@3 as l_extendedprice, l_discount@4 as l_discount, s_nationkey@5 as s_nationkey, ps_supplycost@0 as ps_supplycost], setup_us=0 submit_us=193 device_us=186
-                                          p0: setup_us=0 submit_us=25 device_us=24
-                                          p1: setup_us=0 submit_us=24 device_us=23
-                                          p2: setup_us=0 submit_us=23 device_us=23
+                                      p4: setup_us=0 submit_us=23 device_us=18
+                                      p5: setup_us=0 submit_us=22 device_us=21
+                                      p6: setup_us=0 submit_us=21 device_us=18
+                                      p7: setup_us=0 submit_us=22 device_us=19
+                                      GpuCoalescePartitionsExec, setup_us=0 submit_us=154 device_us=158
+                                        GpuProjectExec: expr=[l_orderkey@1 as l_orderkey, l_quantity@2 as l_quantity, l_extendedprice@3 as l_extendedprice, l_discount@4 as l_discount, s_nationkey@5 as s_nationkey, ps_supplycost@0 as ps_supplycost], setup_us=0 submit_us=194 device_us=188
+                                          p0: setup_us=0 submit_us=26 device_us=25
+                                          p1: setup_us=0 submit_us=24 device_us=24
+                                          p2: setup_us=0 submit_us=25 device_us=24
                                           p3: setup_us=0 submit_us=24 device_us=23
-                                          p4: setup_us=0 submit_us=24 device_us=23
+                                          p4: setup_us=0 submit_us=23 device_us=23
                                           p5: setup_us=0 submit_us=25 device_us=24
-                                          p6: setup_us=0 submit_us=23 device_us=22
-                                          p7: setup_us=0 submit_us=25 device_us=24
+                                          p6: setup_us=0 submit_us=24 device_us=23
+                                          p7: setup_us=0 submit_us=23 device_us=22
                                           GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
                                             p0: setup_us=0 submit_us=0 device_us=0
                                             p1: setup_us=0 submit_us=0 device_us=0
@@ -211,15 +211,15 @@ GpuSortPreservingMergeExec: [nation@0 ASC NULLS LAST, o_year@1 DESC], setup_us=0
                                             p5: setup_us=0 submit_us=0 device_us=0
                                             p6: setup_us=0 submit_us=0 device_us=0
                                             p7: setup_us=0 submit_us=0 device_us=0
-                                            GpuHashJoinExec: join_type=Inner, on=[(ps_suppkey@1, l_suppkey@2), (ps_partkey@0, l_partkey@1)], projection=[2, 3, 6, 7, 8, 9], setup_us=0 submit_us=2170 device_us=2162
-                                              p0: setup_us=0 submit_us=288 device_us=287
-                                              p1: setup_us=0 submit_us=276 device_us=275
-                                              p2: setup_us=0 submit_us=265 device_us=264
-                                              p3: setup_us=0 submit_us=278 device_us=277
-                                              p4: setup_us=0 submit_us=269 device_us=268
-                                              p5: setup_us=0 submit_us=264 device_us=263
-                                              p6: setup_us=0 submit_us=267 device_us=266
-                                              p7: setup_us=0 submit_us=263 device_us=262
+                                            GpuHashJoinExec: join_type=Inner, on=[(ps_suppkey@1, l_suppkey@2), (ps_partkey@0, l_partkey@1)], projection=[2, 3, 6, 7, 8, 9], setup_us=1 submit_us=2135 device_us=2128
+                                              p0: setup_us=1 submit_us=267 device_us=266
+                                              p1: setup_us=0 submit_us=267 device_us=267
+                                              p2: setup_us=0 submit_us=267 device_us=266
+                                              p3: setup_us=0 submit_us=273 device_us=272
+                                              p4: setup_us=0 submit_us=267 device_us=266
+                                              p5: setup_us=0 submit_us=263 device_us=262
+                                              p6: setup_us=0 submit_us=265 device_us=264
+                                              p7: setup_us=0 submit_us=266 device_us=265
                                               GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
                                                 p0: setup_us=0 submit_us=0 device_us=0
                                                 p1: setup_us=0 submit_us=0 device_us=0
@@ -229,24 +229,24 @@ GpuSortPreservingMergeExec: [nation@0 ASC NULLS LAST, o_year@1 DESC], setup_us=0
                                                 p5: setup_us=0 submit_us=0 device_us=0
                                                 p6: setup_us=0 submit_us=0 device_us=0
                                                 p7: setup_us=0 submit_us=0 device_us=0
-                                                GpuRepartitionExec: partitioning=Hash([ps_suppkey@1, ps_partkey@0], 8), input_partitions=1, setup_us=0 submit_us=348 device_us=378
-                                                  p0: setup_us=0 submit_us=246 device_us=281
-                                                  p1: setup_us=0 submit_us=16 device_us=14
-                                                  p2: setup_us=0 submit_us=16 device_us=13
-                                                  p3: setup_us=0 submit_us=14 device_us=14
-                                                  p4: setup_us=0 submit_us=16 device_us=13
-                                                  p5: setup_us=0 submit_us=14 device_us=14
-                                                  p6: setup_us=0 submit_us=13 device_us=15
-                                                  p7: setup_us=0 submit_us=13 device_us=14
-                                                  GpuCoalescePartitionsExec, setup_us=0 submit_us=82 device_us=88
-                                                    GpuScanExec: table=partsupp, projections=[ps_partkey, ps_suppkey, ps_supplycost], setup_us=7 submit_us=168935 device_us=168895
-                                                      p0: setup_us=1 submit_us=26052 device_us=26018
-                                                      p1: setup_us=1 submit_us=25642 device_us=25641
-                                                      p2: setup_us=1 submit_us=25766 device_us=25765
-                                                      p3: setup_us=1 submit_us=25684 device_us=25683
-                                                      p4: setup_us=1 submit_us=25611 device_us=25610
-                                                      p5: setup_us=1 submit_us=25638 device_us=25637
-                                                      p6: setup_us=1 submit_us=14542 device_us=14541
+                                                GpuRepartitionExec: partitioning=Hash([ps_suppkey@1, ps_partkey@0], 8), input_partitions=1, setup_us=0 submit_us=361 device_us=394
+                                                  p0: setup_us=0 submit_us=255 device_us=293
+                                                  p1: setup_us=0 submit_us=15 device_us=15
+                                                  p2: setup_us=0 submit_us=15 device_us=14
+                                                  p3: setup_us=0 submit_us=15 device_us=14
+                                                  p4: setup_us=0 submit_us=16 device_us=15
+                                                  p5: setup_us=0 submit_us=15 device_us=13
+                                                  p6: setup_us=0 submit_us=15 device_us=15
+                                                  p7: setup_us=0 submit_us=15 device_us=15
+                                                  GpuCoalescePartitionsExec, setup_us=0 submit_us=85 device_us=91
+                                                    GpuScanExec: table=partsupp, projections=[ps_partkey, ps_suppkey, ps_supplycost], setup_us=9 submit_us=168878 device_us=168838
+                                                      p0: setup_us=1 submit_us=26176 device_us=26143
+                                                      p1: setup_us=2 submit_us=25646 device_us=25645
+                                                      p2: setup_us=2 submit_us=25654 device_us=25653
+                                                      p3: setup_us=1 submit_us=25642 device_us=25641
+                                                      p4: setup_us=1 submit_us=25701 device_us=25700
+                                                      p5: setup_us=1 submit_us=25641 device_us=25640
+                                                      p6: setup_us=1 submit_us=14418 device_us=14416
                                               GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
                                                 p0: setup_us=0 submit_us=0 device_us=0
                                                 p1: setup_us=0 submit_us=0 device_us=0
@@ -256,24 +256,24 @@ GpuSortPreservingMergeExec: [nation@0 ASC NULLS LAST, o_year@1 DESC], setup_us=0
                                                 p5: setup_us=0 submit_us=0 device_us=0
                                                 p6: setup_us=0 submit_us=0 device_us=0
                                                 p7: setup_us=0 submit_us=0 device_us=0
-                                                GpuRepartitionExec: partitioning=Hash([l_suppkey@2, l_partkey@1], 8), input_partitions=1, setup_us=0 submit_us=389 device_us=385
-                                                  p0: setup_us=0 submit_us=203 device_us=237
-                                                  p1: setup_us=0 submit_us=28 device_us=21
-                                                  p2: setup_us=0 submit_us=28 device_us=19
-                                                  p3: setup_us=0 submit_us=26 device_us=21
-                                                  p4: setup_us=0 submit_us=26 device_us=21
-                                                  p5: setup_us=0 submit_us=26 device_us=22
-                                                  p6: setup_us=0 submit_us=26 device_us=22
+                                                GpuRepartitionExec: partitioning=Hash([l_suppkey@2, l_partkey@1], 8), input_partitions=1, setup_us=0 submit_us=387 device_us=389
+                                                  p0: setup_us=0 submit_us=204 device_us=239
+                                                  p1: setup_us=0 submit_us=25 device_us=20
+                                                  p2: setup_us=0 submit_us=27 device_us=22
+                                                  p3: setup_us=0 submit_us=27 device_us=21
+                                                  p4: setup_us=0 submit_us=26 device_us=22
+                                                  p5: setup_us=0 submit_us=27 device_us=21
+                                                  p6: setup_us=0 submit_us=25 device_us=22
                                                   p7: setup_us=0 submit_us=26 device_us=22
-                                                  GpuCoalescePartitionsExec, setup_us=0 submit_us=176 device_us=178
-                                                    GpuProjectExec: expr=[l_orderkey@1 as l_orderkey, l_partkey@2 as l_partkey, l_suppkey@3 as l_suppkey, l_quantity@4 as l_quantity, l_extendedprice@5 as l_extendedprice, l_discount@6 as l_discount, s_nationkey@0 as s_nationkey], setup_us=0 submit_us=230 device_us=224
-                                                      p0: setup_us=0 submit_us=30 device_us=30
+                                                  GpuCoalescePartitionsExec, setup_us=0 submit_us=179 device_us=181
+                                                    GpuProjectExec: expr=[l_orderkey@1 as l_orderkey, l_partkey@2 as l_partkey, l_suppkey@3 as l_suppkey, l_quantity@4 as l_quantity, l_extendedprice@5 as l_extendedprice, l_discount@6 as l_discount, s_nationkey@0 as s_nationkey], setup_us=0 submit_us=230 device_us=223
+                                                      p0: setup_us=0 submit_us=30 device_us=29
                                                       p1: setup_us=0 submit_us=29 device_us=28
                                                       p2: setup_us=0 submit_us=28 device_us=27
-                                                      p3: setup_us=0 submit_us=29 device_us=28
+                                                      p3: setup_us=0 submit_us=30 device_us=29
                                                       p4: setup_us=0 submit_us=28 device_us=27
-                                                      p5: setup_us=0 submit_us=30 device_us=29
-                                                      p6: setup_us=0 submit_us=28 device_us=28
+                                                      p5: setup_us=0 submit_us=27 device_us=27
+                                                      p6: setup_us=0 submit_us=30 device_us=29
                                                       p7: setup_us=0 submit_us=28 device_us=27
                                                       GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
                                                         p0: setup_us=0 submit_us=0 device_us=0
@@ -284,15 +284,15 @@ GpuSortPreservingMergeExec: [nation@0 ASC NULLS LAST, o_year@1 DESC], setup_us=0
                                                         p5: setup_us=0 submit_us=0 device_us=0
                                                         p6: setup_us=0 submit_us=0 device_us=0
                                                         p7: setup_us=0 submit_us=0 device_us=0
-                                                        GpuHashJoinExec: join_type=Inner, on=[(s_suppkey@0, l_suppkey@2)], projection=[1, 2, 3, 4, 5, 6, 7], setup_us=0 submit_us=1499 device_us=1492
-                                                          p0: setup_us=0 submit_us=192 device_us=192
-                                                          p1: setup_us=0 submit_us=194 device_us=193
-                                                          p2: setup_us=0 submit_us=182 device_us=181
-                                                          p3: setup_us=0 submit_us=189 device_us=188
-                                                          p4: setup_us=0 submit_us=182 device_us=181
-                                                          p5: setup_us=0 submit_us=187 device_us=186
-                                                          p6: setup_us=0 submit_us=189 device_us=188
-                                                          p7: setup_us=0 submit_us=184 device_us=183
+                                                        GpuHashJoinExec: join_type=Inner, on=[(s_suppkey@0, l_suppkey@2)], projection=[1, 2, 3, 4, 5, 6, 7], setup_us=0 submit_us=1525 device_us=1517
+                                                          p0: setup_us=0 submit_us=201 device_us=200
+                                                          p1: setup_us=0 submit_us=191 device_us=190
+                                                          p2: setup_us=0 submit_us=187 device_us=186
+                                                          p3: setup_us=0 submit_us=194 device_us=193
+                                                          p4: setup_us=0 submit_us=193 device_us=192
+                                                          p5: setup_us=0 submit_us=185 device_us=184
+                                                          p6: setup_us=0 submit_us=186 device_us=185
+                                                          p7: setup_us=0 submit_us=188 device_us=187
                                                           GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
                                                             p0: setup_us=0 submit_us=0 device_us=0
                                                             p1: setup_us=0 submit_us=0 device_us=0
@@ -302,18 +302,18 @@ GpuSortPreservingMergeExec: [nation@0 ASC NULLS LAST, o_year@1 DESC], setup_us=0
                                                             p5: setup_us=0 submit_us=0 device_us=0
                                                             p6: setup_us=0 submit_us=0 device_us=0
                                                             p7: setup_us=0 submit_us=0 device_us=0
-                                                            GpuRepartitionExec: partitioning=Hash([s_suppkey@0], 8), input_partitions=1, setup_us=0 submit_us=185 device_us=178
-                                                              p0: setup_us=0 submit_us=98 device_us=98
-                                                              p1: setup_us=0 submit_us=10 device_us=11
-                                                              p2: setup_us=0 submit_us=10 device_us=10
-                                                              p3: setup_us=0 submit_us=10 device_us=11
-                                                              p4: setup_us=0 submit_us=9 device_us=9
-                                                              p5: setup_us=0 submit_us=24 device_us=15
-                                                              p6: setup_us=0 submit_us=14 device_us=15
-                                                              p7: setup_us=0 submit_us=10 device_us=9
-                                                              GpuCoalescePartitionsExec, setup_us=0 submit_us=14 device_us=14
+                                                            GpuRepartitionExec: partitioning=Hash([s_suppkey@0], 8), input_partitions=1, setup_us=0 submit_us=153 device_us=151
+                                                              p0: setup_us=0 submit_us=89 device_us=89
+                                                              p1: setup_us=0 submit_us=10 device_us=10
+                                                              p2: setup_us=0 submit_us=9 device_us=9
+                                                              p3: setup_us=0 submit_us=9 device_us=9
+                                                              p4: setup_us=0 submit_us=9 device_us=8
+                                                              p5: setup_us=0 submit_us=9 device_us=9
+                                                              p6: setup_us=0 submit_us=9 device_us=9
+                                                              p7: setup_us=0 submit_us=9 device_us=8
+                                                              GpuCoalescePartitionsExec, setup_us=0 submit_us=13 device_us=13
                                                                 GpuRepartitionExec: partitioning=RoundRobinBatch(8), input_partitions=1, setup_us=0 submit_us=0 device_us=0
-                                                                  GpuScanExec: table=supplier, projections=[s_suppkey, s_nationkey], setup_us=1 submit_us=3173 device_us=3155
+                                                                  GpuScanExec: table=supplier, projections=[s_suppkey, s_nationkey], setup_us=1 submit_us=3193 device_us=3174
                                                           GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
                                                             p0: setup_us=0 submit_us=0 device_us=0
                                                             p1: setup_us=0 submit_us=0 device_us=0
@@ -323,16 +323,16 @@ GpuSortPreservingMergeExec: [nation@0 ASC NULLS LAST, o_year@1 DESC], setup_us=0
                                                             p5: setup_us=0 submit_us=0 device_us=0
                                                             p6: setup_us=0 submit_us=0 device_us=0
                                                             p7: setup_us=0 submit_us=0 device_us=0
-                                                            GpuRepartitionExec: partitioning=Hash([l_suppkey@2], 8), input_partitions=1, setup_us=0 submit_us=353 device_us=353
-                                                              p0: setup_us=0 submit_us=195 device_us=221
+                                                            GpuRepartitionExec: partitioning=Hash([l_suppkey@2], 8), input_partitions=1, setup_us=0 submit_us=365 device_us=367
+                                                              p0: setup_us=0 submit_us=199 device_us=225
                                                               p1: setup_us=0 submit_us=24 device_us=18
-                                                              p2: setup_us=0 submit_us=22 device_us=17
-                                                              p3: setup_us=0 submit_us=23 device_us=19
-                                                              p4: setup_us=0 submit_us=23 device_us=19
-                                                              p5: setup_us=0 submit_us=22 device_us=18
-                                                              p6: setup_us=0 submit_us=22 device_us=19
-                                                              p7: setup_us=0 submit_us=22 device_us=22
-                                                              GpuCoalescePartitionsExec, setup_us=0 submit_us=156 device_us=160
+                                                              p2: setup_us=0 submit_us=23 device_us=18
+                                                              p3: setup_us=0 submit_us=24 device_us=19
+                                                              p4: setup_us=0 submit_us=24 device_us=18
+                                                              p5: setup_us=0 submit_us=24 device_us=21
+                                                              p6: setup_us=0 submit_us=23 device_us=24
+                                                              p7: setup_us=0 submit_us=24 device_us=24
+                                                              GpuCoalescePartitionsExec, setup_us=0 submit_us=156 device_us=159
                                                                 GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
                                                                   p0: setup_us=0 submit_us=0 device_us=0
                                                                   p1: setup_us=0 submit_us=0 device_us=0
@@ -342,15 +342,15 @@ GpuSortPreservingMergeExec: [nation@0 ASC NULLS LAST, o_year@1 DESC], setup_us=0
                                                                   p5: setup_us=0 submit_us=0 device_us=0
                                                                   p6: setup_us=0 submit_us=0 device_us=0
                                                                   p7: setup_us=0 submit_us=0 device_us=0
-                                                                  GpuHashJoinExec: join_type=Inner, on=[(p_partkey@0, l_partkey@1)], projection=[1, 2, 3, 4, 5, 6], setup_us=1 submit_us=3800 device_us=2316
-                                                                    p0: setup_us=1 submit_us=1781 device_us=303
-                                                                    p1: setup_us=0 submit_us=291 device_us=290
-                                                                    p2: setup_us=0 submit_us=289 device_us=288
-                                                                    p3: setup_us=0 submit_us=292 device_us=291
-                                                                    p4: setup_us=0 submit_us=283 device_us=282
-                                                                    p5: setup_us=0 submit_us=292 device_us=291
-                                                                    p6: setup_us=0 submit_us=286 device_us=286
-                                                                    p7: setup_us=0 submit_us=286 device_us=285
+                                                                  GpuHashJoinExec: join_type=Inner, on=[(p_partkey@0, l_partkey@1)], projection=[1, 2, 3, 4, 5, 6], setup_us=1 submit_us=3846 device_us=2368
+                                                                    p0: setup_us=1 submit_us=1789 device_us=319
+                                                                    p1: setup_us=0 submit_us=294 device_us=292
+                                                                    p2: setup_us=0 submit_us=290 device_us=289
+                                                                    p3: setup_us=0 submit_us=295 device_us=294
+                                                                    p4: setup_us=0 submit_us=290 device_us=289
+                                                                    p5: setup_us=0 submit_us=289 device_us=288
+                                                                    p6: setup_us=0 submit_us=308 device_us=307
+                                                                    p7: setup_us=0 submit_us=291 device_us=290
                                                                     GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
                                                                       p0: setup_us=0 submit_us=0 device_us=0
                                                                       p1: setup_us=0 submit_us=0 device_us=0
@@ -360,25 +360,25 @@ GpuSortPreservingMergeExec: [nation@0 ASC NULLS LAST, o_year@1 DESC], setup_us=0
                                                                       p5: setup_us=0 submit_us=0 device_us=0
                                                                       p6: setup_us=0 submit_us=0 device_us=0
                                                                       p7: setup_us=0 submit_us=0 device_us=0
-                                                                      GpuRepartitionExec: partitioning=Hash([p_partkey@0], 8), input_partitions=1, setup_us=0 submit_us=114 device_us=112
-                                                                        p0: setup_us=0 submit_us=78 device_us=78
-                                                                        p1: setup_us=0 submit_us=5 device_us=5
-                                                                        p2: setup_us=0 submit_us=5 device_us=5
+                                                                      GpuRepartitionExec: partitioning=Hash([p_partkey@0], 8), input_partitions=1, setup_us=0 submit_us=118 device_us=115
+                                                                        p0: setup_us=0 submit_us=80 device_us=80
+                                                                        p1: setup_us=0 submit_us=6 device_us=5
+                                                                        p2: setup_us=0 submit_us=5 device_us=4
                                                                         p3: setup_us=0 submit_us=5 device_us=5
-                                                                        p4: setup_us=0 submit_us=6 device_us=5
-                                                                        p5: setup_us=0 submit_us=5 device_us=5
-                                                                        p6: setup_us=0 submit_us=5 device_us=4
+                                                                        p4: setup_us=0 submit_us=6 device_us=6
+                                                                        p5: setup_us=0 submit_us=6 device_us=5
+                                                                        p6: setup_us=0 submit_us=5 device_us=5
                                                                         p7: setup_us=0 submit_us=5 device_us=5
-                                                                        GpuCoalescePartitionsExec, setup_us=0 submit_us=10 device_us=11
+                                                                        GpuCoalescePartitionsExec, setup_us=0 submit_us=10 device_us=10
                                                                           GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
                                                                             p0: setup_us=0 submit_us=0 device_us=0
                                                                             p1: setup_us=0 submit_us=0 device_us=0
-                                                                            GpuFilterExec: predicate=p_name@1 LIKE %green%, projection=[0], setup_us=1 submit_us=632 device_us=629
-                                                                              p0: setup_us=1 submit_us=332 device_us=331
-                                                                              p1: setup_us=0 submit_us=300 device_us=298
-                                                                              GpuScanExec: table=part, projections=[p_partkey, p_name], setup_us=2 submit_us=139065 device_us=139062
-                                                                                p0: setup_us=1 submit_us=85836 device_us=85834
-                                                                                p1: setup_us=1 submit_us=53229 device_us=53228
+                                                                            GpuFilterExec: predicate=p_name@1 LIKE %green%, projection=[0], setup_us=1 submit_us=631 device_us=629
+                                                                              p0: setup_us=1 submit_us=328 device_us=327
+                                                                              p1: setup_us=0 submit_us=303 device_us=302
+                                                                              GpuScanExec: table=part, projections=[p_partkey, p_name], setup_us=2 submit_us=139107 device_us=139105
+                                                                                p0: setup_us=1 submit_us=85790 device_us=85789
+                                                                                p1: setup_us=1 submit_us=53317 device_us=53316
                                                                     GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
                                                                       p0: setup_us=0 submit_us=0 device_us=0
                                                                       p1: setup_us=0 submit_us=0 device_us=0
@@ -388,32 +388,32 @@ GpuSortPreservingMergeExec: [nation@0 ASC NULLS LAST, o_year@1 DESC], setup_us=0
                                                                       p5: setup_us=0 submit_us=0 device_us=0
                                                                       p6: setup_us=0 submit_us=0 device_us=0
                                                                       p7: setup_us=0 submit_us=0 device_us=0
-                                                                      GpuRepartitionExec: partitioning=Hash([l_partkey@1], 8), input_partitions=1, setup_us=0 submit_us=1442 device_us=2927
-                                                                        p0: setup_us=0 submit_us=1191 device_us=2408
-                                                                        p1: setup_us=0 submit_us=35 device_us=74
-                                                                        p2: setup_us=0 submit_us=39 device_us=73
-                                                                        p3: setup_us=0 submit_us=35 device_us=75
-                                                                        p4: setup_us=0 submit_us=32 device_us=74
-                                                                        p5: setup_us=0 submit_us=33 device_us=75
-                                                                        p6: setup_us=0 submit_us=38 device_us=74
-                                                                        p7: setup_us=0 submit_us=39 device_us=74
-                                                                        GpuCoalescePartitionsExec, setup_us=0 submit_us=358 device_us=408
-                                                                          GpuScanExec: table=lineitem, projections=[l_orderkey, l_partkey, l_suppkey, l_quantity, l_extendedprice, l_discount], setup_us=15 submit_us=275033 device_us=275026
-                                                                            p0: setup_us=1 submit_us=34414 device_us=34413
-                                                                            p1: setup_us=2 submit_us=34300 device_us=34299
-                                                                            p2: setup_us=2 submit_us=34340 device_us=34339
-                                                                            p3: setup_us=2 submit_us=34394 device_us=34394
-                                                                            p4: setup_us=2 submit_us=34451 device_us=34450
-                                                                            p5: setup_us=2 submit_us=34363 device_us=34362
-                                                                            p6: setup_us=2 submit_us=34375 device_us=34374
-                                                                            p7: setup_us=2 submit_us=34396 device_us=34395
+                                                                      GpuRepartitionExec: partitioning=Hash([l_partkey@1], 8), input_partitions=1, setup_us=0 submit_us=1476 device_us=2961
+                                                                        p0: setup_us=0 submit_us=1198 device_us=2413
+                                                                        p1: setup_us=0 submit_us=42 device_us=78
+                                                                        p2: setup_us=0 submit_us=43 device_us=78
+                                                                        p3: setup_us=0 submit_us=36 device_us=79
+                                                                        p4: setup_us=0 submit_us=38 device_us=78
+                                                                        p5: setup_us=0 submit_us=41 device_us=79
+                                                                        p6: setup_us=0 submit_us=43 device_us=78
+                                                                        p7: setup_us=0 submit_us=35 device_us=78
+                                                                        GpuCoalescePartitionsExec, setup_us=0 submit_us=362 device_us=409
+                                                                          GpuScanExec: table=lineitem, projections=[l_orderkey, l_partkey, l_suppkey, l_quantity, l_extendedprice, l_discount], setup_us=17 submit_us=274861 device_us=274851
+                                                                            p0: setup_us=2 submit_us=34490 device_us=34489
+                                                                            p1: setup_us=2 submit_us=34389 device_us=34388
+                                                                            p2: setup_us=2 submit_us=34333 device_us=34331
+                                                                            p3: setup_us=2 submit_us=34300 device_us=34299
+                                                                            p4: setup_us=2 submit_us=34318 device_us=34317
+                                                                            p5: setup_us=2 submit_us=34264 device_us=34263
+                                                                            p6: setup_us=2 submit_us=34429 device_us=34428
+                                                                            p7: setup_us=3 submit_us=34338 device_us=34336
 
 # timing_mode = how the numbers were taken, and what they MEAN. sync: the region ends in a cudaStreamSynchronize, so submit_us contains the device execution and device_us is 0. events: no explicit drain, and CUDA events bracket the device work as device_us. submit_us is NOT launch cost in either mode — cuDF and rmm synchronize internally, so the host waits for most of what it submits and submit_us tracks device_us closely. Only total_us is comparable across the two.
 # setup_us = host time before the node's first device touch (flatbuffer decode, handle lookups, AST build) — the prologue bare cuDF has no analogue for, which is why it is fitted as its own constant. submit_us / device_us: see timing_mode.
 # sync_floor_us = cost of the SYNC measurement itself (empty timed region: clock + cudaStreamSynchronize on an idle stream). Measured in both modes: under sync it is the resolution floor every node time INCLUDES, once PER OUTPUT PARTITION; under events it is the per-region stall that is no longer paid. Do not subtract it.
 # nodes_total_us = Σ setup_us + Σ submit_us, the HOST side of the walk. nodes_device_us is deliberately NOT added to it — the host ran while the device did, so the two are concurrent spans of the same clock. Device regions are on one stream in program order, so nodes_device_us is disjoint and <= total_us; the gap is stream idle, i.e. the device waiting through host prologue. total_us = the whole query, end to end (parse + plan + serialize + node walk + materialize).
-# build_profile = how the harness itself was compiled. total_us MINUS nodes_total_us is that Rust; records from different profiles are not comparable on it. Node times are device work and barely move.
-# allocator = the rmm device resource the node times were taken under. Without a pool every cuDF intermediate is a cudaMalloc/cudaFree round trip, charged to the node that allocated it — so it inflates the largest-output nodes hardest and moves the PROFILE, not only the scale. Records under different allocators are not comparable, node for node or in total.
+# build_profile = how the harness itself was compiled. Always a release build; total_us MINUS nodes_total_us is that Rust, and node times are device work and barely move.
+# allocator = the rmm device resource the node times were taken under. Always a pool: with rmm's default every cuDF intermediate is a cudaMalloc/cudaFree round trip charged to the node that allocated it, which moves the PROFILE and not only the scale. The sizes vary with free memory when the pool was built.
 # shared_work_charged_to = which p<k> sub-line carries work a node does once for all of its output partitions. A hash repartition concatenates its input and scatters it in a single operation, and that time is billed to p0 — so p0 standing far above its siblings is the accounting, not skew. Sub-lines sum to their node line either way. Written whether or not this plan has a repartition.
 build_profile=benchmarks opt-level=3
 allocator=rmm-pool initial=118.3GiB max=132.3GiB of 139.2GiB free on a discrete device
@@ -421,8 +421,8 @@ shared_work_charged_to=p0
 timing_mode=events
 sync_floor_us=1
 nodes_at_or_below_floor=18/60
-nodes_setup_us=41
-nodes_submit_us=804768
-nodes_device_us=804766
-nodes_total_us=804809
-total_us=814271
+nodes_setup_us=49
+nodes_submit_us=804434
+nodes_device_us=804431
+nodes_total_us=804483
+total_us=814288

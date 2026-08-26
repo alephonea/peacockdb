@@ -1,76 +1,76 @@
-GpuSortExec: expr=[channel@0 ASC, id@1 ASC], fetch=100, setup_us=1 submit_us=1866 device_us=1865
-  GpuProjectExec: expr=[channel@0 as channel, id@1 as id, sum(x.sales)@3 as sales, sum(x.returns_)@4 as returns_, sum(x.profit)@5 as profit], setup_us=0 submit_us=124 device_us=123
+GpuSortExec: expr=[channel@0 ASC, id@1 ASC], fetch=100, setup_us=1 submit_us=1865 device_us=1864
+  GpuProjectExec: expr=[channel@0 as channel, id@1 as id, sum(x.sales)@3 as sales, sum(x.returns_)@4 as returns_, sum(x.profit)@5 as profit], setup_us=0 submit_us=120 device_us=119
     GpuAggregateExec: group_by=[channel, id, __grouping_id], aggr=[sum(x.sales), sum(x.returns_), sum(x.profit)], setup_us=1 submit_us=2184 device_us=2183
-      GpuCoalescePartitionsExec, setup_us=0 submit_us=208 device_us=207
-        GpuAggregateExec: group_by=[channel, id], aggr=[sum(x.sales), sum(x.returns_), sum(x.profit)], setup_us=1 submit_us=4655 device_us=4654
-          GpuUnionExec, setup_us=2 submit_us=198 device_us=197
-            GpuProjectExec: expr=[store channel as channel, concat(store, s_store_id@0) as id, sales@1 as sales, returns_@3 as returns_, profit@2 - profit_loss@4 as profit], setup_us=0 submit_us=307 device_us=311
+      GpuCoalescePartitionsExec, setup_us=0 submit_us=209 device_us=208
+        GpuAggregateExec: group_by=[channel, id], aggr=[sum(x.sales), sum(x.returns_), sum(x.profit)], setup_us=1 submit_us=4664 device_us=4663
+          GpuUnionExec, setup_us=2 submit_us=200 device_us=199
+            GpuProjectExec: expr=[store channel as channel, concat(store, s_store_id@0) as id, sales@1 as sales, returns_@3 as returns_, profit@2 - profit_loss@4 as profit], setup_us=0 submit_us=305 device_us=308
               GpuProjectExec: expr=[s_store_id@0 as s_store_id, sum(salesreturns.sales_price)@1 as sales, sum(salesreturns.profit)@2 as profit, sum(salesreturns.return_amt)@3 as returns_, sum(salesreturns.net_loss)@4 as profit_loss], setup_us=0 submit_us=39 device_us=38
                 GpuAggregateExec: group_by=[s_store_id], aggr=[sum(salesreturns.sales_price), sum(salesreturns.profit), sum(salesreturns.return_amt), sum(salesreturns.net_loss)], setup_us=0 submit_us=391 device_us=390
                   GpuCoalescePartitionsExec, setup_us=0 submit_us=67 device_us=67
-                    GpuAggregateExec: group_by=[s_store_id], aggr=[sum(salesreturns.sales_price), sum(salesreturns.profit), sum(salesreturns.return_amt), sum(salesreturns.net_loss)], setup_us=1 submit_us=1999 device_us=1998
-                      GpuProjectExec: expr=[sales_price@1 as sales_price, profit@2 as profit, return_amt@3 as return_amt, net_loss@4 as net_loss, s_store_id@0 as s_store_id], setup_us=0 submit_us=82 device_us=81
+                    GpuAggregateExec: group_by=[s_store_id], aggr=[sum(salesreturns.sales_price), sum(salesreturns.profit), sum(salesreturns.return_amt), sum(salesreturns.net_loss)], setup_us=1 submit_us=2013 device_us=2012
+                      GpuProjectExec: expr=[sales_price@1 as sales_price, profit@2 as profit, return_amt@3 as return_amt, net_loss@4 as net_loss, s_store_id@0 as s_store_id], setup_us=0 submit_us=80 device_us=79
                         GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                          GpuHashJoinExec: join_type=Inner, on=[(s_store_sk@0, store_sk@0)], projection=[1, 3, 4, 5, 6], setup_us=1 submit_us=473 device_us=472
-                            GpuScanExec: table=store, projections=[s_store_sk, s_store_id], setup_us=2 submit_us=829 device_us=824
+                          GpuHashJoinExec: join_type=Inner, on=[(s_store_sk@0, store_sk@0)], projection=[1, 3, 4, 5, 6], setup_us=1 submit_us=460 device_us=459
+                            GpuScanExec: table=store, projections=[s_store_sk, s_store_id], setup_us=2 submit_us=854 device_us=849
                             GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                              GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, date_sk@1)], projection=[1, 3, 4, 5, 6], setup_us=1 submit_us=677 device_us=676
+                              GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, date_sk@1)], projection=[1, 3, 4, 5, 6], setup_us=1 submit_us=679 device_us=678
                                 GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                                  GpuFilterExec: predicate=d_date@1 >= 2000-08-23 AND d_date@1 <= 2000-09-06, projection=[0], setup_us=16 submit_us=139 device_us=138
-                                    GpuScanExec: table=date_dim, projections=[d_date_sk, d_date], setup_us=2 submit_us=16467 device_us=16466
-                                GpuUnionExec, setup_us=0 submit_us=558 device_us=557
-                                  GpuProjectExec: expr=[ss_store_sk@1 as store_sk, ss_sold_date_sk@0 as date_sk, ss_ext_sales_price@2 as sales_price, ss_net_profit@3 as profit, Some(0),7,2 as return_amt, Some(0),7,2 as net_loss], setup_us=0 submit_us=233 device_us=246
-                                    GpuScanExec: table=store_sales, projections=[ss_sold_date_sk, ss_store_sk, ss_ext_sales_price, ss_net_profit], setup_us=2 submit_us=11050 device_us=11049
-                                  GpuProjectExec: expr=[sr_store_sk@1 as store_sk, sr_returned_date_sk@0 as date_sk, Some(0),7,2 as sales_price, Some(0),7,2 as profit, sr_return_amt@2 as return_amt, sr_net_loss@3 as net_loss], setup_us=0 submit_us=128 device_us=129
-                                    GpuScanExec: table=store_returns, projections=[sr_returned_date_sk, sr_store_sk, sr_return_amt, sr_net_loss], setup_us=2 submit_us=8076 device_us=8066
-            GpuProjectExec: expr=[catalog channel as channel, concat(catalog_page, cp_catalog_page_id@0) as id, sales@1 as sales, returns_@3 as returns_, profit@2 - profit_loss@4 as profit], setup_us=0 submit_us=395 device_us=394
-              GpuProjectExec: expr=[cp_catalog_page_id@0 as cp_catalog_page_id, sum(salesreturns.sales_price)@1 as sales, sum(salesreturns.profit)@2 as profit, sum(salesreturns.return_amt)@3 as returns_, sum(salesreturns.net_loss)@4 as profit_loss], setup_us=0 submit_us=49 device_us=48
-                GpuAggregateExec: group_by=[cp_catalog_page_id], aggr=[sum(salesreturns.sales_price), sum(salesreturns.profit), sum(salesreturns.return_amt), sum(salesreturns.net_loss)], setup_us=0 submit_us=897 device_us=896
+                                  GpuFilterExec: predicate=d_date@1 >= 2000-08-23 AND d_date@1 <= 2000-09-06, projection=[0], setup_us=17 submit_us=142 device_us=141
+                                    GpuScanExec: table=date_dim, projections=[d_date_sk, d_date], setup_us=2 submit_us=16485 device_us=16483
+                                GpuUnionExec, setup_us=0 submit_us=577 device_us=576
+                                  GpuProjectExec: expr=[ss_store_sk@1 as store_sk, ss_sold_date_sk@0 as date_sk, ss_ext_sales_price@2 as sales_price, ss_net_profit@3 as profit, Some(0),7,2 as return_amt, Some(0),7,2 as net_loss], setup_us=1 submit_us=240 device_us=252
+                                    GpuScanExec: table=store_sales, projections=[ss_sold_date_sk, ss_store_sk, ss_ext_sales_price, ss_net_profit], setup_us=2 submit_us=11137 device_us=11136
+                                  GpuProjectExec: expr=[sr_store_sk@1 as store_sk, sr_returned_date_sk@0 as date_sk, Some(0),7,2 as sales_price, Some(0),7,2 as profit, sr_return_amt@2 as return_amt, sr_net_loss@3 as net_loss], setup_us=0 submit_us=135 device_us=135
+                                    GpuScanExec: table=store_returns, projections=[sr_returned_date_sk, sr_store_sk, sr_return_amt, sr_net_loss], setup_us=2 submit_us=8146 device_us=8139
+            GpuProjectExec: expr=[catalog channel as channel, concat(catalog_page, cp_catalog_page_id@0) as id, sales@1 as sales, returns_@3 as returns_, profit@2 - profit_loss@4 as profit], setup_us=0 submit_us=406 device_us=405
+              GpuProjectExec: expr=[cp_catalog_page_id@0 as cp_catalog_page_id, sum(salesreturns.sales_price)@1 as sales, sum(salesreturns.profit)@2 as profit, sum(salesreturns.return_amt)@3 as returns_, sum(salesreturns.net_loss)@4 as profit_loss], setup_us=0 submit_us=46 device_us=46
+                GpuAggregateExec: group_by=[cp_catalog_page_id], aggr=[sum(salesreturns.sales_price), sum(salesreturns.profit), sum(salesreturns.return_amt), sum(salesreturns.net_loss)], setup_us=0 submit_us=893 device_us=892
                   GpuCoalescePartitionsExec, setup_us=0 submit_us=134 device_us=133
-                    GpuAggregateExec: group_by=[cp_catalog_page_id], aggr=[sum(salesreturns.sales_price), sum(salesreturns.profit), sum(salesreturns.return_amt), sum(salesreturns.net_loss)], setup_us=1 submit_us=1742 device_us=1741
-                      GpuProjectExec: expr=[sales_price@1 as sales_price, profit@2 as profit, return_amt@3 as return_amt, net_loss@4 as net_loss, cp_catalog_page_id@0 as cp_catalog_page_id], setup_us=0 submit_us=80 device_us=79
+                    GpuAggregateExec: group_by=[cp_catalog_page_id], aggr=[sum(salesreturns.sales_price), sum(salesreturns.profit), sum(salesreturns.return_amt), sum(salesreturns.net_loss)], setup_us=1 submit_us=1740 device_us=1739
+                      GpuProjectExec: expr=[sales_price@1 as sales_price, profit@2 as profit, return_amt@3 as return_amt, net_loss@4 as net_loss, cp_catalog_page_id@0 as cp_catalog_page_id], setup_us=0 submit_us=77 device_us=76
                         GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                          GpuHashJoinExec: join_type=Inner, on=[(cp_catalog_page_sk@0, page_sk@0)], projection=[1, 3, 4, 5, 6], setup_us=1 submit_us=471 device_us=470
-                            GpuScanExec: table=catalog_page, projections=[cp_catalog_page_sk, cp_catalog_page_id], setup_us=2 submit_us=5730 device_us=5729
+                          GpuHashJoinExec: join_type=Inner, on=[(cp_catalog_page_sk@0, page_sk@0)], projection=[1, 3, 4, 5, 6], setup_us=1 submit_us=470 device_us=469
+                            GpuScanExec: table=catalog_page, projections=[cp_catalog_page_sk, cp_catalog_page_id], setup_us=1 submit_us=5735 device_us=5734
                             GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
                               GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, date_sk@1)], projection=[1, 3, 4, 5, 6], setup_us=1 submit_us=510 device_us=509
                                 GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                                  GpuFilterExec: predicate=d_date@1 >= 2000-08-23 AND d_date@1 <= 2000-09-06, projection=[0], setup_us=15 submit_us=139 device_us=139
-                                    GpuScanExec: table=date_dim, projections=[d_date_sk, d_date], setup_us=2 submit_us=16444 device_us=16443
-                                GpuUnionExec, setup_us=0 submit_us=439 device_us=438
-                                  GpuProjectExec: expr=[cs_catalog_page_sk@1 as page_sk, cs_sold_date_sk@0 as date_sk, cs_ext_sales_price@2 as sales_price, cs_net_profit@3 as profit, Some(0),7,2 as return_amt, Some(0),7,2 as net_loss], setup_us=0 submit_us=181 device_us=186
-                                    GpuScanExec: table=catalog_sales, projections=[cs_sold_date_sk, cs_catalog_page_sk, cs_ext_sales_price, cs_net_profit], setup_us=7 submit_us=10086 device_us=10086
-                                  GpuProjectExec: expr=[cr_catalog_page_sk@1 as page_sk, cr_returned_date_sk@0 as date_sk, Some(0),7,2 as sales_price, Some(0),7,2 as profit, cr_return_amount@2 as return_amt, cr_net_loss@3 as net_loss], setup_us=0 submit_us=130 device_us=129
-                                    GpuScanExec: table=catalog_returns, projections=[cr_returned_date_sk, cr_catalog_page_sk, cr_return_amount, cr_net_loss], setup_us=2 submit_us=9282 device_us=9281
-            GpuProjectExec: expr=[web channel as channel, concat(web_site, web_site_id@0) as id, sales@1 as sales, returns_@3 as returns_, profit@2 - profit_loss@4 as profit], setup_us=0 submit_us=307 device_us=311
-              GpuProjectExec: expr=[web_site_id@0 as web_site_id, sum(salesreturns.sales_price)@1 as sales, sum(salesreturns.profit)@2 as profit, sum(salesreturns.return_amt)@3 as returns_, sum(salesreturns.net_loss)@4 as profit_loss], setup_us=0 submit_us=40 device_us=39
-                GpuAggregateExec: group_by=[web_site_id], aggr=[sum(salesreturns.sales_price), sum(salesreturns.profit), sum(salesreturns.return_amt), sum(salesreturns.net_loss)], setup_us=0 submit_us=463 device_us=462
-                  GpuCoalescePartitionsExec, setup_us=0 submit_us=69 device_us=70
-                    GpuAggregateExec: group_by=[web_site_id], aggr=[sum(salesreturns.sales_price), sum(salesreturns.profit), sum(salesreturns.return_amt), sum(salesreturns.net_loss)], setup_us=1 submit_us=1683 device_us=1682
-                      GpuProjectExec: expr=[sales_price@1 as sales_price, profit@2 as profit, return_amt@3 as return_amt, net_loss@4 as net_loss, web_site_id@0 as web_site_id], setup_us=0 submit_us=81 device_us=80
+                                  GpuFilterExec: predicate=d_date@1 >= 2000-08-23 AND d_date@1 <= 2000-09-06, projection=[0], setup_us=16 submit_us=139 device_us=138
+                                    GpuScanExec: table=date_dim, projections=[d_date_sk, d_date], setup_us=2 submit_us=16437 device_us=16436
+                                GpuUnionExec, setup_us=0 submit_us=431 device_us=430
+                                  GpuProjectExec: expr=[cs_catalog_page_sk@1 as page_sk, cs_sold_date_sk@0 as date_sk, cs_ext_sales_price@2 as sales_price, cs_net_profit@3 as profit, Some(0),7,2 as return_amt, Some(0),7,2 as net_loss], setup_us=0 submit_us=184 device_us=190
+                                    GpuScanExec: table=catalog_sales, projections=[cs_sold_date_sk, cs_catalog_page_sk, cs_ext_sales_price, cs_net_profit], setup_us=7 submit_us=10239 device_us=10238
+                                  GpuProjectExec: expr=[cr_catalog_page_sk@1 as page_sk, cr_returned_date_sk@0 as date_sk, Some(0),7,2 as sales_price, Some(0),7,2 as profit, cr_return_amount@2 as return_amt, cr_net_loss@3 as net_loss], setup_us=0 submit_us=131 device_us=131
+                                    GpuScanExec: table=catalog_returns, projections=[cr_returned_date_sk, cr_catalog_page_sk, cr_return_amount, cr_net_loss], setup_us=2 submit_us=9319 device_us=9317
+            GpuProjectExec: expr=[web channel as channel, concat(web_site, web_site_id@0) as id, sales@1 as sales, returns_@3 as returns_, profit@2 - profit_loss@4 as profit], setup_us=0 submit_us=310 device_us=313
+              GpuProjectExec: expr=[web_site_id@0 as web_site_id, sum(salesreturns.sales_price)@1 as sales, sum(salesreturns.profit)@2 as profit, sum(salesreturns.return_amt)@3 as returns_, sum(salesreturns.net_loss)@4 as profit_loss], setup_us=0 submit_us=39 device_us=39
+                GpuAggregateExec: group_by=[web_site_id], aggr=[sum(salesreturns.sales_price), sum(salesreturns.profit), sum(salesreturns.return_amt), sum(salesreturns.net_loss)], setup_us=0 submit_us=462 device_us=461
+                  GpuCoalescePartitionsExec, setup_us=0 submit_us=67 device_us=67
+                    GpuAggregateExec: group_by=[web_site_id], aggr=[sum(salesreturns.sales_price), sum(salesreturns.profit), sum(salesreturns.return_amt), sum(salesreturns.net_loss)], setup_us=1 submit_us=1691 device_us=1690
+                      GpuProjectExec: expr=[sales_price@1 as sales_price, profit@2 as profit, return_amt@3 as return_amt, net_loss@4 as net_loss, web_site_id@0 as web_site_id], setup_us=0 submit_us=96 device_us=95
                         GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                          GpuHashJoinExec: join_type=Inner, on=[(web_site_sk@0, wsr_web_site_sk@0)], projection=[1, 3, 4, 5, 6], setup_us=1 submit_us=456 device_us=455
-                            GpuScanExec: table=web_site, projections=[web_site_sk, web_site_id], setup_us=2 submit_us=791 device_us=790
+                          GpuHashJoinExec: join_type=Inner, on=[(web_site_sk@0, wsr_web_site_sk@0)], projection=[1, 3, 4, 5, 6], setup_us=1 submit_us=459 device_us=458
+                            GpuScanExec: table=web_site, projections=[web_site_sk, web_site_id], setup_us=2 submit_us=789 device_us=788
                             GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                              GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, date_sk@1)], projection=[1, 3, 4, 5, 6], setup_us=0 submit_us=409 device_us=408
+                              GpuHashJoinExec: join_type=Inner, on=[(d_date_sk@0, date_sk@1)], projection=[1, 3, 4, 5, 6], setup_us=0 submit_us=404 device_us=403
                                 GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                                  GpuFilterExec: predicate=d_date@1 >= 2000-08-23 AND d_date@1 <= 2000-09-06, projection=[0], setup_us=15 submit_us=140 device_us=139
-                                    GpuScanExec: table=date_dim, projections=[d_date_sk, d_date], setup_us=1 submit_us=16410 device_us=16409
-                                GpuUnionExec, setup_us=0 submit_us=374 device_us=373
-                                  GpuProjectExec: expr=[ws_web_site_sk@1 as wsr_web_site_sk, ws_sold_date_sk@0 as date_sk, ws_ext_sales_price@2 as sales_price, ws_net_profit@3 as profit, Some(0),7,2 as return_amt, Some(0),7,2 as net_loss], setup_us=0 submit_us=152 device_us=153
-                                    GpuScanExec: table=web_sales, projections=[ws_sold_date_sk, ws_web_site_sk, ws_ext_sales_price, ws_net_profit], setup_us=8 submit_us=6977 device_us=6976
-                                  GpuProjectExec: expr=[ws_web_site_sk@6 as wsr_web_site_sk, wr_returned_date_sk@0 as date_sk, Some(0),7,2 as sales_price, Some(0),7,2 as profit, wr_return_amt@3 as return_amt, wr_net_loss@4 as net_loss], setup_us=0 submit_us=126 device_us=126
+                                  GpuFilterExec: predicate=d_date@1 >= 2000-08-23 AND d_date@1 <= 2000-09-06, projection=[0], setup_us=18 submit_us=147 device_us=146
+                                    GpuScanExec: table=date_dim, projections=[d_date_sk, d_date], setup_us=1 submit_us=16438 device_us=16437
+                                GpuUnionExec, setup_us=0 submit_us=368 device_us=367
+                                  GpuProjectExec: expr=[ws_web_site_sk@1 as wsr_web_site_sk, ws_sold_date_sk@0 as date_sk, ws_ext_sales_price@2 as sales_price, ws_net_profit@3 as profit, Some(0),7,2 as return_amt, Some(0),7,2 as net_loss], setup_us=0 submit_us=153 device_us=154
+                                    GpuScanExec: table=web_sales, projections=[ws_sold_date_sk, ws_web_site_sk, ws_ext_sales_price, ws_net_profit], setup_us=9 submit_us=7010 device_us=7009
+                                  GpuProjectExec: expr=[ws_web_site_sk@6 as wsr_web_site_sk, wr_returned_date_sk@0 as date_sk, Some(0),7,2 as sales_price, Some(0),7,2 as profit, wr_return_amt@3 as return_amt, wr_net_loss@4 as net_loss], setup_us=0 submit_us=126 device_us=125
                                     GpuCoalesceBatchesExec, setup_us=0 submit_us=0 device_us=0
-                                      GpuHashJoinExec: join_type=Left, on=[(wr_item_sk@1, ws_item_sk@0), (wr_order_number@2, ws_order_number@2)], setup_us=1 submit_us=415 device_us=413
-                                        GpuScanExec: table=web_returns, projections=[wr_returned_date_sk, wr_item_sk, wr_order_number, wr_return_amt, wr_net_loss], setup_us=2 submit_us=13284 device_us=13282
-                                        GpuScanExec: table=web_sales, projections=[ws_item_sk, ws_web_site_sk, ws_order_number], setup_us=8 submit_us=7774 device_us=7773
+                                      GpuHashJoinExec: join_type=Left, on=[(wr_item_sk@1, ws_item_sk@0), (wr_order_number@2, ws_order_number@2)], setup_us=1 submit_us=422 device_us=421
+                                        GpuScanExec: table=web_returns, projections=[wr_returned_date_sk, wr_item_sk, wr_order_number, wr_return_amt, wr_net_loss], setup_us=2 submit_us=13315 device_us=13314
+                                        GpuScanExec: table=web_sales, projections=[ws_item_sk, ws_web_site_sk, ws_order_number], setup_us=8 submit_us=7789 device_us=7787
 
 # timing_mode = how the numbers were taken, and what they MEAN. sync: the region ends in a cudaStreamSynchronize, so submit_us contains the device execution and device_us is 0. events: no explicit drain, and CUDA events bracket the device work as device_us. submit_us is NOT launch cost in either mode — cuDF and rmm synchronize internally, so the host waits for most of what it submits and submit_us tracks device_us closely. Only total_us is comparable across the two.
 # setup_us = host time before the node's first device touch (flatbuffer decode, handle lookups, AST build) — the prologue bare cuDF has no analogue for, which is why it is fitted as its own constant. submit_us / device_us: see timing_mode.
 # sync_floor_us = cost of the SYNC measurement itself (empty timed region: clock + cudaStreamSynchronize on an idle stream). Measured in both modes: under sync it is the resolution floor every node time INCLUDES, once PER OUTPUT PARTITION; under events it is the per-region stall that is no longer paid. Do not subtract it.
 # nodes_total_us = Σ setup_us + Σ submit_us, the HOST side of the walk. nodes_device_us is deliberately NOT added to it — the host ran while the device did, so the two are concurrent spans of the same clock. Device regions are on one stream in program order, so nodes_device_us is disjoint and <= total_us; the gap is stream idle, i.e. the device waiting through host prologue. total_us = the whole query, end to end (parse + plan + serialize + node walk + materialize).
-# build_profile = how the harness itself was compiled. total_us MINUS nodes_total_us is that Rust; records from different profiles are not comparable on it. Node times are device work and barely move.
-# allocator = the rmm device resource the node times were taken under. Without a pool every cuDF intermediate is a cudaMalloc/cudaFree round trip, charged to the node that allocated it — so it inflates the largest-output nodes hardest and moves the PROFILE, not only the scale. Records under different allocators are not comparable, node for node or in total.
+# build_profile = how the harness itself was compiled. Always a release build; total_us MINUS nodes_total_us is that Rust, and node times are device work and barely move.
+# allocator = the rmm device resource the node times were taken under. Always a pool: with rmm's default every cuDF intermediate is a cudaMalloc/cudaFree round trip charged to the node that allocated it, which moves the PROFILE and not only the scale. The sizes vary with free memory when the pool was built.
 # shared_work_charged_to = which p<k> sub-line carries work a node does once for all of its output partitions. A hash repartition concatenates its input and scatters it in a single operation, and that time is billed to p0 — so p0 standing far above its siblings is the accounting, not skew. Sub-lines sum to their node line either way. Written whether or not this plan has a repartition.
 build_profile=benchmarks opt-level=3
 allocator=rmm-pool initial=118.3GiB max=132.3GiB of 139.2GiB free on a discrete device
@@ -78,8 +78,8 @@ shared_work_charged_to=p0
 timing_mode=events
 sync_floor_us=1
 nodes_at_or_below_floor=10/66
-nodes_setup_us=102
-nodes_submit_us=147410
-nodes_device_us=147379
-nodes_total_us=147512
-total_us=164381
+nodes_setup_us=108
+nodes_submit_us=147968
+nodes_device_us=147935
+nodes_total_us=148076
+total_us=165138
