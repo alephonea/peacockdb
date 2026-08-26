@@ -2529,6 +2529,137 @@ parking those behind tickets would leave the path unproven in exactly the way th
 end. T21 is the precedent: it was meant to be one test file and it found four defects, each a
 rule held by a doc comment with nothing reading it, and one guard that could not go red.
 
+**T17a — layout injection over corpus queries.** T17 runs seventeen queries at five modes and
+calls it injection; it is not. Each of the five is a plan the planner would have chosen anyway —
+`(target_partitions, sizing)` re-planned, with `small_table_bytes` and the budget constant. The
+prototype's [`LayoutInjector`](../../scripts/exec_model/operators/injection.py) does a different
+thing: it takes one plan and rewrites it into layouts no planner would emit — lanes deliberately
+drained, a degenerate hash, a rebatcher above every source cutting against the grain, sources
+emitting zero-row batches at a probability. Four dimensions, none of them reachable from SQL, and
+none of them exercised by any real query today. They live in `driver/tests/stress.rs` over a mock
+whose answer is a script.
+
+**Why T17 could not do it, and what this task has to build.** `GpuNode` exposes `children()` and
+nothing that reconstructs a node — no `with_children`, no `rebuild` — which is why T17 re-planned
+instead. But the rewrite is writable without touching production: `as_node_ref` is a public
+exhaustive `NodeRef` over all eighteen kinds, each node's steering fields are `pub`, and each kind
+has a public constructor. So a test-side `rebuild(node, new_children)` is eighteen arms that read
+the fields and call the constructor, and because the match is exhaustive a nineteenth kind fails to
+compile rather than being silently un-rewritten — the same guard `node_kind()` and `driven` already
+rest on.
+
+**Prove the rewrite before using it, and a unit test is the right size.** A rebuild that drops a
+field is a plan that differs from the one under test for a reason nobody chose, and every result
+after it is then about a different query. The case is small: hand-built plans through
+`driver/plans.rs`, rebuilt with their own children, rendering byte-identical through the existing
+plan renderer. Hand-built rather than corpus, because the property is per arm and per field — a
+node built with a value in every optional field catches an arm that drops one, where a corpus plan
+covers only the combinations its queries happen to produce. `Filter` with and without a projection,
+`Limit` with and without a fetch, `Join` with a residual and without, and so on.
+
+Cover the arms the way `every_node_kind_builds_the_executor_its_category_names` covers its own:
+assert the fixtures reach every `NodeRef` variant, so a kind added later is a compile error in the
+match and a red count here. It goes red by dropping one field from one arm. Nothing is injected
+until it passes, and no corpus query is needed to prove it.
+
+**Two mechanisms, because the dimensions are not the same kind of thing.** A rebatcher is a node —
+it changes the tree, and it must be placeable anywhere a batch flows, not only above a source. The
+other three are behaviour a node does not carry: this engine's hash is Spark-murmur3 fixed in the
+emitter, and neither an empty lane nor a zero-row batch is a field of `GpuLoadParquet`.
+
+| Dimension | Mechanism | Why not the other one |
+|---|---|---|
+| a rebatcher, at any edge | tree rewrite: insert a node above the chosen child | wrapping an executor cannot do it — an exec is one batch in, one out, and a merging rebatch must hold batches across calls, which is an accumulator's job. A wrapper that held them would lie to the accountant and break the queue bound the driver guarantees |
+| a drained lane | wrap the source executor: produce nothing for that lane | not a node field |
+| zero-row batches at a probability | wrap the source executor: emit an empty batch instead of advancing | not a node field; the driver already carries empty batches, so this exercises a path the operators have and this one does not |
+| a degenerate hash | wrap the emit executor: route every key to one lane | the emitter carries key *expressions*, not a hash function — ours is fixed |
+
+Lane counts are deliberately absent: `target_partitions` already varies them through the planner,
+and a lane count no planner would choose is the one dimension whose correctness rule the prototype
+had to encode (`_is_shuffled_join`, `_LaneOrigin`). Buying that rule to vary something the mode
+axis already varies is not worth it here.
+
+**Three phases, and the middle one is the point.** Plans first, selection second, execution third,
+because 10 queries × 5 modes × the injection crossing is more runs than a CI tier can hold, and
+choosing *which* to run is a claim that has to be visible rather than a `take(30)`.
+
+1. **Plan.** For each enabled query, plan at all five modes. Five plans, no injection yet, and a
+   plan that fails to build is a failure rather than a skip.
+2. **Select.** Derive the candidate set — each plan crossed with the injection settings — and
+   choose at most **30 per query**. Representative means the selection covers each dimension at its
+   boundaries and each mode at least once, not a sample: the rebatcher in both directions, the
+   empty-batch probability at zero and at its high setting, a drained lane where the mode has more
+   than one, the degenerate hash where the plan shuffles. The chosen set is **asserted, not
+   trusted** — a test over the selector alone, with no queries, that a known candidate set yields
+   a cover, and that dropping a dimension from the settings makes it go red. Deterministic and
+   seeded: two runs choose the same 30, or a failure is not reproducible.
+3. **Run.** Each selected plan through the driver, every answer against the same oracle.
+
+**The oracle does not change and must not.** It is DataFusion on the same SQL, planned and
+collected once per query at `target_partitions=1`, compared against every variant. That is what
+makes injection meaningful: the answer is fixed by something that never saw the layout, so a
+layout that changes the answer is a defect rather than a disagreement between two of our own
+shapes. One oracle per query, not per variant — it is the expensive half and it is invariant.
+
+**Eleven queries: the ten cheapest, plus the interleave.** Injection multiplies runs, so it goes on
+the cheap end of the list. Scanned rows at sf1:
+
+| Query | rows scanned | what it carries |
+|---|---:|---|
+| tpch `nested-loop-join` | 40,000 | nested-loop Inner |
+| tpch `nested-loop-left-join` | 40,000 | nested-loop Left, single-batch probe |
+| tpch `nested-limits` | 220,000 | both row-interval lowerings, cross join |
+| tpcds q45 | 899,384 | LeftMark |
+| tpch `anti-join` | 1,600,000 | RightAnti |
+| tpcds q8 | 3,060,404 | Inner multi-key, LeftSemi with `null_equals_null` |
+| tpcds q16 | 3,087,163 | LeftAnti, LeftSemi with a filter, a mid-plan limit |
+| tpcds q93 | 3,187,918 | Right outer, multi-key |
+| tpcds q97 | 4,361,952 | Full outer |
+| tpcds q2 | 4,401,864 | the union that cannot interleave |
+| tpcds q33 | 5,281,336 | the four-lane interleave — not among the cheapest, and here anyway |
+
+q33 is the eleventh on cost and the first on merit: it is the only four-lane interleave in the
+list, and an interleave is the one operator whose correctness *is* a lane correspondence — output
+lane p from lane p of each branch. Excluding the one shape a perturbed lane could break, to save
+0.9M rows over the tenth, would be picking the cheap set over the point of the exercise.
+
+The six left out are the heavy end — q38, q87, `shuffle-stddev`, q20, `left-join`, and q21 at
+19.5M rows, three `lineitem` scans in one query. If the budget turns out to allow more, `left-join`
+is the next one worth having: a Left outer's finish pass accumulates probe keys, so its residency
+is a function of how the batches arrive.
+
+**Shape of the change.** One new test library file carrying the decorator, the settings, the
+candidate derivation and the selector — `peacockdb-core/tests/common/injection.rs`, with the
+selector's own tests beside it, split into a second file only if it passes the 1000-line bar. Ten
+fixtures each gain one line: the macro grows a form that runs the injected set as well as the five
+modes, so an enabled query reads `end_to_end_injected!(tpcds, q45)` and everything else is
+unchanged. Nothing in `peacockdb-core/src` changes.
+
+**Measure before capping, one run at a time.** T17's seventeen queries at five modes are 85 runs in
+4m39s at four threads. Eleven queries at up to 30 is 330, on the cheap end of the corpus — a number
+to measure, not to assume.
+
+The measuring pass runs **serially**, `--test-threads=1`, and times each run on its own. Four
+threads contending for the same host is what the correctness tier wants and the opposite of what a
+timing wants: a number taken under contention cannot be compared with another taken under different
+contention, so a table built from a parallel run would rank the wrong things. Time each
+(query, mode, injection setting) individually and report every one — not a total, since a total
+cannot say which row to cut.
+
+The table is the deliverable of that pass and belongs in `llm-wiki/reports/`, since it is a
+measurement of a host rather than a fact about the code: one row per query, the per-setting times
+across it, its total, and the grand total, with the host and thread count at the top the way the
+benchmark records carry `build_profile`. Then the cap is chosen against it.
+
+**What may be trimmed, and what may not.** If it does not fit the tier, cut runs and not cover.
+The selection rule already guarantees each dimension at its boundaries and each mode at least once,
+so a smaller cap is still a cover — that is what the rule is for. What must survive any trim is one
+carrier per injection dimension and the shapes that only one query has: q33's interleave, the two
+nested-loop forms, `nested-limits`' two row-interval lowerings. Trimming to the cheapest eleven
+minus q33 would be the obvious cut and the wrong one, for the reason q33 is in the list at all.
+Where a query is dropped entirely, say which dimension lost a carrier and why the remaining ones
+cover it.
+
 **T18 — corpus shapes the benchmarks do not have, and goldens that stop multiplying by
 query.** Two halves. The corpus is numeric-aggregate heavy, and this mode's risk sits in what
 it never sees: an audit of every `.cpu.txt` finds zero `OFFSET`s, zero `min`/`max` over a
