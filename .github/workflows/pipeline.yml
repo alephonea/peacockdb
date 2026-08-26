@@ -348,9 +348,13 @@ jobs:
           # test_gpu_recipe_walk = the recipe plan the planner builds, driven by hand on a
           # device: one walk making exactly the calls the recipes name, threading handles
           # between them, with DataFusion on the same SQL as the oracle.
+          # test_gpu_executors = the exec executors on a device, each handed its node's
+          # recipe and one batch: filter, project, per-batch sort, aggregate with and
+          # without its finalize, and the export with a row range. Plans hand-built over
+          # six rows the test writes itself.
           # One line on purpose: the coverage guard reads this array with a single
           # `lines().find`, so a continuation hides every target after the backslash.
-          for t in test_gpu_full_table test_gpu_partitioned test_inc2_conformance test_gpu_abi test_gpu_recipe_walk; do
+          for t in test_gpu_full_table test_gpu_partitioned test_inc2_conformance test_gpu_abi test_gpu_recipe_walk test_gpu_executors; do
             exec_path=$(cargo test --no-run -p peacockdb-core --test "$t" \
                 --message-format=json \
               | python3 -c '

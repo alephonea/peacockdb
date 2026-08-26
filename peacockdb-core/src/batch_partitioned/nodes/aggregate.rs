@@ -5,13 +5,212 @@
 
 use std::any::Any;
 
-use super::super::aggregates::{AggCall, Merge, decomposition};
+use super::super::aggregates::{AggCall, AggFunc, Merge, PlanAgg, decomposition};
 use super::super::error::PlanError;
 use super::super::expr::{Expr, NamedExpr};
 use super::super::layout::{BatchLayout, KeyDistribution, NodeKind, PartitionLayout, SortOrder};
 use super::super::node::GpuNode;
-use super::super::schema::Schema;
+use super::super::schema::{AggStateColumns, Schema};
 use super::{check_column_refs, input_layout, input_schema};
+
+/// One aggregator as both engines name it: the SQL name the executor knows, the call whose
+/// arguments it reads, and the output column it fills.
+///
+/// Order is load-bearing and not cosmetic. A state-shaped input is read positionally, by a
+/// cursor walking each aggregate's state width, so an aggregate listed out of order reads
+/// another one's columns. Everything but the Welford triple is one of ours to one SQL name;
+/// the triple folds into the `stddev`/`var` it decomposes, at the position of the first of
+/// its three, because neither engine has an `m2` of its own.
+pub struct StateFunc<'a> {
+    pub name: &'static str,
+    pub call: &'a AggCall,
+    pub alias: String,
+    /// Whether this one is a folded triple, which is what makes its state three columns
+    /// wide rather than one.
+    pub welford: bool,
+}
+
+/// The aggregators a body declares over a state schema, in the order their state columns
+/// appear. One rule, read by the recipe writer for the wire and by the CPU backend for
+/// DataFusion — a second copy of it would be a second answer to which column is whose.
+pub fn state_funcs<'a>(
+    body: &'a AggregateBody,
+    state: &'a Schema,
+) -> Result<Vec<StateFunc<'a>>, PlanError> {
+    let welford = welford_owners(body, state);
+    let mut funcs: Vec<StateFunc<'a>> = Vec::new();
+    for (position, call) in body.aggs.iter().enumerate() {
+        match welford.get(position).copied().flatten() {
+            // The second and third aggregators of a triple add nothing: the SQL name
+            // covers all three columns.
+            Some(owner) => {
+                if funcs.iter().any(|f| f.alias == owner.output) {
+                    continue;
+                }
+                funcs.push(StateFunc {
+                    name: sql_name(owner.func, owner.ddof),
+                    call,
+                    alias: owner.output.clone(),
+                    welford: true,
+                });
+            }
+            None => {
+                let alias = call
+                    .outputs
+                    .first()
+                    .map(|field| field.name().clone())
+                    .unwrap_or_default();
+                funcs.push(StateFunc {
+                    name: agg_name(call.func)?,
+                    call,
+                    alias,
+                    welford: false,
+                });
+            }
+        }
+    }
+    Ok(funcs)
+}
+
+/// The columns a state leads with before the first aggregate's: the group list, plus the
+/// `__grouping_id` an init expanding grouping sets emits beside the keys and every node
+/// above it groups on. The group list alone is one short of the state exactly there, and
+/// a state position read one column early names the aggregator before the right one.
+pub fn key_width(body: &AggregateBody) -> usize {
+    body.group_by.len() + usize::from(!body.grouping_sets.is_empty())
+}
+
+/// Per aggregator, the Welford state it belongs to, if any.
+///
+/// An aggregator owns as many state columns as it emits — one each at the init, three for
+/// a merge's `merge_m2` — so which aggregator a state position names is a walk over those
+/// widths, never `position - group_width`.
+fn welford_owners<'a>(body: &AggregateBody, state: &'a Schema) -> Vec<Option<&'a AggStateColumns>> {
+    let mut owners = Vec::new();
+    for (position, call) in body.aggs.iter().enumerate() {
+        for _ in 0..call.outputs.len().max(1) {
+            owners.push(position);
+        }
+    }
+    let group_width = key_width(body);
+    let mut per_agg = vec![None; body.aggs.len()];
+    for columns in &state.agg_state {
+        if !matches!(columns.func, AggFunc::Stddev | AggFunc::Var) {
+            continue;
+        }
+        for position in &columns.positions {
+            let Some(state_position) = (*position as usize).checked_sub(group_width) else {
+                continue;
+            };
+            if let Some(agg) = owners.get(state_position) {
+                per_agg[*agg] = Some(columns);
+            }
+        }
+    }
+    per_agg
+}
+
+/// What the executor calls this aggregate, which is DataFusion's own name plus the `ddof`
+/// spelled into it: `stddev` is the sample form and `stddev_pop` the population one.
+pub fn sql_name(func: AggFunc, ddof: u32) -> &'static str {
+    match (func, ddof) {
+        (AggFunc::Stddev, 0) => "stddev_pop",
+        (AggFunc::Stddev, _) => "stddev",
+        (AggFunc::Var, 0) => "var_pop",
+        (AggFunc::Var, _) => "var",
+        (AggFunc::Sum, _) => "sum",
+        (AggFunc::Min, _) => "min",
+        (AggFunc::Max, _) => "max",
+        (AggFunc::Count, _) => "count",
+        (AggFunc::Avg, _) => "avg",
+    }
+}
+
+/// One of ours by the name the executor knows it by. `m2` and `merge_m2` have none of
+/// their own: both are folded into the SQL aggregate whose state they are, above.
+fn agg_name(agg: PlanAgg) -> Result<&'static str, PlanError> {
+    Ok(match agg {
+        PlanAgg::Sum => "sum",
+        PlanAgg::Min => "min",
+        PlanAgg::Max => "max",
+        PlanAgg::Count => "count",
+        PlanAgg::Mean => "mean",
+        PlanAgg::M2 => {
+            return Err(PlanError::Unsupported(
+                "m2 alone has no name on the wire — it is written as part of the stddev or \
+                 var it decomposes"
+                    .to_string(),
+            ));
+        }
+        PlanAgg::MergeM2 => {
+            return Err(PlanError::Unsupported(
+                "merge_m2 alone has no name on the wire either — it is written as the \
+                 stddev or var whose three state columns it merges"
+                    .to_string(),
+            ));
+        }
+    })
+}
+
+/// The finalize as the project it becomes: the group keys straight through, then one
+/// expression per aggregate output column, named as the node declares its output.
+///
+/// A project replaces the row, so the finalize list alone would answer with the finalized
+/// columns and no keys to read them by. Both the width and the key positions are checked
+/// rather than assumed: the keys are taken by position, so a state whose first columns are
+/// not the keys would pass the width check and project state columns as keys.
+pub fn finalize_columns(
+    body: &AggregateBody,
+    state: &Schema,
+    output: &Schema,
+) -> Result<Vec<NamedExpr>, PlanError> {
+    let finalize = body
+        .finalize
+        .as_ref()
+        .expect("a finalize project is built only where the node finalizes");
+    let keys = key_width(body);
+    let declared = output.fields.fields().len();
+    if keys + finalize.len() != declared {
+        return Err(PlanError::Invalid(format!(
+            "an aggregate finalizing {keys} keys and {} columns declares {declared} output \
+             columns — the project that finalizes is the whole row, so the two have to be \
+             the same list",
+            finalize.len()
+        )));
+    }
+    let field_at = |schema: &Schema, ordinal: usize| -> String {
+        schema
+            .fields
+            .fields()
+            .get(ordinal)
+            .expect("a plan that validated declares the columns it names")
+            .name()
+            .clone()
+    };
+    let mut columns = Vec::with_capacity(declared);
+    for ordinal in 0..keys {
+        let name = field_at(state, ordinal);
+        let declared_name = field_at(output, ordinal);
+        if name != declared_name {
+            return Err(PlanError::Invalid(format!(
+                "the finalized output names column {ordinal} `{declared_name}` and the \
+                 state it is projected from names it `{name}` — the keys are taken by \
+                 position, so the two orders have to be the same"
+            )));
+        }
+        columns.push(NamedExpr::new(
+            Expr::column(ordinal as u32, &name),
+            &declared_name,
+        ));
+    }
+    for (offset, column) in finalize.iter().enumerate() {
+        columns.push(NamedExpr::new(
+            column.expr.clone(),
+            &field_at(output, keys + offset),
+        ));
+    }
+    Ok(columns)
+}
 
 /// The aggregators and the optional `final` list every aggregate node carries. A node
 /// with no `final` emits its state; one with a `final` emits the finalized columns, and

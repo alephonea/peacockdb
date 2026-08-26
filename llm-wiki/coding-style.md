@@ -147,19 +147,11 @@ because both parameters are the same type.
 
 ### A doc comment reassigned by an insertion
 
-A doc block belongs to whatever declaration follows it, so inserting a type above an existing
-one moves that block onto the new type. Nothing is missing afterwards: the file is shorter,
-every block is inside its cap, and the orphaned declaration simply has none. A length check
-cannot see it, which is why it survives review.
-
-Found when `When` was inserted above `RunError`: `RunError` lost its documentation, and `When`'s
-block opened with two sentences about `RunError` — one of them stating an enforcement contract
-that a finding in the same task had just disproved. The wrong claim was now the only one in the
-code, attached to the wrong type.
-
-The check is narrow and worth doing at one moment rather than everywhere: when a declaration has
-been inserted above an existing one, read the first sentence of each doc block and ask whether it
-is about the thing beneath it.
+A doc block belongs to the declaration below it, so a type inserted above an existing one
+takes its documentation and leaves it with none. Nothing reads as missing and every cap
+still holds, which is why review passes it: `When` above `RunError` took `RunError`'s
+block, whose opening sentences described `RunError` and stated a contract the same task
+had disproved. After inserting a declaration, read each doc block's first sentence.
 
 ### A thread-local as an output or side-channel argument
 

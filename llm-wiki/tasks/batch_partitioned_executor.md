@@ -1414,8 +1414,10 @@ its subtree once and never lifts — so the holds are O(nodes) per join and per 
 whole run rather than anything per step. The prototype instead re-derives the entire predicate
 every step: every node, every lane, and both hold chains to the root.
 
-A naive rescan survives as a test-only oracle, compared pick by pick over seeded random
-shapes, because an incremental schedule that disagrees with it is wrong by definition.
+A naive rescan survives as a test-only oracle
+([`the_incremental_schedule_picks_what_a_full_rescan_would`](../../peacockdb-core/src/batch_partitioned/driver/scheduler/tests.rs#L365)),
+compared pick by pick over seeded random shapes, because an incremental schedule that
+disagrees with it is wrong by definition.
 
 That is the whole of it, and the push behaviour falls out rather than being programmed.
 The moment a node produces a batch its parent is runnable at a strictly lower height, so
@@ -2332,11 +2334,14 @@ key accumulation ([#136](../tickets.md#t136)), `null_equals_null` on the finish 
 pass is the one shape this mode invented with no device behind it after T21, which is why the
 matrix is emulated here rather than assumed.
 
-**How everything here is tested.** Small synthetic data, never parquet; plans hand-constructed
+**How everything here is tested.** Small synthetic data, never the corpus; plans hand-constructed
 rather than planned, so a test names the shape it means instead of hoping a query produces it;
 `attach_recipes()` is fair game, since the recipe is what a GPU executor consumes. The oracle is
 hand-constructed too: an expected result written down, not derived by the code under test. CPU and
-GPU tests in separate targets so CI hosts split them.
+GPU tests in separate targets so CI hosts split them. A device test writes its own parquet, which
+is the ABI's doing rather than an exception: the four entry points load a table only by reading
+one, so a device test's input is a scan or nothing. What the rule excludes is tpch.minimal and the
+generated sf1, whose values nobody chose.
 
 **What this task does not do.** No driver: nothing here is hooked into the schedule, and every
 assertion is about one executor answering one call. That defers the whole class of claims that
@@ -2382,6 +2387,29 @@ It also inherits what the executors task could not assert without a driver: a li
 nothing whatever the offset, at most two batches sliced per query, the scan stopping — each a call
 or pull count — and `PlaceholderRowExec` ([#158](../tickets.md#t158)), which is a source and so
 proves itself by what a driver pulls from it.
+
+`PlanIndex` gets the unit tests it has never had, and they belong here because this is the first
+task whose failures would be read through it. Nothing tests it directly today: `PlanIndex::build`
+has one caller, and the scheduler tests derive their own subtree ranges from a parents array rather
+than taking the index's. Assert what the derivation decides rather than what a plan happens to
+produce — pre-order numbering and the contiguous subtree range that every hold rests on, `parent`
+and the snapshotted children, and the three counts a category changes: `ready_lanes` against
+`lanes` for a cross-lane accumulator and an emitter, `input_lanes` for the `Done` events a
+partition accumulator owes, and `slot_base` where it is lane-scoped against where it is not. Each
+of those is wrong far from where it shows.
+
+The mock backend gets a handful of its own for the same reason one level up. Every assertion in
+`driver/tests/` is measured against it, so a mock that miscounts is 1255 lines of tests agreeing
+with the wrong answer and staying green. Pin what a script says against what the mock does — the
+scripted batch counts and sizes per source and lane, the skew pattern an emitter fills its lanes
+by, and an accumulator emitting where the script says it emits. A few cases, not a suite: what is
+being checked is that the instrument reads what it was set to.
+
+It starts by wiring the executors to their traits. `Backend` names seven associated types, so no
+earlier task can implement it — T16 finishes the last of them and none of them owns a source — and
+`Executor`'s `resident_bytes`/`scratch_bytes` are the memory accounting this task adds. So the
+executors arrive as inherent methods in the trait's shapes, and the first commit here is the one
+that makes the compiler check that.
 
 **Defects found here are fixed here.** Every task before this one proved its own layer against a
 fixture; the first thing to run all of them at once will find things about their joins, and
