@@ -2764,6 +2764,20 @@ absent: a `golden_exact` where the cap or the subset oracle applies is asserted 
 test that fails on correct behaviour, and a `live_cpu` where neither applies is asserted red too,
 since it spends a device-side live run on a comparison a committed file makes faster and harder.
 
+**A `live_cpu` comparison runs once per mode, beside the device run it checks.** It cannot reuse
+another mode's answer: where the SQL does not fix the row set, a cpu run at `bp-tp4-sized` is no
+more an authority on what the device returns at `bp-tp1-single` than the frozen section was, which
+is the reason this value exists at all. Same rule for the over-cap case even though its result is
+mode-invariant — the test is already per (query, mode), so same-mode costs nothing extra and one
+rule beats two that differ by a condition a reader has to check.
+
+What it costs is on the device leg, which is the leg that runs `--test-threads=1` on one host: a
+`live_cpu` query executes twice per mode there, once on the device and once on the cpu backend
+through the same driver. Legacy carries ten such queries and this mode adds `scan-limit`, so at
+five modes it is on the order of fifty extra cpu runs on the gpu host. Named here rather than
+discovered in a job duration, and it is part of the cost the corpus tier accepts rather than a
+separate decision.
+
 This is not the `result_golden` case one paragraph up. That argument is omitted because it has no
 degrees of freedom left once the rest of the line is written — legacy needs the keyword only
 because its producer and consumer live in different files. `gpu_oracle` has five values, and the
