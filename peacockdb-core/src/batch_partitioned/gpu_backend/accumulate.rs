@@ -208,7 +208,7 @@ impl Collapse {
         }
         let (seq, kind) = self.collapse;
         let handles = hand_over(self.held);
-        let (handle, stats) = execute_node(self.executor, seq, kind, &handles)?;
+        let (handle, stats) = execute_node(self.executor, seq, kind, &[handles])?;
         Ok((
             vec![produced(self.executor, handle, stats, &self.schema)],
             CallStats::default(),
@@ -216,7 +216,9 @@ impl Collapse {
     }
 }
 
-/// Each batch sorted as it arrives, the runs merged into one at done.
+/// Each batch sorted as it arrives, the runs merged into one at done — and nothing at all
+/// where none arrived, since a merge of no runs is the collapse of nothing by another name
+/// and the device refuses that (#173).
 pub struct SortedRuns {
     executor: *mut PeacockExecutor,
     sort: (Seq, FbKind),
@@ -228,16 +230,19 @@ pub struct SortedRuns {
 impl SortedRuns {
     fn accumulate_and_fetch(&mut self, batch: GpuBatch) -> CallResult<Vec<GpuBatch>> {
         let (seq, kind) = self.sort;
-        let (handle, stats) = execute_node(self.executor, seq, kind, &hand_over(vec![batch]))?;
+        let (handle, stats) = execute_node(self.executor, seq, kind, &[hand_over(vec![batch])])?;
         self.held
             .push(produced(self.executor, handle, stats, &self.schema));
         Ok((Vec::new(), CallStats::default()))
     }
 
     fn mark_done_and_fetch(self) -> CallResult<Vec<GpuBatch>> {
+        if self.held.is_empty() {
+            return Ok((Vec::new(), CallStats::default()));
+        }
         let (seq, kind) = self.merge;
         let handles = hand_over(self.held);
-        let (handle, stats) = execute_node(self.executor, seq, kind, &handles)?;
+        let (handle, stats) = execute_node(self.executor, seq, kind, &[handles])?;
         Ok((
             vec![produced(self.executor, handle, stats, &self.schema)],
             CallStats::default(),
@@ -285,9 +290,9 @@ impl AggregateBatches {
         folding.extend(self.state.take());
         folding.append(&mut self.pending);
         let (seq, kind) = self.concat;
-        let (concatenated, _) = execute_node(self.executor, seq, kind, &hand_over(folding))?;
+        let (concatenated, _) = execute_node(self.executor, seq, kind, &[hand_over(folding)])?;
         let (seq, kind) = self.merge;
-        let (handle, stats) = execute_node(self.executor, seq, kind, &[concatenated])?;
+        let (handle, stats) = execute_node(self.executor, seq, kind, &[vec![concatenated]])?;
         let state = produced(self.executor, handle, stats, &self.held);
         self.threshold = self.threshold.max(2 * state.byte_size());
         self.state = Some(state);
@@ -305,7 +310,7 @@ impl AggregateBatches {
         let Some((seq, kind)) = self.finalize else {
             return Ok((vec![state], CallStats::default()));
         };
-        let (handle, stats) = execute_node(self.executor, seq, kind, &hand_over(vec![state]))?;
+        let (handle, stats) = execute_node(self.executor, seq, kind, &[hand_over(vec![state])])?;
         Ok((
             vec![produced(self.executor, handle, stats, &self.output)],
             CallStats::default(),
@@ -314,7 +319,8 @@ impl AggregateBatches {
 }
 
 /// The one node of the partition-accumulator category: every lane's sorted run merged into
-/// one at the last lane's done.
+/// one at the last lane's done, and nothing where no lane sent anything — a merge of no
+/// runs is the collapse of nothing under another name, and the device refuses that (#173).
 ///
 /// One call per lane event, since that is what round-robin driving produces, and the call
 /// carrying the last `Done` is the emitting one. The handles go into the merge in lane
@@ -365,13 +371,15 @@ impl GpuPartitionAccumulator {
             return Ok((Vec::new(), CallStats::default()));
         }
         let (seq, kind) = self.merge;
-        let handles = hand_over(
-            std::mem::take(&mut self.per_lane)
-                .into_iter()
-                .flatten()
-                .collect(),
-        );
-        let (handle, stats) = execute_node(self.executor, seq, kind, &handles)?;
+        let held: Vec<GpuBatch> = std::mem::take(&mut self.per_lane)
+            .into_iter()
+            .flatten()
+            .collect();
+        if held.is_empty() {
+            return Ok((Vec::new(), CallStats::default()));
+        }
+        let handles = hand_over(held);
+        let (handle, stats) = execute_node(self.executor, seq, kind, &[handles])?;
         Ok((
             vec![produced(self.executor, handle, stats, &self.schema)],
             CallStats::default(),

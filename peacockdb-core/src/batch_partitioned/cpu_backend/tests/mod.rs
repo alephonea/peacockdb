@@ -207,4 +207,6 @@ fn out_rows(batch: &CpuBatch) -> Vec<(String, ScalarValue)> {
 }
 
 mod accumulate;
+mod emit;
 mod exec;
+mod join;

@@ -75,15 +75,12 @@ fn a_coalesce_answers_with_one_batch_holding_every_row_it_was_given() {
     assert_eq!(values_of(&out[0]), vec![1, 2, 3, 4, 5]);
 }
 
-/// The contract every SingleBatch accumulator keeps: one batch at done even where nothing
-/// arrived. A join's build lane cannot otherwise tell an empty build side from a lane that
-/// never ran.
+/// An empty lane emits nothing, on this backend as on the device — the collapse of no
+/// handles is a refusal there (#173), so a batch invented here would be a row the other
+/// engine cannot produce.
 #[test]
-fn a_coalesce_that_received_nothing_still_answers_with_a_batch() {
-    let out = drive(coalesce(), Vec::new());
-    assert_eq!(out.len(), 1);
-    assert_eq!(out[0].record_batch().num_rows(), 0);
-    assert_eq!(out[0].record_batch().schema().fields().len(), 2);
+fn a_coalesce_that_received_nothing_emits_nothing() {
+    assert!(drive(coalesce(), Vec::new()).is_empty());
 }
 
 fn accumulating_sort(ascending: bool, fetch: Option<usize>) -> CpuAccumulator {
@@ -130,34 +127,54 @@ fn an_accumulating_sort_with_a_fetch_keeps_the_top_of_the_stream() {
     assert_eq!(values_of(&out[0]), vec![6, 5], "the two largest of all six");
 }
 
-/// Rows equal on the keys come back in the order they arrived, which is what a merge over
-/// the runs produces and what this backend has to match to be an oracle for one.
-#[test]
-fn rows_equal_on_the_keys_keep_the_order_they_arrived_in() {
-    let tagged = |key: &str, value: i64| grouped(vec![Some(key)], vec![Some(value)]);
-    let out = drive(
-        accumulating_sort(true, None),
-        vec![tagged("first", 7), tagged("second", 7), tagged("third", 7)],
-    );
-    assert_eq!(
-        keys_of(&out[0]),
-        vec!["first", "second", "third"],
-        "three rows with one key value, in arrival order"
-    );
+/// Long enough to leave the insertion sort behind. Rust sorts under twenty elements in
+/// place, which is stable whether or not the sort claims to be — so a shorter case pins
+/// nothing about the sort it names.
+const PAST_THE_CUTOFF: usize = 40;
+
+/// Ten distinct keys over forty rows, so every key is tied four ways.
+fn tied_rows() -> Vec<CpuBatch> {
+    (0..PAST_THE_CUTOFF)
+        .map(|row| grouped(vec![Some("k")], vec![Some((row % 10) as i64)]))
+        .collect()
 }
 
-/// The same claim under a fetch, which takes a different path through DataFusion: a top-N
-/// keeps a bounded heap rather than sorting everything, and a heap that broke ties by
-/// whatever it happened to hold would make this backend disagree with a k-way merge on
-/// which of two equal rows survived.
+fn ordered_values(batch: &CpuBatch) -> Vec<i64> {
+    values_of(batch)
+}
+
+/// What a sort here does promise: the keys come out ordered, every row survives, and the
+/// same input answers the same way twice. What it does not promise is tie order — neither
+/// DataFusion's sort nor cuDF's is stable — so a plan that needs one asks for a key that
+/// decides it.
 #[test]
-fn a_fetch_over_tied_rows_keeps_the_ones_that_arrived_first() {
-    let tagged = |key: &str| grouped(vec![Some(key)], vec![Some(7)]);
-    let out = drive(
-        accumulating_sort(true, Some(2)),
-        vec![tagged("first"), tagged("second"), tagged("third")],
+fn an_accumulating_sort_orders_its_keys_and_answers_the_same_way_twice() {
+    let once = drive(accumulating_sort(true, None), tied_rows());
+    let again = drive(accumulating_sort(true, None), tied_rows());
+    let values = ordered_values(&once[0]);
+    assert_eq!(values.len(), PAST_THE_CUTOFF, "every row survives the sort");
+    assert!(
+        values.windows(2).all(|pair| pair[0] <= pair[1]),
+        "the keys are ordered: {values:?}"
     );
-    assert_eq!(keys_of(&out[0]), vec!["first", "second"]);
+    assert_eq!(values, ordered_values(&again[0]), "and the same run twice");
+}
+
+/// The same under a fetch, which is the half that used to keep a heap: the rows kept are
+/// the ones whose keys win, and which of four tied rows was kept does not change between
+/// runs.
+#[test]
+fn a_fetch_keeps_the_rows_whose_keys_win_and_keeps_the_same_ones() {
+    let kept = 6;
+    let once = drive(accumulating_sort(true, Some(kept)), tied_rows());
+    let again = drive(accumulating_sort(true, Some(kept)), tied_rows());
+    let values = ordered_values(&once[0]);
+    assert_eq!(values.len(), kept);
+    assert!(
+        values.iter().all(|value| *value <= 1),
+        "six of the forty rows, and the keys 0 and 1 are the six smallest: {values:?}"
+    );
+    assert_eq!(values, ordered_values(&again[0]));
 }
 
 /// `[k, sum(v), count(v)]` — the state an avg decomposes into, which is what a merge reads.
@@ -274,27 +291,23 @@ fn a_merge_that_finalizes_emits_the_finalized_row() {
     );
 }
 
-/// A lane that received nothing owes its one batch in the schema the node declares, not in
-/// the state's: there is no phase left to run over it.
+/// The same for a merge, and the reason is not only the device: a grouped merge over no
+/// arrivals owes no groups. The shape that would owe a row — a global aggregate's identity
+/// row, count 0 rather than no row — has one lane and no scatter above it, so its lane is
+/// never the empty one.
 #[test]
-fn a_merge_that_received_nothing_answers_with_one_batch_of_its_output_schema() {
+fn a_merge_that_received_nothing_emits_nothing() {
     let output = state_of(
         &[("k", DataType::Utf8), ("avg(v)", DataType::Float64)],
         1,
         None,
     );
     let average = NamedExpr::new(Expr::column(1, "avg(v)$sum"), "avg(v)");
-    let out = drive(
+    let emitted = drive(
         merging(avg_merge_body(Some(vec![average])), output, 1 << 20),
         Vec::new(),
     );
-    assert_eq!(out.len(), 1);
-    assert_eq!(out[0].record_batch().num_rows(), 0);
-    assert_eq!(
-        out[0].record_batch().schema().field(1).name(),
-        "avg(v)",
-        "the finalized name, not the state's"
-    );
+    assert!(emitted.is_empty());
 }
 
 /// `[k, count, mean, m2]` — the Welford triple, in DataFusion's own state order and types.
@@ -577,26 +590,34 @@ fn nothing_is_emitted_while_a_lane_could_still_send() {
     assert!(out.is_empty(), "lane 2 has not reported done");
 }
 
-/// Partition-major: rows equal on the keys come back in lane order, and in arrival order
-/// inside a lane. That is what a k-way merge over the lanes produces, and an oracle that
-/// broke the tie some other way would disagree with the device on which row came first.
+/// The merge across lanes, past the cutoff: every lane's rows arrive, the keys come out
+/// ordered, and the answer does not move between runs. Which of two rows tied on the keys
+/// comes first is not promised — a k-way merge over unstable per-lane sorts has no order
+/// to preserve.
 #[test]
-fn tied_rows_come_back_in_lane_order() {
-    let tagged = |key: &str| grouped(vec![Some(key)], vec![Some(7)]);
-    let out = drive_lanes(
-        merge_sorted(2, None),
-        vec![
-            (1, Some(tagged("lane one"))),
-            (0, Some(tagged("lane zero"))),
-            (0, None),
-            (1, None),
-        ],
+fn the_merge_orders_every_lanes_rows_and_answers_the_same_way_twice() {
+    let events = || {
+        let mut events: Vec<(usize, Option<CpuBatch>)> = (0..PAST_THE_CUTOFF)
+            .map(|row| {
+                (
+                    row % 2,
+                    Some(grouped(vec![Some("k")], vec![Some((row % 10) as i64)])),
+                )
+            })
+            .collect();
+        events.push((0, None));
+        events.push((1, None));
+        events
+    };
+    let once = drive_lanes(merge_sorted(2, None), events());
+    let again = drive_lanes(merge_sorted(2, None), events());
+    let values = values_of(&once[0]);
+    assert_eq!(values.len(), PAST_THE_CUTOFF, "both lanes' rows arrive");
+    assert!(
+        values.windows(2).all(|pair| pair[0] <= pair[1]),
+        "the keys are ordered across lanes: {values:?}"
     );
-    assert_eq!(
-        keys_of(&out[0]),
-        vec!["lane zero", "lane one"],
-        "lane 0's row first, though lane 1's arrived first"
-    );
+    assert_eq!(values, values_of(&again[0]));
 }
 
 #[test]

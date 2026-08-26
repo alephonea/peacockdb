@@ -124,10 +124,19 @@ impl CpuAccumulator {
     }
 }
 
-/// The contract every accumulator whose output is `SingleBatch` keeps: exactly one batch
-/// at done, even where nothing arrived. A join's build lane cannot otherwise tell an empty
-/// build side from a lane that never ran.
+/// What an accumulator answers with at done: one batch of everything it held, and nothing
+/// at all where nothing arrived.
+///
+/// Both backends emit nothing for an empty lane, which is what makes them one engine here:
+/// the device's collapse of no handles is a refusal ([#173](../../../llm-wiki/tickets.md)),
+/// so a batch invented on this side would be a row the other cannot produce. Nothing is
+/// also the right answer everywhere the planner can put one — a grouped merge over no
+/// arrivals owes no groups, and a global aggregate, which would owe its identity row, has
+/// one lane and no scatter above it, so its lane is never the empty one.
 fn one_batch(schema: &SchemaRef, held: &[RecordBatch]) -> CallResult<Vec<CpuBatch>> {
+    if held.is_empty() {
+        return Ok((Vec::new(), CallStats::default()));
+    }
     let batch = concat_batches(schema, held.iter())
         .map_err(|error| BackendError::new(format!("joining the lane's batches: {error}")))?;
     Ok((vec![CpuBatch::new(batch)], CallStats::default()))
@@ -175,10 +184,18 @@ impl SortedRuns {
     }
 
     fn mark_done_and_fetch(self) -> CallResult<Vec<CpuBatch>> {
+        if self.held.is_empty() {
+            return Ok((Vec::new(), CallStats::default()));
+        }
         let sorted = run_node(&self.sort, vec![self.held], &self.ctx)?;
         let (ordered, _) = one_batch(&self.schema, &sorted)?;
-        let [batch] = <[CpuBatch; 1]>::try_from(ordered).expect("one batch at done");
-        Ok((vec![first_rows(batch, self.fetch)], CallStats::default()))
+        Ok((
+            ordered
+                .into_iter()
+                .map(|batch| first_rows(batch, self.fetch))
+                .collect(),
+            CallStats::default(),
+        ))
     }
 }
 
@@ -235,10 +252,18 @@ impl CpuPartitionAccumulator {
             .into_iter()
             .flatten()
             .collect();
+        if partition_major.is_empty() {
+            return Ok((Vec::new(), CallStats::default()));
+        }
         let sorted = run_node(&self.sort, vec![partition_major], &self.ctx)?;
         let (ordered, _) = one_batch(&self.schema, &sorted)?;
-        let [batch] = <[CpuBatch; 1]>::try_from(ordered).expect("one batch at done");
-        Ok((vec![first_rows(batch, self.fetch)], CallStats::default()))
+        Ok((
+            ordered
+                .into_iter()
+                .map(|batch| first_rows(batch, self.fetch))
+                .collect(),
+            CallStats::default(),
+        ))
     }
 }
 
@@ -322,9 +347,6 @@ impl AggregateBatches {
             self.compact()?;
         }
         let Some(state) = self.state else {
-            // A lane that received nothing still owes its one batch, and it owes it in the
-            // schema this node declares rather than the state's: there is no phase left to
-            // run over it.
             return one_batch(&self.output, &[]);
         };
         let Some(finalize) = self.finalize else {

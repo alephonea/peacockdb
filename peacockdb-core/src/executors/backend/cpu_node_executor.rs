@@ -10,8 +10,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use datafusion::arrow::array::{ArrayRef, UInt32Array};
-use datafusion::arrow::compute::{cast, concat_batches, take};
-use datafusion::arrow::datatypes::DataType;
+use datafusion::arrow::compute::{concat_batches, take};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::datasource::physical_plan::parquet::{ParquetAccessPlan, RowGroupAccess};
 use datafusion::datasource::physical_plan::ParquetExec;
@@ -23,7 +22,6 @@ use datafusion::physical_plan::memory::MemoryExec;
 use datafusion::physical_plan::repartition::RepartitionExec;
 use datafusion::physical_plan::sorts::sort_preserving_merge::SortPreservingMergeExec;
 use datafusion::physical_plan::{execute_stream, ExecutionPlan, Partitioning, PhysicalExpr};
-use datafusion_comet_spark_expr::hash_funcs::murmur3::create_murmur3_hashes;
 
 use crate::cpu_executor::{batch_varlen_content_bytes, logical_size_from_schema};
 use crate::gpu_rowgroup_prune::all_row_groups;
@@ -35,16 +33,6 @@ use crate::gpu_rule::{
 use crate::executors::executor::{NodeMemoryStats, PartitionStat};
 use crate::executors::node_by_node::NodeExecutor;
 use crate::executors::single_node::{execute_single_node, merge_stats};
-
-/// Spark HashPartitioning seed (comet + the GPU kernel both init the hash to 42).
-const SPARK_HASH_SEED: u32 = 42;
-
-/// Spark `pmod` (positive modulo): map a signed murmur3 hash into `[0, n)`. MUST
-/// match the GPU kernel's `pmod` exactly (negative hashes wrap identically), else
-/// per-partition row counts diverge from the golden.
-fn pmod(h: i32, n: i32) -> i32 {
-    ((h % n) + n) % n
-}
 
 /// If `node` is a *lowered* Hash `GpuRepartitionExec` (the `1→N` form produced by the
 /// GpuMemoryBudgetRule under RealMultiPartition — its input is a single partition, a
@@ -200,14 +188,11 @@ async fn cpu_scan_partitions(
     Ok((out_parts, stat))
 }
 
-/// CPU Spark-murmur3 hash-repartition: concat the (already coalesced) input
-/// into one table, assign each row to `pmod(spark_murmur3(keys, seed=42), n)` via the
-/// comet helper — EXACTLY the GPU `peacock::partitioning::spark_hash_partition`
-/// kernel (the live conformance gate proves bit-equality) — and scatter rows into
-/// `n` output partitions in row order. Count-preserving (Σ out_rows == input rows);
-/// the per-partition `out_rows`/`out_bytes` are the load-bearing murmur3-fidelity
-/// numbers the golden records and the GPU must reproduce. Uses NOT DataFusion's
-/// `RepartitionExec` (ahash → different partition NUMBERS).
+/// CPU Spark-murmur3 hash-repartition: concat the (already coalesced) input into one
+/// table, assign each row its lane through [`crate::spark_partitioning`], and scatter in
+/// row order. Count-preserving (Σ out_rows == input rows); the per-partition
+/// `out_rows`/`out_bytes` are the load-bearing murmur3-fidelity numbers the golden records
+/// and the GPU must reproduce.
 fn cpu_hash_repartition(
     node: &Arc<dyn ExecutionPlan>,
     hash_exprs: &[Arc<dyn PhysicalExpr>],
@@ -217,35 +202,8 @@ fn cpu_hash_repartition(
     let schema = node.schema();
     // One table — matches the GPU's single cudf::table hash_partition input.
     let batch = concat_batches(&schema, input.iter()).map_err(DataFusionError::from)?;
-    let rows = batch.num_rows();
 
-    // Evaluate the hash key columns, then fold them left-to-right with comet's
-    // Spark-murmur3 (buffer pre-seeded to 42 — Spark's HashPartitioning seed).
-    // comet's hasher rejects the Arrow "view" string/binary layouts (Utf8View/
-    // BinaryView) that DataFusion 45's Parquet reader emits; cast those to the
-    // canonical offset layout — same bytes ⇒ same Spark hash as the GPU (which
-    // hashes the cudf STRING offset layout), so partition assignment still matches.
-    let keys: Vec<ArrayRef> = hash_exprs
-        .iter()
-        .map(|e| {
-            let arr = e.evaluate(&batch).and_then(|v| v.into_array(rows))?;
-            match arr.data_type() {
-                DataType::Utf8View => cast(&arr, &DataType::Utf8).map_err(DataFusionError::from),
-                DataType::BinaryView => cast(&arr, &DataType::Binary).map_err(DataFusionError::from),
-                _ => Ok(arr),
-            }
-        })
-        .collect::<DfResult<Vec<_>>>()?;
-    let mut hashes = vec![SPARK_HASH_SEED; rows];
-    if rows > 0 {
-        create_murmur3_hashes(&keys, &mut hashes)
-            .map_err(|e| DataFusionError::External(format!("comet murmur3: {e}").into()))?;
-    }
-    let n = n_parts as i32;
-    let mut idx: Vec<Vec<u32>> = vec![Vec::new(); n_parts];
-    for (r, &h) in hashes.iter().enumerate() {
-        idx[pmod(h as i32, n) as usize].push(r as u32);
-    }
+    let idx = crate::spark_partitioning::rows_per_lane(&batch, hash_exprs, n_parts)?;
 
     let mut out_parts: Vec<Vec<RecordBatch>> = Vec::with_capacity(n_parts);
     let mut part_stats: Vec<PartitionStat> = Vec::with_capacity(n_parts);

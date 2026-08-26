@@ -493,3 +493,41 @@ fn a_grouping_set_aggregate_emits_the_id_beside_its_keys() {
         "the id is a column of the state, at the position the node declared it"
     );
 }
+
+/// The per-batch sort's fetch, over a run long enough to leave the insertion sort behind.
+/// It is a slice of what the sort ordered rather than a top-N heap, so the rows kept are
+/// the ones whose keys win and the same run answers the same way twice — which is what an
+/// oracle owes, since neither engine's sort promises a tie order.
+#[test]
+fn a_per_batch_fetch_keeps_the_rows_whose_keys_win_and_keeps_the_same_ones() {
+    const ROWS: i32 = 40;
+    let node = GpuSort::new(
+        Given::of(&COLUMNS),
+        vec![ColumnOrder {
+            column: 0,
+            ascending: true,
+            nulls_first: false,
+        }],
+        Some(6),
+    );
+    let tied = || {
+        batch(
+            (0..ROWS).map(|row| Some(row % 10)).collect(),
+            (0..ROWS).map(|_| Some("x")).collect(),
+        )
+    };
+    let run = || {
+        CpuExec::sort(&node, &input(), ctx())
+            .expect("the sort builds")
+            .exec(tied())
+            .expect("it runs")
+            .0
+    };
+    let once = rows(&run()).0;
+    assert_eq!(once.len(), 6);
+    assert!(
+        once.iter().all(|value| value.is_some_and(|v| v <= 1)),
+        "six of the forty, and the keys 0 and 1 are the six smallest: {once:?}"
+    );
+    assert_eq!(once, rows(&run()).0, "and the same run twice");
+}

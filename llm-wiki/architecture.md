@@ -496,7 +496,7 @@ files stay so the operator set is discoverable by name.
 [il]: ../peacockdb-core/src/executors/full_table_cpu_executor.rs#L206
 [pn]: ../peacockdb-core/src/executors/backend/cpu_node_executor.rs#L300
 [scanp]: ../peacockdb-core/src/executors/backend/cpu_node_executor.rs#L124
-[hashp]: ../peacockdb-core/src/executors/backend/cpu_node_executor.rs#L210
+[hashp]: ../peacockdb-core/src/executors/backend/cpu_node_executor.rs#L197
 [map]: ../peacockdb-core/src/executors/backend/cpu_node_executor.rs#L340
 [joinp]: ../peacockdb-core/src/executors/backend/cpu_node_executor.rs#L373
 [spmp]: ../peacockdb-core/src/executors/backend/cpu_node_executor.rs#L404
@@ -1190,7 +1190,8 @@ The hash is **Spark's murmur3 as implemented by comet** (seed 42), on both engin
 DataFusion's default repartition uses ahash, whose partition numbers differ from any GPU
 kernel, and cuDF only exposes standard murmur3, which differs from Spark's spec
 (multi-column combine, null handling). To make CPU and GPU row→partition placement
-identical **by construction**, the CPU twin uses comet's `create_murmur3_hashes` and the
+identical **by construction**, the CPU twin uses comet's `create_murmur3_hashes` — in
+`peacockdb-core/src/spark_partitioning.rs`, the one spelling both CPU paths call — and the
 GPU side owns a bit-exact Spark-murmur3 kernel (`cpp/src/spark_hash_partition.cu`),
 reusing cuDF only for the scatter. A live conformance gate (`peacock_spark_partition_ids`,
 `test_inc2_conformance.rs`) proves GPU == comet over the same bytes; per-partition row

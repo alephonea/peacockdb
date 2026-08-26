@@ -10,6 +10,8 @@
 //! output is priced by. Handles thread from one call to the next.
 
 pub mod accumulate;
+pub mod emit;
+pub mod join;
 
 use std::sync::Arc;
 
@@ -96,7 +98,7 @@ impl GpuExec {
         let (_, mut handle) = batch.consume();
         let mut stats = PeacockNodeStats::default();
         for (seq, kind) in &self.calls {
-            let (produced, node_stats) = execute_node(self.executor, *seq, *kind, &[handle])?;
+            let (produced, node_stats) = execute_node(self.executor, *seq, *kind, &[vec![handle]])?;
             handle = produced;
             stats = node_stats;
         }
@@ -194,18 +196,44 @@ pub(super) fn produced(
     )
 }
 
-/// One `execute_node` against the seq a recipe named, its handles all filling the one
-/// child slot every node this backend drives has. The call CONSUMES them, so a caller
-/// hands over batches it will not release itself.
+/// One `execute_node` against the seq a recipe named, its handles grouped by the child
+/// slot each fills. The call CONSUMES them, so a caller hands over batches it will not
+/// release itself.
 pub(super) fn execute_node(
     executor: *mut PeacockExecutor,
     seq: Seq,
     kind: FbKind,
-    inputs: &[u64],
+    inputs: &[Vec<u64>],
 ) -> Result<(u64, PeacockNodeStats), BackendError> {
-    let counts = [inputs.len() as u64];
-    let mut handles = [0u64];
-    let mut stats = [PeacockNodeStats::default()];
+    let [one] = <[(u64, PeacockNodeStats); 1]>::try_from(execute_node_many(
+        executor, seq, kind, inputs, 1,
+    )?)
+    .map_err(|produced| {
+        BackendError::new(format!(
+            "execute_node(#{seq} {kind}) answered with {} handles — a node driven here maps \
+             one call to one output",
+            produced.len()
+        ))
+    })?;
+    Ok(one)
+}
+
+/// The same call where the output count is a plan value: a scatter's N lanes. Every other
+/// node this backend drives takes the one-output form above.
+pub(super) fn execute_node_many(
+    executor: *mut PeacockExecutor,
+    seq: Seq,
+    kind: FbKind,
+    inputs: &[Vec<u64>],
+    out_cap: usize,
+) -> Result<Vec<(u64, PeacockNodeStats)>, BackendError> {
+    // Grouped by the child slot each fills, not flattened: the C++ reads its output count
+    // off child 0's, so a join's two handles in one group would ask for two outputs and be
+    // refused for a buffer it never needed.
+    let counts: Vec<u64> = inputs.iter().map(|group| group.len() as u64).collect();
+    let inputs: Vec<u64> = inputs.concat();
+    let mut handles = vec![0u64; out_cap];
+    let mut stats = vec![PeacockNodeStats::default(); out_cap];
     let mut produced = 0u64;
     let rc = unsafe {
         peacock_executor_execute_node(
@@ -226,13 +254,9 @@ pub(super) fn execute_node(
             last_error(executor)
         )));
     }
-    if produced != 1 {
-        return Err(BackendError::new(format!(
-            "execute_node(#{seq} {kind}) answered with {produced} handles — an exec node \
-             maps one batch to one"
-        )));
-    }
-    Ok((handles[0], stats[0]))
+    handles.truncate(produced as usize);
+    stats.truncate(produced as usize);
+    Ok(handles.into_iter().zip(stats).collect())
 }
 
 pub(super) fn last_error(executor: *mut PeacockExecutor) -> String {

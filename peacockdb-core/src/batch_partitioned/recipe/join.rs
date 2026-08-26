@@ -13,7 +13,9 @@ use crate::generated::gpu_plan_generated::peacock::plan as fb;
 
 use super::super::error::PlanError;
 use super::super::expr::Expr;
-use super::super::nodes::join::{JoinFilterColumn, JoinSide, NestedLoopJoinType};
+use super::super::nodes::join::{
+    JoinFilterColumn, JoinSide, NestedLoopJoinType, finish_join_type, per_call_join_type,
+};
 use super::super::nodes::{GpuJoin, GpuNestedLoopJoin};
 use super::super::schema::Schema;
 use super::expr_writer::write_expr;
@@ -94,7 +96,9 @@ pub(super) fn hash_join(
         CallPattern::AtDone,
     ));
     let finish_type = finish_join_type(node.join_type);
-    let finish = writer.node(2, |b, kids| finish_join(b, node, finish_type, build, kids))?;
+    let finish = writer.node(2, |b, kids| {
+        finish_join(b, node, finish_type, build, probe, kids)
+    })?;
     calls.push(Call::seq(
         finish,
         FbKind::HashJoin {
@@ -180,12 +184,15 @@ fn finish_join<'a>(
     node: &GpuJoin,
     join_type: JoinType,
     build: &Schema,
+    probe: &Schema,
     kids: &[WIPOffset<fb::PlanNode<'a>>],
 ) -> Result<Payload, PlanError> {
     let mut keys = Vec::with_capacity(node.keys.len());
-    for (position, (build_ordinal, _)) in node.keys.iter().enumerate() {
+    for (position, (build_ordinal, probe_ordinal)) in node.keys.iter().enumerate() {
         let left = column(b, *build_ordinal, build)?;
-        let name = node_writer::field_at(build, *build_ordinal).name().clone();
+        // The name the key project gave that column, which is the probe's: this join is
+        // its only reader, and two names for one column is how the two sides drift.
+        let name = node_writer::field_at(probe, *probe_ordinal).name().clone();
         let right = write_expr(b, &Expr::column(position as u32, &name))?;
         keys.push(fb::JoinKey::create(
             b,
@@ -230,9 +237,11 @@ fn key_project<'a>(
     Ok(node_writer::project_payload(b, exprs, names, kids[0]))
 }
 
-/// Build columns straight through, then one typed NULL per probe column the join's
-/// projection keeps: the anti join emits build columns only, and the node's declared
-/// output is the joined schema.
+/// The node's declared row, out of an anti join that emitted build columns only: each
+/// column the projection keeps, in its order — a build one read where the anti join left
+/// it, a probe one as a typed NULL. Walking the projection rather than the build side is
+/// what keeps this the node's shape: the anti join emits every build column whatever the
+/// projection says.
 fn pad_project<'a>(
     b: &mut FlatBufferBuilder<'a>,
     node: &GpuJoin,
@@ -241,22 +250,19 @@ fn pad_project<'a>(
     kids: &[WIPOffset<fb::PlanNode<'a>>],
 ) -> Result<Payload, PlanError> {
     let build_width = build.fields.fields().len() as u32;
-    let mut exprs = Vec::new();
-    let mut names = Vec::new();
-    for ordinal in 0..build_width {
-        exprs.push(column(b, ordinal, build)?);
-        names.push(b.create_string(node_writer::field_at(build, ordinal).name()));
-    }
     let kept: Vec<u32> = match &node.projection {
-        Some(columns) => columns
-            .iter()
-            .filter(|column| **column >= build_width)
-            .map(|column| column - build_width)
-            .collect(),
-        None => (0..probe.fields.fields().len() as u32).collect(),
+        Some(columns) => columns.clone(),
+        None => (0..build_width + probe.fields.fields().len() as u32).collect(),
     };
+    let mut exprs = Vec::with_capacity(kept.len());
+    let mut names = Vec::with_capacity(kept.len());
     for ordinal in kept {
-        let field = node_writer::field_at(probe, ordinal);
+        if ordinal < build_width {
+            exprs.push(column(b, ordinal, build)?);
+            names.push(b.create_string(node_writer::field_at(build, ordinal).name()));
+            continue;
+        }
+        let field = node_writer::field_at(probe, ordinal - build_width);
         exprs.push(node_writer::null_literal(b, field)?);
         names.push(b.create_string(field.name()));
     }
@@ -357,33 +363,6 @@ fn wire_join_type(join_type: JoinType) -> fb::JoinType {
         JoinType::LeftAnti => fb::JoinType::LeftAnti,
         JoinType::RightAnti => fb::JoinType::RightAnti,
         JoinType::LeftMark => fb::JoinType::LeftMark,
-    }
-}
-
-/// What the per-probe-batch join emits, which is not what the node is: a Left emits this
-/// batch's matches and waits for the finish, and a Full also emits the probe rows this
-/// batch had no match for — batch-local, because the build side was complete before the
-/// first call.
-///
-/// `None` is the build-side semi family, whose probe call is only the key project.
-fn per_call_join_type(join_type: JoinType) -> Option<JoinType> {
-    match join_type {
-        JoinType::Left => Some(JoinType::Inner),
-        JoinType::Full => Some(JoinType::Right),
-        JoinType::LeftSemi | JoinType::LeftAnti | JoinType::LeftMark => None,
-        other => unreachable!("{other:?} needs no finish pass"),
-    }
-}
-
-/// The join the finish pass runs against the accumulated keys. Left and Full ask which
-/// build rows nothing ever matched; the semi family asks its own question, and asks it
-/// with the node's own NULL semantics, so the pass substitutes for a legacy single call
-/// rather than improving on it (#59, #80).
-fn finish_join_type(join_type: JoinType) -> JoinType {
-    match join_type {
-        JoinType::Left | JoinType::Full => JoinType::LeftAnti,
-        semi @ (JoinType::LeftSemi | JoinType::LeftAnti | JoinType::LeftMark) => semi,
-        other => unreachable!("{other:?} needs no finish pass"),
     }
 }
 

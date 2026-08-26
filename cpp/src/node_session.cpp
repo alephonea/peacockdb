@@ -254,8 +254,17 @@ void NodeSession::execute_node(uint64_t seq, const uint64_t* input_handles,
       impl_->registry.erase(it);
       views.push_back(owned.back().table->view());
     }
+    // A collapse of nothing has no schema to answer with: the node's own output_schema is
+    // absent on a recipe plan, and concatenating no views gives a table of no columns,
+    // which is not a batch anything above can read. Both backends emit nothing for an
+    // empty lane instead, so reaching this is a driver that called a node it had no
+    // batches for (#173).
+    if (views.empty())
+      throw std::runtime_error(
+          "NodeSession::execute_node: a collapse with no input handles has no columns to "
+          "answer with — an empty lane emits nothing rather than calling this");
     TableResult result;
-    result.column_names = owned.empty() ? std::vector<std::string>{} : owned[0].column_names;
+    result.column_names = owned[0].column_names;
 
     const fb::CudfSortPreservingMerge* spm =
         (node->node_type() == fb::PlanNodeKind_CudfSortPreservingMerge)

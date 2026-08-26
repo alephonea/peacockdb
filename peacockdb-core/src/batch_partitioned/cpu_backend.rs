@@ -5,11 +5,13 @@
 //! which `node_by_node` already uses. The operator is built at construction, and the
 //! batch is what changes per call.
 //!
-//! The traits are synchronous and DataFusion's operator API is not, so each call blocks on
-//! one node's stream. Sound for these operators, which spawn nothing, and the reason the
-//! relay is per node: a whole plan would contain the operators that do.
+//! The traits are synchronous and DataFusion's operator API is not, so each call blocks a
+//! thread on one node's stream. A sort past its in-place threshold spawns onto the runtime
+//! from under that block, which is what a driver has to leave room for (T17).
 
 pub mod accumulate;
+pub mod emit;
+pub mod join;
 mod merge_m2;
 
 use std::sync::Arc;
@@ -58,6 +60,8 @@ struct Stage {
 /// other backend.
 pub struct CpuExec {
     stages: Vec<Stage>,
+    /// A per-batch sort's top-N, applied by slicing what the sort ordered.
+    fetch: Option<usize>,
     ctx: Arc<TaskContext>,
 }
 
@@ -94,14 +98,25 @@ impl CpuExec {
     /// The per-batch sort: `fetch` is the top-N within this batch, which is what makes a
     /// sort 1:1 per batch rather than an accumulator. Ordering the whole stream is
     /// `GpuAccumulateBatchesAndSort`, a different node.
+    ///
+    /// The fetch is a slice of the ordered batch rather than `SortExec::with_fetch`, for
+    /// the reason the accumulating sort gives: a top-N keeps a bounded heap, so which of
+    /// two rows tied on the keys it kept depends on the heap rather than on the plan.
     pub fn sort(
         node: &GpuSort,
         input: &ArrowSchema,
         ctx: Arc<TaskContext>,
     ) -> Result<Self, PlanError> {
         let ordering = lex_ordering(&node.keys, input)?;
-        let sort = SortExec::new(ordering, placeholder(input)).with_fetch(node.fetch);
-        Ok(Self::of(vec![Arc::new(sort)], ctx))
+        let sort = SortExec::new(ordering, placeholder(input));
+        Ok(Self {
+            stages: vec![Stage {
+                declared: sort.schema(),
+                node: Arc::new(sort),
+            }],
+            fetch: node.fetch,
+            ctx,
+        })
     }
 
     /// State from raw values, and the finalize where the node carries one — two operators,
@@ -130,7 +145,11 @@ impl CpuExec {
                 declared: output.fields.clone(),
             });
         }
-        Ok(Self { stages, ctx })
+        Ok(Self {
+            stages,
+            fetch: None,
+            ctx,
+        })
     }
 
     fn of(nodes: Vec<Arc<dyn ExecutionPlan>>, ctx: Arc<TaskContext>) -> Self {
@@ -142,6 +161,7 @@ impl CpuExec {
                     node,
                 })
                 .collect(),
+            fetch: None,
             ctx,
         }
     }
@@ -162,7 +182,11 @@ impl CpuExec {
         let schema = &self.stages.last().expect("a node has an operator").declared;
         let batch = concat_batches(schema, batches.iter())
             .map_err(|error| BackendError::new(format!("joining the node's output: {error}")))?;
-        Ok((CpuBatch::new(batch), CallStats::default()))
+        let kept = match self.fetch {
+            Some(fetch) if fetch < batch.num_rows() => batch.slice(0, fetch),
+            _ => batch,
+        };
+        Ok((CpuBatch::new(kept), CallStats::default()))
     }
 
     fn run(

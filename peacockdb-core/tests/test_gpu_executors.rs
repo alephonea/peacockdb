@@ -51,12 +51,11 @@ use peacockdb_core::batch_partitioned::recipe::{AbiSymbol, Recipe, RecipePlan, a
 
 use peacockdb_core::batch_partitioned::schema::Schema;
 
-use peacockdb_core::batch_partitioned::{CpuBatch, GpuBatch};
+use peacockdb_core::batch_partitioned::{Batch, CpuBatch, GpuBatch};
 
 use peacockdb_ffi::raw::{
     PeacockExecutor, PeacockNodeStats, peacock_executor_begin_plan, peacock_executor_create,
-    peacock_executor_destroy, peacock_executor_end_plan, peacock_executor_execute_scan_rowgroups,
-    peacock_last_error,
+    peacock_executor_destroy, peacock_executor_end_plan, peacock_executor_execute_node, peacock_executor_execute_scan_rowgroups, peacock_last_error,
 };
 
 use common::GPU_BUDGET;
@@ -310,3 +309,5 @@ fn summing(output: &str) -> AggregateBody {
 mod accumulate;
 #[path = "test_gpu_executors/exec.rs"]
 mod exec;
+#[path = "test_gpu_executors/join.rs"]
+mod join;

@@ -492,6 +492,19 @@ pub struct JoinCapability {
     pub needs_finish: bool,
 }
 
+impl JoinCapability {
+    /// Whether the whole join is one call: no probe keys kept and no finish pass.
+    ///
+    /// True where nothing needs a finish, and also where the probe cannot stream — the
+    /// planner makes that probe a single batch, and one call over the whole of it is the
+    /// same legacy node the other modes emit. Asked by the recipe writer for what to
+    /// publish and by an executor for what to build, because answering it twice is how a
+    /// filtered semi join ended up on the finish path with its residual dropped.
+    pub fn answers_in_one_call(&self) -> bool {
+        !self.probe_streams || !self.needs_finish
+    }
+}
+
 /// The three refused shapes are refusals of a defect or a missing cuDF variant, not of
 /// this mode: an outer join's residual filter is applied after the outer gather and drops
 /// the padded rows (#153), and no swapped `mixed_*` variant exists for the right-handed
@@ -531,6 +544,33 @@ pub fn capability(join_type: JoinType, has_filter: bool) -> Result<JoinCapabilit
             )))
         }
         JoinType::RightSemi | JoinType::RightAnti => streaming(false),
+    }
+}
+
+/// What the per-probe-batch join emits, which is not what the node is: a Left emits this
+/// batch's matches and waits for the finish, and a Full also emits the probe rows this
+/// batch had no match for — batch-local, because the build side was complete before the
+/// first call.
+///
+/// `None` is the build-side semi family, whose probe call is only the key project.
+pub fn per_call_join_type(join_type: JoinType) -> Option<JoinType> {
+    match join_type {
+        JoinType::Left => Some(JoinType::Inner),
+        JoinType::Full => Some(JoinType::Right),
+        JoinType::LeftSemi | JoinType::LeftAnti | JoinType::LeftMark => None,
+        other => unreachable!("{other:?} needs no finish pass"),
+    }
+}
+
+/// The join the finish pass runs against the accumulated keys. Left and Full ask which
+/// build rows nothing ever matched; the semi family asks its own question, and asks it
+/// with the node's own NULL semantics, so the pass substitutes for a legacy single call
+/// rather than improving on it (#59, #80).
+pub fn finish_join_type(join_type: JoinType) -> JoinType {
+    match join_type {
+        JoinType::Left | JoinType::Full => JoinType::LeftAnti,
+        semi @ (JoinType::LeftSemi | JoinType::LeftAnti | JoinType::LeftMark) => semi,
+        other => unreachable!("{other:?} needs no finish pass"),
     }
 }
 

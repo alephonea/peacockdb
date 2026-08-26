@@ -1,14 +1,13 @@
 //! `merge_m2`: state into state, which none of DataFusion's aggregate modes does.
 //!
 //! Partial takes values and emits state, Final takes state and emits a value, Single does
-//! both in one call. This mode stacks two merges — per lane, then across lanes — so the
-//! lower one has to emit the state the upper one reads, and no mode does that. It is the
-//! same gap `AggregateMode::Merge` was added to the wire to fill.
+//! both at once. This mode stacks two merges — per lane, then across lanes — so the lower
+//! one must emit the state the upper one reads. It is the gap `AggregateMode::Merge` was
+//! added to the wire to fill.
 //!
-//! The accumulator is DataFusion's own, with one method rewired: what arrives at a merge
-//! is state, so `update_batch` merges it. No part of Welford is written out here — the
-//! device runs cuDF's MERGE_M2, and two spellings of one recurrence differ in the last
-//! digits.
+//! The accumulator is DataFusion's own with one method rewired: what arrives is state, so
+//! `update_batch` merges it. No part of Welford is written out here, because the device
+//! runs cuDF's MERGE_M2 and two spellings differ in the last digits.
 
 use std::any::Any;
 use std::sync::Arc;
