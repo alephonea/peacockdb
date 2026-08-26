@@ -2751,15 +2751,23 @@ the device runs at every mode the query enables. Where the rows are the same at 
 is one golden serving five runs, which is the point of the single entry. Where they are not, it
 is one golden that only one of them can match: `scan-limit` at `bp-tp1-single` returns different
 rows from the `bp-tp4-sized` section, and `golden_exact` would fail on a correct device. So a
-query whose `cpu_oracle` is `data_fusion_subset` takes `live_cpu` on the device, compared against
-a cpu run at the *same* mode — where both walk one driver over one plan and the rows are
-determined again.
+query whose `cpu_oracle` is `data_fusion_subset` writes `live_cpu` as its `gpu_oracle`, and is
+compared against a cpu run at the *same* mode — where both walk one driver over one plan and the
+rows are determined again.
 
-Both conditions are derivable — one from the golden's own marker, one from the declaration two
-arguments to its left — so neither is a seventh argument, and both are asserted rather than
-trusted. A `golden_exact` where the cap or the subset oracle applies is a test that fails on
-correct behaviour; a `live_cpu` where neither does is a device run spending a live oracle on a
-comparison a committed file would have made faster and harder.
+**Written at the call site, never inferred from the argument beside it.** Every argument is
+required and says what it means; a `gpu_oracle` deduced from a `cpu_oracle` is a behaviour
+selected implicitly by an input, which is the shape `coding-style.md` names as an antipattern and
+which this macro exists to avoid — seven arguments so a query's whole coverage reads off one
+line. That both conditions are derivable is why a *check* can exist, never why a value would be
+absent: a `golden_exact` where the cap or the subset oracle applies is asserted red, since it is a
+test that fails on correct behaviour, and a `live_cpu` where neither applies is asserted red too,
+since it spends a device-side live run on a comparison a committed file makes faster and harder.
+
+This is not the `result_golden` case one paragraph up. That argument is omitted because it has no
+degrees of freedom left once the rest of the line is written — legacy needs the keyword only
+because its producer and consumer live in different files. `gpu_oracle` has five values, and the
+constraint pins it in two cases out of five.
 
 A section can therefore turn from content into a marker, and back, as a result crosses the
 threshold. Nothing guards that transition and nothing should: at a fixed scale factor a result's
