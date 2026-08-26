@@ -153,7 +153,7 @@ fn a_node_whose_limit_was_satisfied_consumed_every_batch_that_reached_it() {
     let script = Script::default().source("part", vec![vec![spec(10, 80); 6]]);
     let plan = unload_limited(filter(source("part", 1)), 0, Some(15));
     let report = run(plan.as_ref(), &script);
-    assert!(report.early_exit);
+    assert!(!report.satisfied.is_empty());
     let produced: u64 = rows_of(&report, 1, 0).iter().sum();
     assert_eq!(produced, 20, "the filter had passed two batches");
     assert_eq!(
@@ -180,7 +180,7 @@ fn an_early_exit_leaves_a_batch_unconsumed_below_the_node_that_stopped() {
     let plan = unload_limited(merge(source("part", 3)), 0, Some(5));
     let report = run(plan.as_ref(), &script);
     // 0 unload, 1 merge, 2 source.
-    assert!(report.early_exit);
+    assert!(!report.satisfied.is_empty());
     assert_eq!(rows_of(&report, 2, 2), vec![4], "lane 2 produced its batch");
     assert_eq!(
         report.consumed[1][0][2], 0,

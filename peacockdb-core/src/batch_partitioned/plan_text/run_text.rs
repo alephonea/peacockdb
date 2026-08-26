@@ -18,12 +18,35 @@ use crate::batch_partitioned::driver::RunReport;
 use crate::batch_partitioned::driver::index::{PlanIndex, ROOT};
 use crate::batch_partitioned::node::GpuNode;
 
-/// `root` as it ran, one node per line with its per-batch record beneath it.
+/// `root` as it ran: the early-exit marker, then one node per line with its per-batch
+/// record beneath it.
 pub fn render_run(root: &dyn GpuNode, report: &RunReport) -> String {
     let index = PlanIndex::build(root).expect("the tree the run was made over indexes");
-    let mut text = String::new();
+    let mut text = format!("early_exit={}\n", early_exit(&index, report));
     render_node(&index, report, ROOT, 0, &mut text);
     text
+}
+
+/// Which limits were satisfied, by name and post-order address — the address because that
+/// is what both engines number a node by, and the name because nobody reads an address.
+/// `none` where the run drained, stated rather than left to an absence, since a smaller
+/// number with no cause reads exactly like a plan that produced less.
+fn early_exit(index: &PlanIndex<'_>, report: &RunReport) -> String {
+    if report.satisfied.is_empty() {
+        return "none".to_string();
+    }
+    let named: Vec<String> = report
+        .satisfied
+        .iter()
+        .map(|node| {
+            format!(
+                "{}@{}",
+                index.nodes[*node].node.name(),
+                index.nodes[*node].post_order
+            )
+        })
+        .collect();
+    named.join(",")
 }
 
 fn render_node(
@@ -62,11 +85,14 @@ fn render_node(
         lanes_of(batches, |batch| batch.rows),
         lanes_of(batches, |batch| batch.bytes as u64),
     );
-    // Only where the run left something behind, so it is absent from every node of every
-    // run that drained rather than a list of zeroes on each of them.
+    // Both are early-exit quantities, so both are absent from every node of every run that
+    // drained rather than a zero on each of them.
     let abandoned = &report.abandoned[node];
     if abandoned.iter().any(|rows| *rows > 0) {
         let _ = write!(text, " abandoned={}", numbers(abandoned));
+    }
+    if report.rows_skipped[node] > 0 {
+        let _ = write!(text, " rows_skipped={}", report.rows_skipped[node]);
     }
     text.push('\n');
     for child in &index.nodes[node].children {

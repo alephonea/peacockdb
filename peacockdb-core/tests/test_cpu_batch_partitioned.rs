@@ -493,7 +493,7 @@ async fn a_limit_slices_at_most_two_batches_and_stops_the_scan() {
              batch each is what their limits need"
         );
         assert!(
-            report.early_exit,
+            !report.satisfied.is_empty(),
             "nested-limits at {name}: the run drained rather than stopping at its limit"
         );
         // The mid-plan limit holds nothing whatever its offset, which is what the slice

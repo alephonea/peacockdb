@@ -101,3 +101,76 @@ GpuSortExec: expr=[x], output_bytes=10, output_rows=1
     assert!(cost.contains("ram_to_vram_bytes=0 # (placeholder, no node mapping)"));
     assert_eq!(cost_total(&cost), 60); // 10 + 20 + 30 == Σ output_bytes
 }
+
+/// Every batch-partitioned node kind is in the taxonomy, and every batch-partitioned name
+/// in the taxonomy is a kind — read off the exhaustive match in `nodes::node_name`, which
+/// is the one place a kind is named. A nineteenth kind adds an arm there and reddens this
+/// until it has an entry, which is what makes "all eighteen at once" a property rather
+/// than a moment: T19 enables queries and must never touch this file.
+#[test]
+fn every_node_kind_is_in_exactly_one_cost_category() {
+    let model = CostModel::load();
+    let mut binned: Vec<(&str, usize)> = Vec::new();
+    for name in node_kind_names() {
+        let categories = model
+            .categories
+            .iter()
+            .filter(|c| c.nodes.iter().any(|n| *n == name))
+            .count();
+        binned.push((name, categories));
+    }
+    let missing: Vec<&str> = binned
+        .iter()
+        .filter(|(_, n)| *n == 0)
+        .map(|(name, _)| *name)
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "node kinds with no cost category: {missing:?}\n\
+         Add each to a category in testdata/cost_model.conf — the taxonomy must be total, \
+         or the first .cpu.txt holding one of them cannot derive its .cost.txt."
+    );
+    let twice: Vec<&str> = binned
+        .iter()
+        .filter(|(_, n)| *n > 1)
+        .map(|(name, _)| *name)
+        .collect();
+    assert!(twice.is_empty(), "node kinds in more than one category: {twice:?}");
+
+    // And back: a name here that no kind carries is a category counting bytes nothing
+    // can produce, which reads as coverage and is not.
+    let kinds: std::collections::BTreeSet<&str> = node_kind_names().into_iter().collect();
+    for category in &model.categories {
+        for node in &category.nodes {
+            assert!(
+                node.ends_with("Exec") || kinds.contains(node.as_str()),
+                "cost_model.conf names '{node}', which is neither a legacy wrapper nor a \
+                 batch-partitioned node kind"
+            );
+        }
+    }
+}
+
+/// The node names, parsed out of `node_name`'s match arms. Reading the source rather than
+/// constructing one node of each kind, for the reason the writer's field cover reads the
+/// fbs: a list of instances can miss a kind, where the exhaustive match cannot.
+fn node_kind_names() -> Vec<&'static str> {
+    const SOURCE: &str = include_str!("../src/batch_partitioned/nodes/mod.rs");
+    let body = SOURCE
+        .split_once("pub(crate) fn node_name(")
+        .expect("nodes/mod.rs declares node_name")
+        .1;
+    let body = body.split_once("\n}").expect("node_name has a body").0;
+    let names: Vec<&str> = body
+        .lines()
+        .filter_map(|line| line.split_once("=> \"")?.1.split_once('"'))
+        .map(|(name, _)| name)
+        .collect();
+    assert!(
+        names.len() >= 18,
+        "node_name has {} arms, which is fewer than the kinds that existed when this was \
+         written — the parse is reading the wrong thing",
+        names.len()
+    );
+    names
+}

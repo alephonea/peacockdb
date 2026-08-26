@@ -423,7 +423,7 @@ fn a_run_that_completed_normally_left_nothing_anywhere() {
     let plan = unload(merge(emit(filter(source("part", 1)), 4)));
     let script = Script::default().source("part", vec![vec![spec(9, 72); 3]]);
     let report = run(plan.as_ref(), &script);
-    assert!(!report.early_exit);
+    assert!(report.satisfied.is_empty());
     assert!(
         report.peak_queued.iter().any(|queued| *queued > 0),
         "a plan that never queued anything proves nothing about draining"
@@ -460,7 +460,10 @@ fn an_early_exit_leaks_nothing_even_though_it_leaves_work_behind() {
     let plan = unload_limited(merge(emit(filter(source("part", 1)), 4)), 0, Some(5));
     let script = Script::default().source("part", vec![vec![spec(9, 72); 4]]);
     let report = run(plan.as_ref(), &script);
-    assert!(report.early_exit, "the limit is what ends this run");
+    assert!(
+        !report.satisfied.is_empty(),
+        "the limit is what ends this run"
+    );
     assert_eq!(
         report.holds, report.releases,
         "{} batches were held and {} released",

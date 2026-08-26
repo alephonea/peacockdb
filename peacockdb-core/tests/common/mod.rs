@@ -1077,9 +1077,12 @@ pub async fn assert_gpu_nodes_match_golden(
 ///                  beyond the 1e-12 convention. 1e-11 = ~5× headroom, still 11
 ///                  significant digits. CPU-side #13 approx tests stay at 1e-12;
 ///                  this looser tol is GPU-cuDF-specific (#94-adjacent).
-/// `Oracle`       = live CPU-oracle compare, NO golden — for results too large to
+/// `LiveCpu`      = live CPU-oracle compare, NO golden — for results too large to
 ///                  commit as text (>= RESULT_GOLDEN_MAX_BYTES, e.g. anti-join's
 ///                  ~240MB/1.2M rows). R4 preserved: still result-validated, live.
+///                  Named for the choice it makes — a live run rather than a frozen
+///                  file — since inside an argument called `gpu_oracle`, `oracle` said
+///                  only that an oracle is an oracle.
 /// `Skip`         = per-node only (non-deterministic LIMIT; tp8-only escape).
 #[cfg(not(feature = "rust-only"))]
 #[derive(Clone, Copy)]
@@ -1087,7 +1090,7 @@ pub enum GpuResultMode {
     GoldenExact,
     GoldenApprox,
     GoldenApproxStddev,
-    Oracle,
+    LiveCpu,
     Skip,
 }
 
@@ -1098,10 +1101,10 @@ pub fn gpu_result_mode(s: &str) -> GpuResultMode {
         "golden_exact" => GpuResultMode::GoldenExact,
         "golden_approx" => GpuResultMode::GoldenApprox,
         "golden_approx_std" => GpuResultMode::GoldenApproxStddev,
-        "oracle" => GpuResultMode::Oracle,
+        "live_cpu" => GpuResultMode::LiveCpu,
         "skip" => GpuResultMode::Skip,
         other => panic!(
-            "gpu test macro: unknown result mode '{other}' (expected golden_exact|golden_approx|golden_approx_std|oracle|skip)"
+            "gpu test macro: unknown result mode '{other}' (expected golden_exact|golden_approx|golden_approx_std|live_cpu|skip)"
         ),
     }
 }
@@ -1169,7 +1172,7 @@ pub async fn assert_gpu_query(
             Some(1e-11),
             &qlabel,
         ),
-        GpuResultMode::Oracle => {
+        GpuResultMode::LiveCpu => {
             // Result too large to commit as a golden → validate against a LIVE CPU
             // oracle run (exact). Still result-validated (R4), just not frozen.
             let cpu = CpuExecutor::new_mode(&data_dir, partitions, budget, mode.partition_mode())

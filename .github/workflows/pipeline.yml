@@ -568,14 +568,24 @@ jobs:
             echo "==> ran \$ran_any C++ test binaries"
 
             echo "==> rust GPU integration tests"
+            # Same zero-test guard the C++ loop above carries, in libtest's wording: a
+            # rust binary whose cases all vanished exits 0 and says nothing, so the staging
+            # array would go on excusing a target that verifies nothing.
             for t in $REMOTE_DIR/cpp/install/rust-tests/*; do
               [ -x "\$t" ] || continue
-              echo "--- \$(basename \$t)"
+              tname=\${t##*/}
+              echo "--- \$tname"
               # --test-threads=1: cuDF/RMM share one process-wide pool; running
               # several GPU tests concurrently OOMs the device and poisons the
               # CUDA context, cascading into bad_alloc/cudaErrorIllegalAddress
               # for every later test. Sequential is mandatory.
-              "\$t" --nocapture --test-threads=1 || rc=1
+              tlog=$REMOTE_DIR/\$tname.rust.log
+              "\$t" --nocapture --test-threads=1 > "\$tlog" 2>&1 || rc=1
+              cat "\$tlog"
+              if grep -q "^running 0 tests" "\$tlog"; then
+                echo "::error::\$tname ran 0 tests — nothing was verified"
+                rc=1
+              fi
             done
 
             exit \$rc

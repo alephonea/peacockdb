@@ -67,8 +67,11 @@ pub struct RunReport {
     /// child's own [`emitted`](RunReport::emitted) where the two differ — an emitter
     /// redistributes, so nothing else would sum.
     pub consumed: Vec<Vec<Vec<u64>>>,
-    /// The run stopped because a limit was satisfied, not because work ran out.
-    pub early_exit: bool,
+    /// The nodes whose row interval was satisfied, in index order — empty on a run that
+    /// drained. What the golden's `early_exit=` marker names, and the reason a lane can be
+    /// short of what its plan called for: not a bool, because a reader of a smaller number
+    /// needs to know which limit produced it.
+    pub satisfied: Vec<usize>,
 }
 
 /// One batch a node emitted. The driver reads both figures already — the rows for a limit
@@ -913,7 +916,9 @@ impl<'a, B: Backend> Driver<'a, B> {
             emitted: self.emitted,
             abandoned: self.abandoned,
             consumed: self.consumed,
-            early_exit: self.scheduler.any_satisfied(),
+            satisfied: (0..self.index.len())
+                .filter(|node| self.scheduler.is_satisfied(*node))
+                .collect(),
         }
     }
 }

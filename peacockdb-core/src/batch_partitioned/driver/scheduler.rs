@@ -170,6 +170,10 @@ impl Scheduler {
 
     /// Any satisfied node at all — the run ended early, so in-flight batches are dropped
     /// rather than reported as stranded.
+    pub(crate) fn is_satisfied(&self, node: usize) -> bool {
+        self.satisfied[node]
+    }
+
     pub(crate) fn any_satisfied(&self) -> bool {
         self.satisfied.iter().any(|satisfied| *satisfied)
     }

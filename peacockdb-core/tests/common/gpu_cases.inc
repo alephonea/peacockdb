@@ -27,10 +27,10 @@
 
 // ── TPC-H (the GPU-supported set) ───────────────────────────────────────────
 gpu_case!(tpch, 1, scan_limit, full_table_tp1_standard, golden_exact);
-gpu_case!(tpch, 1, filter_project, full_table_tp1_standard, oracle);    // >256KB result
+gpu_case!(tpch, 1, filter_project, full_table_tp1_standard, live_cpu);    // >256KB result
 gpu_case!(tpch, 1, aggregate_groupby, full_table_tp1_standard, golden_exact);
-gpu_case!(tpch, 1, semi_join, full_table_tp1_standard, oracle);        // >256KB result
-gpu_case!(tpch, 1, anti_join, full_table_tp1_standard, oracle);        // >256KB result
+gpu_case!(tpch, 1, semi_join, full_table_tp1_standard, live_cpu);        // >256KB result
+gpu_case!(tpch, 1, anti_join, full_table_tp1_standard, live_cpu);        // >256KB result
 gpu_case!(tpch, 1, nested_loop_join, full_table_tp1_standard, golden_exact);
 gpu_case!(tpch, 1, cross_join, full_table_tp1_standard, golden_exact);
 gpu_case!(tpch, 1, q1, full_table_tp1_standard, golden_exact);
@@ -43,12 +43,12 @@ gpu_case!(tpch, 1, q7, full_table_tp1_standard, golden_exact);
 gpu_case!(tpch, 1, q8, full_table_tp1_standard, golden_exact);
 gpu_case!(tpch, 1, q9, full_table_tp1_standard, golden_exact);
 gpu_case!(tpch, 1, q10, full_table_tp1_standard, golden_exact);
-gpu_case!(tpch, 1, q11, full_table_tp1_standard, oracle);              // >256KB result
+gpu_case!(tpch, 1, q11, full_table_tp1_standard, live_cpu);              // >256KB result
 gpu_case!(tpch, 1, q12, full_table_tp1_standard, golden_exact);
 gpu_case!(tpch, 1, q13, full_table_tp1_standard, golden_exact);
 gpu_case!(tpch, 1, q14, full_table_tp1_standard, golden_approx);
 gpu_case!(tpch, 1, q15, full_table_tp1_standard, golden_exact);
-gpu_case!(tpch, 1, q16, full_table_tp1_standard, oracle);              // >256KB result
+gpu_case!(tpch, 1, q16, full_table_tp1_standard, live_cpu);              // >256KB result
 gpu_case!(tpch, 1, q17, full_table_tp1_standard, golden_exact);
 gpu_case!(tpch, 1, q18, full_table_tp1_standard, golden_exact);
 gpu_case!(tpch, 1, q19, full_table_tp1_standard, golden_exact);
@@ -140,7 +140,7 @@ gpu_case!(tpcds, 1, q94, full_table_tp1_standard, golden_exact);
 gpu_case!(tpcds, 1, q95, full_table_tp1_standard, golden_exact);
 gpu_case!(tpcds, 1, q96, full_table_tp1_standard, golden_exact);
 gpu_case!(tpcds, 1, q97, full_table_tp1_standard, golden_exact);
-gpu_case!(tpcds, 1, q98, full_table_tp1_standard, oracle);             // >256KB result
+gpu_case!(tpcds, 1, q98, full_table_tp1_standard, live_cpu);             // >256KB result
 gpu_case!(tpcds, 1, q99, full_table_tp1_standard, golden_exact);
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -173,14 +173,14 @@ gpu_case!(tpch, 1, shuffle_stddev, partitioned_tp8_standard, golden_approx_std);
 // q17: mixed count/avg/stddev over 7 real-8-way joins (golden_approx_std for the
 // GPU-cuDF-M2 stddev). join_int: minimal 1-key fact-dim join (oracle mode).
 gpu_case!(tpcds, 1, q17, partitioned_tp8_standard, golden_approx_std);
-gpu_case!(tpch, 1, join_int, partitioned_tp8_standard, oracle);
+gpu_case!(tpch, 1, join_int, partitioned_tp8_standard, live_cpu);
 // (#97-a) Real-8-way per-partition NON-inner Partitioned joins (semi=RightSemi,
 // anti=RightAnti, left=Left, each 8→8). oracle mode (>256KB results): the GPU output
 // is checked against a LIVE CPU-oracle run, so anti's NOT-IN null handling is gated
 // at both levels.
-gpu_case!(tpch, 1, semi_join, partitioned_tp8_standard, oracle);
-gpu_case!(tpch, 1, anti_join, partitioned_tp8_standard, oracle);
-gpu_case!(tpch, 1, left_join, partitioned_tp8_standard, oracle);
+gpu_case!(tpch, 1, semi_join, partitioned_tp8_standard, live_cpu);
+gpu_case!(tpch, 1, anti_join, partitioned_tp8_standard, live_cpu);
+gpu_case!(tpch, 1, left_join, partitioned_tp8_standard, live_cpu);
 // TPC-H join queries at real 8-way (Partitioned Inner, int keys, mergeable sum
 // aggs); small results → golden_exact (consumes the cpu_partitioned-owned
 // .result.txt). Multi-func aggs (q8, q12: 2 sums) verify on CI only — the local flatc
