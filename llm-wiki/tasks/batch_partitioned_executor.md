@@ -2763,6 +2763,24 @@ Beside it, `rows_skipped=N` on each node that has any: rows released without an 
 which the driver already counts per node precisely because the rows returned look identical
 either way. It is the saving a limit buys, and the golden is where it becomes visible.
 
+**A batch emitted and never consumed is still emitted.** It is counted where it enters a queue,
+so it is in its producer's `batch_rows` and `batch_bytes` whether or not the parent ever took it;
+what the parent took is its `in_rows`. The gap between the two is the work a limit threw away,
+per child and per lane, and it is the quantity `early_exit` exists to explain — without the
+marker it reads as a node that emitted more than its parent wanted, which is a defect
+everywhere else.
+
+The same rule decides the cost, and the answer is not the intuitive one: `.cost.txt` prices what
+was produced, not what was used, because the device did that work and holding those bytes is what
+the budget was spent on. A query that exits early is genuinely cheaper than one that does not,
+and the batches it produced before exiting are genuinely not free.
+
+Where the drop begins is bounded rather than recorded, and does not need a third list. Queues are
+FIFO and arrival order is pinned, so what a parent took is a prefix of the child's lane — the
+cumulative sum of `batch_rows[j]` reaching `in_rows`, ending mid-batch only where a limit sliced a
+straddling one. So `in_rows[child][j]` lies between two adjacent prefix sums of that child's lane,
+which is a tighter check than `<=` on the total and is the form to assert.
+
 **Two checks change shape under it, and both get stronger rather than weaker.** The loader
 identity — `batch_rows` having `partition_groups`' exact shape — is a plan-against-run
 comparison, and early exit is exactly when the run does less than the plan. Per lane it becomes a
