@@ -155,6 +155,12 @@ still holds, which is why review passes it: `When` above `RunError` took `RunErr
 block, whose opening sentences described `RunError` and stated a contract the same task
 had disproved. After inserting a declaration, read each doc block's first sentence.
 
+The same mechanism outside code: `tickets.md` gives each ticket an `<a id="tNN">` above its
+header, and #177 inserted above #170 took #170's anchor, so every link to it — the contents
+table, the cost report — resolved to #177. Existence checks in both directions pass that, since
+every anchor still has a header and every header an anchor; what catches it is asserting each
+anchor sits above the header naming its own number.
+
 ### A thread-local as an output or side-channel argument
 
 Found during the executors refactor: `execute_one`/`execute_node` passed node inputs

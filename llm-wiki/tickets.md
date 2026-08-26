@@ -181,22 +181,16 @@ designing: nothing yet says a thousand-node plan is a shape this mode should pro
 ### #168 — the fbs ScalarValue has no interval, so one join residual has no payload
 
 `ScalarValue` has no interval variant, and `testdata/tpch-queries/mixed-join.sql` adds one to a
-column — `l_shipdate BETWEEN o_orderdate AND o_orderdate + INTERVAL '90' DAY` — so folding cannot
-reach it and that join's recipe has no writable payload.
+column, so folding cannot reach it and that join's recipe has no writable payload.
 
-It is the only query in either bench with the shape: `mixed-join` is the fixture that pairs an
-equi-key with a non-equi residual, and every other corpus interval sits between two literals and
-folds away before serialization. Nothing regressed, either — the legacy path refuses the same
-literal at `serialize_scalar_value`'s unsupported-scalar arm, `mixed_join` has never been staged
-in `gpu_cases.inc`, and its coverage is a plan golden plus a CPU exec case at tp8-mini. No GPU
-path in this engine has ever carried an interval literal; what changed is that the golden now
-says so, where before it lived in an `Err` nobody reads.
+It is the only query in either bench with the shape — every other corpus interval folds away
+before serialization — and nothing regressed: the legacy path refuses the same literal at
+`serialize_scalar_value`, `mixed_join` was never staged in `gpu_cases.inc`, and no GPU path here
+has carried one. What changed is that the golden says so, not an `Err` nobody reads.
 
-Kinds, seqs and handles do not depend on an expression being writable, so the recipe renders as
-it always did and the payload of that one node reads `unavailable:` with the reason. That holds
-because the placeholder adopts the children already taken for the node it replaces — a
-`CudfUnion` over them rather than a leaf. A leaf orphans those subtrees, and an unreachable node
-is never indexed, so every seq above the failure would shift while the rendering said nothing.
+That node's payload reads `unavailable:` with the reason, and the placeholder adopts the children
+already taken for the node it replaces: a leaf would orphan those subtrees and shift every seq
+above the failure while the rendering said nothing.
 
 Closing it is a third appended `ScalarValue` variant plus the C++ arm, on the terms the other two
 took ([the spec's constraints](tasks/batch_partitioned_executor.md#scope-and-constraints)). Not
@@ -372,7 +366,6 @@ A second thing falls out: `boundary()` in `test_cpu_batch_partitioned.rs` search
 the observed peak, so a query whose trip is below it reports an untested floor — the trip assert
 catches that rather than passing. Answering this needs a downward search, a different claim.
 
-<a id="t170"></a>
 <a id="t177"></a>
 ### #177 — the finish join's intermediate is priced by the node's row, not by what it emits
 `schema_of` in `gpu_backend/join.rs` prices the finish join's output by the node's output schema.
@@ -388,6 +381,7 @@ declared fewer, silently.
 Needs a device to check, which is why it is a ticket rather than T17's: a pricing fix nothing can
 run is a second guess on top of the first.
 
+<a id="t170"></a>
 ### #170 — a source whose lanes each hold one batch could say so, and three shortcuts would fire
 
 The loader declares `MultipleBatches` unconditionally
