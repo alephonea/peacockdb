@@ -384,3 +384,60 @@ async fn calibration_record_regions_match_the_cpu_golden() {
         }
     }
 }
+
+/// The benchmark path must not reach for anything the CPU tier produces.
+///
+/// The measurement suite runs at sf40, where there are no `.cpu.txt` statistics and no
+/// `.result.txt` results, and where producing them would mean executing the query on the
+/// CPU over 42 GB of parquet. Today `run_gpu_benchmark` reads neither — it times the GPU
+/// plan and asserts nothing. That is a property of the code as it stands, not of its
+/// shape, and the way it breaks is one added call inside an existing function: the sf1
+/// rows would keep passing, and only the sf40 rows would fail, on a host, hours later,
+/// as a missing file.
+///
+/// So it is checked here, in the CPU tier, on a machine with no GPU, at the moment the
+/// call is added.
+///
+/// By source text rather than by types because the thing being forbidden is a call, and
+/// no type says "this function was not called". Line comments are stripped first: the
+/// point is calls, and a comment explaining why the benchmark does not read a golden
+/// must not itself be the failure. Two known limits — a `//` inside a string literal
+/// hides the rest of that line from the search, and a rename of any of these functions
+/// silently empties the check. It is a tripwire, not a proof. The proof is structural
+/// and lives elsewhere: an sf40 row uses `bench_only_case!`, which is defined only in
+/// the benchmark target, so it cannot expand into a correctness test at all.
+#[test]
+fn the_benchmark_path_reads_no_cpu_side_golden() {
+    // Every accessor in common/ that names a file the CPU tier writes, plus the oracle
+    // comparison mode — the four goldens and the one enum are all of it.
+    const FORBIDDEN: &[&str] =
+        &["cpu_golden", "result_golden", "cost_golden", "plan_golden", "CpuOracle"];
+    // The two files the benchmark path is made of: the target and the runner it calls.
+    const SOURCES: &[&str] = &["tests/peacock_gpu_benchmarks.rs", "tests/common/benchmark.rs"];
+
+    for rel in SOURCES {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(rel);
+        let text = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+            panic!(
+                "cannot read {}: {e}. This guard names the benchmark path by path; if \
+                 the file moved, point it at the new one rather than dropping it.",
+                path.display()
+            )
+        });
+        let code: String = text
+            .lines()
+            .map(|l| l.split_once("//").map_or(l, |(before, _)| before))
+            .collect::<Vec<_>>()
+            .join("\n");
+        for name in FORBIDDEN {
+            assert!(
+                !code.contains(name),
+                "{rel} mentions `{name}`. The benchmark suite runs at sf40, where the \
+                 CPU tier's goldens do not exist and cannot be produced — reading one \
+                 makes every sf40 case fail on a missing file, on the GPU host, long \
+                 after the change. If the benchmark genuinely needs a CPU-side input, \
+                 that is a decision about the sf40 suite, not an edit to this list."
+            );
+        }
+    }
+}
