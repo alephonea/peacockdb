@@ -212,7 +212,8 @@ jobs:
           # binary does not link libpeacock_gpu — a smaller link in the tier that has
           # already hit tmpfs/SIGBUS at link time. It shares this line's already-built
           # rust-only fingerprint, so it costs no extra dependency compile.
-          cargo test --no-run --features rust-only -p peacockdb-core --lib --test test_plan_bytes
+          cargo test --no-run --features rust-only -p peacockdb-core --lib --test test_plan_bytes \
+            --test test_cpu_executors
         env:
           CMAKE_GENERATOR: Ninja
           LD_LIBRARY_PATH: /opt/conda/lib
@@ -269,6 +270,11 @@ jobs:
           # ONLY — so before this line the lib unit tests ran locally and
           # never in CI. test_ci_coverage asserts this line exists.
           cargo test --features rust-only -p peacockdb-core --lib
+          # The executor contract both engines owe, from one table: this runs its rows on
+          # the CPU backend and the gpu-tests job runs the same rows on a device. Neither
+          # half proves the contract alone, which is why the table is shared rather than
+          # copied. Synthetic data written by the test, so no dataset and no device.
+          cargo test --features rust-only -p peacockdb-core --test test_cpu_executors
         env:
           CMAKE_GENERATOR: Ninja
           LD_LIBRARY_PATH: /opt/conda/lib

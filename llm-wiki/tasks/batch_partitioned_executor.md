@@ -887,14 +887,14 @@ refusal is what the device test asserts.
 | Mode | fb seqs: per probe call / at finish | cuDF underneath | Runs on |
 |---|---|---|---|
 | **Inner** | `CudfHashJoin{Inner, keys, filter, projection, null_equals_null}` / — | `inner_join(bk, pk, nulls)` → two gather maps → `gather(build, ·, DONT_CHECK)` + `gather(batch, ·, DONT_CHECK)` → column concat → residual: `build_column` + `apply_boolean_mask` → `projection` | device, one probe batch ([#152](../tickets.md#t152)) |
-| **Right outer** | `CudfHashJoin{Right}` / — | `left_join(pk, bk, nulls)` with the pair swapped back → `gather(build, ·, NULLIFY)` + `gather(batch, ·, DONT_CHECK)` | CPU; a device takes one probe batch (#152) |
+| **Right outer** | `CudfHashJoin{Right}` / — | `left_join(pk, bk, nulls)` with the pair swapped back → `gather(build, ·, NULLIFY)` + `gather(batch, ·, DONT_CHECK)` | CPU; a device would take one probe batch (#152) |
 | **Left outer** | `CudfHashJoin{Inner}` + `CudfProject`(key ordinals) / `CudfCoalescePartitions` → `CudfHashJoin{LeftAnti}` → `CudfProject`(build columns + typed NULL literals) | per call as Inner; at finish `left_anti_join(bk, accumulated_keys, EQUAL)` → `gather` → one literal-only `compute_column` per padded column | refused — no device path (#152) |
 | **Full outer** | `CudfHashJoin{Right}` + `CudfProject`(keys) / as Left outer | per call as Right outer; finish as Left outer | refused — no device path (#152) |
-| **Build-side semi family** | `CudfProject`(key ordinals) / `CudfCoalescePartitions` → `CudfHashJoin{LeftSemi\|LeftAnti\|LeftMark}` | finish only: `left_semi_join` / `left_anti_join` (`filtered_join::semi_join` / `anti_join` where the header exists) → `gather`; mark scatters `true` into an all-false column and appends it | device (LeftAnti, streamed); LeftSemi and LeftMark on CPU |
-| **Probe-side semi family** | `CudfHashJoin{RightSemi\|RightAnti}` / — | `left_semi_join(pk, bk, nulls)` with the sides swapped, as the C++ does → `gather(batch, ·)` | CPU; a device takes one probe batch (#152) |
-| **Cross join** | `CudfCrossJoin` / — | `cross_join(build, batch)` | CPU; a device takes one probe batch (#152) |
-| **Nested-loop Inner** | `CudfNestedLoopJoin{Inner, filter, filter_columns}` / — | `conditional_inner_join(build, batch, ast)` → `gather` ×2; or `cross_join` → `build_column` → `apply_boolean_mask` when the predicate is not AST-able | CPU; a device takes one probe batch (#152) |
-| **Nested-loop Left** | one `CudfNestedLoopJoin{Left, filter}` / — | `conditional_left_join` → `gather(build, ·)` + `gather(probe, ·, NULLIFY)` | CPU; a device takes one probe batch (#152) |
+| **Build-side semi family** | `CudfProject`(key ordinals) / `CudfCoalescePartitions` → `CudfHashJoin{LeftSemi\|LeftAnti\|LeftMark}` | finish only: `left_semi_join` / `left_anti_join` (`filtered_join::semi_join` / `anti_join` where the header exists) → `gather`; mark scatters `true` into an all-false column and appends it | device — LeftSemi, LeftAnti and LeftMark, each streamed and answered at done |
+| **Probe-side semi family** | `CudfHashJoin{RightSemi\|RightAnti}` / — | `left_semi_join(pk, bk, nulls)` with the sides swapped, as the C++ does → `gather(batch, ·)` | CPU; a device would take one probe batch (#152) |
+| **Cross join** | `CudfCrossJoin` / — | `cross_join(build, batch)` | CPU; a device would take one probe batch (#152) |
+| **Nested-loop Inner** | `CudfNestedLoopJoin{Inner, filter, filter_columns}` / — | `conditional_inner_join(build, batch, ast)` → `gather` ×2; or `cross_join` → `build_column` → `apply_boolean_mask` when the predicate is not AST-able | CPU; a device would take one probe batch (#152) |
+| **Nested-loop Left** | one `CudfNestedLoopJoin{Left, filter}` / — | `conditional_left_join` → `gather(build, ·)` + `gather(probe, ·, NULLIFY)` | CPU; a device would take one probe batch (#152) |
 
 **One worked example per mode.** `dim(k, label)` is the build side and `fact(fk, v)` the
 probe throughout, so the shapes are comparable; the plan column shows the join subtree only,
@@ -967,8 +967,11 @@ Three things follow. It is *that* node because its arity is a call argument rath
 constant: the collapse arm concatenates whatever k handles the call hands it, and k here is
 a runtime number, how many batches this lane happened to see. (`CudfUnion` also
 concatenates, but declares its inputs in the node.) It fires only where k > 1 — one probe
-batch hands its key table straight to the finish join, none registers an empty one, which
-is what an empty lane means. And the word "partitions" in its name is the wire's
+batch hands its key table straight to the finish join. **What k = 0 does is the executor's
+answer, not the concat's**: a lane that saw no probe batch has no key table to hand over, and
+since a concat of nothing throws ([#173](../tickets.md#t173)) the finish has to answer from the
+build side alone — LeftAnti over an empty key table is every build row, which is what the CPU
+does and what the device must be made to do. And the word "partitions" in its name is the wire's
 vocabulary, not this mode's; `ScanBatch` sets the same trap in architecture.md.
 
 **Why keys and not the probe rows.** The alternative to accumulating keys is not "a smaller
@@ -1649,16 +1652,17 @@ to be measured; each one holds for the Rust implementation and the case behind i
 - **A memory bound asserted at one partitioning is asserting about one shape of arrival.**
   Only a streamed probe accumulates; a single-batch probe accumulates once and finishes. Two
   corpus queries passed at one layout and failed at two others.
-- **Zero rows is not zero bytes, and a zero peak is a defect.** An empty lane still owes a
-  typed batch, which costs schema and no rows. Every run asserts a peak above zero and
+- **Zero rows is not zero bytes, and a zero peak is a defect.** A batch of no rows still costs
+  its schema; an empty lane emits no batch at all, on either backend, which is a different
+  thing and settled in T16. Every run asserts a peak above zero and
   `in_flight` back to zero at the end. `peak <= budget` is *not* among them, and T13 measured
   why: the peak is observed where a batch is held, and the post-check runs after the emitting
   executor's state has been forgotten, so a buffering node's transient — its state and its
   output alive together, which is exactly what `cudf::concatenate` holds — raises the peak
   without any check seeing it. What prices that transient is the pre-check, so an accumulator
   **must** include the output it is about to build in its `scratch_bytes`; a silent model is a
-  guard switched off, not a cheap call. That obligation is T15's, and the driver tests pin both
-  halves of it.
+  guard switched off, not a cheap call. That obligation is **T17's**, with the rest of the
+  accounting: `scratch_bytes` belongs to `Executor`, which no task before it implements.
 
 ## GPU execution through the frozen FFI
 
@@ -2342,8 +2346,10 @@ expected rather than avoided, since both are asking DataFusion for the same oper
 zero batches, one batch, ties for the merge (partition-major stability), fetch interaction, large
 batch counts, gid-carrying aggregate merges.
 
-**T16 — partition ops and joins.** `GpuEmitPartitions` (per-batch scatter, N=3 and large N, empty
-outputs for skewed hashes), `GpuMergePartitions`' round-robin rule, `GpuJoin` with
+**T16 — partition ops and joins.** `GpuEmitPartitions` (per-batch scatter at a small N and a
+large one, empty outputs for skewed hashes, and the lane each key lands in, asserted on both
+backends — co-partitioning is what every partitioned join rests on). `GpuMergePartitions` is not
+here: its mapping is `Forwarder`'s, from T13, and its service order is the driver's. `GpuJoin` with
 `set_build`/`probe_and_fetch`/`finish_and_fetch`, plus cross and nested-loop joins on the same
 trait. The [capability matrix](#join-capability-matrix) is emulated as a test table — per
 (type × layout): stream-vs-refuse, correctness against a hand-built oracle, the GPU finish pass via

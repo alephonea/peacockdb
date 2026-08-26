@@ -11,6 +11,7 @@
 use std::sync::Arc;
 
 use datafusion::arrow::datatypes::{Schema as ArrowSchema, SchemaRef};
+use datafusion::common::JoinType;
 
 use peacockdb_ffi::raw::PeacockExecutor;
 
@@ -140,12 +141,41 @@ impl GpuProbingJoin {
         if self.join.at_done.is_empty() {
             return Ok((Vec::new(), CallStats::default()));
         }
+        if self.accumulated.is_empty() {
+            return self.finish_without_keys();
+        }
         let mut prior: Option<GpuBatch> = None;
         let mut none = None;
         for call in self.join.at_done.clone() {
             prior = Some(self.make(call, &mut none, &mut prior)?);
         }
         Ok((prior.into_iter().collect(), CallStats::default()))
+    }
+
+    /// A lane whose probe was empty accumulated no keys, and the concat of none is a
+    /// refusal on this side (#173). What the finish would have computed is known without
+    /// it — nothing matched — so an anti join hands its build side up, which is the answer
+    /// and the one this backend can express. A semi join owes no rows and a mark join owes
+    /// a column of `false`, and neither is a table the frozen surface makes out of nothing.
+    fn finish_without_keys(mut self) -> CallResult<Vec<GpuBatch>> {
+        let anti = self.join.at_done.len() == 2
+            && matches!(
+                self.join.at_done[1].kind,
+                FbKind::HashJoin {
+                    join_type: JoinType::LeftAnti
+                }
+            );
+        if anti {
+            return Ok((
+                self.build.take().into_iter().collect(),
+                CallStats::default(),
+            ));
+        }
+        Err(BackendError::new(
+            "this lane's probe was empty, so its finish has no keys to join against — and \
+             the answer it owes is a table of no rows or of literals, which the frozen \
+             surface cannot make without one (#173)",
+        ))
     }
 
     /// One call, its named inputs resolved to the handles this join is holding.
@@ -203,7 +233,9 @@ impl GpuProbingJoin {
     /// there is no arrangement of these two calls that leaves both a batch to read.
     fn copy_of(&self, _batch: &mut Option<GpuBatch>) -> Result<u64, BackendError> {
         Err(BackendError::new(
-            "this join's recipe copies its probe batch — the key project keeps the keys              and the join below it reads the same batch — and the ABI has no copy, so              neither call can run without erasing the other's input (#152)",
+            "this join's recipe copies its probe batch — the key project keeps the keys \
+             and the join below it reads the same batch — and the ABI has no copy, so \
+             neither call can run without erasing the other's input (#152)",
         ))
     }
 

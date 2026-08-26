@@ -35,7 +35,7 @@ pub(super) fn hash_join(
         unreachable!("a join declares two inputs")
     };
 
-    if !capability.probe_streams || !capability.needs_finish {
+    if capability.answers_in_one_call() {
         // One node over the whole probe side, or one per batch where every emitted row is
         // decided by (build, this batch). The handles differ — a single-batch probe hands
         // the build over, a streamed one copies it (#152) — and the plan does not.

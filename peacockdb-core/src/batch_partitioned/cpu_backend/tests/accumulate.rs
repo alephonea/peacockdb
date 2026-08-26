@@ -5,6 +5,7 @@
 //! expected answer is hand-computed.
 
 use super::*;
+use datafusion::execution::context::SessionContext;
 use crate::batch_partitioned::cpu_backend::accumulate::{CpuAccumulator, CpuPartitionAccumulator};
 use crate::batch_partitioned::executor::LaneEvent;
 use crate::batch_partitioned::node::RowInterval;
@@ -83,7 +84,21 @@ fn a_coalesce_that_received_nothing_emits_nothing() {
     assert!(drive(coalesce(), Vec::new()).is_empty());
 }
 
+/// A session whose sort cannot stay in place, so `ExternalSorter` takes the arm that
+/// spawns instead of the one that concatenates and sorts once. Stated rather than reached
+/// by making the input large: a threshold in bytes and a fixture in rows are two facts
+/// that drift apart, and the test would go quiet rather than red.
+fn spilling_sort(ascending: bool, fetch: Option<usize>) -> CpuAccumulator {
+    let config = datafusion::prelude::SessionConfig::new()
+        .set_u64("datafusion.execution.sort_in_place_threshold_bytes", 0);
+    sort_with(ascending, fetch, SessionContext::new_with_config(config).task_ctx())
+}
+
 fn accumulating_sort(ascending: bool, fetch: Option<usize>) -> CpuAccumulator {
+    sort_with(ascending, fetch, ctx())
+}
+
+fn sort_with(ascending: bool, fetch: Option<usize>, ctx: Arc<TaskContext>) -> CpuAccumulator {
     let node = GpuAccumulateBatchesAndSort::new(
         Given::of(&GROUPED),
         vec![ColumnOrder {
@@ -93,7 +108,7 @@ fn accumulating_sort(ascending: bool, fetch: Option<usize>) -> CpuAccumulator {
         }],
         fetch,
     );
-    CpuAccumulator::sorted(&node, &schema_of(&GROUPED).fields, ctx()).expect("the sort builds")
+    CpuAccumulator::sorted(&node, &schema_of(&GROUPED).fields, ctx).expect("the sort builds")
 }
 
 /// The whole stream, not each batch: batches that are each sorted and not sorted against
@@ -632,4 +647,77 @@ fn a_fetch_over_the_merge_keeps_the_top_of_every_lane_together() {
         ],
     );
     assert_eq!(values_of(&out[0]), vec![1, 2, 5]);
+}
+
+/// A global aggregate's lane can be empty — a mid-plan limit that dropped every batch of
+/// the one lane is how — and what it owes then is its identity row rather than no row.
+/// `count(*)` over nothing is 0, and a query asking for it gets an answer.
+#[test]
+fn a_global_aggregate_that_received_nothing_still_owes_its_identity_row() {
+    let counted = Schema::new(Arc::new(
+        schema_of(&[("count(v)", DataType::Int64)])
+            .fields
+            .as_ref()
+            .clone(),
+    ));
+    let body = AggregateBody {
+        group_by: Vec::new(),
+        grouping_sets: Vec::new(),
+        null_exprs: Vec::new(),
+        aggs: vec![AggCall {
+            func: PlanAgg::Sum,
+            args: vec![Expr::column(0, "count(v)")],
+            outputs: vec![Field::new("count(v)", DataType::Int64, true)],
+        }],
+        finalize: None,
+    };
+    let node = GpuAggregateBatches::new(
+        Given::of_schema(counted.clone()),
+        body,
+        counted.clone(),
+        counted.clone(),
+    );
+    let accumulator = CpuAccumulator::aggregate(&node, &counted.fields, ctx(), 1 << 20)
+        .expect("the merge builds");
+    let emitted = drive(accumulator, Vec::new());
+    assert_eq!(
+        emitted.len(),
+        1,
+        "a global aggregate answers whatever arrived"
+    );
+    assert_eq!(
+        emitted[0].record_batch().num_rows(),
+        1,
+        "and its answer is one row, not an empty batch"
+    );
+}
+
+/// The one case that runs under a runtime with threads to spare, because every other test
+/// here is a plain `#[test]` where DataFusion never spawns.
+///
+/// A call blocks a thread on one node's stream, and a sort past its in-place threshold
+/// spawns onto the runtime from under that block. On a single worker that is a deadlock;
+/// this is the shape a driver has to leave room for, and the header that says so was on no
+/// test's path until now.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_accumulating_sort_answers_from_under_a_blocked_worker() {
+    const ROWS: usize = 4096;
+    let arrivals: Vec<CpuBatch> = (0..8)
+        .map(|batch| {
+            let values: Vec<Option<i64>> = (0..ROWS / 8)
+                .map(|row| Some(((batch * ROWS / 8 + row) % 997) as i64))
+                .collect();
+            grouped(values.iter().map(|_| Some("k")).collect(), values)
+        })
+        .collect();
+    let answered =
+        tokio::task::spawn_blocking(move || drive(accumulating_sort(true, None), arrivals))
+            .await
+            .expect("the sort finishes rather than deadlocking under its own spawn");
+    let values = values_of(&answered[0]);
+    assert_eq!(values.len(), ROWS);
+    assert!(
+        values.windows(2).all(|pair| pair[0] <= pair[1]),
+        "and the answer is ordered"
+    );
 }

@@ -16,7 +16,7 @@ reference still resolves there.
 |---|--:|---|
 | [Critical correctness](#critical-correctness) | 15 | #166 #153 #80 #59 #46 #47 #60 #121 #122 #123 #118 #119 #120 #117 #41 |
 | [Blockers for disabled coverage](#blockers-for-disabled-coverage) | 17 | #169 #168 #158 #97 #23 #32 #65 #62 #91 #95 #57 #45 #63 #56 #55 #96 #143 |
-| [Performance / architecture](#performance--architecture) | 27 | #173 #170 #155 #154 #152 #150 #149 #148 #19 #16 #20 #71 #101 #73 #110 #75 #136 #137 #138 #139 #140 #141 #147 #146 #145 #144 #142 |
+| [Performance / architecture](#performance--architecture) | 26 | #170 #155 #154 #152 #150 #149 #148 #19 #16 #20 #71 #101 #73 #110 #75 #136 #137 #138 #139 #140 #141 #147 #146 #145 #144 #142 |
 | [Infrastructure / process](#infrastructure--process) | 26 | #167 #164 #163 #159 #160 #161 #162 #113 #114 #116 #126 #134 #133 #132 #131 #130 #129 #128 #127 #172 #124 #125 #13 #94 #69 #49 |
 
 ## Critical correctness
@@ -323,26 +323,6 @@ whole-partition aggregate windows need a single batch (coalesce-all first), whil
 rank/dense_rank gaps of #32 carry over unchanged.
 
 ## Performance / architecture
-
-<a id="t173"></a>
-### #173 — a collapse of nothing answers with a table that has no columns
-
-`GpuCoalesceAllBatches` over a lane that received no batch returns a handle whose table carries
-zero columns, so the export decodes a batch whose first column is out of bounds.
-`cudf::concatenate` of an empty view list has no schema to preserve, and the node's declared one
-is not reachable: `PlanNode.output_schema` exists on the wire but the recipe writer leaves it
-`None` (`recipe/writer.rs:102`, `:131`), which `WRITER_DIFFERENCES` records with the reason that
-nothing on the C++ side reads it.
-
-Decided rather than filled in: an empty lane emits nothing, on both backends, so the arm is
-unreachable from a correct driver and `node_session.cpp:302` throws on a zero-input collapse
-instead of answering with a schemaless table — the same shape as `execute_one`'s
-consumed-equals-provided check. Putting the schema on the wire for this one arm would move all 16
-digests in the payload golden to serve a case that no longer happens.
-
-Closes when the throw is in, a device test proves it goes red, the CPU executor emits nothing for
-an empty lane as the GPU one does, and the `WRITER_DIFFERENCES` reason says the arm that would
-have read a schema is now a refusal.
 
 <a id="t170"></a>
 ### #170 — a source whose lanes each hold one batch could say so, and three shortcuts would fire

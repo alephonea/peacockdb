@@ -92,6 +92,7 @@ impl CpuAccumulator {
             pending_bytes: 0,
             threshold: compact_bytes,
             compactions: 0,
+            grouped: !body.group_by.is_empty(),
             held: state.fields.clone(),
             output: output.fields.clone(),
             ctx,
@@ -129,10 +130,10 @@ impl CpuAccumulator {
 ///
 /// Both backends emit nothing for an empty lane, which is what makes them one engine here:
 /// the device's collapse of no handles is a refusal ([#173](../../../llm-wiki/tickets.md)),
-/// so a batch invented on this side would be a row the other cannot produce. Nothing is
-/// also the right answer everywhere the planner can put one — a grouped merge over no
-/// arrivals owes no groups, and a global aggregate, which would owe its identity row, has
-/// one lane and no scatter above it, so its lane is never the empty one.
+/// so a batch invented on this side would be a row the other cannot produce. A grouped
+/// merge over no arrivals owes no groups, so nothing is also its answer. The exception is
+/// a global aggregate, which owes its identity row whatever arrived — see
+/// [`AggregateBatches::mark_done_and_fetch`].
 fn one_batch(schema: &SchemaRef, held: &[RecordBatch]) -> CallResult<Vec<CpuBatch>> {
     if held.is_empty() {
         return Ok((Vec::new(), CallStats::default()));
@@ -296,6 +297,9 @@ pub struct AggregateBatches {
     /// How many times the threshold was reached. Read by the tests, which are what pins
     /// the doubling: without it a disjoint-key aggregate compacts once per arrival.
     compactions: usize,
+    /// Whether this aggregate has group keys. A global one owes a row even for an empty
+    /// lane; a grouped one owes no groups.
+    grouped: bool,
     held: SchemaRef,
     output: SchemaRef,
     ctx: Arc<TaskContext>,
@@ -342,8 +346,13 @@ impl AggregateBatches {
         Ok(())
     }
 
+    /// A lane that received nothing usually owes nothing — but a global aggregate owes its
+    /// identity row, `count 0` rather than no row, and a mid-plan limit that dropped every
+    /// batch of its one lane is how that lane comes to be empty. So the merge runs over no
+    /// input rather than being skipped, and the operator answers: one row where there are
+    /// no group keys, none where there are.
     fn mark_done_and_fetch(mut self) -> CallResult<Vec<CpuBatch>> {
-        if !self.pending.is_empty() {
+        if !self.pending.is_empty() || (self.state.is_none() && !self.grouped) {
             self.compact()?;
         }
         let Some(state) = self.state else {

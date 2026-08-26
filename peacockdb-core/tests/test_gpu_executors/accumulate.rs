@@ -59,7 +59,7 @@ fn a_coalesce_answers_with_one_batch_holding_every_row_of_the_lane() {
             .into_iter()
             .map(|row| row[1].clone())
             .collect::<Vec<ScalarValue>>(),
-        VALUES
+        values()
             .iter()
             .map(|v| ScalarValue::Int64(Some(*v)))
             .collect::<Vec<ScalarValue>>(),
@@ -331,17 +331,15 @@ fn a_collapse_with_no_input_handles_is_refused_by_the_device() {
     );
 }
 
-/// The Welford merge on a device, which is the one this file claimed and did not have —
-/// and the merge where #103 actually bit. Three lane batches become three partials and one
-/// merged state: for `a` the values are 2, 4 and 6, so a count of 3, a mean of 4 and an m2
-/// of 8, which is 4 + 0 + 4 and computed here rather than by either engine.
+/// The Welford merge on a device, and the merge where #103 actually bit. Three lane
+/// batches become three partials and one state: for `a` the values are 2, 4 and 6, so a
+/// count of 3, a mean of 4 and an m2 of 8, computed here rather than by either engine.
 ///
-/// The count is declared Int64 here and UInt64 everywhere a plan declares it: a plan takes
-/// state types from DataFusion's `state_fields` and cuDF's is what comes back. That is
-/// [#163](../../../llm-wiki/tickets.md#t163), seen rather than reasoned about for the
-/// first time — and it bites only where state crosses the boundary, which this does and a
-/// plan does not: the validator refuses a plan whose sink emits anything but the query's
-/// own columns, so a finalize always stands between the state and the export.
+/// The count is Int64 here and UInt64 wherever a plan declares it — a plan takes state
+/// types from DataFusion's `state_fields` and cuDF's is what comes back, which is
+/// [#163](../../../llm-wiki/tickets.md#t163). It bites only where state crosses the
+/// boundary: a plan's sink emits the query's own columns, which the validator enforces,
+/// so a finalize always stands between the state and the export.
 #[test]
 fn a_welford_triple_merges_as_one_aggregate_on_the_device() {
     let state = Schema {

@@ -519,10 +519,11 @@ fn the_filtered_column_answers_in_one_call_and_never_at_done() {
     }
 }
 
-/// The four cells the matrix refuses, each for a defect or a missing cuDF variant rather
-/// than for anything this mode decided — so each names the ticket a reader would follow.
+/// The five cells the matrix refuses — the three outer forms and the two right-handed semi
+/// ones — each for a defect or a missing cuDF variant rather than for anything this mode
+/// decided, so each names the ticket a reader would follow.
 #[test]
-fn the_filtered_column_refuses_four_cells_by_ticket() {
+fn the_filtered_column_refuses_five_cells_by_ticket() {
     let cases: [(JoinType, &str); 5] = [
         (JoinType::Left, "#153"),
         (JoinType::Right, "#153"),
@@ -547,4 +548,26 @@ fn the_filtered_column_refuses_four_cells_by_ticket() {
             "{join_type:?} has to name {ticket}: {message}"
         );
     }
+}
+
+/// A lane whose probe was empty — routine above a shuffle, and the shape where the two
+/// backends had no answer between them. An anti join owes every build row: nothing
+/// matched, because nothing arrived to match.
+#[test]
+fn a_finish_over_no_probe_keys_at_all_owes_every_build_row() {
+    let node = hash_join(JoinType::LeftAnti, &dim_columns());
+    let join = CpuJoin::hash(
+        &node,
+        &schema_of(&dim_columns()).fields,
+        &schema_of(&fact_columns()).fields,
+        ctx(),
+    )
+    .expect("the join builds");
+    let (probing, _) = join.set_build(dim()).expect("the build side is set");
+    let (finished, _) = probing.finish_and_fetch().expect("the finish runs");
+    assert_eq!(
+        rows_of(finished),
+        rows(&["1|a", "2|b", "3|c"]),
+        "no probe batch ever arrived, so no build row was ever matched"
+    );
 }

@@ -60,11 +60,18 @@ use peacockdb_ffi::raw::{
 
 use common::GPU_BUDGET;
 
-/// Six rows in one row group, two groups of three under `k`. The values are chosen so that
-/// every expected answer below is exact in a float: an average of 4 and an average of 3.
-const KEYS: [&str; 6] = ["a", "b", "a", "b", "a", "b"];
+// The rows are the contract's, so the two backends cannot claim one fixture and read two.
+// The device writes them into three row groups, which is how a lane comes to have three
+// batches.
+include!("common/executor_cases.inc");
 
-const VALUES: [i64; 6] = [2, 1, 4, 3, 6, 5];
+fn keys() -> Vec<&'static str> {
+    INPUT.iter().map(|(k, _)| *k).collect()
+}
+
+fn values() -> Vec<i64> {
+    INPUT.iter().map(|(_, v)| *v).collect()
+}
 
 fn columns() -> ArrowSchema {
     ArrowSchema::new(vec![
@@ -82,8 +89,8 @@ fn table() -> PathBuf {
     if path.exists() {
         return path;
     }
-    let k: ArrayRef = Arc::new(StringArray::from(KEYS.to_vec()));
-    let v: ArrayRef = Arc::new(Int64Array::from(VALUES.to_vec()));
+    let k: ArrayRef = Arc::new(StringArray::from(keys()));
+    let v: ArrayRef = Arc::new(Int64Array::from(values()));
     let batch = RecordBatch::try_new(Arc::new(columns()), vec![k, v]).expect("six rows");
     let file = std::fs::File::create(&path).expect("a writable temp dir");
     // Two rows per row group, so a lane can be read as one batch or as three.
@@ -208,6 +215,10 @@ impl Session {
         self.recipes.get(index).expect("the node makes ABI calls")
     }
 
+    fn recipes_len(&self) -> usize {
+        self.recipes.nodes()
+    }
+
     fn export(&self, schema: &ArrowSchema) -> GpuExport {
         GpuExport::new(self.executor, schema)
     }
@@ -307,6 +318,8 @@ fn summing(output: &str) -> AggregateBody {
 // another target. The path keeps them under a directory named for this one.
 #[path = "test_gpu_executors/accumulate.rs"]
 mod accumulate;
+#[path = "test_gpu_executors/contract.rs"]
+mod contract;
 #[path = "test_gpu_executors/exec.rs"]
 mod exec;
 #[path = "test_gpu_executors/join.rs"]

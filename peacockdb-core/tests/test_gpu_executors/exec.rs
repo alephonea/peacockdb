@@ -70,7 +70,7 @@ fn a_project_evaluates_its_expressions_under_the_names_it_declares() {
             .into_iter()
             .map(|row| row[0].clone())
             .collect::<Vec<ScalarValue>>(),
-        VALUES
+        values()
             .iter()
             .map(|v| ScalarValue::Int64(Some(v * 2)))
             .collect::<Vec<ScalarValue>>()
@@ -208,7 +208,7 @@ fn an_export_of_the_whole_handle_brings_back_every_row() {
             .into_iter()
             .map(|row| row[1].clone())
             .collect::<Vec<ScalarValue>>(),
-        VALUES
+        values()
             .iter()
             .map(|v| ScalarValue::Int64(Some(*v)))
             .collect::<Vec<ScalarValue>>(),
