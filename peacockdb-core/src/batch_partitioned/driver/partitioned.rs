@@ -56,8 +56,24 @@ pub struct RunReport {
     pub peak_queued: Vec<usize>,
     /// Per node, its output lane count — what `peak_queued` is bounded by.
     pub lanes_of: Vec<usize>,
+    /// Per node, per output lane, the batches it emitted in order.
+    pub emitted: Vec<Vec<Vec<EmittedBatch>>>,
+    /// Per node, per child, per that child's lane, the rows this node consumed from it.
+    /// Indexed by the child's lane rather than the consumer's, so it lines up with that
+    /// child's own [`emitted`](RunReport::emitted) where the two differ — an emitter
+    /// redistributes, so nothing else would sum.
+    pub consumed: Vec<Vec<Vec<u64>>>,
     /// The run stopped because a limit was satisfied, not because work ran out.
     pub early_exit: bool,
+}
+
+/// One batch a node emitted. The driver reads both figures already — the rows for a limit
+/// interval, the bytes for the accountant — and kept only totals until the corpus goldens
+/// needed the sizes themselves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EmittedBatch {
+    pub rows: u64,
+    pub bytes: usize,
 }
 
 /// Run `root` to completion on `B`. `budget` of `None` accounts without ever tripping.
@@ -83,6 +99,8 @@ pub(crate) struct Driver<'a, B: Backend> {
     rows_seen: Vec<u64>,
     rows_skipped: Vec<u64>,
     peak_queued: Vec<usize>,
+    emitted: Vec<Vec<Vec<EmittedBatch>>>,
+    consumed: Vec<Vec<Vec<u64>>>,
 }
 
 /// Output queues live on the producing node, which is what makes lane remapping free: an
@@ -136,6 +154,21 @@ impl<'a, B: Backend> Driver<'a, B> {
             })
             .collect();
         let nodes = index.len();
+        let emitted = index
+            .nodes
+            .iter()
+            .map(|node| vec![Vec::new(); node.lanes])
+            .collect();
+        let consumed = index
+            .nodes
+            .iter()
+            .map(|node| {
+                node.children
+                    .iter()
+                    .map(|child| vec![0u64; index.nodes[*child].lanes])
+                    .collect()
+            })
+            .collect();
         let mut driver = Self {
             index,
             ctx,
@@ -148,6 +181,8 @@ impl<'a, B: Backend> Driver<'a, B> {
             rows_seen: vec![0; nodes],
             rows_skipped: vec![0; nodes],
             peak_queued: vec![0; nodes],
+            emitted,
+            consumed,
         };
         driver.wire_forwarders()?;
         Ok(driver)
@@ -313,6 +348,7 @@ impl<'a, B: Backend> Driver<'a, B> {
                 LaneOutputs::Device(batches) => {
                     let produced = batches.len();
                     for batch in batches {
+                        self.record_emitted(node, lane, &batch);
                         self.states[node].out_queues[lane].push_back(batch);
                     }
                     produced
@@ -322,6 +358,7 @@ impl<'a, B: Backend> Driver<'a, B> {
                 LaneOutputs::Host(batches) => {
                     let produced = batches.len();
                     for batch in batches {
+                        self.record_emitted(node, lane, &batch);
                         self.acct.release(batch.bytes)?;
                         self.results.push(batch.batch);
                     }
@@ -358,6 +395,7 @@ impl<'a, B: Backend> Driver<'a, B> {
         let batch = self.states[child].out_queues[0]
             .pop_front()
             .expect("a batch");
+        self.record_consumed(node, 0, 0, batch.rows());
         self.build_cross(node)?;
         let Some(CrossExecutor::Emitter(emitter)) = &mut self.states[node].cross else {
             return Err(wrong_cross(self.index.nodes[node].node).into());
@@ -387,6 +425,7 @@ impl<'a, B: Backend> Driver<'a, B> {
             }
             let held = Held::of(out);
             self.acct.hold(held.bytes);
+            self.record_emitted(node, lane, &held);
             self.states[node].out_queues[lane].push_back(held);
             emitted += 1;
         }
@@ -418,6 +457,9 @@ impl<'a, B: Backend> Driver<'a, B> {
             let (rows, bytes) = batch
                 .as_ref()
                 .map_or((0, 0), |held| (held.rows(), held.bytes));
+            if batch.is_some() {
+                self.record_consumed(node, 0, lane, rows);
+            }
             self.build_cross(node)?;
             let Some(CrossExecutor::Accumulator(accumulator)) = &mut self.states[node].cross else {
                 return Err(wrong_cross(self.index.nodes[node].node).into());
@@ -440,6 +482,7 @@ impl<'a, B: Backend> Driver<'a, B> {
             for out in outputs {
                 let held = Held::of(out);
                 self.acct.hold(held.bytes);
+                self.record_emitted(node, 0, &held);
                 self.states[node].out_queues[0].push_back(held);
             }
             let Some(CrossExecutor::Accumulator(accumulator)) = &self.states[node].cross else {
@@ -485,6 +528,8 @@ impl<'a, B: Backend> Driver<'a, B> {
             let child = self.index.nodes[node].children[child_index];
             // A move between queues: the batch stays in flight, so nothing is accounted.
             if let Some(batch) = self.states[child].out_queues[child_lane].pop_front() {
+                self.record_consumed(node, child_index, child_lane, batch.rows());
+                self.record_emitted(node, lane, &batch);
                 self.states[node].out_queues[lane].push_back(batch);
                 self.states[node].cursors[lane] = (index + 1) % sources;
                 return true;
@@ -596,14 +641,16 @@ impl<'a, B: Backend> Driver<'a, B> {
     ) -> Result<Held<B::Batch>, StepError> {
         let slot = call.consumes().expect("a consuming call");
         let child = self.index.nodes[node].children[slot];
-        self.states[child].out_queues[lane]
+        let batch = self.states[child].out_queues[lane]
             .pop_front()
             .ok_or_else(|| {
                 StepError::Run(RunError::Protocol(format!(
                     "{}: the schedule offered a batch that is not there",
                     self.index.nodes[node].node.name()
                 )))
-            })
+            })?;
+        self.record_consumed(node, slot, lane, batch.rows());
+        Ok(batch)
     }
 
     #[cfg(test)]
@@ -786,6 +833,22 @@ impl<'a, B: Backend> Driver<'a, B> {
         }
     }
 
+    fn record_emitted<T: crate::batch_partitioned::batch::Batch>(
+        &mut self,
+        node: usize,
+        lane: usize,
+        batch: &Held<T>,
+    ) {
+        self.emitted[node][lane].push(EmittedBatch {
+            rows: batch.rows(),
+            bytes: batch.bytes,
+        });
+    }
+
+    fn record_consumed(&mut self, node: usize, slot: usize, child_lane: usize, rows: u64) {
+        self.consumed[node][slot][child_lane] += rows;
+    }
+
     fn record(&mut self, node: usize, lane: usize, call: CallKind, outputs: usize) {
         self.trace.push(TraceEvent {
             step: self.steps as u32,
@@ -835,6 +898,8 @@ impl<'a, B: Backend> Driver<'a, B> {
             rows_skipped: self.rows_skipped,
             lanes_of: self.index.nodes.iter().map(|node| node.lanes).collect(),
             peak_queued: self.peak_queued,
+            emitted: self.emitted,
+            consumed: self.consumed,
             early_exit: self.scheduler.any_satisfied(),
         }
     }

@@ -5,6 +5,7 @@
 //! as well when the whole input was read and thrown away.
 
 mod budget;
+mod counts;
 mod failure;
 mod flow;
 mod instrument;

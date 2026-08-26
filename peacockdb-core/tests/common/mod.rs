@@ -10,6 +10,7 @@
 pub mod benchmark;
 pub mod cost_model;
 pub mod exec_mode;
+pub mod golden_text;
 pub mod injection;
 pub mod join_fixture;
 pub mod rebuild;

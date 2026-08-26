@@ -11,7 +11,7 @@
 //! goldens regenerated without recompiling, and the config stays a plain editable
 //! file with no parser-crate dependency (the format is trivial whitespace columns).
 
-const OUTPUT_BYTES_KEY: &str = "output_bytes=";
+use super::golden_text::parse_node_line;
 
 /// One cost category: where its bytes come from and how they are weighted.
 pub struct Category {
@@ -74,10 +74,11 @@ impl CostModel {
     pub fn cost_text_from_cpu(&self, cpu_text: &str, ctx: &str) -> String {
         let mut bytes = vec![0u64; self.categories.len()];
         for line in cpu_text.lines() {
-            let Some((node_type, ob)) = parse_node_line(line) else { continue };
-            let cat = self
-                .category_of(node_type)
-                .unwrap_or_else(|| panic!("{ctx}: node type '{node_type}' is not in the cost taxonomy"));
+            let Some(node) = parse_node_line(line) else { continue };
+            let Some(ob) = node.count("output_bytes") else { continue };
+            let cat = self.category_of(node.name).unwrap_or_else(|| {
+                panic!("{ctx}: node type '{}' is not in the cost taxonomy", node.name)
+            });
             bytes[cat] += ob;
         }
         let mut total = 0.0f64;
@@ -94,23 +95,4 @@ impl CostModel {
         out.push_str(&format!("peacockdb_cost={}", total.round() as u64));
         out
     }
-}
-
-/// Parse one `.cpu.txt` node line into `(node_type, output_bytes)`. `None` for any
-/// line without `output_bytes=` (blank lines, the trailing total footer if present).
-fn parse_node_line(line: &str) -> Option<(&str, u64)> {
-    let pos = line.find(OUTPUT_BYTES_KEY)?;
-    // Node name = the leading identifier. A node with no args renders bare (e.g.
-    // `GpuCoalescePartitionsExec, output_bytes=…`), so stop at the first non-ident
-    // char (`:`, `,` or space), not at `:` alone.
-    let trimmed = line.trim_start();
-    let end = trimmed.find(|c: char| !c.is_alphanumeric()).unwrap_or(trimmed.len());
-    let node_type = &trimmed[..end];
-    let bytes: u64 = line[pos + OUTPUT_BYTES_KEY.len()..]
-        .chars()
-        .take_while(|c| c.is_ascii_digit())
-        .collect::<String>()
-        .parse()
-        .ok()?;
-    Some((node_type, bytes))
 }

@@ -2826,10 +2826,16 @@ identity — `batch_rows` having `partition_groups`' exact shape — is a plan-a
 comparison, and early exit is exactly when the run does less than the plan. Per lane it becomes a
 prefix: `batch_rows[j]` has at most as many entries as `partition_groups[j]`, aligned from the
 start because a scan reads its groups in order, and equal on any run whose marker says `none`.
-And the `in_rows` exceptions stop being permanent exemptions: a limit-satisfied node and an
-empty-build-side join may consume less than they were offered *when the marker says the run
-stopped early*, and must consume everything when it says `none`. A conditional weakening the
-file itself justifies, rather than two node kinds exempted for good.
+And the `in_rows` equality holds at every node on any run whose marker says `none`, weakening to
+`<=` only where it names one. A conditional the file itself carries, rather than node kinds
+exempted for good — which is as well, since the two that looked like the exceptions are not.
+
+The exact law survives in the driver's own tests, where the report is in hand and the file is not:
+a third per-node, per-lane count of rows abandoned by `release_in_flight` closes it back into
+`emitted == consumed + abandoned` everywhere, under an early exit as much as a drain. That is a
+conservation check of the same kind as `in_flight_bytes` returning to zero and `holds == releases`,
+which the report already carries for the same reason — a batch that vanishes without being either
+consumed or abandoned is a defect no inequality can see. The goldens do not render it.
 
 **Several test cases now write one file, and that is the task's one real hazard.** A whole-file
 write is last-writer-wins, which would drop every other query's section and leave a green run. So
