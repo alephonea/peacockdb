@@ -29,15 +29,19 @@ fn formatters(batch: &RecordBatch) -> Vec<ArrayFormatter<'_>> {
         .collect()
 }
 
-/// One row rendered as its cells, tab-separated. Not the golden's padded form — padding is
-/// a function of the whole answer, so it cannot be computed a row at a time — and the
-/// verdict is the same either way: two answers agree cell for cell exactly when they agree
-/// padded.
+/// One row rendered as its cells. Not the golden's padded form — padding is a function of
+/// the whole answer, so it cannot be computed a row at a time — and the verdict is the same
+/// either way: two answers agree cell for cell exactly when they agree padded.
+///
+/// The separator is `\u{1}`, as the tolerance arm's key in `mod.rs` already uses. A tab
+/// occurs in data, so with one of those `("a\tb", "c")` and `("a", "b\tc")` render to one
+/// string and hash to one digest — two different answers agreeing, on the comparison that
+/// has no second opinion behind it.
 fn render_row(columns: &[ArrayFormatter<'_>], row: usize, out: &mut String) {
     out.clear();
     for formatter in columns {
         out.push_str(&formatter.value(row).to_string());
-        out.push('\t');
+        out.push('\u{1}');
     }
 }
 

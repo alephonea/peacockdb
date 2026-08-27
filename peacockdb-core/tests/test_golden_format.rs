@@ -264,6 +264,43 @@ fn containment_holds_when_the_two_sides_render_at_different_widths() {
     );
 }
 
+/// The separator has to be a character the data cannot hold, which a tab is not: with one,
+/// a row of `("a\tb", "c")` and a row of `("a", "b\tc")` render to one string and are one
+/// digest — two different answers agreeing, on the comparison nothing sits behind.
+#[test]
+fn a_separator_in_the_data_does_not_make_two_rows_one() {
+    let left = two_columns(&[("a\tb", "c")]);
+    let right = two_columns(&[("a", "b\tc")]);
+    assert!(
+        !common::result_text::results_agree(&left, &right),
+        "two different answers came out equal"
+    );
+}
+
+fn two_columns(rows: &[(&str, &str)]) -> Vec<datafusion::arrow::array::RecordBatch> {
+    use std::sync::Arc;
+
+    use datafusion::arrow::array::{RecordBatch, StringArray};
+    use datafusion::arrow::datatypes::{DataType, Field, Schema};
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("a", DataType::Utf8, true),
+        Field::new("b", DataType::Utf8, true),
+    ]));
+    let first: Vec<&str> = rows.iter().map(|(a, _)| *a).collect();
+    let second: Vec<&str> = rows.iter().map(|(_, b)| *b).collect();
+    vec![
+        RecordBatch::try_new(
+            schema,
+            vec![
+                Arc::new(StringArray::from(first)),
+                Arc::new(StringArray::from(second)),
+            ],
+        )
+        .expect("a batch"),
+    ]
+}
+
 fn rows(values: &[&str]) -> Vec<datafusion::arrow::array::RecordBatch> {
     use std::sync::Arc;
 
@@ -393,4 +430,37 @@ fn the_split_guard_finds_the_shape_and_nothing_else() {
         stranded_blocks(module_doc).is_empty(),
         "a module doc is not one"
     );
+}
+
+// --- the convention two crates read ------------------------------------------
+
+/// The same committed sample `cost-report`'s tests read, asserted to the same values from
+/// the other side of the crate boundary. Nothing is shared but the file: `cost-report`'s
+/// `[dependencies]` is empty on purpose, so it builds in seconds in the cheap tier, and
+/// depending on this crate to share fifteen lines of `key=` reading would trade a stated
+/// property for nothing. What is wanted is that the two readers diverge RED, and this is
+/// what makes them.
+#[test]
+fn the_sectioned_cost_fixture_reads_the_same_from_this_side() {
+    let text = std::fs::read_to_string(common::testdata_root().join("fixtures/sectioned-cost.txt"))
+        .expect("the committed fixture");
+    let sections = ordered_sections(&text);
+    assert_eq!(
+        sections.iter().map(|(q, _)| q.as_str()).collect::<Vec<_>>(),
+        ["q6", "q14"]
+    );
+    let total = |query: &str| -> u64 {
+        sections
+            .iter()
+            .find(|(name, _)| name == query)
+            .and_then(|(_, body)| {
+                body.lines()
+                    .find_map(|line| line.strip_prefix("peacockdb_cost="))
+            })
+            .expect("a section with a total")
+            .parse()
+            .expect("a number")
+    };
+    assert_eq!(total("q6"), 54_772_928);
+    assert_eq!(total("q14"), 28_000_000);
 }
