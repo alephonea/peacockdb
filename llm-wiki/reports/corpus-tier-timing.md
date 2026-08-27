@@ -31,13 +31,14 @@ be compared with one taken under this.
 Each row is its own process and pays one parquet registration, so the rows do not sum to the
 tier — the tier line is the one to compare against another tier.
 
-**Two queries are most of it.** `tpch/q19` and `tpcds/q15` are 38% of the serial wall clock
-between them, and q19 alone is 1.28 GB of the 1.34 GB peak: the tier's memory is one query's. The
-other sixteen average 1.7 s.
+**Two queries are most of it.** `tpch/q19` and `tpcds/q15` are 17.58 s between them — 38% of the
+tier's 45.93 s, or 38% of the rows' own 46.66 s, which differ by one registration and so agree
+here. q19 alone is 1.28 GB of the 1.34 GB peak: the tier's memory is one query's. The other
+sixteen average 1.8 s.
 
-**What this does not support.** Scaling it to T19's 119 queries gives roughly six minutes serial
-if the distribution holds, comfortably under the fifty-eight minutes that has lost the cpp-cpu leg
-before. Distrust that projection rather than plan against it: these twenty were chosen for having
+**What this does not support.** Scaling it to T19's 119 queries gives 5.1 minutes serial by
+query, or 5.2 by case, if the distribution holds — well under the fifty-eight minutes that has
+lost the cpp-cpu leg before. Distrust that projection rather than plan against it: these twenty were chosen for having
 the smallest plans in the corpus, so the distribution is the one thing about them that is not
 representative. The number worth carrying forward is the shape — that one or two queries dominate
 both axes — because that is what decides whether a tier that grows fivefold grows evenly.

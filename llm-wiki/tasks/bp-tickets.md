@@ -36,11 +36,10 @@ and with them off, those two sites were the only ones in the tree passing `Some(
 planned query — so the accountant's enforcement path is now exercised by unit cases over the mock
 backend and by nothing else, which is the state the budget case was written to end.
 
-The budget case is [#179](../tickets.md#t179), not a lost boundary: `boundary()` searches upward
-from the observed peak, so its byte-below arm fails only when `fits(peak)`, and "10057 also fits"
-says the peak is 10,057 and the trip is below it. Logical pricing raised the peak (8,222 to
-10,057, a bitmap arrow never allocated) without raising the modelled transient as much. A downward
-search settles it.
+The budget case is [#179](../tickets.md#t179): `boundary()` searches upward from the observed peak,
+so "10057 also fits" says the peak is 10,057 and the trip is below it. Logical pricing raised the
+peak (8,222 to 10,057, a bitmap arrow never allocated) without raising the modelled transient as
+much, so a downward search settles it.
 
 The rebatcher case loses its query, not its premise. A rebatcher cannot move a *total* built from
 logical bytes, but a peak is what is resident at once and `GpuCoalesceAllBatches` holds its whole
