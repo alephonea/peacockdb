@@ -16,7 +16,7 @@ the last) and **fail rather than skip** without them: a skipped operator suite r
 exactly like a passing one.
 
 `test_tpch.py` runs simple hand-built plans over real TPC-H tables. It runs in CI's
-**cpp-cpu** job, after that job generates sf1; every other file runs in cost-report, which
+**dataset-matrix** job, after that job generates sf1; every other file runs in cost-report, which
 has no dataset. Locally it falls back to the committed `testdata/tpch.minimal` when sf1 was
 never generated — for the four tables it uses the two are the same data, same schema and
 same row counts, so the assertions hold either way. Every plan there and in
@@ -186,7 +186,7 @@ a tie, and the fix is to name its `order_by`, not to re-sort the oracle until th
 rows through a pandas operator chain is minutes, not seconds. The queries are independent,
 so `PCK_SHARD=k/n` splits a file across n processes and `PCK_LAYOUT` picks one of the three
 layouts each query runs at. `test_tpch.py`'s short plan-shape tests are a separate file and
-still run on every push in cpp-cpu.
+still run on every push in dataset-matrix.
 
 **`PCK_BACKEND=recipe`** re-runs the whole corpus with every join going through the
 FlatBuffers emulation instead of pandas — the same `Cudf*` node sequence the C++ reads off

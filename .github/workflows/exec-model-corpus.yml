@@ -6,10 +6,10 @@ name: Exec-model corpus (manual)
 # against DuckDB running the query's own text, which also needs the DuckDB CLI below.
 #
 # Manual dispatch only, for two reasons. They need the generated sf1 datasets, which the
-# push pipeline builds inside the cpp-cpu container job; and they are minutes rather than
+# push pipeline builds inside the dataset-matrix container job; and they are minutes rather than
 # seconds, being real tables through a pandas operator chain. The prototype's short tests
 # keep running on every push — the whole suite in cost-report, and test_tpch.py's plan
-# shapes in cpp-cpu, which is now a separate file rather than a `-corpus` exclusion.
+# shapes in dataset-matrix, which is now a separate file rather than a `-corpus` exclusion.
 #
 # `backend` chooses what the joins run on. `pandas` is the default sweep; `recipe` routes
 # every join through the FlatBuffers emulation (operators/recipe_join.py), which is the

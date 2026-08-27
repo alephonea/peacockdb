@@ -75,7 +75,13 @@ jobs:
           echo "code=false" >> "$GITHUB_OUTPUT"
           echo "documentation only — skipping the pipeline for this push"
 
-  cpp-cpu:
+  # What this tier OFFERS: the generated sf1 dataset and the cuDF matrix. `cost-report` has
+  # neither, which is what the two names distinguish.
+  # What LANDS here is a different question, and the answer is production code — the engine's
+  # tests belong together whether or not each one needs the dataset, and `cost-report` holds
+  # the report crate and its inputs. Several steps below need nothing this tier offers and
+  # are here for that rule rather than in spite of it.
+  dataset-matrix:
     strategy:
       fail-fast: false
       matrix:
@@ -177,6 +183,63 @@ jobs:
           set -euo pipefail
           python3 -c "import pandas, pyarrow" 2>/dev/null || pip install --quiet pandas pyarrow
           python3 scripts/exec_model/tests/test_tpch.py
+
+      # The rust tests that read committed artifacts rather than a device: the three
+      # planner targets write their own parquet, the rest read goldens. They ran in the
+      # cost-report tier until that tier was named for what it contains rather than for
+      # what decides placement — they are prod-code tests and this is where prod-code
+      # tests live. ONE matrix leg, for the reason the exec-model step above gives: a
+      # rust-only test cannot see cuDF, so a second leg would report the same failure twice.
+      # The three planner targets run first: each writes its own parquet, so none needs the
+      # generated dataset, and a break in the mode under development shows in under a second.
+      - name: Planner join capability (Rust)
+        if: matrix.cudf == '25.02'
+        run: cargo test --features rust-only -p peacockdb-core --test test_planner_join_capability
+
+      # Every shape the planner refuses, reached from the SQL that provokes it: each
+      # asserts its ticket number is in the message a user sees, so a refusal that stops
+      # naming its ticket fails. Same self-written parquet as the step above.
+      - name: Planner join refusals (Rust)
+        if: matrix.cudf == '25.02'
+        run: cargo test --features rust-only -p peacockdb-core --test test_planner_join_refusals
+
+      # Every rule in the null analysis, on hand-built nodes: a source can declare a
+      # NOT-nullable column here, which no corpus fixture can — every column in both
+      # benchmarks is declared nullable, primary keys included.
+      - name: Null analysis rules (Rust)
+        if: matrix.cudf == '25.02'
+        run: cargo test --features rust-only -p peacockdb-core --test test_null_analysis
+
+      # Verify every committed .cost.txt exactly matches regeneration from its
+      # sibling .cpu.txt plan golden (full-file, not just the total), and the
+      # cost-model unit test. Pure text over committed goldens — no executor, no
+      # dataset, no GPU.
+      - name: Cost goldens match plan-golden regeneration (Rust)
+        if: matrix.cudf == '25.02'
+        run: cargo test --features rust-only -p peacockdb-core --test test_cost_model
+
+      # The one reader of the golden text format, against strings rather than files:
+      # no dataset, no executor — it belongs beside the cost model.
+      # Every other golden assertion in the tree is a comparison through it.
+      - name: The golden text format, read back (Rust)
+        if: matrix.cudf == '25.02'
+        run: cargo test --features rust-only -p peacockdb-core --test test_golden_format
+
+      # The corpus goldens against their own arithmetic — conservation, lane counts,
+      # the loader prefix, the root against the result. Committed files only, so it
+      # needs no dataset of its own.
+      - name: Corpus goldens against their own redundancy (Rust)
+        if: matrix.cudf == '25.02'
+        run: cargo test --features rust-only -p peacockdb-core --test test_corpus_goldens
+
+      # The injection mechanism against itself: the plan rebuild is identity per arm
+      # and per field, and the selector's output is a cover rather than a prefix.
+      # Reads no parquet — the plans are hand-built and the four cases are the ones
+      # that need no dataset.
+      - name: Layout injection mechanism (Rust)
+        if: matrix.cudf == '25.02'
+        run: cargo test --features rust-only -p peacockdb-core --test test_batch_partitioned_injection
+
 
       - name: Validate sf1 datasets
         run: |
@@ -295,7 +358,7 @@ jobs:
           # crashing with SIGBUS. Debug info is dead weight for pass/fail CI.
           RUSTFLAGS: "-C debuginfo=0"
 
-  # Standalone build job for the shad-gpu artifact — runs in parallel with cpp-cpu
+  # Standalone build job for the shad-gpu artifact — runs in parallel with dataset-matrix
   # so gpu-tests can start as soon as the build is done, without waiting for the
   # CPU tests + Rust tests to finish.
   cpp-build-2502:
@@ -305,7 +368,7 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: rapidsai/base:25.02-cuda12.0-py3.12
-    # Same container sh-not-bash default as cpp-cpu above.
+    # Same container sh-not-bash default as dataset-matrix above.
     defaults:
       run:
         shell: bash
@@ -335,7 +398,7 @@ jobs:
 
       # Cache the Rust dep tree for the GPU test-binary build. Own shared-key: this
       # job builds a different target set (test_gpu_executor/test_gpu_node) than
-      # cpp-cpu and runs in PARALLEL with it, so a shared key would only invite
+      # dataset-matrix and runs in PARALLEL with it, so a shared key would only invite
       # same-run save contention for no same-run gain. It uses the same
       # RUSTFLAGS=-C debuginfo=0, so it warm-restores its own opt-3 deps.
       - name: Cache Rust build
@@ -353,7 +416,7 @@ jobs:
           #   a whole-result check misses. Staging one alone retires an execution mode.
           # test_inc2_conformance = GPU vs comet Spark-murmur3 partition ids, bit-exact.
           # test_gpu_abi = the batch-partitioned ABI's three per-call symbols on a device;
-          #   its companion test_gpu_batch needs no device and runs in cpp-cpu instead.
+          #   its companion test_gpu_batch needs no device and runs in dataset-matrix instead.
           # test_gpu_recipe_walk = a recipe plan driven by hand, DataFusion as the oracle.
           # test_gpu_executors = the exec executors, each handed its recipe and one batch.
           # One line on purpose: the coverage guard reads the array below with a single
@@ -380,7 +443,7 @@ jobs:
           CMAKE_GENERATOR: Ninja
           LD_LIBRARY_PATH: /opt/conda/lib
           CUDF_ROOT: /opt/conda
-          # Same as the cpp-cpu job: without this, linking the GPU test binaries
+          # Same as the dataset-matrix job: without this, linking the GPU test binaries
           # (full DataFusion/Arrow + libpeacock_gpu, now larger with the TPC-DS
           # suite merged in) overflows the container tmpfs while lld writes its
           # mmap'd output and crashes with SIGBUS. The failure is at *link* time,
@@ -623,8 +686,8 @@ jobs:
 
       # Cache the Rust dep tree so this job restores the opt-3 deps instead of
       # recompiling the whole DataFusion/Arrow stack (the opt-level bump pushed this
-      # job 3m30s -> 15m40s cold). Own shared-key, NOT cpp-cpu's: this job sets no
-      # RUSTFLAGS (keeps debug symbols), whereas cpp-cpu builds with -C debuginfo=0,
+      # job 3m30s -> 15m40s cold). Own shared-key, NOT dataset-matrix's: this job sets no
+      # RUSTFLAGS (keeps debug symbols), whereas dataset-matrix builds with -C debuginfo=0,
       # so the dep fingerprints differ — a shared key would fingerprint-miss and
       # rebuild anyway. With its own key it warm-restores its own opt-3 deps, which
       # is what makes the 2nd-run cost-report time drop.
@@ -642,7 +705,7 @@ jobs:
       # in this cheap tier next to the extractor tests. The scheduler tests are stdlib
       # only; the operator tests need pandas, and they FAIL rather than skip when it is
       # absent — a skipped operator suite reads exactly like a passing one. Same
-      # self-heal shape the cpp-cpu and s3-datasets jobs use for numpy/pyarrow.
+      # self-heal shape the dataset-matrix and s3-datasets jobs use for numpy/pyarrow.
       #
       # Enumerated by glob rather than by name, unlike the rust targets above: there is
       # no meta guard over python files, so a hand-written list would rot the way
@@ -653,7 +716,7 @@ jobs:
           python3 -c "import pandas" 2>/dev/null || pip install --quiet pandas
           shopt -s nullglob
           # These three need the generated sf1 tables, which this job does not have.
-          # test_tpch.py's plan shapes run in cpp-cpu; the two corpus files run in
+          # test_tpch.py's plan shapes run in dataset-matrix; the two corpus files run in
           # exec-model-corpus.yml on manual dispatch. Named rather than pattern-matched,
           # and a missing one is an error, so renaming a file cannot silently drop it from
           # every job.
@@ -677,52 +740,12 @@ jobs:
           done
           exit "$status"
 
-      # The three planner targets run first: each writes its own parquet, so none needs the
-      # generated dataset, and a break in the mode under development shows in under a second.
-      - name: Planner join capability (Rust)
-        run: cargo test --features rust-only -p peacockdb-core --test test_planner_join_capability
-
-      # Every shape the planner refuses, reached from the SQL that provokes it: each
-      # asserts its ticket number is in the message a user sees, so a refusal that stops
-      # naming its ticket fails. Same self-written parquet as the step above.
-      - name: Planner join refusals (Rust)
-        run: cargo test --features rust-only -p peacockdb-core --test test_planner_join_refusals
-
-      # Every rule in the null analysis, on hand-built nodes: a source can declare a
-      # NOT-nullable column here, which no corpus fixture can — every column in both
-      # benchmarks is declared nullable, primary keys included.
-      - name: Null analysis rules (Rust)
-        run: cargo test --features rust-only -p peacockdb-core --test test_null_analysis
-
       - name: cost-report unit tests (Rust)
         run: cargo test -p cost-report
 
-      # Verify every committed .cost.txt exactly matches regeneration from its
-      # sibling .cpu.txt plan golden (full-file, not just the total), and the
-      # cost-model unit test. Pure text over committed goldens — no executor, no
-      # dataset, no GPU — so it stays in this cheap golden-only tier.
-      - name: Cost goldens match plan-golden regeneration (Rust)
-        run: cargo test --features rust-only -p peacockdb-core --test test_cost_model
-
-      # The one reader of the golden text format, against strings rather than files:
-      # no dataset, no executor, so it belongs beside the cost model in this tier.
-      # Every other golden assertion in the tree is a comparison through it.
-      - name: The golden text format, read back (Rust)
-        run: cargo test --features rust-only -p peacockdb-core --test test_golden_format
-
-      # The corpus goldens against their own arithmetic — conservation, lane counts,
-      # the loader prefix, the root against the result. Committed files only, so it
-      # belongs here rather than in the tier that has the dataset.
-      - name: Corpus goldens against their own redundancy (Rust)
-        run: cargo test --features rust-only -p peacockdb-core --test test_corpus_goldens
-
-      # The injection mechanism against itself: the plan rebuild is identity per arm
-      # and per field, and the selector's output is a cover rather than a prefix.
-      # Reads no parquet — the plans are hand-built and the four cases are the ones
-      # that need no dataset — so this tier is its cheapest home.
-      - name: Layout injection mechanism (Rust)
-        run: cargo test --features rust-only -p peacockdb-core --test test_batch_partitioned_injection
-
+      # It reads committed workflow text and asserts about CI rather than about the engine,
+      # so it is tooling and lives with the tooling — and its whole value is saying EARLY that a
+      # target is unwired, which it cannot do from behind a container and a dataset build.
       # Every peacockdb-core integration test target must be NAMED by some workflow
       # step above. CI does not sweep them as a set, so a new tests/test_*.rs is
       # invisible here until someone remembers to add it — which is exactly how
@@ -757,36 +780,57 @@ jobs:
             fi
             cargo run -p cost-report -- --published \
               --sha "$REPORT_SHA" --generated-at "$GENERATED_AT" \
-              --site report --md "$RUNNER_TEMP/pr_comment.md"
+              --site report --md-legacy "$RUNNER_TEMP/pr_comment.md" \
+              --md-bp "$RUNNER_TEMP/pr_comment_bp.md"
           else
             # PR: single standalone report for the artifact-less comment; the page
             # isn't published for this change yet, so no --site / no nav links.
             cargo run -p cost-report -- \
               --sha "$REPORT_SHA" --generated-at "$GENERATED_AT" \
-              --html report/index.html --md "$RUNNER_TEMP/pr_comment.md"
+              --html report/index.html --md-legacy "$RUNNER_TEMP/pr_comment.md" \
+              --md-bp "$RUNNER_TEMP/pr_comment_bp.md"
           fi
 
       # PR: upsert exactly one comment, keyed on the hidden sentinel. Restricted
       # to same-repo PRs — fork PRs get a read-only token, so a comment write
       # would fail; the Pages publish on master is the canonical artifact.
+      # always(), so a failure here cannot take the cost-regression gate down with it —
+      # one oversized body did exactly that, and both widgets went missing for one cause.
       - name: Upsert PR comment
-        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
-            const body = fs.readFileSync(process.env.RUNNER_TEMP + '/pr_comment.md', 'utf8');
-            const sentinel = '<!-- peacockdb-cost-report -->';
             const { owner, repo } = context.repo;
             const issue_number = context.issue.number;
             const comments = await github.paginate(github.rest.issues.listComments, {
               owner, repo, issue_number, per_page: 100,
             });
-            const existing = comments.find(c => c.body && c.body.includes(sentinel));
-            if (existing) {
-              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
-            } else {
-              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            // The sentinel is the file's FIRST LINE rather than a copy of the constant:
+            // the tables exceed one comment's 65,536-byte body, so there are two files, and
+            // a sentinel spelled in both Rust and YAML is a constant that drifts.
+            for (const name of ['pr_comment.md', 'pr_comment_bp.md']) {
+              const path = process.env.RUNNER_TEMP + '/' + name;
+              // always() runs this after a failed generate step too, where the file is absent.
+              if (!fs.existsSync(path)) { core.info(`no ${name}; skipping`); continue; }
+              const body = fs.readFileSync(path, 'utf8');
+              const sentinel = body.split('\n', 1)[0];
+              // A derived sentinel needs checking on this side: an empty or leading-newline
+              // file makes it '', and `includes('')` is true of EVERY comment — the upsert
+              // would then edit whichever came first, a person's or the gate's, and look like
+              // a widget that moved rather than one that broke.
+              if (!sentinel.startsWith('<!-- peacockdb-')) {
+                core.setFailed(`${name}: first line is not a sentinel: ${JSON.stringify(sentinel.slice(0, 40))}`);
+                continue;
+              }
+              core.info(`${name}: ${body.length} bytes, sentinel ${sentinel}`);
+              const existing = comments.find(c => c.body && c.body.includes(sentinel));
+              if (existing) {
+                await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+              } else {
+                await github.rest.issues.createComment({ owner, repo, issue_number, body });
+              }
             }
 
       # --- PeacockDB CPU cost-regression gate (PR only) -----------------------
@@ -795,9 +839,11 @@ jobs:
       # steps so the comment is visible even when the gate fails: compute (captures
       # the exit code without failing) → upsert comment (always) → fail iff regression.
       # The push/master path skips all three (no base diff, no PR) and no-ops cleanly.
+      # always(), for the same reason its own upsert has it: a failure in the comment step
+      # above must not decide whether this widget renders. One oversized body took both.
       - name: Cost-regression gate — compute + render
         id: cost_gate
-        if: github.event_name == 'pull_request'
+        if: always() && github.event_name == 'pull_request'
         env:
           # The PR's actual base commit (not master tip), so the diff is PR-vs-base
           # and unaffected by other PRs merged to master meanwhile. Present locally
@@ -806,9 +852,12 @@ jobs:
         run: |
           set +e
           cargo run -q -p cost-report -- --cost-diff --base "$BASE_SHA" \
-            --html "$RUNNER_TEMP/cost_diff.html" --md "$RUNNER_TEMP/cost_diff.md"
+            --html "$RUNNER_TEMP/cost_diff.html" --md-diff "$RUNNER_TEMP/cost_diff.md"
           rc=$?
           set -e
+          # rc is three things and the fail step below says which: 0 clean, 1 regressions
+          # found, anything else the binary died. `set +e` made a crash and a regression the
+          # same red for an hour when a dead flag panicked here.
           echo "rc=$rc" >> "$GITHUB_OUTPUT"
           echo "cost-diff exit code: $rc"
 
@@ -843,7 +892,12 @@ jobs:
       - name: Cost-regression gate — fail on regression
         if: github.event_name == 'pull_request' && steps.cost_gate.outputs.rc != '0'
         run: |
-          echo "::error::PeacockDB CPU cost regression detected (see the cost-regression PR comment)."
+          if [ "${{ steps.cost_gate.outputs.rc }}" = "1" ]; then
+            echo "::error::PeacockDB CPU cost regression detected (see the cost-regression PR comment)."
+          else
+            echo "::error::cost-diff died with rc=${{ steps.cost_gate.outputs.rc }} — it computed no \
+          diff, so this is not a cost result. See the cost-diff step's output."
+          fi
           exit 1
 
       # On master, hand report/ to the deploy-pages job as the Pages artifact.
