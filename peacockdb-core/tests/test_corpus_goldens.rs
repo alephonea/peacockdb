@@ -506,3 +506,97 @@ fn a_marker_is_never_read_as_a_run() {
     }
     assert!(markers > 0, "no marker was checked, so nothing here ran");
 }
+
+/// The third leg of the three that have to agree. The registry is held to the macro by each
+/// binary's inventory check, and the goldens are written FROM the registry — but nothing
+/// read them back against it, so a hand-edited section or a stale file agreed with nobody
+/// and went green.
+///
+/// Every enabled cell means a section carrying content; every disabled one means a marker.
+/// The converse matters as much: a disabled cell whose section is full is coverage nobody
+/// is reading.
+#[test]
+fn every_enabled_cell_has_a_section_with_content_and_every_disabled_one_a_marker() {
+    let rows = common::registry::load_csv();
+    let mut wrong: Vec<String> = Vec::new();
+    let mut checked = 0;
+    for (dataset, sf) in [("tpch", "1"), ("tpcds", "1")] {
+        for mode in &BP_MODES {
+            let column = format!("bp_cpu_{}", mode.ident().trim_start_matches("bp_"));
+            let text = std::fs::read_to_string(cpu_golden(dataset, sf, mode.name))
+                .expect("the mode's golden");
+            let sections: std::collections::BTreeMap<String, String> =
+                ordered_sections(&text).into_iter().collect();
+            for row in rows.iter().filter(|r| r.dataset == dataset && r.sf == sf) {
+                let state = row.states.get(&column).map(String::as_str).unwrap_or("na");
+                let held = sections.get(&row.query);
+                let at = format!("{dataset} {} {}", mode.name, row.query);
+                match (state, held) {
+                    ("enabled", None) => wrong.push(format!("{at}: enabled and has no section")),
+                    ("enabled", Some(body)) if body.starts_with(SKIPPED) => {
+                        wrong.push(format!("{at}: enabled and its section is a marker"))
+                    }
+                    ("disabled", None) => wrong.push(format!("{at}: disabled and has no section")),
+                    ("disabled", Some(body)) if !body.starts_with(SKIPPED) => wrong
+                        .push(format!("{at}: disabled and its section holds a run — coverage \
+                                       nobody is reading")),
+                    ("na", Some(_)) => wrong.push(format!("{at}: not declared and has a section")),
+                    _ => {}
+                }
+                checked += 1;
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+    assert!(checked > 500, "only {checked} cells were checked");
+}
+
+/// The one golden whose key carries no mode names the mode that wrote it, and that mode has
+/// to be the authority: the LAST the query declares, in the fixed sequence. A section
+/// written by any other mode is one a filtered regeneration re-authored from a run that was
+/// not entitled to, which is the failure the authority rule exists to prevent — and the
+/// body's own line would say so while nobody read it.
+#[test]
+fn each_result_section_was_written_by_the_mode_entitled_to_write_it() {
+    let rows = common::registry::load_csv();
+    for (dataset, sf) in [("tpch", "1"), ("tpcds", "1")] {
+        let text = std::fs::read_to_string(result_golden(dataset, sf)).expect("the result golden");
+        for (query, body) in ordered_sections(&text) {
+            let row = rows
+                .iter()
+                .find(|r| r.dataset == dataset && r.sf == sf && r.query == query)
+                .unwrap_or_else(|| panic!("{dataset}/{query}: a section with no registry row"));
+            let entitled = BP_MODES.iter().rev().find(|mode| {
+                let column = format!("bp_cpu_{}", mode.ident().trim_start_matches("bp_"));
+                row.states.get(&column).map(String::as_str) == Some("enabled")
+            });
+            match (entitled, body.starts_with(SKIPPED)) {
+                (None, true) => {}
+                (None, false) => panic!("{dataset}/{query}: no mode is enabled and its section holds a run"),
+                (Some(mode), true) => {
+                    // Over the cap is the one reason an enabled query carries a marker, and
+                    // it says so in words rather than by being absent.
+                    assert!(
+                        body.contains("cap"),
+                        "{dataset}/{query}: enabled at {} and its section is a marker that does \
+                         not say why:\n{body}",
+                        mode.name
+                    );
+                }
+                (Some(mode), false) => {
+                    let author = body
+                        .lines()
+                        .next()
+                        .and_then(|line| line.strip_prefix("mode="))
+                        .unwrap_or_else(|| panic!("{dataset}/{query}: no `mode=` line"));
+                    assert_eq!(
+                        author, mode.name,
+                        "{dataset}/{query}: written at {author}, and {} is the last mode it \
+                         declares",
+                        mode.name
+                    );
+                }
+            }
+        }
+    }
+}

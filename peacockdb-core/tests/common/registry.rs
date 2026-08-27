@@ -49,6 +49,23 @@ pub struct RegistryEntry {
 
 inventory::collect!(RegistryEntry);
 
+/// One `corpus_query!` line as declared, whatever it expanded to. Separate from
+/// [`RegistryEntry`], which is per enabled (query, mode): this is per QUERY, and it is
+/// submitted by the `none` arm too, so a declaration with no cases is still readable.
+///
+/// What reads it is the pairing between the two oracles, which is a property of the line
+/// rather than of a run.
+#[derive(Debug)]
+pub struct CorpusDeclaration {
+    pub dataset: &'static str,
+    pub sf: &'static str,
+    pub query: &'static str,
+    pub cpu_oracle: &'static str,
+    pub gpu_oracle: &'static str,
+}
+
+inventory::collect!(CorpusDeclaration);
+
 /// The CSV's per-mode columns, in file order.
 ///
 /// Three groups for the batch-partitioned mode, one per thing that can be enabled
