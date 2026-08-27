@@ -86,6 +86,15 @@ Same idiom as [`casts.md`](casts.md) — build the node, run its recipe fn, `wri
   columns still has `output_schema` set, since a conditional wire format is the thing step 1
   declines to own.
 
+## What this task should also carry
+
+`casts.md` leaves `exports=` predicting types that nothing compares against: the golden is checked
+by eye and the runtime check at `unload` sees only the divergences the cast absorbs. The device tier
+already holds both sides — it reads the cpu-authored section and has the exported schema in hand — so
+"the types the device exported are the ones `exports=` predicted" is one comparison in a place that
+already runs. It also covers the `StringType` arm, which the cast otherwise hides from every
+observer: the assertion sees the export before the absorption, where a reader of results cannot.
+
 ## Restriction
 
 **Code and test changes are limited to what is written above.** No refactor of `node_session.cpp`

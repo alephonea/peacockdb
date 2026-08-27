@@ -134,6 +134,13 @@ nothing on the wire describes the sink's columns. The golden is documentation an
 the runtime check at `unload` is the only thing that enforces it. [`wire-schema.md`](wire-schema.md)
 is what makes it checkable against the buffer.
 
+The tripwire fired during the rollout: the attribute predicted the decimal divergence on six rows
+before they ran, and the device agreed on each. That is one arm of the table confirmed six times,
+not the table confirmed — `StringType` is cast at the unload and so can never be observed as a
+landing, and `DateAsTimestamp` has no corpus query. More batches add instances of the same arm.
+Turning it into a claim about the table needs an assertion rather than more rows, and that is
+[`wire-schema.md`](wire-schema.md)'s, not this task's.
+
 ## Device workflow
 
 The cast and the precision are not proved by a green CPU tier — every cell they exist for is a device
