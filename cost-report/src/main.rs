@@ -320,6 +320,10 @@ impl Row {
     }
 }
 
+/// Where each query's `== <query>` section starts, per batch-partitioned file: the line a
+/// `#L<n>` anchor names. Keyed by the file stem, since a group and a mode name one file.
+type SectionLines = BTreeMap<String, BTreeMap<String, usize>>;
+
 struct Dataset {
     label: &'static str,
     total: usize,
@@ -329,6 +333,9 @@ struct Dataset {
     /// Query column to each query's `q<n>.sql` source.
     query_rel: &'static str,
     rows: Vec<Row>,
+    /// Read once per dataset rather than per cell: fifteen cells a row over a hundred rows
+    /// would be two thousand opens of twenty files.
+    section_lines: SectionLines,
 }
 
 impl Dataset {
@@ -693,7 +700,29 @@ fn build_dataset(
     // 22/99: the registry includes the synthetic micro-queries, so the denominator
     // must describe the table, not the numbered-query count.
     let total = rows.len();
-    Dataset { label, total, canon_rel, query_rel, rows }
+    Dataset { label, total, canon_rel, query_rel, rows, section_lines: section_lines(canon) }
+}
+
+/// The line each query's section opens on, for every batch-partitioned file a cell links at.
+/// A blob view cannot address a section by name but it can address a line, and landing on the
+/// file is landing at the top of one holding twenty sections today and ninety-nine after the
+/// rollout — which is not the distinction the widget is for.
+fn section_lines(canon: &Path) -> SectionLines {
+    let mut all = BTreeMap::new();
+    for mode in BP_MODES {
+        for stem in [format!("{mode}.plans"), format!("{mode}-{BP_TIER}.cpu")] {
+            let Ok(text) = std::fs::read_to_string(canon.join(format!("{stem}.txt"))) else {
+                continue;
+            };
+            let lines = text
+                .lines()
+                .enumerate()
+                .filter_map(|(at, line)| line.strip_prefix("== ").map(|q| (q.to_string(), at + 1)))
+                .collect();
+            all.insert(stem, lines);
+        }
+    }
+    all
 }
 
 /// This query's batch-partitioned cost: the section it has in the last mode's `.cost.txt`
@@ -845,14 +874,23 @@ fn mode_cells_html(r: &Row, links: &Links, canon_rel: &str) -> String {
 /// address a section by name, so the link lands on the file and the reader finds the
 /// `== <query>` header — which is also where a refusal is, so an enabled query and a
 /// refused one link to the same place and differ in what the reader lands on.
-fn bp_cell_html(r: &Row, links: &Links, canon_rel: &str, group: BpGroup) -> String {
+fn bp_cell_html(r: &Row, links: &Links, d: &Dataset, group: BpGroup) -> String {
     let glyphs: Vec<String> = BP_MODES
         .iter()
         .map(|mode| {
             let state = r.state(&group.column(mode));
             let glyph = state_glyph(state);
-            match (state == "enabled", links.golden_url(canon_rel, &group.file(mode), "txt")) {
-                (true, Some(url)) => format!("<a href=\"{url}\" title=\"{mode}\">{glyph}</a>"),
+            let stem = group.file(mode);
+            let at = d
+                .section_lines
+                .get(&stem)
+                .and_then(|lines| lines.get(&r.query))
+                .map(|line| format!("#L{line}"))
+                .unwrap_or_default();
+            match (state == "enabled", links.golden_url(d.canon_rel, &stem, "txt")) {
+                (true, Some(url)) => {
+                    format!("<a href=\"{url}{at}\" title=\"{mode}\">{glyph}</a>")
+                }
                 _ => format!("<span title=\"{mode}\">{glyph}</span>"),
             }
         })
@@ -1159,9 +1197,9 @@ fn render_html(
                 r.bp_bucket(),
                 if r.n.is_none() { " class=\"micro\"" } else { "" },
                 query_cell_html(&r.query, links.query_url(d.query_rel, &stem)),
-                bp_cell_html(r, links, d.canon_rel, BpGroup::Plan),
-                bp_cell_html(r, links, d.canon_rel, BpGroup::Cpu),
-                bp_cell_html(r, links, d.canon_rel, BpGroup::Gpu),
+                bp_cell_html(r, links, d, BpGroup::Plan),
+                bp_cell_html(r, links, d, BpGroup::Cpu),
+                bp_cell_html(r, links, d, BpGroup::Gpu),
                 peacock_cell_html(cost, None, cost_url),
                 cost_cell_html(r.duckdb, dk_url),
                 ratio_or_dash(r.bp_ratio()),
@@ -2282,6 +2320,7 @@ mod tests {
             canon_rel: "testdata/goldens/tpch.sf1",
             query_rel: "testdata/tpch-queries",
             rows: vec![test_row("q1", &[("full_table_gpu", "enabled")], Some(100), Some(100))],
+            section_lines: SectionLines::new(),
         }
     }
 
@@ -2367,6 +2406,10 @@ mod tests {
             canon_rel: "testdata/goldens/tpch.sf1",
             query_rel: "testdata/tpch-queries",
             rows: vec![bp_row()],
+            section_lines: SectionLines::from([(
+                "bp-tp1-single.plans".to_string(),
+                BTreeMap::from([("q6".to_string(), 42)]),
+            )]),
         }
     }
 
@@ -2398,6 +2441,49 @@ mod tests {
                 "the cost of the last enabled cpu mode is missing: {rendering}"
             );
         }
+    }
+
+    /// An enabled glyph lands on its query's SECTION, not on the top of a file holding
+    /// twenty of them — which after the rollout is ninety-nine, and is not the distinction
+    /// the cell exists to draw. A blob view cannot address a section by name; it can address
+    /// a line, and the line is read once per file rather than per cell.
+    #[test]
+    fn an_enabled_glyph_links_at_its_own_section() {
+        let linked = Links {
+            repo: "o/r".into(),
+            sha: Some("deadbeef".into()),
+            tickets: TicketIndex::default(),
+        };
+        let d = bp_dataset();
+        let cell = bp_cell_html(&d.rows[0], &linked, &d, BpGroup::Plan);
+        assert!(
+            cell.contains("bp-tp1-single.plans.txt#L42"),
+            "the glyph does not land on the section: {cell}"
+        );
+        // The mode with no line recorded still links, at the file: a missing anchor is worse
+        // as a missing link.
+        assert!(
+            cell.contains("bp-tp1-rowgroup.plans.txt\" title="),
+            "a mode with no recorded line lost its link entirely: {cell}"
+        );
+    }
+
+    /// The lines come from the committed goldens, so the map is read rather than assumed.
+    #[test]
+    fn the_section_lines_are_read_from_the_goldens() {
+        let canon = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../testdata/goldens/tpch.sf1");
+        let lines = section_lines(&canon);
+        let cpu = lines
+            .get("bp-tp1-single-mini.cpu")
+            .expect("the mode's execution golden");
+        let at = *cpu.get("q6").expect("q6 has a section");
+        let text = std::fs::read_to_string(canon.join("bp-tp1-single-mini.cpu.txt")).unwrap();
+        assert_eq!(
+            text.lines().nth(at - 1),
+            Some("== q6"),
+            "the line the anchor names is not the section header"
+        );
     }
 
     /// The three cells report three different things about one query, so a row enabled for

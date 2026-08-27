@@ -2975,9 +2975,14 @@ of what each node emitted; the driver reads both numbers already, for the accoun
 limit interval, and keeps only aggregates. `rows_seen` is not the emitted total and must not be
 reused as one — it counts rows arriving at a node for the limit rule, which is `in_rows` summed
 over lanes rather than anything a node produced. Plus the
-`pipeline.yml` steps `test_ci_coverage` requires, which are not engine code at all. Naming that
-surface is what gives the rule an edge: T19 has none of it left to touch, and T20 is where the
-engine moves again.
+`pipeline.yml` steps `test_ci_coverage` requires, which are not engine code at all. Three more landed than that list, each approved on its own and each recorded here rather than
+only in the exchange that approved it: `CpuBatch::byte_size` pricing from the plan's schema, which
+is the one the headline forbids by name and which moved every budget decision in the engine; the
+`gpu_backend` guard closing [#181](bp-tickets.md#t181); and `driver/mod.rs`'s `mod index` going
+`pub(crate)` so the renderer walks the driver's own index rather than a second pre-order.
+
+Naming that surface is what gives the rule an edge, and the edge only holds against a list that
+is true: T19 has none of these seven left to touch, and T20 is where the engine moves again.
 
 **Every node carries what it consumed and the size of every batch it emitted**, as parallel
 structures on one continuation line under the node:
@@ -3166,9 +3171,9 @@ which is two tickets and not one.
 
 **The cost of running all of it is accepted for now.** 119 queries at five modes is about 595 cpu
 runs and as many on a device, against a corpus measurement nobody has: T17a's report covers
-eleven queries chosen for being the cheapest. Measuring it the way T17a did — serially, one row
-per query — is still worth doing, because a number nobody has is a number nobody can decide
-against later. What it does not do is gate the rollout. The one thing that would force this open
+eleven queries chosen for being the cheapest. Measured the way T17a did, serially and one row per query, in
+[corpus-tier-timing.md](../reports/corpus-tier-timing.md): 45.9 s for 87 cpu runs on one thread,
+26.2 s on the two CI uses, and a 1.34 GB peak of which one query is 1.28 GB. It gates nothing. The one thing that would force this open
 again is a job that stops finishing: pipeline.yml's cpp-cpu leg has already been lost once at
 fifty-eight minutes on a tier a fraction of this size, and the device leg runs
 `--test-threads=1` on one host.

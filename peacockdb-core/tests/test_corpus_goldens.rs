@@ -600,3 +600,37 @@ fn each_result_section_was_written_by_the_mode_entitled_to_write_it() {
         }
     }
 }
+
+/// The read-only path is read-only under a regeneration, which is what the device side
+/// rests on: it calls `assert_section` and never `assert_or_merge`, and a device that can
+/// author its own golden proves nothing against it.
+///
+/// Both variables set, a body that does NOT match, and the file must come back byte for
+/// byte with the verification still failing. Asserting the property rather than trusting
+/// that nothing on that path happens to call the write — the gpu binary links the write
+/// path through `mod common` exactly like every other binary.
+#[test]
+fn a_regeneration_does_not_make_the_read_only_path_write() {
+    let path = scratch("read-only");
+    let before = "== q1\nthe committed body\n";
+    std::fs::write(&path, before).expect("the file");
+    // SAFETY: this binary's other cases drive the merge with an explicit `Regeneration`
+    // and never read the environment, so nothing else here observes these.
+    unsafe {
+        std::env::set_var("UPDATE_CANONICAL", "1");
+        std::env::set_var("PCK_UPDATE_SECTIONS", "1");
+    }
+    let wrote_anyway = std::panic::catch_unwind(|| {
+        common::corpus_golden::assert_section(&path, "q1", "a body from a run\n");
+    });
+    unsafe {
+        std::env::remove_var("UPDATE_CANONICAL");
+        std::env::remove_var("PCK_UPDATE_SECTIONS");
+    }
+    assert!(wrote_anyway.is_err(), "it did not even verify");
+    assert_eq!(
+        std::fs::read_to_string(&path).expect("the file"),
+        before,
+        "the read-only path wrote under a regeneration"
+    );
+}

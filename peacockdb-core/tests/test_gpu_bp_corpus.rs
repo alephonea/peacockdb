@@ -45,6 +45,55 @@ macro_rules! corpus_query {
 
 include!("common/corpus_cases.inc");
 
+/// The device does not write a golden, asserted on the real path rather than left to the
+/// fact that nothing on it happens to call the write.
+///
+/// This binary links the write path through `mod common` exactly like the cpu one, and the
+/// whole tier rests on the device being held to what the cpu wrote: a device that can author
+/// its own golden proves nothing against it. So both regeneration variables are set, one
+/// real device case runs, and the three files it could have touched must come back byte for
+/// byte.
+///
+/// Setting the environment is safe here and only here: the gpu job runs this binary with
+/// `--test-threads=1`, since cuDF and RMM share one process-wide pool.
+#[test]
+fn a_device_run_under_a_regeneration_writes_no_golden() {
+    let (dataset, sf, query, mode) = ("tpch", "1", "q6", "bp_tp1_single");
+    let files = [
+        common::corpus_golden::cpu_golden(dataset, sf, "bp-tp1-single"),
+        common::corpus_golden::cost_golden(dataset, sf, "bp-tp1-single"),
+        common::corpus_golden::result_golden(dataset, sf),
+    ];
+    let before: Vec<Vec<u8>> = files
+        .iter()
+        .map(|path| std::fs::read(path).expect("a committed golden"))
+        .collect();
+    // SAFETY: `--test-threads=1` on this binary, which the gpu job and the shadgpu script
+    // both pass and `test_ci_coverage` holds them to.
+    unsafe {
+        std::env::set_var("UPDATE_CANONICAL", "1");
+        std::env::set_var("PCK_UPDATE_SECTIONS", "1");
+    }
+    let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        tokio::runtime::Runtime::new()
+            .expect("a runtime")
+            .block_on(common::corpus_gpu::gpu_case(dataset, sf, query, mode, "golden_exact"));
+    }));
+    unsafe {
+        std::env::remove_var("UPDATE_CANONICAL");
+        std::env::remove_var("PCK_UPDATE_SECTIONS");
+    }
+    for (path, was) in files.iter().zip(before) {
+        assert_eq!(
+            std::fs::read(path).expect("the golden"),
+            was,
+            "the device wrote {} under a regeneration",
+            path.display()
+        );
+    }
+    assert!(ran.is_ok(), "the case itself failed, so it proved nothing");
+}
+
 /// The five `bp_gpu_` columns against what this binary declares, in both directions. It
 /// runs only on the gpu host, because that is where these registrations are linked — so a
 /// gpu-column drift does not go red on the cpu leg, which is a consequence to know rather
