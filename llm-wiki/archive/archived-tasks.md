@@ -4,6 +4,11 @@ Specs for tasks whose PR has merged, newest first. Each is the contract the work
 done against, kept verbatim -- including the amendments and corrections made mid-task,
 since those are the part a later reader cannot reconstruct from the diff.
 
+T15, T16, T17, T17a, T18 and T19 merged 2026-08-27 as PRs #131 through #135 and are not
+here: their specs are sections of
+[`batch_partitioned_executor.md`](../tasks/batch_partitioned_executor.md), which is still
+in-flight for T20 and T22, and are struck through in its implementation plan instead.
+
 Merged 2026-08-20 as PR #126, opened against ENS-bp-plan-skeleton and retargeted to
 master when that base merged.
 

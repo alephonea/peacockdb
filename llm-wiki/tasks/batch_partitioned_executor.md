@@ -2676,7 +2676,7 @@ minus q33 would be the obvious cut and the wrong one, for the reason q33 is in t
 Where a query is dropped entirely, say which dimension lost a carrier and why the remaining ones
 cover it.
 
-**T18 — infra for running corpus queries.** T17 proved the path on seventeen queries and T17a
+~~**T18 — infra for running corpus queries.**~~ (done). T17 proved the path on seventeen queries and T17a
 injected layouts into eleven; the corpus is 39 tpch and 99 tpcds, each at five modes on two
 engines. What stands between the two is not more test cases but a way to declare one. This task
 builds that. It was split out of T20, which carried both this and the new query shapes, once it
@@ -3239,7 +3239,7 @@ fill — and q96 partially enabled is worth more than a replacement would be, si
 query here exercising the mode-scoped disablement the whole `cpu_modes`/`gpu_modes` shape exists
 for.
 
-**T19 — rollout.** Query-by-query enablement across the rest of the corpus on T18's macro,
+~~**T19 — rollout.**~~ (done). Query-by-query enablement across the rest of the corpus on T18's macro,
 starting from the twenty it already carries. No production code changes, per T18: a query that
 does not run is disabled with a ticket in [`bp-tickets.md`](bp-tickets.md), which is the whole
 output of this task besides the enabled rows. Not one line of `peacockdb-core/src` moves here:
