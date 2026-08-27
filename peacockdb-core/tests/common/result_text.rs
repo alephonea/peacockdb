@@ -78,15 +78,18 @@ fn row_digests(batches: &[RecordBatch]) -> Vec<(u64, usize)> {
     digests
 }
 
-/// The schema as one digest, so a right answer under the wrong column names is still wrong.
-/// The old exact arm compared the golden's header line and would have caught it; nothing
-/// else here reads a name.
+/// The column NAMES as one digest, so a right answer under the wrong names is still wrong.
+///
+/// Names and not types, because the rendering this replaces carried exactly that: a header
+/// of names and no types at all. Hashing the type would redden runs the string compare
+/// passed — the device exports `Utf8` where DataFusion's oracle holds `Utf8View`, same
+/// values, and every string-returning gpu case would fail on a difference the comparator
+/// was never asked about. A type mismatch that matters is `columns_of`'s check, one tier up.
 fn schema_digest(batches: &[RecordBatch]) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     if let Some(batch) = batches.first() {
         for field in batch.schema().fields() {
             field.name().hash(&mut hasher);
-            format!("{:?}", field.data_type()).hash(&mut hasher);
         }
     }
     hasher.finish()
@@ -128,7 +131,7 @@ pub fn results_agree(expected: &[RecordBatch], actual: &[RecordBatch]) -> bool {
 pub fn first_difference(expected: &[RecordBatch], actual: &[RecordBatch]) -> String {
     if schema_digest(expected) != schema_digest(actual) {
         return format!(
-            "the columns differ — expected {:?}, actual {:?}",
+            "the column names differ — expected {:?}, actual {:?}",
             columns_of(expected),
             columns_of(actual)
         );
@@ -165,7 +168,7 @@ fn columns_of(batches: &[RecordBatch]) -> Vec<String> {
                 .schema()
                 .fields()
                 .iter()
-                .map(|field| format!("{}:{:?}", field.name(), field.data_type()))
+                .map(|field| field.name().to_string())
                 .collect()
         })
         .unwrap_or_default()

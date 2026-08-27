@@ -21,16 +21,16 @@ corpus_query!(tpch, 1, q6, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_
 // here at all. Disabled rather than fixed: a fix made while enabling a query is a fix
 // nothing else in this branch proves.
 corpus_query!(tpch, 1, q1, none, none, data_fusion_exact, golden_exact);
-// Every query below carrying a join is #181 on a device: `per_call_join_type` is called for
-// every join by the gpu backend and is total only over the streaming family, so an Inner
-// join reaches its `unreachable!`. Fifteen queries, all five modes, one defect. q6 is the
-// only query here with no join, which is why it is the only device column left.
 corpus_query!(tpch, 1, q14, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, none, data_fusion_exact, golden_exact);
-corpus_query!(tpch, 1, q19, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, none, data_fusion_exact, golden_exact);
+corpus_query!(tpch, 1, q19, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, bp_tp1_single, data_fusion_exact, golden_exact);
 corpus_query!(tpch, 1, q12, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, none, data_fusion_exact, golden_exact);
-// q13 and tpcds/q41 are #152 on a device at every mode: the join's recipe copies its probe
-// batch and the frozen ABI has no copy, so neither call can run without erasing the other's
-// input. The refusal is by name, which is the planner saying so rather than a crash.
+// THE DEVICE COLUMN, after the first two cycles. q6 runs at all five modes and q19 at
+// bp-tp1-single; every other device cell is off against a ticket. Four causes, none of them
+// this task's to fix: #152 refuses a join whose recipe copies a side the ABI cannot copy (52
+// cases, by name rather than by crash), #183 is an unload declaring Utf8View where the device
+// exports Utf8, #184 is a cuDF failure in the hash scatter, and #185 is the device reporting
+// one input row where the cpu reports the group count — which is the golden catching exactly
+// what it is for. T19 is where these are settled query by query.
 corpus_query!(tpch, 1, q13, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, none, data_fusion_exact, golden_exact);
 corpus_query!(tpch, 1, q15, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, none, data_fusion_exact, golden_exact);
 corpus_query!(tpch, 1, q17, none, none, data_fusion_exact, golden_exact);
