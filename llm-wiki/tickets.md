@@ -827,19 +827,23 @@ wrong-order subtree before the root.
 <a id="t163"></a>
 ### #163 — a declared type is never checked against the expression that produces it
 
-Three places compare types — union's branch check, the root against the DataFusion plan, and
-`types_across_the_edge` — and each compares one declared schema against another rather than
-deriving one from an expression. So a `GpuProject` declaring `Decimal128(15,2)` where its
-expression produces `Decimal128(38,10)` validates, and an aggregate's declared state types are
-checked nowhere. A reference cannot carry the expectation either: `ColumnRef` is `{index, name}`,
-and only `Binary`, `Cast` and `ScalarFunction` carry a type. Both engines take their per-node bytes from the declared schema, so a wrong type costs
-the same on each and moves no golden byte — `avg`'s state columns typed backwards is the case
-that shipped, and the T7 schema tests are what catch it today. A device confirmed it in T16:
-cuDF's Welford count exports as Int64 where every plan declares UInt64, because `state_fields` is
-DataFusion's answer and nothing asks what produces the column. Same width, so nothing else moved.
-Fix: derive each expression's
-output type and compare it against the declared field, for the nodes that compute rather than
-carry. Same class as [#135](archive/archived-tickets.md#t135).
+Union's branch check, the root against the DataFusion plan, and `types_across_the_edge` each
+compare one declared schema against another rather than deriving one from an expression, so an
+aggregate's declared state types are checked nowhere.
+
+Both engines price a node from the declared schema, so a wrong type moves no golden byte. T16
+confirmed it on a device: cuDF's Welford count exports Int64 where every plan declares UInt64,
+`state_fields` being DataFusion's answer rather than the producing expression's.
+
+T17 closed one arm only. `widened_decimal` in `cpu_backend.rs` now allows a produced decimal wider
+than the declared one at equal scale. The signed arm remains: `avg` declares its count state
+UInt64 and DataFusion's own accumulator produces Int64, which is no widening and must not be
+escaped the same way, since accepting it masks what the device showed. `tpch/q1` and `q17` are
+disabled at all five batch-partitioned modes on this and return with the fix, not by loosening
+the guard.
+
+Fix: derive each expression's output type and compare it against the declared field, for the
+nodes that compute rather than carry. Same class as [#135](archive/archived-tickets.md#t135).
 
 <a id="t159"></a>
 ### #159 — RightSemi/RightAnti with a residual filter has no cuDF path
