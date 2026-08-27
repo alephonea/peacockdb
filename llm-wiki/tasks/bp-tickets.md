@@ -46,6 +46,47 @@ than on what is declared, or the accounting is right and the rebatcher was never
 and T17a measured an artefact of arrow's allocator. Deferred deliberately — T18's bar is results
 and node stats, not memory.
 
+<a id="t183"></a>
+### #183 — the device exports Utf8 where the sink declares Utf8View
+
+`GpuUnload lane 0: the exported stream is not the sink's rows: column types must match schema
+types, expected Utf8View`. The sink's schema comes from DataFusion, which uses `Utf8View`; the
+device's IPC export produces `Utf8`. Same values, different arrow type.
+
+Twelve of T18's device cases over eleven queries — tpcds q3 q15 q37 q42 q43 q52 q55 q82, tpch q10
+q12 q15 — with `#183` on their gpu columns.
+
+The same divergence bit the digest comparator one layer up, where hashing the column type reddened
+eight legacy gpu cases whose rendered comparison had never looked at types. That one was a
+comparison artefact and was fixed by hashing names; this one is the export genuinely disagreeing
+with the schema the plan declared, and no comparison choice makes it go away.
+
+<a id="t184"></a>
+### #184 — a hash repartition of one lane into four fails in cuDF
+
+`GpuEmitPartitions: execute_node(#11 CudfRepartition{Hash, 1 -> 4}): CUDF failure at
+cpp/src/spark_hash_partition.cu:179`. Four of T18's device cases, `tpch/q15` at every mode, and
+no other query reaches it.
+
+One lane in and four out is the shape, which the batched mode produces far more often than legacy
+does — a shuffle above a single-lane source. Whether the kernel refuses the 1-to-N case or the
+input carries something it will not take is the first thing to establish.
+
+<a id="t185"></a>
+### #185 — the device reports one input row where the CPU reports the group count
+
+The two engines' sections differ in `in_rows` and in nothing else. `tpcds/q96` expects
+`in_rows=[[34]]` and the device reports `[[1]]`; `tpch/q14` expects `[[10]]` against `[[1]]`, and
+at `bp-tp4-sized` `[[3,3,3,3]]` against `[[1,1,1,1]]`. Every `batch_rows` entry and every byte
+agrees, on every node.
+
+So it is an aggregate's state being counted as one row rather than as its groups, on the consuming
+side. Four device cases over tpcds q96 and tpch q3 q14.
+
+Worth the note that this is the failure the per-node golden exists for: the answers match, the
+bytes match, and no result comparison at any tolerance could see it. It was found on the first
+device run of the corpus tier, which is the argument for the tier.
+
 <a id="t180"></a>
 ### #180 — a shuffled count(\*) merges to nullable against a non-nullable declaration
 
