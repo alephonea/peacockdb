@@ -6,7 +6,7 @@ anchor that the cost widget links to. Device labels are `tp<N>-<tier>` (micro=10
 mini=2GiB, standard=12GiB).
 
 A ticket carries a **Priority** line only when it is not medium; medium is the default.
-New tickets take the next free number (currently 186), which is also the counter for
+New tickets take the next free number (currently 195), which is also the counter for
 `tasks/bp-tickets.md` — the rollout's own list, separate file, one ID space. Finished and lapsed tickets move to
 `llm-wiki/archive/archived-tickets.md` (Done / Stale) — numbers are never reused, so an old
 reference still resolves there.
@@ -749,6 +749,26 @@ trip log, and `Underestimate` is the precedent for what one would look like. Rel
 
 ## Infrastructure / process
 
+<a id="t194"></a>
+### #194 — the cost gate's git baseline ignores which section it was asked for
+
+`base_total` (`cost-report/src/main.rs:1623`) reads a base-side total two ways. The directory arm
+passes `section` to `entry_total`; the git-ref arm — the one every PR uses — calls
+`read_total_str` on the whole file and drops it. `read_total_str` returns the FIRST
+`peacockdb_cost=` in the text, so every section of a per-mode `.cost.txt` is compared against
+whichever query sorts first in that file.
+
+Legacy goldens are one file per query, so `section` is `None` and the two arms agree. The
+batch-partitioned per-mode files hold ~60 sections each, and there the gate is comparing unrelated
+queries. On `tpcds.sf1/bp-tp1-single-mini.cost.txt` the reported deltas run -99.6% to +341.3%
+against `q2`'s 737,382,823 — three below -90%, three above +200%, none of them a cost change.
+
+Every bp row on PR #135's cost widget is this. The new-side totals are correct; only the baseline
+is wrong, so nothing is mis-measured in the goldens themselves.
+
+Fix: the git arm takes the same `entry_total(text, section)` path as the directory arm. A test that
+the two arms agree on a multi-section file is what would have caught it.
+
 <a id="t178"></a>
 ### #178 — two CI runs share the GPU host, and the pool is sized for one
 `gpu-tests` uses a per-run `REMOTE_DIR` so two runs do not overwrite each other's files, and
@@ -829,18 +849,18 @@ wrong-order subtree before the root.
 
 Union's branch check, the root against the DataFusion plan, and `types_across_the_edge` each
 compare one declared schema against another rather than deriving one from an expression, so an
-aggregate's declared state types are checked nowhere.
+aggregate's declared state types are checked nowhere — `state_fields` is DataFusion's answer, not
+the producing expression's.
 
 Both engines price a node from the declared schema, so a wrong type moves no golden byte. T16
-confirmed it on a device: cuDF's Welford count exports Int64 where every plan declares UInt64,
-`state_fields` being DataFusion's answer rather than the producing expression's.
+confirmed it on a device: cuDF's Welford count exports Int64 where every plan declares UInt64.
 
-T17 closed one arm only. `widened_decimal` in `cpu_backend.rs` now allows a produced decimal wider
-than the declared one at equal scale. The signed arm remains: `avg` declares its count state
-UInt64 and DataFusion's own accumulator produces Int64, which is no widening and must not be
-escaped the same way, since accepting it masks what the device showed. `tpch/q1` and `q17` are
-disabled at all five batch-partitioned modes on this and return with the fix, not by loosening
-the guard.
+T17 closed the widening arm only (`widened_decimal`, `cpu_backend.rs`). The signed arm remains:
+`avg` declares its count state UInt64 and DataFusion's accumulator produces Int64 — no widening, and
+it must not be escaped the same way, since accepting it masks what the device showed. The queries
+disabled on this return with the fix, not by loosening the guard. Its column runs 1 to 10 over T19's
+seventeen `avg` queries — wherever the count state sits in that query's own state row — so no fix
+special-casing a position can work.
 
 Fix: derive each expression's output type and compare it against the declared field, for the
 nodes that compute rather than carry. Same class as [#135](archive/archived-tickets.md#t135).
@@ -899,6 +919,10 @@ bit four times during the refactor. Fix: sweep
 `git ls-files --cached --others --exclude-standard testdata`. Lessons from the parked
 draft: `--exclude=*.parquet` is wrong (tpch.minimal commits 5 needed .parquet files);
 tracked-only misses new uncommitted fixtures. Needs its own clean verification run.
+
+Bit a fifth time in T19: the script pushed no query directory where `pipeline.yml:461` rsyncs both,
+so a T17 query was absent on the host. An absent file is loud; a stale one runs old text and writes
+cells describing a query the repo does not contain, with nothing red.
 
 <a id="t114"></a>
 ### #114 — plan_status is shape-validated but never truth-verified
@@ -1009,7 +1033,7 @@ operator tables for architecture.md.
 <a id="t129"></a>
 ### #129 — The "26.02" CI leg builds against a 25.10a image; the GPU job has no fork guard
 Two unrelated smells in `pipeline.yml`, both found auditing the CI section of
-build-test.md. (a) The cpp-cpu matrix leg labelled `cudf: "26.02"` runs
+build-test.md. (a) The dataset-matrix matrix leg labelled `cudf: "26.02"` runs
 `rapidsai/base:25.10a-cuda12-py3.12`, so the compile-only 26.02 coverage the wiki and
 `#94` both rely on is actually 25.10a coverage; the label is the only place 26.02 appears.
 Either bump the image or rename the leg — as it stands, "26.02 compiles" is a claim no job
@@ -1026,7 +1050,7 @@ missing step: `test_ci_coverage.rs` enumerates `--test` targets plus `--lib`, so
 doctest is invisible to the guard whose whole job is finding targets CI does not run —
 this one is unlisted, not exempted, and adding a second doctest would go equally
 unnoticed. Fix: run `cargo test --features rust-only -p peacockdb-core --doc` in the
-cpp-cpu tier and teach the guard that `--doc` is a target class it must see named
+dataset-matrix tier and teach the guard that `--doc` is a target class it must see named
 (the `--lib` check at `line_runs_lib_tests` is the pattern). Found during the
 test-category census (2026-08-04).
 

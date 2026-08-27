@@ -7,7 +7,7 @@ fixtures of `test_end_to_end.py`. Each is checked against a pandas oracle over t
 frames, so the assertions do not depend on which dataset was found.
 
 **Which dataset.** `testdata/tpch.sf1` when it exists, otherwise the committed
-`testdata/tpch.minimal`. This file runs in the **cpp-cpu** job, right after
+`testdata/tpch.minimal`. This file runs in the **dataset-matrix** job, right after
 `generate_testdata.sh` produces sf1 — the rest of the prototype suite runs in cost-report,
 which has no dataset. The fallback is for local runs where sf1 was never generated: for
 the four tables used here the two are the same data (same schema, same row counts —

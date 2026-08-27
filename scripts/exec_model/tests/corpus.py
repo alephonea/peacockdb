@@ -4,7 +4,7 @@
 share a reader, a budget and an oracle comparison. Nothing here is a test.
 
 **Which dataset.** `testdata/tpch.sf1` and `testdata/tpcds.sf1`, which
-`generate_testdata.sh` produces and CI's cpp-cpu job regenerates every run — which is why
+`generate_testdata.sh` produces and CI's dataset-matrix job regenerates every run — which is why
 both corpus files run there rather than in cost-report, where there is no dataset. TPC-H
 falls back to the committed `testdata/tpch.minimal` for the five tables it holds; a query
 naming a table neither dataset has **fails**, loudly, naming the generator. It does not
@@ -87,7 +87,7 @@ def dataset_dir(bench: str, name: str) -> pathlib.Path:
     raise FileNotFoundError(
         f"no {name}.parquet under {' or '.join(_DATASETS[bench])} in {_ROOT}. "
         "The corpus tests need the generated sf1 tables: run testdata/generate_testdata.sh "
-        "(CI's cpp-cpu job does this before running these files)."
+        "(CI's dataset-matrix job does this before running these files)."
     )
 
 

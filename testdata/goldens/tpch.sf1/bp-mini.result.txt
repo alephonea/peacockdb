@@ -1,5 +1,111 @@
 == q1
 skipped: not enabled at any mode
+== q2
+mode=bp-tp4-sized
++-----------+--------------------+----------------+-----------+----------------+------------------------------------------+-----------------+------------------------------------------------------------------------------------------------------+
+| s_acctbal | s_name             | n_name         | p_partkey | p_mfgr         | s_address                                | s_phone         | s_comment                                                                                            |
++-----------+--------------------+----------------+-----------+----------------+------------------------------------------+-----------------+------------------------------------------------------------------------------------------------------+
+| 7843.52   | Supplier#000006683 | FRANCE         | 11680     | Manufacturer#4 | Z1,hkHIw,Z3,,Comv6kLxIiPJtoNt            | 16-464-517-8943 | sits. blithely regular requests above the pending, regular ideas boo                                 |
+| 7850.66   | Supplier#000001518 | UNITED KINGDOM | 86501     | Manufacturer#1 | ddNQX3hIjgico                            | 33-730-383-3892 | ccounts. special, final deposits                                                                     |
+| 7852.45   | Supplier#000005864 | RUSSIA         | 8363      | Manufacturer#4 | 5odLpc1M83KXJ0O                          | 32-454-883-3821 | egular, regular ideas. requests are carefully. furiously final dolp                                  |
+| 7871.50   | Supplier#000007206 | RUSSIA         | 104695    | Manufacturer#1 | YvrLdpD 5ExhHmRWzK41tw4                  | 32-432-452-7731 | ording to the furious theodolites cajole carefully according to the busily express asymptotes.       |
+| 7887.08   | Supplier#000009792 | GERMANY        | 164759    | Manufacturer#3 | 3YSi76M2 I8XGikO5YgSM81r5Z6A7VkZcys      | 17-988-938-4296 |  the regular ideas. furiously bold deposits boost above the bli                                      |
+| 7894.56   | Supplier#000007981 | GERMANY        | 85472     | Manufacturer#4 | e8hRUxe9cqQM3b                           | 17-963-404-3760 | ly final courts. unusual, quiet dolphi                                                               |
+| 7912.91   | Supplier#000004211 | GERMANY        | 159180    | Manufacturer#5 | Zva95Dwj EY0w,XjgsL7O0Zb2 l3almck        | 17-266-947-7315 |  slyly silent requests; fluffily fi                                                                  |
+| 7912.91   | Supplier#000004211 | GERMANY        | 184210    | Manufacturer#4 | Zva95Dwj EY0w,XjgsL7O0Zb2 l3almck        | 17-266-947-7315 |  slyly silent requests; fluffily fi                                                                  |
+| 7914.45   | Supplier#000001013 | RUSSIA         | 125988    | Manufacturer#2 | AI9ODzBzWgnny28PHBei5M2lUFdD9            | 32-194-698-3365 |  the blithely silent accounts. q                                                                     |
+| 7937.93   | Supplier#000009012 | ROMANIA        | 83995     | Manufacturer#2 | J6I7sJj0mGYIWFv9KxD3fK O7tvNP            | 29-250-925-9690 |  use slyly against the slyly bold theod                                                              |
+| 7950.37   | Supplier#000008101 | GERMANY        | 33094     | Manufacturer#5 | HG2wfVixwCIhK7dlrigGR3an2LuSifDJH        | 17-627-663-8014 | ly alongside of the furiously unusual requests! bold, express foxe                                   |
+| 7980.65   | Supplier#000001288 | FRANCE         | 13784     | Manufacturer#4 | tm0TjL5b oE                              | 16-646-464-8247 | gular pains? fluffily bold warhorses affix? blithe instruction                                       |
+| 7992.40   | Supplier#000006108 | FRANCE         | 118574    | Manufacturer#1 | TyptNE7nv6BLpLl6WFX                      | 16-974-998-8937 | theodolites among the furiously unusual accounts must x                                              |
+| 8042.09   | Supplier#000003245 | RUSSIA         | 135705    | Manufacturer#4 | oJSiGLXRCDAPcfWot7LkwSQRCh63XNS2         | 32-836-132-8872 |  use slyly. furiously regular deposits sleep according to the requests.                              |
+| 8042.09   | Supplier#000003245 | RUSSIA         | 150729    | Manufacturer#1 | oJSiGLXRCDAPcfWot7LkwSQRCh63XNS2         | 32-836-132-8872 |  use slyly. furiously regular deposits sleep according to the requests.                              |
+| 8046.07   | Supplier#000008780 | FRANCE         | 191222    | Manufacturer#3 | rOssxn,6gRDzHr0gu,hEK                    | 16-473-215-6395 | he regular foxes cajole ruthlessly among the sometimes final grouches. blithel                       |
+| 8102.62   | Supplier#000003347 | UNITED KINGDOM | 18344     | Manufacturer#5 | Froy39Y8ZUJ                              | 33-454-274-8532 | y daring requests. unusual accounts wake atop the blithely special packages. sly                     |
+| 8109.09   | Supplier#000009186 | FRANCE         | 99185     | Manufacturer#1 | wKLCzA5bMuGRBm35tvQAGpen23L              | 16-668-570-1402 | ts cajole daringly. pinto beans                                                                      |
+| 8152.61   | Supplier#000002731 | ROMANIA        | 15227     | Manufacturer#4 | sDFx3iox2Zzx                             | 29-805-463-2030 | ly above the packages. final accounts sleep furiously. fluffily iro                                  |
+| 8231.61   | Supplier#000009558 | RUSSIA         | 192000    | Manufacturer#2 | FONKME0t7ZJhnjn9VL5                      | 32-762-137-5858 | g to the carefully even brai                                                                         |
+| 8307.93   | Supplier#000003142 | GERMANY        | 18139     | Manufacturer#1 | OAPFw6SNodrC kFi                         | 17-595-447-6026 | usly express packages sleep finally regular ideas. carefu                                            |
+| 8328.46   | Supplier#000001744 | ROMANIA        | 69237     | Manufacturer#5 | DfCXL6UWAY1lgjQYB0AjE8T2sx0BzS           | 29-330-728-5873 |  regular, special dolphins haggle carefully special asy                                              |
+| 8338.58   | Supplier#000007269 | FRANCE         | 17268     | Manufacturer#4 | 2vJh8wqp6CJp,W0Y                         | 16-267-277-4365 | lithely through the accounts. express, ironic asymptotes wou                                         |
+| 8348.74   | Supplier#000008851 | FRANCE         | 66344     | Manufacturer#4 | E4uITlvmPHKvZ                            | 16-796-240-2472 | s packages haggle above the express pinto beans. stealthy, ironic theodolites sleep quickly          |
+| 8376.52   | Supplier#000005306 | UNITED KINGDOM | 190267    | Manufacturer#5 | SyS2SsaA8i CqnbzUdfNH07bVtt9uW,Cp6FLCkOR | 33-632-514-7931 | pendencies affix furiously against the special, blithe packages. qui                                 |
+| 8386.08   | Supplier#000008518 | FRANCE         | 36014     | Manufacturer#3 | ZHAsABq5MRP e5kc0DRD8za3xGdf763ChHmoOA45 | 16-618-780-7481 | g alongside of the slyly unusual platelets! blithely regular asymptotes cajole. quickly regular      |
+| 8407.04   | Supplier#000005406 | RUSSIA         | 162889    | Manufacturer#4 | ITrK2mV94SooV6 Igo                       | 32-626-152-4621 |  even theodolites. quickly bold deposits after the pen                                               |
+| 8431.40   | Supplier#000002675 | ROMANIA        | 5174      | Manufacturer#1 | khl8ydxR9VekbcMLgJKPtpNtwAkYtJTv         | 29-474-643-1443 | regular, express platelets are. carefully ironic forges since the requests affix                     |
+| 8432.89   | Supplier#000003990 | RUSSIA         | 191470    | Manufacturer#1 | wMJppCZ9aPMuq2nr88TVfztvE gj95OG wdNUE   | 32-839-509-9301 | . express pinto beans use slyly. regular platelets sleep quickly busy deposits. final                |
+| 8441.40   | Supplier#000003817 | FRANCE         | 141302    | Manufacturer#2 | K6XLsYufTS                               | 16-339-356-5115 | sly fluffily regular pinto beans. slyly even deposits snooze fluffily along the fluff                |
+| 8457.09   | Supplier#000009456 | UNITED KINGDOM | 19455     | Manufacturer#1 | U8pJ1 SKbZPhH7,bLWXX3pG                  | 33-858-440-4349 | ounts sleep about the bold, even ideas. slyly unusual accounts after the asymptotes                  |
+| 8503.70   | Supplier#000006830 | RUSSIA         | 44325     | Manufacturer#4 | qoW4lp2961uQiKOK6rW8                     | 32-147-878-5069 | atelets sleep furiously pending asymptotes. even requests for the blithely unusual packages          |
+| 8517.23   | Supplier#000009529 | RUSSIA         | 37025     | Manufacturer#5 | NWW9SDThqi9RIeOA                         | 32-565-297-8775 | ial requests use stealthily along the carefully u                                                    |
+| 8517.23   | Supplier#000009529 | RUSSIA         | 59528     | Manufacturer#2 | NWW9SDThqi9RIeOA                         | 32-565-297-8775 | ial requests use stealthily along the carefully u                                                    |
+| 8553.82   | Supplier#000003979 | ROMANIA        | 143978    | Manufacturer#4 | qLE5JpqDoe3XHsBI6etWpd4zRsjsBNb9Tidi6    | 29-124-646-4897 | counts are quickly carefully ironic instructions. platelets wake f                                   |
+| 8564.12   | Supplier#000000033 | GERMANY        | 110032    | Manufacturer#1 | LLMgB3vXW,0g,8nuv3qU3QZaEBZvU2qRLX9      | 17-138-897-9374 | l packages cajole unusual, final packages. slyly express requests                                    |
+| 8569.52   | Supplier#000005936 | RUSSIA         | 5935      | Manufacturer#5 | I3Qd1VwvDm5hYGzg1hBHzKy,P3YQXq7          | 32-644-251-7916 | s about the carefully final accounts use always even requests. furiously express dependenc           |
+| 8607.69   | Supplier#000006003 | UNITED KINGDOM | 76002     | Manufacturer#2 | njRvqoOmIxNDe,da,SsnweINv1VY2YatifmJq    | 33-416-807-5206 | braids sleep carefully along the iron                                                                |
+| 8638.36   | Supplier#000002920 | RUSSIA         | 170402    | Manufacturer#3 | iMYQSQzsLXg                              | 32-122-621-7549 | ickly dolphins. furiously careful asymptotes sublate                                                 |
+| 8638.36   | Supplier#000002920 | RUSSIA         | 75398     | Manufacturer#1 | iMYQSQzsLXg                              | 32-122-621-7549 | ickly dolphins. furiously careful asymptotes sublate                                                 |
+| 8655.99   | Supplier#000006330 | RUSSIA         | 193810    | Manufacturer#2 | 7CsFQnd ,tzgMYvVoMim5l4DrJcX8SaQMTcy     | 32-561-198-3705 | ideas wake across the regular, unusual instructions; furiously final deposits wake near the s        |
+| 8691.06   | Supplier#000004429 | UNITED KINGDOM | 126892    | Manufacturer#2 | H0paE V6JCrlZpYrzI0LgIP                  | 33-964-337-5038 |  sly requests might sleep. final dolphins sleep. furiousl                                            |
+| 8754.24   | Supplier#000009407 | UNITED KINGDOM | 179406    | Manufacturer#4 | pj9oPHQ4OLWp                             | 33-903-970-9604 | ng asymptotes hang across the blithely special deposits.                                             |
+| 8781.71   | Supplier#000003121 | ROMANIA        | 13120     | Manufacturer#5 | wdA7CLuYXS22oQEmP0V,x0PHrXiPdl5Rpwv,ub   | 29-707-291-5144 | ies. final foxes are furiou                                                                          |
+| 8841.59   | Supplier#000005750 | ROMANIA        | 100729    | Manufacturer#5 | n uXFrKx,KVYIQjmRuV,yejWmLMdRJnk         | 29-344-502-5481 | leep finally furiously express packages. slyly unusual packages cajole unusual,                      |
+| 8862.24   | Supplier#000003323 | ROMANIA        | 73322     | Manufacturer#3 | 5RrF2PzoRlwpAGXjyf                       | 29-736-951-3710 | regular ideas haggle blithely packages. regula                                                       |
+| 8877.82   | Supplier#000007967 | FRANCE         | 167966    | Manufacturer#5 | rXBIZqq9eWEuU90B vlCab6                  | 16-442-147-9345 | ckages-- evenly even requests boost blit                                                             |
+| 8913.96   | Supplier#000004603 | UNITED KINGDOM | 137063    | Manufacturer#2 | d6sFwf6 TD1xyfuFbdM2h8LX7ZWc3zHupV       | 33-789-255-7342 | lithely whithout the furiously ironic sheaves. ironic reques                                         |
+| 8920.59   | Supplier#000003967 | ROMANIA        | 173966    | Manufacturer#2 | NjCq3NUY82S                              | 29-194-731-3944 | ts. daringly regular theodolites affix silently. reg                                                 |
+| 8920.59   | Supplier#000003967 | ROMANIA        | 26460     | Manufacturer#1 | NjCq3NUY82S                              | 29-194-731-3944 | ts. daringly regular theodolites affix silently. reg                                                 |
+| 8929.42   | Supplier#000008770 | FRANCE         | 173735    | Manufacturer#4 | aTOkYV7y3 kqbRrkOGJLaI                   | 16-242-746-9248 | ns haggle quickly silent theodolites. bold, final requests along t                                   |
+| 8936.82   | Supplier#000007043 | UNITED KINGDOM | 109512    | Manufacturer#1 | m5QHON1iD1OPhmU2R3z97u 6mCIvjnAc3I0,9s   | 33-784-177-8208 |  final dependencies. deposits a                                                                      |
+| 8968.42   | Supplier#000010000 | ROMANIA        | 119999    | Manufacturer#5 | R7kfmyzoIfXlrbnqNwUUW3phJctocp0J         | 29-578-432-2146 | ular, quick foxes sleep quickly according to the blithely fluffy theodolit                           |
+| 8996.14   | Supplier#000009814 | ROMANIA        | 139813    | Manufacturer#2 | RL,cVCKSXFc6Win6EmtF415A22as8nG2fqEa     | 29-995-571-8781 |  regular requests haggle carefully above the carefully regular deposits. ironic pearls in p          |
+| 8996.87   | Supplier#000004702 | FRANCE         | 102191    | Manufacturer#5 | T35OahYXQGC                              | 16-811-269-8946 | ily regular grouches wake quickly ironic de                                                          |
+| 9094.57   | Supplier#000004582 | RUSSIA         | 39575     | Manufacturer#1 | 5p,3Gp8kX 1EDarE0JR5juHH Sq9jlxgKenM     | 32-587-577-1351 | ages affix quickly after the carefully regular accounts. regular, regular foxes kindle.              |
+| 9101.00   | Supplier#000005791 | ROMANIA        | 128254    | Manufacturer#5 | txPYsp50HJkbbaAJ0bYieqHmZtirDUVOcmC4lk   | 29-549-251-5384 |  regular foxes use carefully final packages. fluffily stealthy deposits toward the sp                |
+| 9104.83   | Supplier#000008520 | GERMANY        | 150974    | Manufacturer#4 | aA95nLn,m9shRrPXZw9Y1X                   | 17-728-804-1793 | nstructions. carefully regular requests use fluffily against the quickly final deposits. blithel     |
+| 9128.97   | Supplier#000004311 | RUSSIA         | 146768    | Manufacturer#5 | jSiHD4NTd8i9zVRX9uz9a,                   | 32-155-440-7120 | theodolites. furiously even pinto beans abou                                                         |
+| 9189.98   | Supplier#000001226 | GERMANY        | 21225     | Manufacturer#4 | BzfoA9wft1Mx3iBIs                        | 17-725-903-1381 | luffily across the slyly special instructions. bold, ironic deposi                                   |
+| 9192.10   | Supplier#000000115 | UNITED KINGDOM | 85098     | Manufacturer#3 | EhrYy0MT5M1vfZ0V4skpifdp6pgFz5           | 33-597-248-1220 | onic instructions. ironic, regular deposits haggle f                                                 |
+| 9201.47   | Supplier#000009690 | UNITED KINGDOM | 67183     | Manufacturer#5 | pprpD77FEIWsNMmGT9T                      | 33-121-267-9529 | uriously bold packages integrate blithely ironic theodolites. carefully unusual escap                |
+| 9208.70   | Supplier#000007769 | ROMANIA        | 40256     | Manufacturer#5 | AzIENtMrVCSbrjyUu8                       | 29-964-424-9649 |  ironic requests among the deposits affix busily ironic accounts. slow pinto beans are blithely fi   |
+| 9249.35   | Supplier#000003973 | FRANCE         | 26466     | Manufacturer#1 | OZSkIozfU4FYizk4e091MZHozL1qcHe257J89bW  | 16-722-866-1658 | beans. slyly ironic dependencies cajole furiously furiously regular ideas. boldly even requests hagg |
+| 9249.35   | Supplier#000003973 | FRANCE         | 33972     | Manufacturer#1 | OZSkIozfU4FYizk4e091MZHozL1qcHe257J89bW  | 16-722-866-1658 | beans. slyly ironic dependencies cajole furiously furiously regular ideas. boldly even requests hagg |
+| 9274.80   | Supplier#000008854 | RUSSIA         | 76346     | Manufacturer#3 | ,uJfCd6eTiYE1ZEhDM vsc8ANQPWaPlQ         | 32-524-148-5221 | onic, final ideas. blithely regular platelets boost final, ironic pinto beans. fluffil               |
+| 9280.27   | Supplier#000007194 | ROMANIA        | 47193     | Manufacturer#3 | tJ96aHp8 l3uiq38LiDHswtk9bHMg            | 29-318-454-2133 | tes. carefully regular accounts are carefully since the waters. accounts cajole? carefully bold      |
+| 9312.97   | Supplier#000007807 | RUSSIA         | 100276    | Manufacturer#5 | Dk2ebpGR3jlpYbpMg9Djr                    | 32-673-872-5854 | . silent asymptotes boost. quickly ironic accounts for the                                           |
+| 9312.97   | Supplier#000007807 | RUSSIA         | 90279     | Manufacturer#5 | Dk2ebpGR3jlpYbpMg9Djr                    | 32-673-872-5854 | . silent asymptotes boost. quickly ironic accounts for the                                           |
+| 9352.04   | Supplier#000003439 | GERMANY        | 170921    | Manufacturer#4 | B2bnKDIpkJp2uHKp                         | 17-128-996-4650 | nusual frets cajole carefully beneath                                                                |
+| 9357.45   | Supplier#000006188 | UNITED KINGDOM | 138648    | Manufacturer#1 | LS,Z0 zbSvC7GWjF                         | 33-583-607-1633 |  somas cajole around the even, ironic deposits. pending theodolites according to the b               |
+| 9359.61   | Supplier#000004856 | ROMANIA        | 62349     | Manufacturer#5 | k2CKOmXhPruJZ                            | 29-334-870-9731 | es. final asymptotes wake carefully                                                                  |
+| 9408.65   | Supplier#000007772 | UNITED KINGDOM | 117771    | Manufacturer#4 | rIoV2rj0KNy,IT                           | 33-152-491-1126 | s nag quickly regular packages. carefully express pinto beans about th                               |
+| 9453.01   | Supplier#000000802 | ROMANIA        | 175767    | Manufacturer#1 | 1Uj23QWxQjj7EyeqHWqGWTbN                 | 29-342-882-6463 | s according to the even deposits integrate express packages. express                                 |
+| 9461.05   | Supplier#000002536 | UNITED KINGDOM | 20033     | Manufacturer#1 | TEEkPusQ6rU18YvixE7IQtBDOyRBdGoOWl2r     | 33-556-973-5522 | inal ideas cajole furiously. blithely special Tiresias against the b                                 |
+| 9492.79   | Supplier#000005975 | GERMANY        | 25974     | Manufacturer#5 | 9UEiIp7uSYtTF5                           | 17-992-579-4839 | fluffily ironic instructions haggle against the even, special accounts. quickly final                |
+| 9558.10   | Supplier#000003532 | UNITED KINGDOM | 88515     | Manufacturer#4 | ncMxIJcDYZd5B7FlKxxLmnlzPeZB,FKBujB      | 33-152-301-2164 | against the final pinto beans. carefully bold asymptotes use                                         |
+| 9571.83   | Supplier#000004305 | ROMANIA        | 179270    | Manufacturer#2 | Bdj1T5EostLveb9ocRbz                     | 29-973-481-1831 | fully: fluffily special deposits use fur                                                             |
+| 9612.94   | Supplier#000003228 | ROMANIA        | 120715    | Manufacturer#2 | hnNBdhdXO4yT18 QNABTrL8fuv0A4p           | 29-325-784-8187 | furiously foxes. express packages nag blithely express, pending ideas. fluffily ironi                |
+| 9612.94   | Supplier#000003228 | ROMANIA        | 198189    | Manufacturer#4 | hnNBdhdXO4yT18 QNABTrL8fuv0A4p           | 29-325-784-8187 | furiously foxes. express packages nag blithely express, pending ideas. fluffily ironi                |
+| 9624.78   | Supplier#000009658 | ROMANIA        | 189657    | Manufacturer#1 | DmRxpLmL88XCBiONB3tq3e0u                 | 29-748-876-2014 | inst the blithely brave frays. brav                                                                  |
+| 9624.82   | Supplier#000001816 | FRANCE         | 34306     | Manufacturer#3 | NTwQPSZwfhc4uu1EMvEDopBnEv2j P           | 16-392-237-6726 |  the express, regular accounts. regular decoys boost alongside of                                    |
+| 9643.55   | Supplier#000005148 | ROMANIA        | 107617    | Manufacturer#1 | H7WOI6lzFuSsWzTSBrhzTYV                  | 29-252-617-4850 | carefully platelets. packages sleep special ideas. quick                                             |
+| 9681.33   | Supplier#000008406 | RUSSIA         | 78405     | Manufacturer#1 | 1A6x3PLy6F                               | 32-139-873-8571 | ons sleep express deposits. epitap                                                                   |
+| 9721.95   | Supplier#000008757 | UNITED KINGDOM | 156241    | Manufacturer#3 | ryKUkEeWN7Z                              | 33-821-407-2995 |  the instructions breach slyly                                                                       |
+| 9739.86   | Supplier#000003384 | FRANCE         | 138357    | Manufacturer#2 | D01XwXbcILNwmrGS6ZPrVhZxO40i             | 16-494-913-5925 | es. carefully regular ideas cajole. quickly ironic requests haggle. pending sentiment                |
+| 9817.10   | Supplier#000002352 | RUSSIA         | 124815    | Manufacturer#2 | XfLCj71HKHnPqgvs7KNgPKcOWoWxo2w          | 32-551-831-1437 | al packages doze always according to the quickly f                                                   |
+| 9817.10   | Supplier#000002352 | RUSSIA         | 152351    | Manufacturer#3 | XfLCj71HKHnPqgvs7KNgPKcOWoWxo2w          | 32-551-831-1437 | al packages doze always according to the quickly f                                                   |
+| 9836.93   | Supplier#000007342 | RUSSIA         | 4841      | Manufacturer#4 | icFgTpZ0TuAm188dv                        | 32-399-414-5385 |  packages are blithely about the quickly                                                             |
+| 9847.57   | Supplier#000006345 | FRANCE         | 173827    | Manufacturer#2 | 68yX tGXAkVRSxUGNSjJdptw 8O878xaFnaoQK   | 16-886-766-7945 | odolites. blithely special requests above the regular foxes sleep unusual sauternes. care            |
+| 9847.57   | Supplier#000006345 | FRANCE         | 86344     | Manufacturer#1 | 68yX tGXAkVRSxUGNSjJdptw 8O878xaFnaoQK   | 16-886-766-7945 | odolites. blithely special requests above the regular foxes sleep unusual sauternes. care            |
+| 9847.83   | Supplier#000008097 | RUSSIA         | 130557    | Manufacturer#2 | veMRTQBmUResNvfD3                        | 32-375-640-3593 |  slyly ironic, special requests. final instructions above the qu                                     |
+| 9852.52   | Supplier#000008973 | RUSSIA         | 18972     | Manufacturer#2 | zVfUT3Np22kUC05tYWHBotaR                 | 32-188-594-7038 | ly daring excuses unwind carefully above the fu                                                      |
+| 9870.78   | Supplier#000001286 | GERMANY        | 181285    | Manufacturer#4 | 3gq0mZLHI5OTM6 tBYmLTHZaulCYnlECzQ7nj    | 17-516-924-4574 | into beans haggle at the quickly final asymptotes. unusu                                             |
+| 9870.78   | Supplier#000001286 | GERMANY        | 81285     | Manufacturer#2 | 3gq0mZLHI5OTM6 tBYmLTHZaulCYnlECzQ7nj    | 17-516-924-4574 | into beans haggle at the quickly final asymptotes. unusu                                             |
+| 9871.22   | Supplier#000006373 | GERMANY        | 43868     | Manufacturer#5 | iSLO35z7Ae                               | 17-813-485-8637 | against the slyly daring requests. unusual accounts wake atop the blithely spe                       |
+| 9923.77   | Supplier#000002324 | GERMANY        | 29821     | Manufacturer#4 | uXcnR7tv87dG                             | 17-779-299-1839 | s sleep according to the quick requests. carefully                                                   |
+| 9936.22   | Supplier#000005250 | UNITED KINGDOM | 249       | Manufacturer#4 | qX AB0vP8mJEWeBuY9jri                    | 33-320-228-2957 | ar, regular requests nag blithely special accounts. final deposits impress carefully. ironic,        |
+| 9937.84   | Supplier#000005969 | ROMANIA        | 108438    | Manufacturer#1 | rdnmd9c8EG1EIAYY3LPVa4yUNx6OwyVaQ        | 29-520-692-3537 | es. furiously silent deposits among the deposits haggle furiously a                                  |
+| 9938.53   | Supplier#000005359 | UNITED KINGDOM | 185358    | Manufacturer#4 | bgxj2K0w1kJvxYl5mhCfou,W                 | 33-429-790-6131 | l, ironic instructions cajole                                                                        |
++-----------+--------------------+----------------+-----------+----------------+------------------------------------------+-----------------+------------------------------------------------------------------------------------------------------+
 == q3
 mode=bp-tp4-sized
 +------------+-------------+-------------+----------------+
@@ -16,6 +122,28 @@ mode=bp-tp4-sized
 | 5521732    | 375153.9215 | 1995-03-13  | 0              |
 | 993600     | 371407.4595 | 1995-03-05  | 0              |
 +------------+-------------+-------------+----------------+
+== q4
+mode=bp-tp4-sized
++-----------------+-------------+
+| o_orderpriority | order_count |
++-----------------+-------------+
+| 1-URGENT        | 10594       |
+| 2-HIGH          | 10476       |
+| 3-MEDIUM        | 10410       |
+| 4-NOT SPECIFIED | 10556       |
+| 5-LOW           | 10487       |
++-----------------+-------------+
+== q5
+mode=bp-tp4-sized
++-----------+---------------+
+| n_name    | revenue       |
++-----------+---------------+
+| CHINA     | 53724494.2566 |
+| INDIA     | 52035512.0002 |
+| INDONESIA | 55502041.1697 |
+| JAPAN     | 45410175.6954 |
+| VIETNAM   | 55295086.9967 |
++-----------+---------------+
 == q6
 mode=bp-tp4-sized
 +----------------+
@@ -23,6 +151,205 @@ mode=bp-tp4-sized
 +----------------+
 | 123141078.2283 |
 +----------------+
+== q7
+mode=bp-tp4-sized
++-------------+-------------+--------+---------------+
+| supp_nation | cust_nation | l_year | revenue       |
++-------------+-------------+--------+---------------+
+| FRANCE      | GERMANY     | 1995   | 54639732.7336 |
+| FRANCE      | GERMANY     | 1996   | 54633083.3076 |
+| GERMANY     | FRANCE      | 1995   | 52531746.6697 |
+| GERMANY     | FRANCE      | 1996   | 52520549.0224 |
++-------------+-------------+--------+---------------+
+== q8
+mode=bp-tp4-sized
++--------+------------+
+| o_year | mkt_share  |
++--------+------------+
+| 1995   | 0.03443589 |
+| 1996   | 0.04148552 |
++--------+------------+
+== q9
+mode=bp-tp4-sized
++----------------+--------+---------------+
+| nation         | o_year | sum_profit    |
++----------------+--------+---------------+
+| ALGERIA        | 1992   | 45636849.4881 |
+| ALGERIA        | 1993   | 46044207.7838 |
+| ALGERIA        | 1994   | 48694008.0668 |
+| ALGERIA        | 1995   | 44402273.5999 |
+| ALGERIA        | 1996   | 48285482.6782 |
+| ALGERIA        | 1997   | 48611833.4962 |
+| ALGERIA        | 1998   | 27136900.1803 |
+| ARGENTINA      | 1992   | 46654240.7487 |
+| ARGENTINA      | 1993   | 48605593.6162 |
+| ARGENTINA      | 1994   | 48268856.3547 |
+| ARGENTINA      | 1995   | 45631769.2054 |
+| ARGENTINA      | 1996   | 45255278.6021 |
+| ARGENTINA      | 1997   | 47143964.1176 |
+| ARGENTINA      | 1998   | 28341663.7848 |
+| BRAZIL         | 1992   | 45280216.8027 |
+| BRAZIL         | 1993   | 45766603.7379 |
+| BRAZIL         | 1994   | 44854218.8932 |
+| BRAZIL         | 1995   | 44015888.5132 |
+| BRAZIL         | 1996   | 45090647.1630 |
+| BRAZIL         | 1997   | 45640660.7677 |
+| BRAZIL         | 1998   | 26527736.3960 |
+| CANADA         | 1992   | 45873849.6882 |
+| CANADA         | 1993   | 46634791.1121 |
+| CANADA         | 1994   | 46691491.9596 |
+| CANADA         | 1995   | 47311993.0441 |
+| CANADA         | 1996   | 46307936.1108 |
+| CANADA         | 1997   | 44849954.3186 |
+| CANADA         | 1998   | 26828985.3944 |
+| CHINA          | 1992   | 46949457.6426 |
+| CHINA          | 1993   | 49634673.9463 |
+| CHINA          | 1994   | 46397896.6097 |
+| CHINA          | 1995   | 46734651.4838 |
+| CHINA          | 1996   | 49532807.0601 |
+| CHINA          | 1997   | 46123865.4097 |
+| CHINA          | 1998   | 27510180.1657 |
+| EGYPT          | 1992   | 47000574.5027 |
+| EGYPT          | 1993   | 49133627.6471 |
+| EGYPT          | 1994   | 47194895.2280 |
+| EGYPT          | 1995   | 45897160.6783 |
+| EGYPT          | 1996   | 47745727.5450 |
+| EGYPT          | 1997   | 47674857.6783 |
+| EGYPT          | 1998   | 28401491.7968 |
+| ETHIOPIA       | 1992   | 44385735.6813 |
+| ETHIOPIA       | 1993   | 42622804.1616 |
+| ETHIOPIA       | 1994   | 41597208.5283 |
+| ETHIOPIA       | 1995   | 43575757.3343 |
+| ETHIOPIA       | 1996   | 43636287.1922 |
+| ETHIOPIA       | 1997   | 43010596.0838 |
+| ETHIOPIA       | 1998   | 25135046.1377 |
+| FRANCE         | 1992   | 44052308.4290 |
+| FRANCE         | 1993   | 43729961.0639 |
+| FRANCE         | 1994   | 43447352.9922 |
+| FRANCE         | 1995   | 46377408.4328 |
+| FRANCE         | 1996   | 43306317.9749 |
+| FRANCE         | 1997   | 42392969.4731 |
+| FRANCE         | 1998   | 26210392.2804 |
+| GERMANY        | 1992   | 44361141.2107 |
+| GERMANY        | 1993   | 45126645.9113 |
+| GERMANY        | 1994   | 44616995.4369 |
+| GERMANY        | 1995   | 43314338.3077 |
+| GERMANY        | 1996   | 45882074.8049 |
+| GERMANY        | 1997   | 43968355.8079 |
+| GERMANY        | 1998   | 25991257.1071 |
+| INDIA          | 1992   | 47914303.1234 |
+| INDIA          | 1993   | 48112766.6987 |
+| INDIA          | 1994   | 50106952.4261 |
+| INDIA          | 1995   | 49344062.2829 |
+| INDIA          | 1996   | 47571018.5122 |
+| INDIA          | 1997   | 51386111.3448 |
+| INDIA          | 1998   | 29626417.2379 |
+| INDONESIA      | 1992   | 45185777.0688 |
+| INDONESIA      | 1993   | 46147963.7895 |
+| INDONESIA      | 1994   | 45988483.8772 |
+| INDONESIA      | 1995   | 45593622.6993 |
+| INDONESIA      | 1996   | 44746729.8078 |
+| INDONESIA      | 1997   | 44593812.9863 |
+| INDONESIA      | 1998   | 27734909.6763 |
+| IRAN           | 1992   | 43052338.4143 |
+| IRAN           | 1993   | 45362775.8094 |
+| IRAN           | 1994   | 43696360.4795 |
+| IRAN           | 1995   | 44414285.2348 |
+| IRAN           | 1996   | 45891397.0992 |
+| IRAN           | 1997   | 45019114.1696 |
+| IRAN           | 1998   | 26661608.9301 |
+| IRAQ           | 1992   | 47562355.6571 |
+| IRAQ           | 1993   | 47435691.5082 |
+| IRAQ           | 1994   | 48795847.2310 |
+| IRAQ           | 1995   | 48774801.7275 |
+| IRAQ           | 1996   | 50036593.8404 |
+| IRAQ           | 1997   | 48585307.5222 |
+| IRAQ           | 1998   | 31188498.1914 |
+| JAPAN          | 1992   | 39113493.9052 |
+| JAPAN          | 1993   | 39589074.2771 |
+| JAPAN          | 1994   | 41159518.3058 |
+| JAPAN          | 1995   | 40925317.4650 |
+| JAPAN          | 1996   | 40267778.9094 |
+| JAPAN          | 1997   | 42377052.3454 |
+| JAPAN          | 1998   | 24694102.1720 |
+| JORDAN         | 1992   | 41657604.2684 |
+| JORDAN         | 1993   | 39060405.4658 |
+| JORDAN         | 1994   | 40707555.4638 |
+| JORDAN         | 1995   | 39931672.0908 |
+| JORDAN         | 1996   | 41860855.4684 |
+| JORDAN         | 1997   | 41615962.6619 |
+| JORDAN         | 1998   | 23489867.7893 |
+| KENYA          | 1992   | 43217106.2068 |
+| KENYA          | 1993   | 42724038.7571 |
+| KENYA          | 1994   | 43612479.4523 |
+| KENYA          | 1995   | 42517988.9814 |
+| KENYA          | 1996   | 43482953.5430 |
+| KENYA          | 1997   | 43108847.9024 |
+| KENYA          | 1998   | 25566337.4303 |
+| MOROCCO        | 1992   | 42800781.6415 |
+| MOROCCO        | 1993   | 42672288.0699 |
+| MOROCCO        | 1994   | 43458604.6029 |
+| MOROCCO        | 1995   | 42316089.1593 |
+| MOROCCO        | 1996   | 42986113.5049 |
+| MOROCCO        | 1997   | 42698382.8550 |
+| MOROCCO        | 1998   | 24915496.8756 |
+| MOZAMBIQUE     | 1992   | 47809075.1192 |
+| MOZAMBIQUE     | 1993   | 48555926.2669 |
+| MOZAMBIQUE     | 1994   | 46092076.2805 |
+| MOZAMBIQUE     | 1995   | 48905200.6007 |
+| MOZAMBIQUE     | 1996   | 48072525.0645 |
+| MOZAMBIQUE     | 1997   | 51159216.2298 |
+| MOZAMBIQUE     | 1998   | 28279876.0301 |
+| PERU           | 1992   | 47711665.3137 |
+| PERU           | 1993   | 51536906.2487 |
+| PERU           | 1994   | 46420910.2773 |
+| PERU           | 1995   | 49647080.9629 |
+| PERU           | 1996   | 50310008.8629 |
+| PERU           | 1997   | 48324008.6011 |
+| PERU           | 1998   | 26713966.2678 |
+| ROMANIA        | 1992   | 44111439.8044 |
+| ROMANIA        | 1993   | 47515092.5613 |
+| ROMANIA        | 1994   | 46088041.1066 |
+| ROMANIA        | 1995   | 45710636.2909 |
+| ROMANIA        | 1996   | 47492335.0323 |
+| ROMANIA        | 1997   | 45063059.1953 |
+| ROMANIA        | 1998   | 27271993.1010 |
+| RUSSIA         | 1992   | 47672831.5329 |
+| RUSSIA         | 1993   | 48569624.5082 |
+| RUSSIA         | 1994   | 48000515.6191 |
+| RUSSIA         | 1995   | 46755990.0976 |
+| RUSSIA         | 1996   | 47553559.4932 |
+| RUSSIA         | 1997   | 48222347.2924 |
+| RUSSIA         | 1998   | 27935323.7271 |
+| SAUDI ARABIA   | 1992   | 48924913.2717 |
+| SAUDI ARABIA   | 1993   | 45692556.4438 |
+| SAUDI ARABIA   | 1994   | 48181672.8100 |
+| SAUDI ARABIA   | 1995   | 46657107.8287 |
+| SAUDI ARABIA   | 1996   | 47775782.6670 |
+| SAUDI ARABIA   | 1997   | 46690468.9649 |
+| SAUDI ARABIA   | 1998   | 27113516.8424 |
+| UNITED KINGDOM | 1992   | 44123402.5484 |
+| UNITED KINGDOM | 1993   | 44770146.7555 |
+| UNITED KINGDOM | 1994   | 43081609.5737 |
+| UNITED KINGDOM | 1995   | 46845879.3390 |
+| UNITED KINGDOM | 1996   | 45539729.6166 |
+| UNITED KINGDOM | 1997   | 44518130.1851 |
+| UNITED KINGDOM | 1998   | 26366682.8786 |
+| UNITED STATES  | 1992   | 46168214.0901 |
+| UNITED STATES  | 1993   | 46181600.5278 |
+| UNITED STATES  | 1994   | 45099092.0598 |
+| UNITED STATES  | 1995   | 48951591.6156 |
+| UNITED STATES  | 1996   | 46688280.5474 |
+| UNITED STATES  | 1997   | 46638572.3648 |
+| UNITED STATES  | 1998   | 27826593.6825 |
+| VIETNAM        | 1992   | 47846355.6485 |
+| VIETNAM        | 1993   | 45352676.8672 |
+| VIETNAM        | 1994   | 47729256.3324 |
+| VIETNAM        | 1995   | 48235135.8016 |
+| VIETNAM        | 1996   | 47824595.9040 |
+| VIETNAM        | 1997   | 48735914.1796 |
+| VIETNAM        | 1998   | 27281931.0011 |
++----------------+--------+---------------+
 == q10
 mode=bp-tp4-sized
 +-----------+--------------------+-------------+-----------+----------------+------------------------------------------+-----------------+------------------------------------------------------------------------------------------------------------------+
@@ -49,6 +376,8 @@ mode=bp-tp4-sized
 | 84223     | Customer#000084223 | 594998.0239 | 528.65    | UNITED KINGDOM | Eq51o UpQ4RBr  fYTdrZApDsPV4pQyuPq       | 33-442-824-8191 | longside of the slyly final deposits. blithely final platelets about the blithely i                              |
 | 922       | Customer#000000922 | 576767.5333 | 3869.25   | GERMANY        | rsR9lRxyTdHbDOVt8nYbwjK5vAWH9sB          | 17-945-916-9648 | cuses cajole carefully regular idea                                                                              |
 +-----------+--------------------+-------------+-----------+----------------+------------------------------------------+-----------------+------------------------------------------------------------------------------------------------------------------+
+== q11
+skipped: not enabled at any mode
 == q12
 mode=bp-tp4-sized
 +------------+-----------------+----------------+
@@ -119,8 +448,74 @@ mode=bp-tp4-sized
 +-----------+--------------------+-------------------+-----------------+---------------+
 | 8449      | Supplier#000008449 | 5BXWsJERA2mP5OyO4 | 20-469-856-8873 | 1772627.2087  |
 +-----------+--------------------+-------------------+-----------------+---------------+
+== q16
+skipped: the result is at or above the 262144-byte cap
+mode=bp-tp1-rowgroup
 == q17
 skipped: not enabled at any mode
+== q18
+mode=bp-tp4-sized
++--------------------+-----------+------------+-------------+--------------+--------------------------+
+| c_name             | c_custkey | o_orderkey | o_orderdate | o_totalprice | sum(lineitem.l_quantity) |
++--------------------+-----------+------------+-------------+--------------+--------------------------+
+| Customer#000003566 | 3566      | 2329187    | 1998-01-04  | 439803.36    | 304.00                   |
+| Customer#000003680 | 3680      | 3861123    | 1998-07-03  | 433525.97    | 301.00                   |
+| Customer#000010129 | 10129     | 5849444    | 1994-03-21  | 409129.85    | 309.00                   |
+| Customer#000012251 | 12251     | 735366     | 1993-11-24  | 455107.26    | 309.00                   |
+| Customer#000012599 | 12599     | 4259524    | 1998-02-12  | 415200.61    | 304.00                   |
+| Customer#000013072 | 13072     | 1481925    | 1998-03-15  | 399195.47    | 301.00                   |
+| Customer#000013940 | 13940     | 2232932    | 1997-04-13  | 522720.61    | 304.00                   |
+| Customer#000015272 | 15272     | 3883783    | 1993-07-28  | 500241.33    | 302.00                   |
+| Customer#000015619 | 15619     | 3767271    | 1996-08-07  | 480083.96    | 318.00                   |
+| Customer#000015631 | 15631     | 1845057    | 1994-05-12  | 419879.59    | 302.00                   |
+| Customer#000016384 | 16384     | 502886     | 1994-04-12  | 458378.92    | 312.00                   |
+| Customer#000017746 | 17746     | 6882       | 1997-04-09  | 408446.93    | 303.00                   |
+| Customer#000018188 | 18188     | 3037414    | 1995-01-25  | 443807.22    | 308.00                   |
+| Customer#000024341 | 24341     | 1474818    | 1992-11-15  | 491348.26    | 302.00                   |
+| Customer#000036619 | 36619     | 4806726    | 1995-01-17  | 446704.09    | 328.00                   |
+| Customer#000037729 | 37729     | 4134341    | 1995-06-29  | 441082.97    | 309.00                   |
+| Customer#000045538 | 45538     | 4527553    | 1994-05-22  | 436275.31    | 305.00                   |
+| Customer#000046435 | 46435     | 4745607    | 1997-07-03  | 508047.99    | 309.00                   |
+| Customer#000050008 | 50008     | 2366755    | 1996-12-09  | 483891.26    | 302.00                   |
+| Customer#000053029 | 53029     | 2662214    | 1993-08-13  | 446144.49    | 302.00                   |
+| Customer#000054602 | 54602     | 5832321    | 1997-02-09  | 471220.08    | 307.00                   |
+| Customer#000064483 | 64483     | 2745894    | 1996-07-04  | 466991.35    | 304.00                   |
+| Customer#000066098 | 66098     | 5007490    | 1992-08-07  | 453436.16    | 304.00                   |
+| Customer#000066533 | 66533     | 29158      | 1995-10-21  | 443576.50    | 305.00                   |
+| Customer#000066790 | 66790     | 2199712    | 1996-09-30  | 515531.82    | 327.00                   |
+| Customer#000069904 | 69904     | 1742403    | 1996-10-19  | 408513.00    | 305.00                   |
+| Customer#000077260 | 77260     | 1436544    | 1992-09-12  | 479499.43    | 307.00                   |
+| Customer#000081581 | 81581     | 4739650    | 1995-11-04  | 435405.90    | 305.00                   |
+| Customer#000082441 | 82441     | 857959     | 1994-02-07  | 382579.74    | 305.00                   |
+| Customer#000088703 | 88703     | 2995076    | 1994-01-30  | 363812.12    | 302.00                   |
+| Customer#000088876 | 88876     | 983201     | 1993-12-30  | 446717.46    | 304.00                   |
+| Customer#000093392 | 93392     | 5200102    | 1997-01-22  | 425487.51    | 304.00                   |
+| Customer#000096103 | 96103     | 5984582    | 1992-03-16  | 494398.79    | 312.00                   |
+| Customer#000105260 | 105260    | 5296167    | 1996-09-06  | 469360.57    | 303.00                   |
+| Customer#000105410 | 105410    | 4478371    | 1996-03-05  | 412754.51    | 302.00                   |
+| Customer#000105995 | 105995    | 2096705    | 1994-07-03  | 469692.58    | 307.00                   |
+| Customer#000107590 | 107590    | 4267751    | 1994-11-04  | 485141.38    | 301.00                   |
+| Customer#000109379 | 109379    | 5746311    | 1996-10-10  | 478064.11    | 302.00                   |
+| Customer#000112987 | 112987    | 4439686    | 1996-09-17  | 418161.49    | 305.00                   |
+| Customer#000113131 | 113131    | 967334     | 1995-12-15  | 432957.75    | 301.00                   |
+| Customer#000114586 | 114586    | 551136     | 1993-05-19  | 469605.59    | 308.00                   |
+| Customer#000117076 | 117076    | 4290656    | 1997-02-05  | 449545.85    | 301.00                   |
+| Customer#000117919 | 117919    | 2869152    | 1996-06-20  | 456815.92    | 317.00                   |
+| Customer#000119989 | 119989    | 1544643    | 1997-09-20  | 434568.25    | 320.00                   |
+| Customer#000120098 | 120098    | 1971680    | 1995-06-14  | 453451.23    | 308.00                   |
+| Customer#000126865 | 126865    | 4702759    | 1994-11-07  | 447606.65    | 320.00                   |
+| Customer#000128120 | 128120    | 4722021    | 1994-04-07  | 544089.09    | 323.00                   |
+| Customer#000129379 | 129379    | 4720454    | 1997-06-07  | 448665.79    | 303.00                   |
+| Customer#000136573 | 136573    | 2761378    | 1996-05-31  | 461282.73    | 301.00                   |
+| Customer#000137446 | 137446    | 5489475    | 1997-05-23  | 487763.25    | 311.00                   |
+| Customer#000141098 | 141098    | 565574     | 1995-09-24  | 430986.69    | 301.00                   |
+| Customer#000141823 | 141823    | 2806245    | 1996-12-29  | 446269.12    | 310.00                   |
+| Customer#000144617 | 144617    | 3043270    | 1997-02-12  | 530604.44    | 317.00                   |
+| Customer#000146608 | 146608    | 3342468    | 1994-06-12  | 499794.58    | 303.00                   |
+| Customer#000147197 | 147197    | 1263015    | 1997-02-02  | 467149.67    | 320.00                   |
+| Customer#000148885 | 148885    | 2942469    | 1992-05-31  | 469630.44    | 313.00                   |
+| Customer#000149842 | 149842    | 5156581    | 1994-05-30  | 411329.35    | 302.00                   |
++--------------------+-----------+------------+-------------+--------------+--------------------------+
 == q19
 mode=bp-tp4-sized
 +--------------+
@@ -128,3 +523,838 @@ mode=bp-tp4-sized
 +--------------+
 | 3083843.0578 |
 +--------------+
+== q20
+mode=bp-tp4-sized
++--------------------+------------------------------------------+
+| s_name             | s_address                                |
++--------------------+------------------------------------------+
+| Supplier#000000020 | JtPqm19E7tF 152Rl1wQZ8j0H                |
+| Supplier#000000091 | 35WVnU7GLNbQDcc2TARavGtk6RB6ZCd46UAY     |
+| Supplier#000000205 | Alrx5TN,hdnG                             |
+| Supplier#000000285 | q TMZEDyZtv vUiFKBhT3NJlnIxpL            |
+| Supplier#000000287 | UQR8bUA4V2HxVbw9K                        |
+| Supplier#000000354 | wSLcCW40Q8                               |
+| Supplier#000000378 | mLPJtpu4wOc cSFzBR                       |
+| Supplier#000000402 | JR8vWoCteJtJg3okRpt0r28KEo               |
+| Supplier#000000530 | 0BvoewCPg2scOEfuL93FRKqSxHmdhw1          |
+| Supplier#000000555 | 8Lp0QWPLFXrJrX1sTWkAEdzUsh5ke            |
+| Supplier#000000640 | FwwyFbgz7c hHViKGT0OB                    |
+| Supplier#000000729 | CAOGYCBtTVT7aB1p6qHbxF6VVhXaHLgTpI       |
+| Supplier#000000736 | GUIYDfv5xCxLgDx6KQ8khY ntVVnFqmfMKIgT    |
+| Supplier#000000761 | tF8fMGa6HY4 w77mDwT4rO21kxwe7uTSYNW      |
+| Supplier#000000887 | y mQ7NHjVbdqnbYr9 L                      |
+| Supplier#000000935 | JHRSOterYgt4MTNo7cupTzA,6MoNw 4          |
+| Supplier#000000975 | 1qorM1ypBdwgPVuf6sMCKuF9D1rJN1iCTXKmalSt |
+| Supplier#000001263 | Aa4 UELS1JqY7qIjniwCWiC                  |
+| Supplier#000001367 | XY28GmOq3efOxOzBMmMLdmWjMpo              |
+| Supplier#000001426 | QbcoO0TUClFSzfy90Lk k                    |
+| Supplier#000001446 | GOJRjfd6Z9UQ,fiuPz6CO5GDGV               |
+| Supplier#000001500 | wnElVvfuyaPJROy6x0                       |
+| Supplier#000001602 | ygd4iNQLQeVWW                            |
+| Supplier#000001626 | 7Jud9t6xZNzlEB,                          |
+| Supplier#000001682 | C37Gkv 7a5ujZ9                           |
+| Supplier#000001700 | UJeFoDLZ2VtflK                           |
+| Supplier#000001726 | 8M92T8y7jYXzmvCANTtqR8GHuT               |
+| Supplier#000001730 | aOSM0,btPDs UsC06himJn,6nswJG            |
+| Supplier#000001746 | B4zMDOFcMGbkZQ4XxA,UyaQoEWZzMSGI wTsJp9N |
+| Supplier#000001806 | fRXWLy18Df5                              |
+| Supplier#000001855 | f4GUmrMCs3Q                              |
+| Supplier#000001931 | mBhPe7YJU1aYMpwTiRdivl                   |
+| Supplier#000002022 | sNvMPl3TiNZBOYV3w2XX                     |
+| Supplier#000002036 | Z,ty7z5cPHh66iY5op,q                     |
+| Supplier#000002096 | HxuzMufyArbbf3uFR16 EpUgGKRYhyhVOast3d6r |
+| Supplier#000002117 | f9yGKhCFjhS4Jr3Sh0x rdjgntwH             |
+| Supplier#000002204 | y2EF XUo,UyNoAQEH,gIazC7aRG1zmuzzf       |
+| Supplier#000002218 | Ecn1vWAWNusGB,gW                         |
+| Supplier#000002243 | E8cm5YhMc6UR                             |
+| Supplier#000002245 | KsYA4445HcugJAb3eCmvtUslGA7Qne           |
+| Supplier#000002282 | n8YZgSNuC4,iZ7s5oHTMHNFdv94DwZ2rrUEb0pgD |
+| Supplier#000002303 | EoC4LCpU2cuEPKcKyTFyMGFBGkF              |
+| Supplier#000002331 | 59JYvW4lw9LT1,8,qw8wkof                  |
+| Supplier#000002373 | asj8ud7aEmGoHuiqI5qVZ1rhpWS hJc9tF9      |
+| Supplier#000002419 | BtNpaOZWiVGVE53RWL22                     |
+| Supplier#000002571 | i16xKt,WOrJhlf GkzsRdrd04sZ 5jei9MtB     |
+| Supplier#000002585 | pzbCgCvYax82Wq5,dG4xzyDMiRW8d            |
+| Supplier#000002629 | 0qv0AW1BSzyR3 sDoDK1YOqm32v1             |
+| Supplier#000002721 | k5NlqeYhjeb8BgE                          |
+| Supplier#000002730 | Gilu9XLsEX,oU0EyshvFTWs                  |
+| Supplier#000002775 | unOFQoQpnWJJj                            |
+| Supplier#000002799 | Gv 0rVfXKNMOTRbbxy0W4cUDa 7h2UYOqt2d     |
+| Supplier#000002934 | F0y pndtv8r vKXoJp                       |
+| Supplier#000002941 | eQNNPRrS27ngMG1ub,                       |
+| Supplier#000003028 | ICxsK4,41HKde4fRjWLt                     |
+| Supplier#000003095 | kucdXIhJ6IYsHy0ArE7n                     |
+| Supplier#000003143 | KNCFKKU,Sx8GjJTzUAL8BGILgRIlHDpj         |
+| Supplier#000003185 | KeQVXWoPLYFHZdvXc4cg55 zg06NnGi69 NI8ihM |
+| Supplier#000003189 | o4NbuzTr9DH1wU5dpt9,NE                   |
+| Supplier#000003201 | nSTtv Ui0y0BdzWb4T6snugIhEhn14yM         |
+| Supplier#000003213 | Cu 9bXI aZ6CtLa1N7LX                     |
+| Supplier#000003275 | SucWDuhYahP3UwkM                         |
+| Supplier#000003288 | nnNLdzTmV6P0uf7yBCiK3fWt2UxHJ0           |
+| Supplier#000003314 | IDIz6TesAcXI6pXtzbO uzevXon6CH9WATfo     |
+| Supplier#000003373 | JtS5eXStDBPXdYc pvqwK2QGcZxzR9,PI        |
+| Supplier#000003421 | 9JXNyS4VCMDLl4CxDlJ L0                   |
+| Supplier#000003422 | ohComRB6Mp4C5ZI3IoObmawsz8wY1iSU,        |
+| Supplier#000003441 | twlhit80C6y8JjHCO3                       |
+| Supplier#000003590 |  tTRoffuAP1oPC                           |
+| Supplier#000003607 | GdAljb2Hv8rGL                            |
+| Supplier#000003625 | B2VSS5,2GVJQ6tZa37KdAmg erHp2jPgz        |
+| Supplier#000003723 | I1mB,dmtyJpfO8rdEh8 myuhUVPeFs9B         |
+| Supplier#000003849 | hKP1mR9G0UbXE4wwJUxBz zZga6jKr0          |
+| Supplier#000003894 | xwkorAQEMfdG                             |
+| Supplier#000003941 | cEP,VFaLpe9UZScU4gA1irRwtx               |
+| Supplier#000004059 | yEm219AR9hZ4msN wREM7S EAws5f9LI1vo      |
+| Supplier#000004207 | zlUWBwIceWjG4HdYE80M0V4xqIfu             |
+| Supplier#000004236 | OF0jbzhEkICu2z8BDRvEBGx4H y0EoNhScU8     |
+| Supplier#000004278 | QpNNPCpui5CrnIR                          |
+| Supplier#000004281 | ,cvbjKrbKIuMxz0J18VMrYXhndIBvG           |
+| Supplier#000004304 | KaoqsWRG0jgFBYoh6 Opjf                   |
+| Supplier#000004346 | 9X,TUgmcvC                               |
+| Supplier#000004406 | rJ,1QgxU5vyLb46t0TGP4K21JRxmQjBkiK       |
+| Supplier#000004430 | uw8zge87fVkf3pm8WFxc bdfuhsqeG           |
+| Supplier#000004527 | CrB53pDuKOHF4lUrZCXck2XA4V               |
+| Supplier#000004655 | VTdApPWryXckXlSRcrizB4dAWHkQbCw2f        |
+| Supplier#000004851 | aH0uUjKf7THpfRREAB                       |
+| Supplier#000004871 | 1BJByVq4mD78SyWrwPV,AlLNKUcROUE6SuuxSMoV |
+| Supplier#000004884 | XY1ZxgtMRD DUQ7lpdNrOiSru                |
+| Supplier#000004975 | lbAVbfg2U4u                              |
+| Supplier#000005076 | 4FTJRJLKwikEAulgK4LjhWkHQxrpGb           |
+| Supplier#000005195 | 5CIXPZ1QIOcJr18MxZmL4Jm                  |
+| Supplier#000005256 | dDOXyWT5qePJE0BFC5fQ7SPcdEIRdzyQerbteels |
+| Supplier#000005257 | MRKS8njpTCQeHXa4qH38ZwL22ZY              |
+| Supplier#000005300 | L3kYS3ABu6                               |
+| Supplier#000005323 | zeoGNBPnCteCSwejGsHpB2MuCaqxw08UrAsPx    |
+| Supplier#000005386 | 7PUqqMjB4f5b                             |
+| Supplier#000005426 | SnsYc67ZAr PWpgUZFHa,3Hbp39bwc           |
+| Supplier#000005465 | VXO21ND1p92UZXa,lQCk01zEDpVsFR           |
+| Supplier#000005484 |  QlNcarA4Trl20XRzbAIJqQZZfCYYBpCd,pzb gC |
+| Supplier#000005505 | OYzPHlWXgvfb3                            |
+| Supplier#000005506 | dDrLVuBsC4Lp                             |
+| Supplier#000005631 | ,W75 IFsCY9hmp2pnKBew7Fwv9Ao             |
+| Supplier#000005642 | 2vguqxX5W,z4rmScTavx1sFx0Hbzf            |
+| Supplier#000005686 | MY9pgNOY7ZeiITt9re                       |
+| Supplier#000005730 | W GP,c8MvzsjwuGgShQnXZ6BD9lYOKTjZ        |
+| Supplier#000005736 | ZNAr382Jy258LB                           |
+| Supplier#000005737 | OEm4O9XYoXHu0N0qRVrcF2DWS                |
+| Supplier#000005797 | 1C0cMQv9P8oE5FRLdRLB5boIAqr6CKxF89       |
+| Supplier#000005875 | Gg0z2JkspRXJ8tjuRuw82lP5aeo1MYg31xkQ8    |
+| Supplier#000005974 | amJ9VIm0Ffyza3wMVW8v3t8Kz985lJy          |
+| Supplier#000006059 | XE,OwTevhRu3YwFwir1                      |
+| Supplier#000006065 | 7IiYouX4W7yVzfGsfxw3g9tUgJJFkw           |
+| Supplier#000006093 | hhd6K,CN67Zvyo8ZzUb kXnULO               |
+| Supplier#000006099 | R1IFvbg2n76bCg                           |
+| Supplier#000006109 | A2VKPMJXNgkDtFOb67bkpvDPM                |
+| Supplier#000006217 | a5dYX927RHND6MQ5k36N                     |
+| Supplier#000006297 | UX59ndcVUk7otwOX,C2h                     |
+| Supplier#000006435 | viKmUS3zs2QDcWmDDTOjkcSt                 |
+| Supplier#000006463 | UrvGNIYmcWSICyFNtYGEjerqnCf8zsl5X9d5H    |
+| Supplier#000006478 | Qa2bDIRFBE5X6                            |
+| Supplier#000006521 | QRrYsIjsu9                               |
+| Supplier#000006642 | e0o6OG8A9fiO8Ssb                         |
+| Supplier#000006659 | J7fzDxnSnYls4d6xrG9iEv9HGW nMmFLxBZ      |
+| Supplier#000006669 | eaW2 uHUYWCTgVX                          |
+| Supplier#000006748 | Ao0Y nDSKgoi8Va0OhmCJl                   |
+| Supplier#000006761 | EWHJuleApVC nZjKBfwvA48ycgFFQ            |
+| Supplier#000006808 | kkNY3DrRDmPjhJ1x3H3u5giBqC7              |
+| Supplier#000006858 | MDFid8SSVwqpJz4w7kI10DYYyKvk2ZVJrkjiHYZ  |
+| Supplier#000006946 | 8CU8FD,kh7BOiwn                          |
+| Supplier#000006949 | Ffu26iJzkOgygMr1klI exZSXrw7             |
+| Supplier#000007072 | Zy9t3SeZQrX9OEVUzTTRmZqdkSHFBg           |
+| Supplier#000007098 | lXHSK0hoWcPPqxYd5CbjA3a4ep6NHATvKojdmux  |
+| Supplier#000007132 | vCDwD0hqaigXBSG3Grjo,l88n9687o           |
+| Supplier#000007135 | GzrnCh5T5VyFLatS5                        |
+| Supplier#000007147 | 4sPZUHoUXvFf52Mv6mKp0K3lwkGH7VJbBA       |
+| Supplier#000007160 | 8Ankp7fpXO8Ai7UmgnwESp8WMXw0sv3IabP      |
+| Supplier#000007169 | zmORVoYECdS8SWDOVVc0OFD4                 |
+| Supplier#000007278 | jYQMXA8Tg5mSk5jzp                        |
+| Supplier#000007365 | WZuJ9dfwaei,VnDOy14y                     |
+| Supplier#000007398 | 6SMmUD1,,cmd60                           |
+| Supplier#000007402 | X65wVTM tZAHEA8aV                        |
+| Supplier#000007448 | uJJB4JhITmiUaV5pQa                       |
+| Supplier#000007458 | q2xxORB2GBz1FULENYaQot1EiSK9ZiKZUM       |
+| Supplier#000007477 | SERH,wLJ4spw5juH60bBruv8j0K              |
+| Supplier#000007509 | BS05Ugh9CjiHjOcy8kTQg7eK                 |
+| Supplier#000007561 | AeOlKZVX,5p                              |
+| Supplier#000007616 | ariCwjAsnIY0ajDRA1GZv8WJkrKMFJcWtH       |
+| Supplier#000007760 | izbmZTbwONm7g                            |
+| Supplier#000007801 | VRLI07Z UME6Pr                           |
+| Supplier#000007865 | WOnko907Ud                               |
+| Supplier#000007885 | yXzIOPJJV1Ct76BeZOhgeOqCQQi4K2           |
+| Supplier#000007926 | n solT,gR6u                              |
+| Supplier#000007998 | gDq8lqL29ldCRNUO0Qzpx5ARfDYb             |
+| Supplier#000008090 | NCDPh2wCnl3pd6IE2LBUum9iK                |
+| Supplier#000008224 | 84uyRM0f5ma                              |
+| Supplier#000008231 | jgTMkwr2HR0 7NB b0wOB4ufp                |
+| Supplier#000008243 | ZqtMbfGnAEt5sHk8Is3yKlfCSKrmIxOoeucFiik  |
+| Supplier#000008323 | UViZS 1Eq8wErbcNJM9eOHRyECtMa0qLo3dWpiqP |
+| Supplier#000008366 | KTTSOnHZWpy4RcmhFwb75AWIvr89Umqp3dTtM8S  |
+| Supplier#000008532 | 7OYRAX0Vu5OnclSU61 uK Wu49,IJm73xJ       |
+| Supplier#000008595 | fj,IpUXkaXtr64XdrnPoQAEO                 |
+| Supplier#000008610 | 9K5KbS,wbWWYz6d8KsfRtgv3j4qs5Uz5         |
+| Supplier#000008683 | LfxkOyKLBh9MkaqaDQjdpQ4DkRAzdDItFY,      |
+| Supplier#000008705 | Rm0y adNbu1WtID8nRcXoMPniC               |
+| Supplier#000008742 | kEbFansgobnO76f,W0GgB                    |
+| Supplier#000008841 | jrSVfyZzMGQKYu 9isE,                     |
+| Supplier#000008872 | TnrWVlKuhcZcvv2cR8WqR3hgwovbLff          |
+| Supplier#000008879 | An8q0oRCbe1UVde5ml Elgqx                 |
+| Supplier#000008967 | ZGvmjuekrTmvCsdjEq6mVEj,J3yA2OyFhe       |
+| Supplier#000008972 | wYwlUsnV21dXwIzc3zA5Mfqn7h               |
+| Supplier#000009032 | Bg0y qU8NtXnsZpa6ldt                     |
+| Supplier#000009043 | WTcbwhjWAt4i1Tit2MoQwZZQVeZgIRMZ44E6a0   |
+| Supplier#000009278 | aA27sLuHRXpf3r,FO2LondcMLo               |
+| Supplier#000009326 | 4EIo0ytXUpS0LP,tJOHQRKI3ayyK             |
+| Supplier#000009430 | JK9AEEMlyr                               |
+| Supplier#000009549 | KX95OK6LSet2WUitP1,DL,R                  |
+| Supplier#000009601 | WZEUXUPc09wVnDj5l6wfRO9uR                |
+| Supplier#000009709 | A9DoPk2KnKGRb12Et4g53864,xgK             |
+| Supplier#000009753 | wfJ5mP9ENTcGhlWmpDkgU1                   |
+| Supplier#000009799 | sWvdH4kQWch4F                            |
+| Supplier#000009811 | nXIxtBT6D1v6TCb2iMYkyU                   |
+| Supplier#000009812 | rbl9euXFoPLlKQVYDVyRouslbbbKDHAkyXY      |
+| Supplier#000009846 | WTzdvihXbyqnx0JfbbVaxBOcO9d93DYbtBhi J   |
+| Supplier#000009899 | U3NBqk s Zz06al2m                        |
+| Supplier#000009974 | Uvh0hWngOu96WgB,OafBQOqwpWqzwg8          |
++--------------------+------------------------------------------+
+== q21
+mode=bp-tp4-sized
++--------------------+---------+
+| s_name             | numwait |
++--------------------+---------+
+| Supplier#000000262 | 17      |
+| Supplier#000000357 | 13      |
+| Supplier#000000379 | 12      |
+| Supplier#000000436 | 13      |
+| Supplier#000000486 | 15      |
+| Supplier#000000496 | 17      |
+| Supplier#000000565 | 15      |
+| Supplier#000000610 | 13      |
+| Supplier#000000633 | 14      |
+| Supplier#000000673 | 12      |
+| Supplier#000000762 | 12      |
+| Supplier#000000788 | 13      |
+| Supplier#000000811 | 12      |
+| Supplier#000000821 | 12      |
+| Supplier#000000889 | 13      |
+| Supplier#000001046 | 15      |
+| Supplier#000001047 | 15      |
+| Supplier#000001062 | 13      |
+| Supplier#000001161 | 15      |
+| Supplier#000001336 | 15      |
+| Supplier#000001337 | 12      |
+| Supplier#000001435 | 15      |
+| Supplier#000001498 | 13      |
+| Supplier#000001916 | 12      |
+| Supplier#000001925 | 12      |
+| Supplier#000001960 | 14      |
+| Supplier#000002005 | 16      |
+| Supplier#000002039 | 12      |
+| Supplier#000002056 | 13      |
+| Supplier#000002095 | 16      |
+| Supplier#000002160 | 17      |
+| Supplier#000002301 | 17      |
+| Supplier#000002312 | 13      |
+| Supplier#000002323 | 14      |
+| Supplier#000002344 | 13      |
+| Supplier#000002357 | 12      |
+| Supplier#000002483 | 12      |
+| Supplier#000002490 | 14      |
+| Supplier#000002540 | 17      |
+| Supplier#000002596 | 13      |
+| Supplier#000002615 | 13      |
+| Supplier#000002829 | 20      |
+| Supplier#000002978 | 13      |
+| Supplier#000002993 | 14      |
+| Supplier#000003048 | 13      |
+| Supplier#000003063 | 17      |
+| Supplier#000003075 | 15      |
+| Supplier#000003101 | 14      |
+| Supplier#000003234 | 13      |
+| Supplier#000003335 | 15      |
+| Supplier#000003727 | 13      |
+| Supplier#000003806 | 13      |
+| Supplier#000004472 | 13      |
+| Supplier#000004489 | 14      |
+| Supplier#000005178 | 17      |
+| Supplier#000005236 | 13      |
+| Supplier#000005435 | 14      |
+| Supplier#000005583 | 14      |
+| Supplier#000005649 | 15      |
+| Supplier#000005774 | 14      |
+| Supplier#000005799 | 16      |
+| Supplier#000005808 | 18      |
+| Supplier#000005842 | 16      |
+| Supplier#000005906 | 13      |
+| Supplier#000006027 | 15      |
+| Supplier#000006241 | 13      |
+| Supplier#000006326 | 13      |
+| Supplier#000006384 | 13      |
+| Supplier#000006394 | 13      |
+| Supplier#000006450 | 16      |
+| Supplier#000006624 | 13      |
+| Supplier#000006629 | 13      |
+| Supplier#000006682 | 13      |
+| Supplier#000006737 | 13      |
+| Supplier#000006795 | 15      |
+| Supplier#000006800 | 15      |
+| Supplier#000006824 | 15      |
+| Supplier#000006825 | 13      |
+| Supplier#000006939 | 16      |
+| Supplier#000007021 | 13      |
+| Supplier#000007131 | 15      |
+| Supplier#000007382 | 15      |
+| Supplier#000007417 | 13      |
+| Supplier#000007497 | 13      |
+| Supplier#000007579 | 14      |
+| Supplier#000007602 | 13      |
+| Supplier#000008134 | 13      |
+| Supplier#000008180 | 14      |
+| Supplier#000008234 | 13      |
+| Supplier#000008331 | 17      |
+| Supplier#000008695 | 14      |
+| Supplier#000008913 | 15      |
+| Supplier#000009200 | 16      |
+| Supplier#000009224 | 14      |
+| Supplier#000009435 | 13      |
+| Supplier#000009436 | 13      |
+| Supplier#000009564 | 13      |
+| Supplier#000009727 | 16      |
+| Supplier#000009787 | 15      |
+| Supplier#000009896 | 13      |
++--------------------+---------+
+== q22
+skipped: not enabled at any mode
+== aggregate-groupby
+mode=bp-tp4-sized
++--------------+--------------------------+
+| l_returnflag | sum(lineitem.l_quantity) |
++--------------+--------------------------+
+| A            | 37734107.00              |
+| N            | 77624935.00              |
+| R            | 37719753.00              |
++--------------+--------------------------+
+== anti-join
+skipped: the result is at or above the 262144-byte cap
+mode=bp-tp4-sized
+== cross-join
+mode=bp-tp4-sized
++-------------+-------------+---------------------------------------------------------------------------------------------------------------------+-------------+----------------+-------------+--------------------------------------------------------------------------------------------------------------------+
+| r_regionkey | r_name      | r_comment                                                                                                           | n_nationkey | n_name         | n_regionkey | n_comment                                                                                                          |
++-------------+-------------+---------------------------------------------------------------------------------------------------------------------+-------------+----------------+-------------+--------------------------------------------------------------------------------------------------------------------+
+| 0           | AFRICA      | ar packages. regular excuses among the ironic requests cajole fluffily blithely final requests. furiously express p | 0           | ALGERIA        | 0           | furiously regular requests. platelets affix furious                                                                |
+| 0           | AFRICA      | ar packages. regular excuses among the ironic requests cajole fluffily blithely final requests. furiously express p | 1           | ARGENTINA      | 1           | instructions wake quickly. final deposits haggle. final, silent theodolites                                        |
+| 0           | AFRICA      | ar packages. regular excuses among the ironic requests cajole fluffily blithely final requests. furiously express p | 10          | IRAN           | 4           | furiously idle platelets nag. express asymptotes s                                                                 |
+| 0           | AFRICA      | ar packages. regular excuses among the ironic requests cajole fluffily blithely final requests. furiously express p | 11          | IRAQ           | 4           | pendencies; slyly express foxes integrate carefully across the reg                                                 |
+| 0           | AFRICA      | ar packages. regular excuses among the ironic requests cajole fluffily blithely final requests. furiously express p | 12          | JAPAN          | 2           |  quickly final packages. furiously i                                                                               |
+| 0           | AFRICA      | ar packages. regular excuses among the ironic requests cajole fluffily blithely final requests. furiously express p | 13          | JORDAN         | 4           | the slyly regular ideas. silent Tiresias affix slyly fu                                                            |
+| 0           | AFRICA      | ar packages. regular excuses among the ironic requests cajole fluffily blithely final requests. furiously express p | 14          | KENYA          | 0           | lyly special foxes. slyly regular deposits sleep carefully. carefully permanent accounts slee                      |
+| 0           | AFRICA      | ar packages. regular excuses among the ironic requests cajole fluffily blithely final requests. furiously express p | 15          | MOROCCO        | 0           | ct blithely: blithely express accounts nag carefully. silent packages haggle carefully abo                         |
+| 0           | AFRICA      | ar packages. regular excuses among the ironic requests cajole fluffily blithely final requests. furiously express p | 16          | MOZAMBIQUE     | 0           |  beans after the carefully regular accounts r                                                                      |
+| 0           | AFRICA      | ar packages. regular excuses among the ironic requests cajole fluffily blithely final requests. furiously express p | 17          | PERU           | 1           | ly final foxes. blithely ironic accounts haggle. regular foxes about the regular deposits are furiously ir         |
+| 0           | AFRICA      | ar packages. regular excuses among the ironic requests cajole fluffily blithely final requests. furiously express p | 18          | CHINA          | 2           | ckly special packages cajole slyly. unusual, unusual theodolites mold furiously. slyly sile                        |
+| 0           | AFRICA      | ar packages. regular excuses among the ironic requests cajole fluffily blithely final requests. furiously express p | 19          | ROMANIA        | 3           | sly blithe requests. thinly bold deposits above the blithely regular accounts nag special, final requests. care    |
+| 0           | AFRICA      | ar packages. regular excuses among the ironic requests cajole fluffily blithely final requests. furiously express p | 2           | BRAZIL         | 1           | asymptotes use fluffily quickly bold instructions. slyly bold dependencies sleep carefully pending accounts        |
+| 0           | AFRICA      | ar packages. regular excuses among the ironic requests cajole fluffily blithely final requests. furiously express p | 20          | SAUDI ARABIA   | 4           | se slyly across the blithely regular deposits. deposits use carefully regular                                      |
+| 0           | AFRICA      | ar packages. regular excuses among the ironic requests cajole fluffily blithely final requests. furiously express p | 21          | VIETNAM        | 2           | lly across the quickly even pinto beans. caref                                                                     |
+| 0           | AFRICA      | ar packages. regular excuses among the ironic requests cajole fluffily blithely final requests. furiously express p | 22          | RUSSIA         | 3           | uctions. furiously unusual instructions sleep furiously ironic packages. slyly                                     |
+| 0           | AFRICA      | ar packages. regular excuses among the ironic requests cajole fluffily blithely final requests. furiously express p | 23          | UNITED KINGDOM | 3           | carefully pending courts sleep above the ironic, regular theo                                                      |
+| 0           | AFRICA      | ar packages. regular excuses among the ironic requests cajole fluffily blithely final requests. furiously express p | 24          | UNITED STATES  | 1           | ly ironic requests along the slyly bold ideas hang after the blithely special notornis; blithely even accounts     |
+| 0           | AFRICA      | ar packages. regular excuses among the ironic requests cajole fluffily blithely final requests. furiously express p | 3           | CANADA         | 1           | ss deposits wake across the pending foxes. packages after the carefully bold requests integrate caref              |
+| 0           | AFRICA      | ar packages. regular excuses among the ironic requests cajole fluffily blithely final requests. furiously express p | 4           | EGYPT          | 4           | usly ironic, pending foxes. even, special instructions nag. sly, final foxes detect slyly fluffily                 |
+| 0           | AFRICA      | ar packages. regular excuses among the ironic requests cajole fluffily blithely final requests. furiously express p | 5           | ETHIOPIA       | 0           | regular requests sleep carefull                                                                                    |
+| 0           | AFRICA      | ar packages. regular excuses among the ironic requests cajole fluffily blithely final requests. furiously express p | 6           | FRANCE         | 3           | oggedly. regular packages solve across                                                                             |
+| 0           | AFRICA      | ar packages. regular excuses among the ironic requests cajole fluffily blithely final requests. furiously express p | 7           | GERMANY        | 3           | ong the regular requests: blithely silent pinto beans hagg                                                         |
+| 0           | AFRICA      | ar packages. regular excuses among the ironic requests cajole fluffily blithely final requests. furiously express p | 8           | INDIA          | 2           | uriously unusual deposits about the slyly final pinto beans could                                                  |
+| 0           | AFRICA      | ar packages. regular excuses among the ironic requests cajole fluffily blithely final requests. furiously express p | 9           | INDONESIA      | 2           | d deposits sleep quickly according to the dogged, regular dolphins. special excuses haggle furiously special reque |
+| 1           | AMERICA     | s are. furiously even pinto bea                                                                                     | 0           | ALGERIA        | 0           | furiously regular requests. platelets affix furious                                                                |
+| 1           | AMERICA     | s are. furiously even pinto bea                                                                                     | 1           | ARGENTINA      | 1           | instructions wake quickly. final deposits haggle. final, silent theodolites                                        |
+| 1           | AMERICA     | s are. furiously even pinto bea                                                                                     | 10          | IRAN           | 4           | furiously idle platelets nag. express asymptotes s                                                                 |
+| 1           | AMERICA     | s are. furiously even pinto bea                                                                                     | 11          | IRAQ           | 4           | pendencies; slyly express foxes integrate carefully across the reg                                                 |
+| 1           | AMERICA     | s are. furiously even pinto bea                                                                                     | 12          | JAPAN          | 2           |  quickly final packages. furiously i                                                                               |
+| 1           | AMERICA     | s are. furiously even pinto bea                                                                                     | 13          | JORDAN         | 4           | the slyly regular ideas. silent Tiresias affix slyly fu                                                            |
+| 1           | AMERICA     | s are. furiously even pinto bea                                                                                     | 14          | KENYA          | 0           | lyly special foxes. slyly regular deposits sleep carefully. carefully permanent accounts slee                      |
+| 1           | AMERICA     | s are. furiously even pinto bea                                                                                     | 15          | MOROCCO        | 0           | ct blithely: blithely express accounts nag carefully. silent packages haggle carefully abo                         |
+| 1           | AMERICA     | s are. furiously even pinto bea                                                                                     | 16          | MOZAMBIQUE     | 0           |  beans after the carefully regular accounts r                                                                      |
+| 1           | AMERICA     | s are. furiously even pinto bea                                                                                     | 17          | PERU           | 1           | ly final foxes. blithely ironic accounts haggle. regular foxes about the regular deposits are furiously ir         |
+| 1           | AMERICA     | s are. furiously even pinto bea                                                                                     | 18          | CHINA          | 2           | ckly special packages cajole slyly. unusual, unusual theodolites mold furiously. slyly sile                        |
+| 1           | AMERICA     | s are. furiously even pinto bea                                                                                     | 19          | ROMANIA        | 3           | sly blithe requests. thinly bold deposits above the blithely regular accounts nag special, final requests. care    |
+| 1           | AMERICA     | s are. furiously even pinto bea                                                                                     | 2           | BRAZIL         | 1           | asymptotes use fluffily quickly bold instructions. slyly bold dependencies sleep carefully pending accounts        |
+| 1           | AMERICA     | s are. furiously even pinto bea                                                                                     | 20          | SAUDI ARABIA   | 4           | se slyly across the blithely regular deposits. deposits use carefully regular                                      |
+| 1           | AMERICA     | s are. furiously even pinto bea                                                                                     | 21          | VIETNAM        | 2           | lly across the quickly even pinto beans. caref                                                                     |
+| 1           | AMERICA     | s are. furiously even pinto bea                                                                                     | 22          | RUSSIA         | 3           | uctions. furiously unusual instructions sleep furiously ironic packages. slyly                                     |
+| 1           | AMERICA     | s are. furiously even pinto bea                                                                                     | 23          | UNITED KINGDOM | 3           | carefully pending courts sleep above the ironic, regular theo                                                      |
+| 1           | AMERICA     | s are. furiously even pinto bea                                                                                     | 24          | UNITED STATES  | 1           | ly ironic requests along the slyly bold ideas hang after the blithely special notornis; blithely even accounts     |
+| 1           | AMERICA     | s are. furiously even pinto bea                                                                                     | 3           | CANADA         | 1           | ss deposits wake across the pending foxes. packages after the carefully bold requests integrate caref              |
+| 1           | AMERICA     | s are. furiously even pinto bea                                                                                     | 4           | EGYPT          | 4           | usly ironic, pending foxes. even, special instructions nag. sly, final foxes detect slyly fluffily                 |
+| 1           | AMERICA     | s are. furiously even pinto bea                                                                                     | 5           | ETHIOPIA       | 0           | regular requests sleep carefull                                                                                    |
+| 1           | AMERICA     | s are. furiously even pinto bea                                                                                     | 6           | FRANCE         | 3           | oggedly. regular packages solve across                                                                             |
+| 1           | AMERICA     | s are. furiously even pinto bea                                                                                     | 7           | GERMANY        | 3           | ong the regular requests: blithely silent pinto beans hagg                                                         |
+| 1           | AMERICA     | s are. furiously even pinto bea                                                                                     | 8           | INDIA          | 2           | uriously unusual deposits about the slyly final pinto beans could                                                  |
+| 1           | AMERICA     | s are. furiously even pinto bea                                                                                     | 9           | INDONESIA      | 2           | d deposits sleep quickly according to the dogged, regular dolphins. special excuses haggle furiously special reque |
+| 2           | ASIA        | c, special dependencies around                                                                                      | 0           | ALGERIA        | 0           | furiously regular requests. platelets affix furious                                                                |
+| 2           | ASIA        | c, special dependencies around                                                                                      | 1           | ARGENTINA      | 1           | instructions wake quickly. final deposits haggle. final, silent theodolites                                        |
+| 2           | ASIA        | c, special dependencies around                                                                                      | 10          | IRAN           | 4           | furiously idle platelets nag. express asymptotes s                                                                 |
+| 2           | ASIA        | c, special dependencies around                                                                                      | 11          | IRAQ           | 4           | pendencies; slyly express foxes integrate carefully across the reg                                                 |
+| 2           | ASIA        | c, special dependencies around                                                                                      | 12          | JAPAN          | 2           |  quickly final packages. furiously i                                                                               |
+| 2           | ASIA        | c, special dependencies around                                                                                      | 13          | JORDAN         | 4           | the slyly regular ideas. silent Tiresias affix slyly fu                                                            |
+| 2           | ASIA        | c, special dependencies around                                                                                      | 14          | KENYA          | 0           | lyly special foxes. slyly regular deposits sleep carefully. carefully permanent accounts slee                      |
+| 2           | ASIA        | c, special dependencies around                                                                                      | 15          | MOROCCO        | 0           | ct blithely: blithely express accounts nag carefully. silent packages haggle carefully abo                         |
+| 2           | ASIA        | c, special dependencies around                                                                                      | 16          | MOZAMBIQUE     | 0           |  beans after the carefully regular accounts r                                                                      |
+| 2           | ASIA        | c, special dependencies around                                                                                      | 17          | PERU           | 1           | ly final foxes. blithely ironic accounts haggle. regular foxes about the regular deposits are furiously ir         |
+| 2           | ASIA        | c, special dependencies around                                                                                      | 18          | CHINA          | 2           | ckly special packages cajole slyly. unusual, unusual theodolites mold furiously. slyly sile                        |
+| 2           | ASIA        | c, special dependencies around                                                                                      | 19          | ROMANIA        | 3           | sly blithe requests. thinly bold deposits above the blithely regular accounts nag special, final requests. care    |
+| 2           | ASIA        | c, special dependencies around                                                                                      | 2           | BRAZIL         | 1           | asymptotes use fluffily quickly bold instructions. slyly bold dependencies sleep carefully pending accounts        |
+| 2           | ASIA        | c, special dependencies around                                                                                      | 20          | SAUDI ARABIA   | 4           | se slyly across the blithely regular deposits. deposits use carefully regular                                      |
+| 2           | ASIA        | c, special dependencies around                                                                                      | 21          | VIETNAM        | 2           | lly across the quickly even pinto beans. caref                                                                     |
+| 2           | ASIA        | c, special dependencies around                                                                                      | 22          | RUSSIA         | 3           | uctions. furiously unusual instructions sleep furiously ironic packages. slyly                                     |
+| 2           | ASIA        | c, special dependencies around                                                                                      | 23          | UNITED KINGDOM | 3           | carefully pending courts sleep above the ironic, regular theo                                                      |
+| 2           | ASIA        | c, special dependencies around                                                                                      | 24          | UNITED STATES  | 1           | ly ironic requests along the slyly bold ideas hang after the blithely special notornis; blithely even accounts     |
+| 2           | ASIA        | c, special dependencies around                                                                                      | 3           | CANADA         | 1           | ss deposits wake across the pending foxes. packages after the carefully bold requests integrate caref              |
+| 2           | ASIA        | c, special dependencies around                                                                                      | 4           | EGYPT          | 4           | usly ironic, pending foxes. even, special instructions nag. sly, final foxes detect slyly fluffily                 |
+| 2           | ASIA        | c, special dependencies around                                                                                      | 5           | ETHIOPIA       | 0           | regular requests sleep carefull                                                                                    |
+| 2           | ASIA        | c, special dependencies around                                                                                      | 6           | FRANCE         | 3           | oggedly. regular packages solve across                                                                             |
+| 2           | ASIA        | c, special dependencies around                                                                                      | 7           | GERMANY        | 3           | ong the regular requests: blithely silent pinto beans hagg                                                         |
+| 2           | ASIA        | c, special dependencies around                                                                                      | 8           | INDIA          | 2           | uriously unusual deposits about the slyly final pinto beans could                                                  |
+| 2           | ASIA        | c, special dependencies around                                                                                      | 9           | INDONESIA      | 2           | d deposits sleep quickly according to the dogged, regular dolphins. special excuses haggle furiously special reque |
+| 3           | EUROPE      | e dolphins are furiously about the carefully                                                                        | 0           | ALGERIA        | 0           | furiously regular requests. platelets affix furious                                                                |
+| 3           | EUROPE      | e dolphins are furiously about the carefully                                                                        | 1           | ARGENTINA      | 1           | instructions wake quickly. final deposits haggle. final, silent theodolites                                        |
+| 3           | EUROPE      | e dolphins are furiously about the carefully                                                                        | 10          | IRAN           | 4           | furiously idle platelets nag. express asymptotes s                                                                 |
+| 3           | EUROPE      | e dolphins are furiously about the carefully                                                                        | 11          | IRAQ           | 4           | pendencies; slyly express foxes integrate carefully across the reg                                                 |
+| 3           | EUROPE      | e dolphins are furiously about the carefully                                                                        | 12          | JAPAN          | 2           |  quickly final packages. furiously i                                                                               |
+| 3           | EUROPE      | e dolphins are furiously about the carefully                                                                        | 13          | JORDAN         | 4           | the slyly regular ideas. silent Tiresias affix slyly fu                                                            |
+| 3           | EUROPE      | e dolphins are furiously about the carefully                                                                        | 14          | KENYA          | 0           | lyly special foxes. slyly regular deposits sleep carefully. carefully permanent accounts slee                      |
+| 3           | EUROPE      | e dolphins are furiously about the carefully                                                                        | 15          | MOROCCO        | 0           | ct blithely: blithely express accounts nag carefully. silent packages haggle carefully abo                         |
+| 3           | EUROPE      | e dolphins are furiously about the carefully                                                                        | 16          | MOZAMBIQUE     | 0           |  beans after the carefully regular accounts r                                                                      |
+| 3           | EUROPE      | e dolphins are furiously about the carefully                                                                        | 17          | PERU           | 1           | ly final foxes. blithely ironic accounts haggle. regular foxes about the regular deposits are furiously ir         |
+| 3           | EUROPE      | e dolphins are furiously about the carefully                                                                        | 18          | CHINA          | 2           | ckly special packages cajole slyly. unusual, unusual theodolites mold furiously. slyly sile                        |
+| 3           | EUROPE      | e dolphins are furiously about the carefully                                                                        | 19          | ROMANIA        | 3           | sly blithe requests. thinly bold deposits above the blithely regular accounts nag special, final requests. care    |
+| 3           | EUROPE      | e dolphins are furiously about the carefully                                                                        | 2           | BRAZIL         | 1           | asymptotes use fluffily quickly bold instructions. slyly bold dependencies sleep carefully pending accounts        |
+| 3           | EUROPE      | e dolphins are furiously about the carefully                                                                        | 20          | SAUDI ARABIA   | 4           | se slyly across the blithely regular deposits. deposits use carefully regular                                      |
+| 3           | EUROPE      | e dolphins are furiously about the carefully                                                                        | 21          | VIETNAM        | 2           | lly across the quickly even pinto beans. caref                                                                     |
+| 3           | EUROPE      | e dolphins are furiously about the carefully                                                                        | 22          | RUSSIA         | 3           | uctions. furiously unusual instructions sleep furiously ironic packages. slyly                                     |
+| 3           | EUROPE      | e dolphins are furiously about the carefully                                                                        | 23          | UNITED KINGDOM | 3           | carefully pending courts sleep above the ironic, regular theo                                                      |
+| 3           | EUROPE      | e dolphins are furiously about the carefully                                                                        | 24          | UNITED STATES  | 1           | ly ironic requests along the slyly bold ideas hang after the blithely special notornis; blithely even accounts     |
+| 3           | EUROPE      | e dolphins are furiously about the carefully                                                                        | 3           | CANADA         | 1           | ss deposits wake across the pending foxes. packages after the carefully bold requests integrate caref              |
+| 3           | EUROPE      | e dolphins are furiously about the carefully                                                                        | 4           | EGYPT          | 4           | usly ironic, pending foxes. even, special instructions nag. sly, final foxes detect slyly fluffily                 |
+| 3           | EUROPE      | e dolphins are furiously about the carefully                                                                        | 5           | ETHIOPIA       | 0           | regular requests sleep carefull                                                                                    |
+| 3           | EUROPE      | e dolphins are furiously about the carefully                                                                        | 6           | FRANCE         | 3           | oggedly. regular packages solve across                                                                             |
+| 3           | EUROPE      | e dolphins are furiously about the carefully                                                                        | 7           | GERMANY        | 3           | ong the regular requests: blithely silent pinto beans hagg                                                         |
+| 3           | EUROPE      | e dolphins are furiously about the carefully                                                                        | 8           | INDIA          | 2           | uriously unusual deposits about the slyly final pinto beans could                                                  |
+| 3           | EUROPE      | e dolphins are furiously about the carefully                                                                        | 9           | INDONESIA      | 2           | d deposits sleep quickly according to the dogged, regular dolphins. special excuses haggle furiously special reque |
+| 4           | MIDDLE EAST |  foxes boost furiously along the carefully dogged tithes. slyly regular orbits according to the special epit        | 0           | ALGERIA        | 0           | furiously regular requests. platelets affix furious                                                                |
+| 4           | MIDDLE EAST |  foxes boost furiously along the carefully dogged tithes. slyly regular orbits according to the special epit        | 1           | ARGENTINA      | 1           | instructions wake quickly. final deposits haggle. final, silent theodolites                                        |
+| 4           | MIDDLE EAST |  foxes boost furiously along the carefully dogged tithes. slyly regular orbits according to the special epit        | 10          | IRAN           | 4           | furiously idle platelets nag. express asymptotes s                                                                 |
+| 4           | MIDDLE EAST |  foxes boost furiously along the carefully dogged tithes. slyly regular orbits according to the special epit        | 11          | IRAQ           | 4           | pendencies; slyly express foxes integrate carefully across the reg                                                 |
+| 4           | MIDDLE EAST |  foxes boost furiously along the carefully dogged tithes. slyly regular orbits according to the special epit        | 12          | JAPAN          | 2           |  quickly final packages. furiously i                                                                               |
+| 4           | MIDDLE EAST |  foxes boost furiously along the carefully dogged tithes. slyly regular orbits according to the special epit        | 13          | JORDAN         | 4           | the slyly regular ideas. silent Tiresias affix slyly fu                                                            |
+| 4           | MIDDLE EAST |  foxes boost furiously along the carefully dogged tithes. slyly regular orbits according to the special epit        | 14          | KENYA          | 0           | lyly special foxes. slyly regular deposits sleep carefully. carefully permanent accounts slee                      |
+| 4           | MIDDLE EAST |  foxes boost furiously along the carefully dogged tithes. slyly regular orbits according to the special epit        | 15          | MOROCCO        | 0           | ct blithely: blithely express accounts nag carefully. silent packages haggle carefully abo                         |
+| 4           | MIDDLE EAST |  foxes boost furiously along the carefully dogged tithes. slyly regular orbits according to the special epit        | 16          | MOZAMBIQUE     | 0           |  beans after the carefully regular accounts r                                                                      |
+| 4           | MIDDLE EAST |  foxes boost furiously along the carefully dogged tithes. slyly regular orbits according to the special epit        | 17          | PERU           | 1           | ly final foxes. blithely ironic accounts haggle. regular foxes about the regular deposits are furiously ir         |
+| 4           | MIDDLE EAST |  foxes boost furiously along the carefully dogged tithes. slyly regular orbits according to the special epit        | 18          | CHINA          | 2           | ckly special packages cajole slyly. unusual, unusual theodolites mold furiously. slyly sile                        |
+| 4           | MIDDLE EAST |  foxes boost furiously along the carefully dogged tithes. slyly regular orbits according to the special epit        | 19          | ROMANIA        | 3           | sly blithe requests. thinly bold deposits above the blithely regular accounts nag special, final requests. care    |
+| 4           | MIDDLE EAST |  foxes boost furiously along the carefully dogged tithes. slyly regular orbits according to the special epit        | 2           | BRAZIL         | 1           | asymptotes use fluffily quickly bold instructions. slyly bold dependencies sleep carefully pending accounts        |
+| 4           | MIDDLE EAST |  foxes boost furiously along the carefully dogged tithes. slyly regular orbits according to the special epit        | 20          | SAUDI ARABIA   | 4           | se slyly across the blithely regular deposits. deposits use carefully regular                                      |
+| 4           | MIDDLE EAST |  foxes boost furiously along the carefully dogged tithes. slyly regular orbits according to the special epit        | 21          | VIETNAM        | 2           | lly across the quickly even pinto beans. caref                                                                     |
+| 4           | MIDDLE EAST |  foxes boost furiously along the carefully dogged tithes. slyly regular orbits according to the special epit        | 22          | RUSSIA         | 3           | uctions. furiously unusual instructions sleep furiously ironic packages. slyly                                     |
+| 4           | MIDDLE EAST |  foxes boost furiously along the carefully dogged tithes. slyly regular orbits according to the special epit        | 23          | UNITED KINGDOM | 3           | carefully pending courts sleep above the ironic, regular theo                                                      |
+| 4           | MIDDLE EAST |  foxes boost furiously along the carefully dogged tithes. slyly regular orbits according to the special epit        | 24          | UNITED STATES  | 1           | ly ironic requests along the slyly bold ideas hang after the blithely special notornis; blithely even accounts     |
+| 4           | MIDDLE EAST |  foxes boost furiously along the carefully dogged tithes. slyly regular orbits according to the special epit        | 3           | CANADA         | 1           | ss deposits wake across the pending foxes. packages after the carefully bold requests integrate caref              |
+| 4           | MIDDLE EAST |  foxes boost furiously along the carefully dogged tithes. slyly regular orbits according to the special epit        | 4           | EGYPT          | 4           | usly ironic, pending foxes. even, special instructions nag. sly, final foxes detect slyly fluffily                 |
+| 4           | MIDDLE EAST |  foxes boost furiously along the carefully dogged tithes. slyly regular orbits according to the special epit        | 5           | ETHIOPIA       | 0           | regular requests sleep carefull                                                                                    |
+| 4           | MIDDLE EAST |  foxes boost furiously along the carefully dogged tithes. slyly regular orbits according to the special epit        | 6           | FRANCE         | 3           | oggedly. regular packages solve across                                                                             |
+| 4           | MIDDLE EAST |  foxes boost furiously along the carefully dogged tithes. slyly regular orbits according to the special epit        | 7           | GERMANY        | 3           | ong the regular requests: blithely silent pinto beans hagg                                                         |
+| 4           | MIDDLE EAST |  foxes boost furiously along the carefully dogged tithes. slyly regular orbits according to the special epit        | 8           | INDIA          | 2           | uriously unusual deposits about the slyly final pinto beans could                                                  |
+| 4           | MIDDLE EAST |  foxes boost furiously along the carefully dogged tithes. slyly regular orbits according to the special epit        | 9           | INDONESIA      | 2           | d deposits sleep quickly according to the dogged, regular dolphins. special excuses haggle furiously special reque |
++-------------+-------------+---------------------------------------------------------------------------------------------------------------------+-------------+----------------+-------------+--------------------------------------------------------------------------------------------------------------------+
+== filter-project
+skipped: the result is at or above the 262144-byte cap
+mode=bp-tp4-sized
+== hash-join
+mode=bp-tp4-sized
++----------+-------------------+---------------------+
+| count(*) | sum(l.l_quantity) | sum(o.o_totalprice) |
++----------+-------------------+---------------------+
+| 6001215  | 153078795.00      | 1134436101880.19    |
++----------+-------------------+---------------------+
+== join-int
+mode=bp-tp4-sized
++-------------+-------+
+| c_nationkey | cnt   |
++-------------+-------+
+| 0           | 59622 |
+| 1           | 59547 |
+| 10          | 59675 |
+| 11          | 58902 |
+| 12          | 59405 |
+| 13          | 60736 |
+| 14          | 58940 |
+| 15          | 59459 |
+| 16          | 61267 |
+| 17          | 59018 |
+| 18          | 60784 |
+| 19          | 61012 |
+| 2           | 60137 |
+| 20          | 58453 |
+| 21          | 60347 |
+| 22          | 61495 |
+| 23          | 59455 |
+| 24          | 59921 |
+| 3           | 60480 |
+| 4           | 59111 |
+| 5           | 59706 |
+| 6           | 61600 |
+| 7           | 59724 |
+| 8           | 59827 |
+| 9           | 61377 |
++-------------+-------+
+== left-join
+mode=bp-tp4-sized
++----------+-------------------+---------------------+
+| count(*) | sum(l.l_quantity) | sum(o.o_totalprice) |
++----------+-------------------+---------------------+
+| 6001215  | 153078795.00      | 1134436101880.19    |
++----------+-------------------+---------------------+
+== mixed-join
+mode=bp-tp4-sized
++----------+-------------------+---------------------+
+| count(*) | sum(l.l_quantity) | sum(o.o_totalprice) |
++----------+-------------------+---------------------+
+| 4464071  | 113860331.00      | 843810858324.96     |
++----------+-------------------+---------------------+
+== nested-limits
+mode=bp-tp4-sized
++----+
+| k  |
++----+
+| 10 |
+| 11 |
+| 12 |
+| 13 |
+| 14 |
+| 15 |
+| 16 |
+| 17 |
+| 18 |
+| 19 |
+| 20 |
+| 21 |
+| 22 |
+| 23 |
+| 24 |
+| 25 |
+| 26 |
+| 27 |
+| 28 |
+| 9  |
++----+
+== nested-loop-join
+mode=bp-tp4-sized
++-------------+---------+---------------------------------------------------------------------------------------------------------------------+-------------+----------------+-------------+--------------------------------------------------------------------------------------------------------------------+
+| r_regionkey | r_name  | r_comment                                                                                                           | n_nationkey | n_name         | n_regionkey | n_comment                                                                                                          |
++-------------+---------+---------------------------------------------------------------------------------------------------------------------+-------------+----------------+-------------+--------------------------------------------------------------------------------------------------------------------+
+| 0           | AFRICA  | ar packages. regular excuses among the ironic requests cajole fluffily blithely final requests. furiously express p | 1           | ARGENTINA      | 1           | instructions wake quickly. final deposits haggle. final, silent theodolites                                        |
+| 0           | AFRICA  | ar packages. regular excuses among the ironic requests cajole fluffily blithely final requests. furiously express p | 10          | IRAN           | 4           | furiously idle platelets nag. express asymptotes s                                                                 |
+| 0           | AFRICA  | ar packages. regular excuses among the ironic requests cajole fluffily blithely final requests. furiously express p | 11          | IRAQ           | 4           | pendencies; slyly express foxes integrate carefully across the reg                                                 |
+| 0           | AFRICA  | ar packages. regular excuses among the ironic requests cajole fluffily blithely final requests. furiously express p | 12          | JAPAN          | 2           |  quickly final packages. furiously i                                                                               |
+| 0           | AFRICA  | ar packages. regular excuses among the ironic requests cajole fluffily blithely final requests. furiously express p | 13          | JORDAN         | 4           | the slyly regular ideas. silent Tiresias affix slyly fu                                                            |
+| 0           | AFRICA  | ar packages. regular excuses among the ironic requests cajole fluffily blithely final requests. furiously express p | 17          | PERU           | 1           | ly final foxes. blithely ironic accounts haggle. regular foxes about the regular deposits are furiously ir         |
+| 0           | AFRICA  | ar packages. regular excuses among the ironic requests cajole fluffily blithely final requests. furiously express p | 18          | CHINA          | 2           | ckly special packages cajole slyly. unusual, unusual theodolites mold furiously. slyly sile                        |
+| 0           | AFRICA  | ar packages. regular excuses among the ironic requests cajole fluffily blithely final requests. furiously express p | 19          | ROMANIA        | 3           | sly blithe requests. thinly bold deposits above the blithely regular accounts nag special, final requests. care    |
+| 0           | AFRICA  | ar packages. regular excuses among the ironic requests cajole fluffily blithely final requests. furiously express p | 2           | BRAZIL         | 1           | asymptotes use fluffily quickly bold instructions. slyly bold dependencies sleep carefully pending accounts        |
+| 0           | AFRICA  | ar packages. regular excuses among the ironic requests cajole fluffily blithely final requests. furiously express p | 20          | SAUDI ARABIA   | 4           | se slyly across the blithely regular deposits. deposits use carefully regular                                      |
+| 0           | AFRICA  | ar packages. regular excuses among the ironic requests cajole fluffily blithely final requests. furiously express p | 21          | VIETNAM        | 2           | lly across the quickly even pinto beans. caref                                                                     |
+| 0           | AFRICA  | ar packages. regular excuses among the ironic requests cajole fluffily blithely final requests. furiously express p | 22          | RUSSIA         | 3           | uctions. furiously unusual instructions sleep furiously ironic packages. slyly                                     |
+| 0           | AFRICA  | ar packages. regular excuses among the ironic requests cajole fluffily blithely final requests. furiously express p | 23          | UNITED KINGDOM | 3           | carefully pending courts sleep above the ironic, regular theo                                                      |
+| 0           | AFRICA  | ar packages. regular excuses among the ironic requests cajole fluffily blithely final requests. furiously express p | 24          | UNITED STATES  | 1           | ly ironic requests along the slyly bold ideas hang after the blithely special notornis; blithely even accounts     |
+| 0           | AFRICA  | ar packages. regular excuses among the ironic requests cajole fluffily blithely final requests. furiously express p | 3           | CANADA         | 1           | ss deposits wake across the pending foxes. packages after the carefully bold requests integrate caref              |
+| 0           | AFRICA  | ar packages. regular excuses among the ironic requests cajole fluffily blithely final requests. furiously express p | 4           | EGYPT          | 4           | usly ironic, pending foxes. even, special instructions nag. sly, final foxes detect slyly fluffily                 |
+| 0           | AFRICA  | ar packages. regular excuses among the ironic requests cajole fluffily blithely final requests. furiously express p | 6           | FRANCE         | 3           | oggedly. regular packages solve across                                                                             |
+| 0           | AFRICA  | ar packages. regular excuses among the ironic requests cajole fluffily blithely final requests. furiously express p | 7           | GERMANY        | 3           | ong the regular requests: blithely silent pinto beans hagg                                                         |
+| 0           | AFRICA  | ar packages. regular excuses among the ironic requests cajole fluffily blithely final requests. furiously express p | 8           | INDIA          | 2           | uriously unusual deposits about the slyly final pinto beans could                                                  |
+| 0           | AFRICA  | ar packages. regular excuses among the ironic requests cajole fluffily blithely final requests. furiously express p | 9           | INDONESIA      | 2           | d deposits sleep quickly according to the dogged, regular dolphins. special excuses haggle furiously special reque |
+| 1           | AMERICA | s are. furiously even pinto bea                                                                                     | 10          | IRAN           | 4           | furiously idle platelets nag. express asymptotes s                                                                 |
+| 1           | AMERICA | s are. furiously even pinto bea                                                                                     | 11          | IRAQ           | 4           | pendencies; slyly express foxes integrate carefully across the reg                                                 |
+| 1           | AMERICA | s are. furiously even pinto bea                                                                                     | 12          | JAPAN          | 2           |  quickly final packages. furiously i                                                                               |
+| 1           | AMERICA | s are. furiously even pinto bea                                                                                     | 13          | JORDAN         | 4           | the slyly regular ideas. silent Tiresias affix slyly fu                                                            |
+| 1           | AMERICA | s are. furiously even pinto bea                                                                                     | 18          | CHINA          | 2           | ckly special packages cajole slyly. unusual, unusual theodolites mold furiously. slyly sile                        |
+| 1           | AMERICA | s are. furiously even pinto bea                                                                                     | 19          | ROMANIA        | 3           | sly blithe requests. thinly bold deposits above the blithely regular accounts nag special, final requests. care    |
+| 1           | AMERICA | s are. furiously even pinto bea                                                                                     | 20          | SAUDI ARABIA   | 4           | se slyly across the blithely regular deposits. deposits use carefully regular                                      |
+| 1           | AMERICA | s are. furiously even pinto bea                                                                                     | 21          | VIETNAM        | 2           | lly across the quickly even pinto beans. caref                                                                     |
+| 1           | AMERICA | s are. furiously even pinto bea                                                                                     | 22          | RUSSIA         | 3           | uctions. furiously unusual instructions sleep furiously ironic packages. slyly                                     |
+| 1           | AMERICA | s are. furiously even pinto bea                                                                                     | 23          | UNITED KINGDOM | 3           | carefully pending courts sleep above the ironic, regular theo                                                      |
+| 1           | AMERICA | s are. furiously even pinto bea                                                                                     | 4           | EGYPT          | 4           | usly ironic, pending foxes. even, special instructions nag. sly, final foxes detect slyly fluffily                 |
+| 1           | AMERICA | s are. furiously even pinto bea                                                                                     | 6           | FRANCE         | 3           | oggedly. regular packages solve across                                                                             |
+| 1           | AMERICA | s are. furiously even pinto bea                                                                                     | 7           | GERMANY        | 3           | ong the regular requests: blithely silent pinto beans hagg                                                         |
+| 1           | AMERICA | s are. furiously even pinto bea                                                                                     | 8           | INDIA          | 2           | uriously unusual deposits about the slyly final pinto beans could                                                  |
+| 1           | AMERICA | s are. furiously even pinto bea                                                                                     | 9           | INDONESIA      | 2           | d deposits sleep quickly according to the dogged, regular dolphins. special excuses haggle furiously special reque |
+| 2           | ASIA    | c, special dependencies around                                                                                      | 10          | IRAN           | 4           | furiously idle platelets nag. express asymptotes s                                                                 |
+| 2           | ASIA    | c, special dependencies around                                                                                      | 11          | IRAQ           | 4           | pendencies; slyly express foxes integrate carefully across the reg                                                 |
+| 2           | ASIA    | c, special dependencies around                                                                                      | 13          | JORDAN         | 4           | the slyly regular ideas. silent Tiresias affix slyly fu                                                            |
+| 2           | ASIA    | c, special dependencies around                                                                                      | 19          | ROMANIA        | 3           | sly blithe requests. thinly bold deposits above the blithely regular accounts nag special, final requests. care    |
+| 2           | ASIA    | c, special dependencies around                                                                                      | 20          | SAUDI ARABIA   | 4           | se slyly across the blithely regular deposits. deposits use carefully regular                                      |
+| 2           | ASIA    | c, special dependencies around                                                                                      | 22          | RUSSIA         | 3           | uctions. furiously unusual instructions sleep furiously ironic packages. slyly                                     |
+| 2           | ASIA    | c, special dependencies around                                                                                      | 23          | UNITED KINGDOM | 3           | carefully pending courts sleep above the ironic, regular theo                                                      |
+| 2           | ASIA    | c, special dependencies around                                                                                      | 4           | EGYPT          | 4           | usly ironic, pending foxes. even, special instructions nag. sly, final foxes detect slyly fluffily                 |
+| 2           | ASIA    | c, special dependencies around                                                                                      | 6           | FRANCE         | 3           | oggedly. regular packages solve across                                                                             |
+| 2           | ASIA    | c, special dependencies around                                                                                      | 7           | GERMANY        | 3           | ong the regular requests: blithely silent pinto beans hagg                                                         |
+| 3           | EUROPE  | e dolphins are furiously about the carefully                                                                        | 10          | IRAN           | 4           | furiously idle platelets nag. express asymptotes s                                                                 |
+| 3           | EUROPE  | e dolphins are furiously about the carefully                                                                        | 11          | IRAQ           | 4           | pendencies; slyly express foxes integrate carefully across the reg                                                 |
+| 3           | EUROPE  | e dolphins are furiously about the carefully                                                                        | 13          | JORDAN         | 4           | the slyly regular ideas. silent Tiresias affix slyly fu                                                            |
+| 3           | EUROPE  | e dolphins are furiously about the carefully                                                                        | 20          | SAUDI ARABIA   | 4           | se slyly across the blithely regular deposits. deposits use carefully regular                                      |
+| 3           | EUROPE  | e dolphins are furiously about the carefully                                                                        | 4           | EGYPT          | 4           | usly ironic, pending foxes. even, special instructions nag. sly, final foxes detect slyly fluffily                 |
++-------------+---------+---------------------------------------------------------------------------------------------------------------------+-------------+----------------+-------------+--------------------------------------------------------------------------------------------------------------------+
+== nested-loop-left-join
+mode=bp-tp4-sized
++-------------+-------------+---------------------------------------------------------------------------------------------------------------------+-------------+----------------+-------------+--------------------------------------------------------------------------------------------------------------------+
+| r_regionkey | r_name      | r_comment                                                                                                           | n_nationkey | n_name         | n_regionkey | n_comment                                                                                                          |
++-------------+-------------+---------------------------------------------------------------------------------------------------------------------+-------------+----------------+-------------+--------------------------------------------------------------------------------------------------------------------+
+| 0           | AFRICA      | ar packages. regular excuses among the ironic requests cajole fluffily blithely final requests. furiously express p |             |                |             |                                                                                                                    |
+| 1           | AMERICA     | s are. furiously even pinto bea                                                                                     | 0           | ALGERIA        | 0           | furiously regular requests. platelets affix furious                                                                |
+| 1           | AMERICA     | s are. furiously even pinto bea                                                                                     | 14          | KENYA          | 0           | lyly special foxes. slyly regular deposits sleep carefully. carefully permanent accounts slee                      |
+| 1           | AMERICA     | s are. furiously even pinto bea                                                                                     | 15          | MOROCCO        | 0           | ct blithely: blithely express accounts nag carefully. silent packages haggle carefully abo                         |
+| 1           | AMERICA     | s are. furiously even pinto bea                                                                                     | 16          | MOZAMBIQUE     | 0           |  beans after the carefully regular accounts r                                                                      |
+| 1           | AMERICA     | s are. furiously even pinto bea                                                                                     | 5           | ETHIOPIA       | 0           | regular requests sleep carefull                                                                                    |
+| 2           | ASIA        | c, special dependencies around                                                                                      | 0           | ALGERIA        | 0           | furiously regular requests. platelets affix furious                                                                |
+| 2           | ASIA        | c, special dependencies around                                                                                      | 1           | ARGENTINA      | 1           | instructions wake quickly. final deposits haggle. final, silent theodolites                                        |
+| 2           | ASIA        | c, special dependencies around                                                                                      | 14          | KENYA          | 0           | lyly special foxes. slyly regular deposits sleep carefully. carefully permanent accounts slee                      |
+| 2           | ASIA        | c, special dependencies around                                                                                      | 15          | MOROCCO        | 0           | ct blithely: blithely express accounts nag carefully. silent packages haggle carefully abo                         |
+| 2           | ASIA        | c, special dependencies around                                                                                      | 16          | MOZAMBIQUE     | 0           |  beans after the carefully regular accounts r                                                                      |
+| 2           | ASIA        | c, special dependencies around                                                                                      | 17          | PERU           | 1           | ly final foxes. blithely ironic accounts haggle. regular foxes about the regular deposits are furiously ir         |
+| 2           | ASIA        | c, special dependencies around                                                                                      | 2           | BRAZIL         | 1           | asymptotes use fluffily quickly bold instructions. slyly bold dependencies sleep carefully pending accounts        |
+| 2           | ASIA        | c, special dependencies around                                                                                      | 24          | UNITED STATES  | 1           | ly ironic requests along the slyly bold ideas hang after the blithely special notornis; blithely even accounts     |
+| 2           | ASIA        | c, special dependencies around                                                                                      | 3           | CANADA         | 1           | ss deposits wake across the pending foxes. packages after the carefully bold requests integrate caref              |
+| 2           | ASIA        | c, special dependencies around                                                                                      | 5           | ETHIOPIA       | 0           | regular requests sleep carefull                                                                                    |
+| 3           | EUROPE      | e dolphins are furiously about the carefully                                                                        | 0           | ALGERIA        | 0           | furiously regular requests. platelets affix furious                                                                |
+| 3           | EUROPE      | e dolphins are furiously about the carefully                                                                        | 1           | ARGENTINA      | 1           | instructions wake quickly. final deposits haggle. final, silent theodolites                                        |
+| 3           | EUROPE      | e dolphins are furiously about the carefully                                                                        | 12          | JAPAN          | 2           |  quickly final packages. furiously i                                                                               |
+| 3           | EUROPE      | e dolphins are furiously about the carefully                                                                        | 14          | KENYA          | 0           | lyly special foxes. slyly regular deposits sleep carefully. carefully permanent accounts slee                      |
+| 3           | EUROPE      | e dolphins are furiously about the carefully                                                                        | 15          | MOROCCO        | 0           | ct blithely: blithely express accounts nag carefully. silent packages haggle carefully abo                         |
+| 3           | EUROPE      | e dolphins are furiously about the carefully                                                                        | 16          | MOZAMBIQUE     | 0           |  beans after the carefully regular accounts r                                                                      |
+| 3           | EUROPE      | e dolphins are furiously about the carefully                                                                        | 17          | PERU           | 1           | ly final foxes. blithely ironic accounts haggle. regular foxes about the regular deposits are furiously ir         |
+| 3           | EUROPE      | e dolphins are furiously about the carefully                                                                        | 18          | CHINA          | 2           | ckly special packages cajole slyly. unusual, unusual theodolites mold furiously. slyly sile                        |
+| 3           | EUROPE      | e dolphins are furiously about the carefully                                                                        | 2           | BRAZIL         | 1           | asymptotes use fluffily quickly bold instructions. slyly bold dependencies sleep carefully pending accounts        |
+| 3           | EUROPE      | e dolphins are furiously about the carefully                                                                        | 21          | VIETNAM        | 2           | lly across the quickly even pinto beans. caref                                                                     |
+| 3           | EUROPE      | e dolphins are furiously about the carefully                                                                        | 24          | UNITED STATES  | 1           | ly ironic requests along the slyly bold ideas hang after the blithely special notornis; blithely even accounts     |
+| 3           | EUROPE      | e dolphins are furiously about the carefully                                                                        | 3           | CANADA         | 1           | ss deposits wake across the pending foxes. packages after the carefully bold requests integrate caref              |
+| 3           | EUROPE      | e dolphins are furiously about the carefully                                                                        | 5           | ETHIOPIA       | 0           | regular requests sleep carefull                                                                                    |
+| 3           | EUROPE      | e dolphins are furiously about the carefully                                                                        | 8           | INDIA          | 2           | uriously unusual deposits about the slyly final pinto beans could                                                  |
+| 3           | EUROPE      | e dolphins are furiously about the carefully                                                                        | 9           | INDONESIA      | 2           | d deposits sleep quickly according to the dogged, regular dolphins. special excuses haggle furiously special reque |
+| 4           | MIDDLE EAST |  foxes boost furiously along the carefully dogged tithes. slyly regular orbits according to the special epit        | 0           | ALGERIA        | 0           | furiously regular requests. platelets affix furious                                                                |
+| 4           | MIDDLE EAST |  foxes boost furiously along the carefully dogged tithes. slyly regular orbits according to the special epit        | 1           | ARGENTINA      | 1           | instructions wake quickly. final deposits haggle. final, silent theodolites                                        |
+| 4           | MIDDLE EAST |  foxes boost furiously along the carefully dogged tithes. slyly regular orbits according to the special epit        | 12          | JAPAN          | 2           |  quickly final packages. furiously i                                                                               |
+| 4           | MIDDLE EAST |  foxes boost furiously along the carefully dogged tithes. slyly regular orbits according to the special epit        | 14          | KENYA          | 0           | lyly special foxes. slyly regular deposits sleep carefully. carefully permanent accounts slee                      |
+| 4           | MIDDLE EAST |  foxes boost furiously along the carefully dogged tithes. slyly regular orbits according to the special epit        | 15          | MOROCCO        | 0           | ct blithely: blithely express accounts nag carefully. silent packages haggle carefully abo                         |
+| 4           | MIDDLE EAST |  foxes boost furiously along the carefully dogged tithes. slyly regular orbits according to the special epit        | 16          | MOZAMBIQUE     | 0           |  beans after the carefully regular accounts r                                                                      |
+| 4           | MIDDLE EAST |  foxes boost furiously along the carefully dogged tithes. slyly regular orbits according to the special epit        | 17          | PERU           | 1           | ly final foxes. blithely ironic accounts haggle. regular foxes about the regular deposits are furiously ir         |
+| 4           | MIDDLE EAST |  foxes boost furiously along the carefully dogged tithes. slyly regular orbits according to the special epit        | 18          | CHINA          | 2           | ckly special packages cajole slyly. unusual, unusual theodolites mold furiously. slyly sile                        |
+| 4           | MIDDLE EAST |  foxes boost furiously along the carefully dogged tithes. slyly regular orbits according to the special epit        | 19          | ROMANIA        | 3           | sly blithe requests. thinly bold deposits above the blithely regular accounts nag special, final requests. care    |
+| 4           | MIDDLE EAST |  foxes boost furiously along the carefully dogged tithes. slyly regular orbits according to the special epit        | 2           | BRAZIL         | 1           | asymptotes use fluffily quickly bold instructions. slyly bold dependencies sleep carefully pending accounts        |
+| 4           | MIDDLE EAST |  foxes boost furiously along the carefully dogged tithes. slyly regular orbits according to the special epit        | 21          | VIETNAM        | 2           | lly across the quickly even pinto beans. caref                                                                     |
+| 4           | MIDDLE EAST |  foxes boost furiously along the carefully dogged tithes. slyly regular orbits according to the special epit        | 22          | RUSSIA         | 3           | uctions. furiously unusual instructions sleep furiously ironic packages. slyly                                     |
+| 4           | MIDDLE EAST |  foxes boost furiously along the carefully dogged tithes. slyly regular orbits according to the special epit        | 23          | UNITED KINGDOM | 3           | carefully pending courts sleep above the ironic, regular theo                                                      |
+| 4           | MIDDLE EAST |  foxes boost furiously along the carefully dogged tithes. slyly regular orbits according to the special epit        | 24          | UNITED STATES  | 1           | ly ironic requests along the slyly bold ideas hang after the blithely special notornis; blithely even accounts     |
+| 4           | MIDDLE EAST |  foxes boost furiously along the carefully dogged tithes. slyly regular orbits according to the special epit        | 3           | CANADA         | 1           | ss deposits wake across the pending foxes. packages after the carefully bold requests integrate caref              |
+| 4           | MIDDLE EAST |  foxes boost furiously along the carefully dogged tithes. slyly regular orbits according to the special epit        | 5           | ETHIOPIA       | 0           | regular requests sleep carefull                                                                                    |
+| 4           | MIDDLE EAST |  foxes boost furiously along the carefully dogged tithes. slyly regular orbits according to the special epit        | 6           | FRANCE         | 3           | oggedly. regular packages solve across                                                                             |
+| 4           | MIDDLE EAST |  foxes boost furiously along the carefully dogged tithes. slyly regular orbits according to the special epit        | 7           | GERMANY        | 3           | ong the regular requests: blithely silent pinto beans hagg                                                         |
+| 4           | MIDDLE EAST |  foxes boost furiously along the carefully dogged tithes. slyly regular orbits according to the special epit        | 8           | INDIA          | 2           | uriously unusual deposits about the slyly final pinto beans could                                                  |
+| 4           | MIDDLE EAST |  foxes boost furiously along the carefully dogged tithes. slyly regular orbits according to the special epit        | 9           | INDONESIA      | 2           | d deposits sleep quickly according to the dogged, regular dolphins. special excuses haggle furiously special reque |
++-------------+-------------+---------------------------------------------------------------------------------------------------------------------+-------------+----------------+-------------+--------------------------------------------------------------------------------------------------------------------+
+== rollup-over-join
+mode=bp-tp1-rowgroup
++-------------+--------------+----------+
+| c_nationkey | c_mktsegment | count(*) |
++-------------+--------------+----------+
+|             |              | 150000   |
+| 0           |              | 5925     |
+| 0           | AUTOMOBILE   | 1202     |
+| 0           | BUILDING     | 1158     |
+| 0           | FURNITURE    | 1196     |
+| 0           | HOUSEHOLD    | 1216     |
+| 0           | MACHINERY    | 1153     |
+| 1           |              | 5975     |
+| 1           | AUTOMOBILE   | 1172     |
+| 1           | BUILDING     | 1261     |
+| 1           | FURNITURE    | 1138     |
+| 1           | HOUSEHOLD    | 1198     |
+| 1           | MACHINERY    | 1206     |
+| 10          |              | 6009     |
+| 10          | AUTOMOBILE   | 1126     |
+| 10          | BUILDING     | 1245     |
+| 10          | FURNITURE    | 1232     |
+| 10          | HOUSEHOLD    | 1255     |
+| 10          | MACHINERY    | 1151     |
+| 11          |              | 5963     |
+| 11          | AUTOMOBILE   | 1161     |
+| 11          | BUILDING     | 1204     |
+| 11          | FURNITURE    | 1182     |
+| 11          | HOUSEHOLD    | 1230     |
+| 11          | MACHINERY    | 1186     |
+| 12          |              | 5948     |
+| 12          | AUTOMOBILE   | 1182     |
+| 12          | BUILDING     | 1211     |
+| 12          | FURNITURE    | 1243     |
+| 12          | HOUSEHOLD    | 1154     |
+| 12          | MACHINERY    | 1158     |
+| 13          |              | 6033     |
+| 13          | AUTOMOBILE   | 1183     |
+| 13          | BUILDING     | 1224     |
+| 13          | FURNITURE    | 1211     |
+| 13          | HOUSEHOLD    | 1201     |
+| 13          | MACHINERY    | 1214     |
+| 14          |              | 5992     |
+| 14          | AUTOMOBILE   | 1171     |
+| 14          | BUILDING     | 1200     |
+| 14          | FURNITURE    | 1253     |
+| 14          | HOUSEHOLD    | 1156     |
+| 14          | MACHINERY    | 1212     |
+| 15          |              | 5921     |
+| 15          | AUTOMOBILE   | 1157     |
+| 15          | BUILDING     | 1171     |
+| 15          | FURNITURE    | 1224     |
+| 15          | HOUSEHOLD    | 1172     |
+| 15          | MACHINERY    | 1197     |
+| 16          |              | 5974     |
+| 16          | AUTOMOBILE   | 1211     |
+| 16          | BUILDING     | 1154     |
+| 16          | FURNITURE    | 1221     |
+| 16          | HOUSEHOLD    | 1226     |
+| 16          | MACHINERY    | 1162     |
+| 17          |              | 5975     |
+| 17          | AUTOMOBILE   | 1215     |
+| 17          | BUILDING     | 1233     |
+| 17          | FURNITURE    | 1188     |
+| 17          | HOUSEHOLD    | 1226     |
+| 17          | MACHINERY    | 1113     |
+| 18          |              | 6024     |
+| 18          | AUTOMOBILE   | 1214     |
+| 18          | BUILDING     | 1234     |
+| 18          | FURNITURE    | 1150     |
+| 18          | HOUSEHOLD    | 1159     |
+| 18          | MACHINERY    | 1267     |
+| 19          |              | 6100     |
+| 19          | AUTOMOBILE   | 1272     |
+| 19          | BUILDING     | 1203     |
+| 19          | FURNITURE    | 1163     |
+| 19          | HOUSEHOLD    | 1189     |
+| 19          | MACHINERY    | 1273     |
+| 2           |              | 5999     |
+| 2           | AUTOMOBILE   | 1168     |
+| 2           | BUILDING     | 1222     |
+| 2           | FURNITURE    | 1158     |
+| 2           | HOUSEHOLD    | 1200     |
+| 2           | MACHINERY    | 1251     |
+| 20          |              | 5904     |
+| 20          | AUTOMOBILE   | 1183     |
+| 20          | BUILDING     | 1182     |
+| 20          | FURNITURE    | 1187     |
+| 20          | HOUSEHOLD    | 1206     |
+| 20          | MACHINERY    | 1146     |
+| 21          |              | 6008     |
+| 21          | AUTOMOBILE   | 1186     |
+| 21          | BUILDING     | 1230     |
+| 21          | FURNITURE    | 1200     |
+| 21          | HOUSEHOLD    | 1215     |
+| 21          | MACHINERY    | 1177     |
+| 22          |              | 6078     |
+| 22          | AUTOMOBILE   | 1191     |
+| 22          | BUILDING     | 1207     |
+| 22          | FURNITURE    | 1192     |
+| 22          | HOUSEHOLD    | 1265     |
+| 22          | MACHINERY    | 1223     |
+| 23          |              | 6011     |
+| 23          | AUTOMOBILE   | 1207     |
+| 23          | BUILDING     | 1228     |
+| 23          | FURNITURE    | 1172     |
+| 23          | HOUSEHOLD    | 1246     |
+| 23          | MACHINERY    | 1158     |
+| 24          |              | 5983     |
+| 24          | AUTOMOBILE   | 1207     |
+| 24          | BUILDING     | 1182     |
+| 24          | FURNITURE    | 1238     |
+| 24          | HOUSEHOLD    | 1164     |
+| 24          | MACHINERY    | 1192     |
+| 3           |              | 6020     |
+| 3           | AUTOMOBILE   | 1166     |
+| 3           | BUILDING     | 1254     |
+| 3           | FURNITURE    | 1152     |
+| 3           | HOUSEHOLD    | 1231     |
+| 3           | MACHINERY    | 1217     |
+| 4           |              | 5995     |
+| 4           | AUTOMOBILE   | 1195     |
+| 4           | BUILDING     | 1168     |
+| 4           | FURNITURE    | 1234     |
+| 4           | HOUSEHOLD    | 1179     |
+| 4           | MACHINERY    | 1219     |
+| 5           |              | 5952     |
+| 5           | AUTOMOBILE   | 1208     |
+| 5           | BUILDING     | 1165     |
+| 5           | FURNITURE    | 1147     |
+| 5           | HOUSEHOLD    | 1217     |
+| 5           | MACHINERY    | 1215     |
+| 6           |              | 6100     |
+| 6           | AUTOMOBILE   | 1229     |
+| 6           | BUILDING     | 1243     |
+| 6           | FURNITURE    | 1226     |
+| 6           | HOUSEHOLD    | 1235     |
+| 6           | MACHINERY    | 1167     |
+| 7           |              | 5908     |
+| 7           | AUTOMOBILE   | 1205     |
+| 7           | BUILDING     | 1150     |
+| 7           | FURNITURE    | 1166     |
+| 7           | HOUSEHOLD    | 1190     |
+| 7           | MACHINERY    | 1197     |
+| 8           |              | 6042     |
+| 8           | AUTOMOBILE   | 1111     |
+| 8           | BUILDING     | 1221     |
+| 8           | FURNITURE    | 1247     |
+| 8           | HOUSEHOLD    | 1227     |
+| 8           | MACHINERY    | 1236     |
+| 9           |              | 6161     |
+| 9           | AUTOMOBILE   | 1230     |
+| 9           | BUILDING     | 1192     |
+| 9           | FURNITURE    | 1248     |
+| 9           | HOUSEHOLD    | 1232     |
+| 9           | MACHINERY    | 1259     |
++-------------+--------------+----------+
+== scan-limit
+mode=bp-tp4-sized
++------------+-----------+-----------+--------------+------------+-----------------+------------+-------+--------------+--------------+------------+--------------+---------------+-------------------+------------+-------------------------------------------+
+| l_orderkey | l_partkey | l_suppkey | l_linenumber | l_quantity | l_extendedprice | l_discount | l_tax | l_returnflag | l_linestatus | l_shipdate | l_commitdate | l_receiptdate | l_shipinstruct    | l_shipmode | l_comment                                 |
++------------+-----------+-----------+--------------+------------+-----------------+------------+-------+--------------+--------------+------------+--------------+---------------+-------------------+------------+-------------------------------------------+
+| 1054181    | 16217     | 6218      | 1            | 45.00      | 50994.45        | 0.03       | 0.08  | R            | F            | 1992-01-02 | 1992-02-05   | 1992-01-15    | NONE              | MAIL       | e fluffily. final theodolites sleep f     |
+| 1111877    | 134177    | 1717      | 3            | 20.00      | 24223.40        | 0.10       | 0.07  | A            | F            | 1992-01-02 | 1992-02-28   | 1992-01-07    | TAKE BACK RETURN  | FOB        | express theodol                           |
+| 1332613    | 53982     | 1498      | 1            | 14.00      | 27103.72        | 0.08       | 0.07  | A            | F            | 1992-01-02 | 1992-02-11   | 1992-01-18    | TAKE BACK RETURN  | TRUCK      | pending pinto beans. pending pin          |
+| 1552449    | 159307    | 1823      | 2            | 28.00      | 38256.40        | 0.08       | 0.06  | R            | F            | 1992-01-02 | 1992-03-14   | 1992-01-05    | TAKE BACK RETURN  | SHIP       |  furiously special asymptotes. slyly fina |
+| 2167527    | 17849     | 7850      | 3            | 39.00      | 68906.76        | 0.00       | 0.06  | R            | F            | 1992-01-02 | 1992-02-18   | 1992-01-11    | TAKE BACK RETURN  | AIR        | requests. furiously even accounts use bl  |
+| 2184032    | 139420    | 4447      | 5            | 14.00      | 20431.88        | 0.06       | 0.02  | A            | F            | 1992-01-02 | 1992-02-25   | 1992-01-15    | DELIVER IN PERSON | RAIL       | xes. packages along the ironic accou      |
+| 721220     | 177803    | 5355      | 2            | 19.00      | 35735.20        | 0.08       | 0.03  | R            | F            | 1992-01-02 | 1992-02-04   | 1992-01-09    | TAKE BACK RETURN  | SHIP       | egular requests? slyly                    |
+| 842980     | 188156    | 5711      | 4            | 5.00       | 6220.75         | 0.01       | 0.03  | A            | F            | 1992-01-02 | 1992-03-20   | 1992-01-20    | COLLECT COD       | REG AIR    | yly fluffy packages. slyly                |
+| 904677     | 56678     | 1689      | 1            | 43.00      | 70290.81        | 0.08       | 0.01  | R            | F            | 1992-01-02 | 1992-03-22   | 1992-01-14    | COLLECT COD       | AIR        | cuses cajole blithely silent              |
+| 990147     | 154290    | 4291      | 1            | 6.00       | 8065.74         | 0.10       | 0.01  | R            | F            | 1992-01-02 | 1992-03-01   | 1992-01-15    | NONE              | REG AIR    | thely after the regular dep               |
++------------+-----------+-----------+--------------+------------+-----------------+------------+-------+--------------+--------------+------------+--------------+---------------+-------------------+------------+-------------------------------------------+
+== semi-join
+skipped: the result is at or above the 262144-byte cap
+mode=bp-tp4-sized
+== shuffle-additive
+mode=bp-tp4-sized
++--------------+--------------+---------+-------------+-----------------+
+| l_returnflag | l_linestatus | cnt     | sum_qty     | sum_base_price  |
++--------------+--------------+---------+-------------+-----------------+
+| A            | F            | 1478493 | 37734107.00 | 56586554400.73  |
+| N            | F            | 38854   | 991417.00   | 1487504710.38   |
+| N            | O            | 3004998 | 76633518.00 | 114935210409.19 |
+| R            | F            | 1478870 | 37719753.00 | 56568041380.90  |
++--------------+--------------+---------+-------------+-----------------+
+== shuffle-additive-avg
+skipped: not enabled at any mode
+== shuffle-stddev
+mode=bp-tp4-sized
++--------------+--------------+--------------------+--------------------+--------------------+--------------------+
+| l_returnflag | l_linestatus | std_samp_qty       | std_pop_qty        | var_samp_qty       | var_pop_qty        |
++--------------+--------------+--------------------+--------------------+--------------------+--------------------+
+| A            | F            | 14.426465559177979 | 14.426460680403444 | 208.1229085301484  | 208.1227677632266  |
+| N            | F            | 14.386954269168731 | 14.38676912675301  | 206.9844531431524  | 206.97912590649355 |
+| N            | O            | 14.427079798157319 | 14.427077397643076 | 208.14063150239903 | 208.1405622375837  |
+| R            | F            | 14.425435242135801 | 14.42543036495333  | 208.09318192505359 | 208.09304121411756 |
++--------------+--------------+--------------------+--------------------+--------------------+--------------------+

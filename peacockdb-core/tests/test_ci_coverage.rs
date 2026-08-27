@@ -282,6 +282,44 @@ fn line_matcher_rejects_both_false_coverage_modes() {
     }
 }
 
+/// A step gated on a matrix leg names a leg the matrix declares.
+///
+/// The gate and the leg list are two spellings of one value in one file, and only one of them
+/// is checked by anything: `every_rust_test_target_is_named_by_ci` asserts a target is NAMED
+/// by a step, never that the step can RUN. Relabel a leg or drop one and the steps gated on
+/// it stop running with that meta-test still green — and [#129](tickets.md#t129) records that
+/// the leg labels already disagree with their images, so the label is the untrustworthy half
+/// of a pair that seven steps now depend on.
+#[test]
+fn every_matrix_gated_step_names_a_leg_the_matrix_declares() {
+    let text = std::fs::read_to_string(repo_root().join(".github/workflows/pipeline.yml"))
+        .expect("read pipeline.yml");
+    let declared: BTreeSet<String> = text
+        .lines()
+        .filter_map(|l| l.trim().strip_prefix("- cudf: "))
+        .map(|v| v.trim().trim_matches('"').to_string())
+        .collect();
+    assert!(!declared.is_empty(), "pipeline.yml declares no `- cudf:` legs — the matrix was reshaped");
+
+    let mut gated = 0;
+    for line in text.lines() {
+        let Some(rest) = line.trim().strip_prefix("if:") else { continue };
+        let Some(at) = rest.find("matrix.cudf == ") else { continue };
+        let value = rest[at + "matrix.cudf == ".len()..]
+            .trim_start_matches('\'')
+            .split('\'')
+            .next()
+            .unwrap_or("");
+        assert!(
+            declared.contains(value),
+            "a step is gated on cudf {value:?} and the matrix declares {declared:?} — the steps \
+             behind that gate silently stop running, and the coverage guard stays green"
+        );
+        gated += 1;
+    }
+    assert!(gated > 0, "no step is gated on a matrix leg — this test now proves nothing");
+}
+
 /// Every integration-test target in the WORKSPACE, as `(crate, target)`.
 ///
 /// Two scoping bugs this closes, both of which let a target escape the gate by being

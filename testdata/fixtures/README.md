@@ -1,19 +1,13 @@
 # fixtures
 
-Committed samples of a format two crates read independently.
+Committed samples of a format two crates read independently. Nothing regenerates them: they are
+samples of a convention, not goldens of a run. The numbers are a real q6 section's shape, shortened.
 
-`sectioned-cost.txt` is a two-section `.cost.txt`. `cost-report` reads a total out of one
-section to gate the build; the test side's parser reads the same sections to check a golden
-against itself. Neither depends on the other — `cost-report`'s `[dependencies]` is empty on
-purpose, so it builds in seconds in the cheap tier — so what holds them to one convention is
-this file and the fact that both of their unit tests assert the same values off it. They
-diverge red rather than silently.
+`sectioned-cost.txt` is a two-section `.cost.txt`. `cost-report` reads a total out of one section;
+the test side's parser reads the same sections. `cost-report` has no dependencies on purpose, so the
+two readers share no code — this file is what holds them to one convention, and both assert the same
+values off it so they diverge red rather than silently.
 
-`two-row-registry.csv` is a registry with the batch-partitioned columns filled, loaded through
-`Registry::load` so a widget test can start on the far side of the loader. Every other widget test
-builds its rows by hand and so began downstream of the seam where `load` read only the legacy mode
-columns — which rendered every batch-partitioned cell as an em-dash, present and plausible and
-wrong, with all of them green.
-
-The numbers are a real q6 section's shape, shortened. Nothing regenerates either file: they are
-samples of a convention, not goldens of a run.
+`two-row-registry.csv` is loaded through `Registry::load` so a widget test starts on the far side of
+the loader. Every other widget test builds its rows by hand, downstream of the seam where `load` read
+only the legacy columns and rendered every batch-partitioned cell as a plausible em-dash.

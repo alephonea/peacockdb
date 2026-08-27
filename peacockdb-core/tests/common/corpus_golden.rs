@@ -238,7 +238,7 @@ pub fn declared_sections(
                 .iter()
                 .any(|state| matches!(*state, "enabled" | "skip"))
             {
-                return Some((row.query, None));
+                return Some((registry::stem(&row.query), None));
             }
             // The result golden spans the modes, so its marker cannot say "this mode" —
             // absent for one reason reading as absent for another is the whole thing these
@@ -249,7 +249,7 @@ pub fn declared_sections(
             };
             states
                 .contains(&"disabled")
-                .then(|| (row.query, Some(format!("{SKIPPED}not enabled {where_}\n"))))
+                .then(|| (registry::stem(&row.query), Some(format!("{SKIPPED}not enabled {where_}\n"))))
         })
         .collect()
 }

@@ -115,7 +115,8 @@ pub async fn assert_answer(
             }
         }
         // The tolerance arm indexes the rows and cannot work from a digest, so its oracle is
-        // run per mode. No query in the corpus declares it today.
+        // run per mode. `shuffle-stddev` is what declares it: the Welford merge reassociates
+        // its sums and drifts a few ULP from a single-partition pass.
         oracle => {
             let expected = oracle_rows(dataset, sf, query, &what).await;
             assert_results_match(&expected, batches, oracle.rel_tol(), &what);
@@ -395,7 +396,7 @@ pub fn authoritative_mode(dataset: &str, sf: &str, query: &str) -> Option<&'stat
     let rows = registry::load_csv();
     let row = rows
         .iter()
-        .find(|row| row.dataset == dataset && row.sf == sf && row.query == query)?;
+        .find(|row| row.dataset == dataset && row.sf == sf && registry::stem(&row.query) == query)?;
     BP_MODES.iter().rev().find(|mode| {
         row.states
             .get(&cpu_column(mode))
@@ -403,17 +404,22 @@ pub fn authoritative_mode(dataset: &str, sf: &str, query: &str) -> Option<&'stat
     })
 }
 
-/// Why a result has no section. The size is named where it is known — where the lower
-/// bound tripped, the run stopped counting on purpose and says so rather than finishing the
-/// sum to put a number in a marker.
-fn over_cap(bytes: Option<usize>) -> String {
+/// Why a result has no section, and which mode decided it. The size is named where it is
+/// known — where the lower bound tripped, the run stopped counting on purpose and says so
+/// rather than finishing the sum to put a number in a marker.
+///
+/// The marker keeps first position and `mode=` follows it: `corpus_gpu` reads a leading
+/// SKIPPED as "this section holds no rows", so a mode line ahead of it would let a
+/// `golden_exact` declaration pass against a section with nothing to compare.
+pub fn over_cap(bytes: Option<usize>, mode: &BpMode) -> String {
     let size = match bytes {
         Some(bytes) => format!("is {bytes} bytes, at or above"),
         None => "is at or above".to_string(),
     };
     format!(
-        "{}the result {size} the {RESULT_GOLDEN_MAX_BYTES}-byte cap\n",
-        corpus_golden::SKIPPED
+        "{}the result {size} the {RESULT_GOLDEN_MAX_BYTES}-byte cap\nmode={}\n",
+        corpus_golden::SKIPPED,
+        mode.name
     )
 }
 
@@ -432,11 +438,11 @@ fn assert_result_section(
     // sorted, and then discarded for being too large. Under the bound it is rendered once
     // and measured exactly, so the cap still means the same bytes it always did.
     let body = match result_text::exceeds_rendered_size(batches, RESULT_GOLDEN_MAX_BYTES) {
-        true => over_cap(None),
+        true => over_cap(None, mode),
         false => {
             let rendered = batches_to_sorted_str(batches);
             match rendered.len() >= RESULT_GOLDEN_MAX_BYTES {
-                true => over_cap(Some(rendered.len())),
+                true => over_cap(Some(rendered.len()), mode),
                 false => format!("mode={}\n{rendered}\n", mode.name),
             }
         }
