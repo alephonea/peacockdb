@@ -61,8 +61,14 @@ fn a_left_joins_probe_batch_cannot_be_read_twice_and_says_which_ticket() {
     let tree = left_join_tree(JoinType::Left, &out);
     let session = Session::open(tree.as_ref());
     let keys = schema_of(&[("k", DataType::Utf8)]);
-    let join = GpuJoinExec::new(session.executor, session.recipe(3), Some(&keys), &out)
-        .expect("the join builds");
+    let join = GpuJoinExec::new(
+        session.executor,
+        session.recipe(3),
+        Some(JoinType::Left),
+        Some(&keys),
+        &out,
+    )
+    .expect("the join builds");
     let (mut probing, _) = join
         .set_build(session.scan(&[2]))
         .expect("the build side is set");
@@ -150,8 +156,14 @@ fn every_member_of_the_semi_family_streams_and_answers_at_done() {
             _ => ("v", DataType::Int64),
         };
         let key_schema = schema_of(&[key_column]);
-        let join = GpuJoinExec::new(session.executor, session.recipe(2), Some(&key_schema), &out)
-            .expect("the join builds");
+        let join = GpuJoinExec::new(
+            session.executor,
+            session.recipe(2),
+            Some(join_type),
+            Some(&key_schema),
+            &out,
+        )
+        .expect("the join builds");
         let (mut probing, _) = join
             .set_build(session.scan(&[2]))
             .expect("the build side is set");
@@ -174,6 +186,66 @@ fn every_member_of_the_semi_family_streams_and_answers_at_done() {
     }
 }
 
+/// The narrowing project, on a device. A semi join's finish emits the build side, so a
+/// node keeping one of its two columns owes a call that cuts it down — and until the
+/// recipe published one, the device emitted both columns while the CPU emitted one.
+///
+/// `v` alone, so the column that survives is not the key: keeping the key would pass with
+/// a project that emitted the wrong column as readily as the right one.
+#[test]
+fn a_projecting_semi_joins_finish_emits_the_column_the_node_declares() {
+    let out = schema_of(&[("v", DataType::Int64)]);
+    let tree: Box<dyn GpuNode> = Box::new(GpuJoin::new(
+        mapped(vec![vec![vec![2]]]),
+        mapped(vec![vec![vec![0], vec![1]]]),
+        JoinType::LeftSemi,
+        vec![(0, 0)],
+        None,
+        Vec::new(),
+        false,
+        Some(vec![1]),
+        Schema::new(Arc::new(out.clone())),
+    ));
+    let session = Session::open(tree.as_ref());
+    let keys = schema_of(&[("k", DataType::Utf8)]);
+    let join = GpuJoinExec::new(
+        session.executor,
+        session.recipe(2),
+        Some(JoinType::LeftSemi),
+        Some(&keys),
+        &out,
+    )
+    .expect("the join builds");
+    let (mut probing, _) = join
+        .set_build(session.scan(&[2]))
+        .expect("the build side is set");
+    for group in [0u32, 1] {
+        let (produced, _) = probing
+            .probe_and_fetch(session.scan(&[group]))
+            .expect("the probe runs");
+        assert!(
+            produced.is_empty(),
+            "a probe call keeps keys and emits nothing"
+        );
+    }
+    let (finished, _) = probing.finish_and_fetch().expect("the finish runs");
+    let [answer] = <[GpuBatch; 1]>::try_from(finished).expect("one batch at done");
+    let (back, _) = session
+        .export(&out)
+        .unload(answer, RowRange::WHOLE)
+        .expect("the rows cross the boundary");
+    let mut rows = rows(&back);
+    rows.sort_by_key(|row| format!("{:?}", row));
+    assert_eq!(
+        rows,
+        vec![
+            vec![ScalarValue::Int64(Some(5))],
+            vec![ScalarValue::Int64(Some(6))],
+        ],
+        "one column out, and it is v"
+    );
+}
+
 /// The call the frozen surface cannot make. `execute_node` erases what it reads, so the
 /// join call for the first probe batch takes the build side with it; a second batch has
 /// nothing to be given, and saying so is better than a handle that is not there.
@@ -192,8 +264,14 @@ fn a_second_probe_batch_of_a_copying_join_is_refused_by_name() {
         Schema::new(Arc::new(out.clone())),
     ));
     let session = Session::open(tree.as_ref());
-    let join =
-        GpuJoinExec::new(session.executor, session.recipe(2), None, &out).expect("the join builds");
+    let join = GpuJoinExec::new(
+        session.executor,
+        session.recipe(2),
+        Some(JoinType::Inner),
+        None,
+        &out,
+    )
+    .expect("the join builds");
     let (mut probing, _) = join
         .set_build(session.scan(&[2]))
         .expect("the build side is set");
@@ -273,8 +351,14 @@ fn a_finish_over_no_probe_keys_hands_the_build_side_up() {
     ));
     let session = Session::open(tree.as_ref());
     let keys = schema_of(&[("k", DataType::Utf8)]);
-    let join = GpuJoinExec::new(session.executor, session.recipe(2), Some(&keys), &out)
-        .expect("the join builds");
+    let join = GpuJoinExec::new(
+        session.executor,
+        session.recipe(2),
+        Some(JoinType::LeftAnti),
+        Some(&keys),
+        &out,
+    )
+    .expect("the join builds");
     let (probing, _) = join
         .set_build(session.scan(&[2]))
         .expect("the build side is set");

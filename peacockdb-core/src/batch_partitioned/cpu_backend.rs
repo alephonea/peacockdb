@@ -10,15 +10,18 @@
 //! from under that block, which is what a driver has to leave room for (T17).
 
 pub mod accumulate;
+pub mod backend;
 pub mod emit;
 pub mod join;
 mod merge_m2;
+pub mod source;
 
 use std::sync::Arc;
 
 use datafusion::arrow::array::RecordBatch;
-use datafusion::arrow::compute::concat_batches;
-use datafusion::arrow::datatypes::{Schema as ArrowSchema, SchemaRef};
+use datafusion::arrow::compute::{CastOptions, cast_with_options, concat_batches};
+use datafusion::arrow::datatypes::{DataType, Schema as ArrowSchema, SchemaRef};
+use datafusion::arrow::util::display::FormatOptions;
 use datafusion::execution::context::SessionContext;
 use datafusion::execution::{FunctionRegistry, TaskContext};
 use datafusion::logical_expr::AggregateUDF;
@@ -148,7 +151,7 @@ impl CpuExec {
         Ok(Self {
             stages,
             fetch: None,
-            ctx,
+            ctx: always_aggregating(ctx),
         })
     }
 
@@ -172,12 +175,18 @@ impl CpuExec {
     /// of the node's schema rather than a missing one.
     pub fn exec(&mut self, batch: CpuBatch) -> CallResult<CpuBatch> {
         let mut batches = vec![batch.into_record_batch()];
+        // The largest a stage's ANSWER got — not the largest allocation the call made, so
+        // a sort's working buffers are outside it. What it buys is a measured figure to
+        // check the model against: an exec node's model is its input's size, and a project
+        // that widens its rows exceeds that.
+        let mut scratch = 0;
         for stage in &self.stages {
             let produced = self.run(&stage.node, vec![batches])?;
             batches = produced
                 .into_iter()
                 .map(|batch| declared_as(batch, &stage.declared))
                 .collect::<Result<Vec<RecordBatch>, BackendError>>()?;
+            scratch = scratch.max(batches.iter().map(RecordBatch::get_array_memory_size).sum());
         }
         let schema = &self.stages.last().expect("a node has an operator").declared;
         let batch = concat_batches(schema, batches.iter())
@@ -186,7 +195,12 @@ impl CpuExec {
             Some(fetch) if fetch < batch.num_rows() => batch.slice(0, fetch),
             _ => batch,
         };
-        Ok((CpuBatch::new(kept), CallStats::default()))
+        Ok((
+            CpuBatch::new(kept),
+            CallStats {
+                scratch_bytes: Some(scratch),
+            },
+        ))
     }
 
     fn run(
@@ -225,7 +239,33 @@ fn declared_as(batch: RecordBatch, declared: &SchemaRef) -> Result<RecordBatch, 
     if batch.schema() == *declared {
         return Ok(batch);
     }
-    RecordBatch::try_new(declared.clone(), batch.columns().to_vec()).map_err(|error| {
+    // A merge sums a column that is already a sum, and DataFusion widens a decimal at
+    // every such step — so a state merged twice would carry a wider type than one merged
+    // once, and what a lane emits would depend on how many batches it saw. The
+    // declaration is the fixed point, and it is the precision the device is sent, so the
+    // cast back is what keeps the two engines' states one type rather than one value in
+    // two. Everything else is relabelled, and `try_new` refuses what cannot be.
+    let mut columns = batch.columns().to_vec();
+    for (column, field) in columns.iter_mut().zip(declared.fields().iter()) {
+        if widened_decimal(column.data_type(), field.data_type()) {
+            // Unsafe rather than safe casting, which is the whole point: arrow's safe cast
+            // turns a value that does not fit the declared precision into a NULL, and a
+            // NULL in a sum column is indistinguishable here from one the data had. The
+            // one input this call exists for is the one it would silently swallow.
+            let options = CastOptions {
+                safe: false,
+                format_options: FormatOptions::default(),
+            };
+            *column = cast_with_options(column, field.data_type(), &options).map_err(|error| {
+                BackendError::new(format!(
+                    "{} does not fit the {} the node declares: {error}",
+                    field.name(),
+                    field.data_type()
+                ))
+            })?;
+        }
+    }
+    RecordBatch::try_new(declared.clone(), columns).map_err(|error| {
         BackendError::new(format!(
             "the node declares {declared:?} and DataFusion answered with {:?}: {error}",
             batch.schema()
@@ -249,6 +289,31 @@ fn run_node(
 /// stream over the batches the call was handed, so what it holds is never read.
 fn placeholder(schema: &ArrowSchema) -> Arc<dyn ExecutionPlan> {
     Arc::new(EmptyExec::new(Arc::new(schema.clone())))
+}
+
+/// A context whose partial aggregates never stop aggregating.
+///
+/// DataFusion's `AggregateExec` in Partial mode probes its own aggregation ratio after
+/// 100,000 rows and, where the groups are nearly as many as the rows, stops grouping and
+/// passes its input through as state — which is sound only because a Final stage regroups
+/// downstream. In this mode nothing does: the init emits state and the merge is a Partial
+/// too, so a skipped grouping reaches the finalize as duplicate keys and comes out as
+/// extra rows. A device never skips, so this is also what keeps the two engines' answers
+/// the same.
+pub(super) fn always_aggregating(ctx: Arc<TaskContext>) -> Arc<TaskContext> {
+    let config = ctx.session_config().clone().set_usize(
+        "datafusion.execution.skip_partial_aggregation_probe_rows_threshold",
+        usize::MAX,
+    );
+    Arc::new(TaskContext::new(
+        ctx.task_id(),
+        ctx.session_id(),
+        config,
+        ctx.scalar_functions().clone(),
+        ctx.aggregate_functions().clone(),
+        ctx.window_functions().clone(),
+        ctx.runtime_env(),
+    ))
 }
 
 /// The aggregate as DataFusion runs it: the group list under the names the state gives
@@ -409,17 +474,35 @@ fn check_state_layout(produced: &ArrowSchema, declared: &Schema) -> Result<(), P
         )));
     }
     for (position, (theirs, ours)) in produced.fields().iter().zip(ours.iter()).enumerate() {
-        if theirs.data_type() != ours.data_type() {
-            return Err(PlanError::Invalid(format!(
-                "column {position} is {} in the declared state and {} in the one \
-                 DataFusion's accumulators produce — a state read positionally has to be \
-                 the state that was declared",
-                ours.data_type(),
-                theirs.data_type()
-            )));
+        if theirs.data_type() == ours.data_type()
+            || widened_decimal(theirs.data_type(), ours.data_type())
+        {
+            continue;
         }
+        return Err(PlanError::Invalid(format!(
+            "column {position} is {} in the declared state and {} in the one \
+             DataFusion's accumulators produce — a state read positionally has to be \
+             the state that was declared",
+            ours.data_type(),
+            theirs.data_type()
+        )));
     }
     Ok(())
+}
+
+/// Whether the produced type is the declared one with the precision a decimal sum gains
+/// per merge — the one mismatch [`declared_as`] casts away.
+///
+/// Same scale, because a scale difference moves the point and is a different number rather
+/// than a wider one; and wider only, because narrower is not what a merge does and casting
+/// it up would be inventing precision the state never had.
+fn widened_decimal(produced: &DataType, declared: &DataType) -> bool {
+    match (produced, declared) {
+        (DataType::Decimal128(theirs, their_scale), DataType::Decimal128(ours, our_scale)) => {
+            their_scale == our_scale && theirs >= ours
+        }
+        _ => false,
+    }
 }
 
 fn lex_ordering(keys: &[ColumnOrder], input: &ArrowSchema) -> Result<LexOrdering, PlanError> {

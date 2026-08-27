@@ -7,9 +7,11 @@
 mod budget;
 mod failure;
 mod flow;
+mod instrument;
 mod limit;
 mod memory;
 mod stress;
+mod wiring;
 
 use super::mock::{Mock, Script};
 use super::partitioned::{Driver, RunReport};
@@ -84,6 +86,14 @@ fn assert_accounted(report: &RunReport) {
     assert_eq!(
         report.in_flight_bytes, 0,
         "a batch was held and never released"
+    );
+    // The bytes balancing is not the counts balancing: a release of nothing subtracts
+    // nothing and still counts, which is how a cross-lane accumulator's lane-done events
+    // made these disagree with the invariant the report states.
+    assert_eq!(
+        report.holds, report.releases,
+        "{} batches held and {} released",
+        report.holds, report.releases
     );
     assert!(
         report.peak_bytes > 0,

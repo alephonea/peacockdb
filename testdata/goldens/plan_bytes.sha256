@@ -113,6 +113,7 @@ tpch.sf1/join_sort.tp8-mini [inline]  c7b1a55bbefd755b7b0f87d362bf83da3f27922a86
 tpch.sf1/left-join.tp8-mini  cdcddc35b5655839baf7602729bd47373c7b7359f18813eb56077d9909819f19 4632
 tpch.sf1/mixed-join.tp8-mini  UNSUPPORTED unsupported scalar value: IntervalMonthDayNano("IntervalMonthDayNano { months: 0, days: 90, nanoseconds: 0 }")
 tpch.sf1/nested-loop-join.tp8-mini  e9357ef2be9c3f845a0789b04e8065a38c3151fdfd523c0b32e4d085299c9c5e 1248
+tpch.sf1/nested-loop-left-join.tp8-mini  93940c96c146ae89bdd4ed313de68ef2b03fd77a71b24c36966944dbce5b467e 1252
 tpch.sf1/q1.tp8-mini  97886bea6a075b1a0e66c4739d329565c6ad69b98dbef747424b5b33cc8e7801 11720
 tpch.sf1/q10.tp8-mini  7358d8a85fc70295f0b10a7e0e5476928d0ba620a35f7a6eda0578827907f29a 16328
 tpch.sf1/q11.tp8-mini  f35f4c231b7c83bd03611bf23ec2e122e2be998481862af5b1767e9b4d6d57b8 13680

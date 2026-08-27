@@ -5,7 +5,6 @@
 //! expected answer is hand-computed.
 
 use super::*;
-use datafusion::execution::context::SessionContext;
 use crate::batch_partitioned::cpu_backend::accumulate::{CpuAccumulator, CpuPartitionAccumulator};
 use crate::batch_partitioned::executor::LaneEvent;
 use crate::batch_partitioned::node::RowInterval;
@@ -15,6 +14,7 @@ use crate::batch_partitioned::nodes::{
 };
 use datafusion::arrow::array::Float64Array;
 use datafusion::arrow::datatypes::UInt64Type;
+use datafusion::execution::context::SessionContext;
 
 /// A lane's worth of arrivals through one accumulator, and what it answered with at done.
 fn drive(mut accumulator: CpuAccumulator, arrivals: Vec<CpuBatch>) -> Vec<CpuBatch> {
@@ -49,18 +49,6 @@ fn values_of(batch: &CpuBatch) -> Vec<i64> {
         .collect()
 }
 
-fn keys_of(batch: &CpuBatch) -> Vec<String> {
-    let record = batch.record_batch();
-    let column = record
-        .column(0)
-        .as_any()
-        .downcast_ref::<StringArray>()
-        .expect("the key column");
-    (0..record.num_rows())
-        .map(|row| column.value(row).to_string())
-        .collect()
-}
-
 fn coalesce() -> CpuAccumulator {
     let node = GpuCoalesceAllBatches::new(Given::of(&GROUPED));
     CpuAccumulator::coalesce(&node, &schema_of(&GROUPED).fields)
@@ -91,7 +79,11 @@ fn a_coalesce_that_received_nothing_emits_nothing() {
 fn spilling_sort(ascending: bool, fetch: Option<usize>) -> CpuAccumulator {
     let config = datafusion::prelude::SessionConfig::new()
         .set_u64("datafusion.execution.sort_in_place_threshold_bytes", 0);
-    sort_with(ascending, fetch, SessionContext::new_with_config(config).task_ctx())
+    sort_with(
+        ascending,
+        fetch,
+        SessionContext::new_with_config(config).task_ctx(),
+    )
 }
 
 fn accumulating_sort(ascending: bool, fetch: Option<usize>) -> CpuAccumulator {
@@ -240,10 +232,67 @@ fn avg_merge_body(finalize: Option<Vec<NamedExpr>>) -> AggregateBody {
 }
 
 fn merging(body: AggregateBody, output: Schema, compact_bytes: usize) -> CpuAccumulator {
+    merging_under(body, output, compact_bytes, ctx())
+}
+
+fn merging_under(
+    body: AggregateBody,
+    output: Schema,
+    compact_bytes: usize,
+    ctx: Arc<TaskContext>,
+) -> CpuAccumulator {
     let state = avg_state();
     let node =
         GpuAggregateBatches::new(Given::of_schema(state.clone()), body, state.clone(), output);
-    CpuAccumulator::aggregate(&node, &state.fields, ctx(), compact_bytes).expect("the merge builds")
+    CpuAccumulator::aggregate(&node, &state.fields, ctx, compact_bytes).expect("the merge builds")
+}
+
+/// A session configured to give up on grouping as early as it can: the probe after one
+/// row, and any aggregation ratio above zero enough to trigger it.
+fn eager_to_skip() -> Arc<TaskContext> {
+    let config = datafusion::prelude::SessionConfig::new()
+        .set_usize(
+            "datafusion.execution.skip_partial_aggregation_probe_rows_threshold",
+            1,
+        )
+        .set(
+            "datafusion.execution.skip_partial_aggregation_probe_ratio_threshold",
+            &datafusion::common::ScalarValue::Float64(Some(0.0)),
+        );
+    SessionContext::new_with_config(config).task_ctx()
+}
+
+/// DataFusion's partial aggregate stops grouping where grouping is not paying, which is
+/// sound under a Final stage and wrong here: the merge is a Partial too, so duplicate keys
+/// would reach the finalize as extra rows. The executor overrides the thresholds, and this
+/// asserts what the executor DOES rather than what the context said — the difference being
+/// that a later site building an executor from an unguarded context still goes red here.
+///
+/// Red without the override: two rows for `a` instead of one.
+#[test]
+fn a_merge_groups_even_where_the_session_asks_it_not_to() {
+    let out = drive(
+        merging_under(avg_merge_body(None), avg_state(), 1 << 20, eager_to_skip()),
+        vec![
+            avg_state_batch(vec![("a", 12, 3), ("b", 5, 1)]),
+            avg_state_batch(vec![("a", 10, 1)]),
+        ],
+    );
+    assert_eq!(out.len(), 1, "a merge emits nothing until done");
+    assert_eq!(
+        by_key(&out[0]),
+        vec![
+            (
+                "a".to_string(),
+                vec![ScalarValue::Int64(Some(22)), ScalarValue::Int64(Some(4))]
+            ),
+            (
+                "b".to_string(),
+                vec![ScalarValue::Int64(Some(5)), ScalarValue::Int64(Some(1))]
+            ),
+        ],
+        "one row per key, not one per arrival"
+    );
 }
 
 #[test]
@@ -710,10 +759,9 @@ async fn an_accumulating_sort_answers_from_under_a_blocked_worker() {
             grouped(values.iter().map(|_| Some("k")).collect(), values)
         })
         .collect();
-    let answered =
-        tokio::task::spawn_blocking(move || drive(accumulating_sort(true, None), arrivals))
-            .await
-            .expect("the sort finishes rather than deadlocking under its own spawn");
+    let answered = tokio::task::spawn_blocking(move || drive(spilling_sort(true, None), arrivals))
+        .await
+        .expect("the sort finishes rather than deadlocking under its own spawn");
     let values = values_of(&answered[0]);
     assert_eq!(values.len(), ROWS);
     assert!(

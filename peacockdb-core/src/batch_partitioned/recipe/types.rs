@@ -45,6 +45,10 @@ pub enum ProjectRole {
     /// Build columns straight through, plus one typed NULL per probe column the join's
     /// projection keeps — what makes the anti join's output the joined schema.
     NullPad { nulls: usize },
+    /// The columns the node's projection keeps, out of what the finish emitted. No literal
+    /// in it: the build-side semi family's finish already emits the row, and a projection
+    /// only narrows it. Its absence was two engines answering with different columns.
+    Narrow,
 }
 
 /// The legacy node kinds this mode addresses, carrying the fields a reader cannot get
@@ -126,6 +130,13 @@ pub enum Input {
 }
 
 impl Input {
+    /// Whether this input is the build side, handed over or copied. Asked by an executor
+    /// pricing a call: a probe call that names neither is a call the build side does not
+    /// have to be there for.
+    pub fn is_build_side(&self) -> bool {
+        matches!(self, Self::BuildSide | Self::BuildSideCopy)
+    }
+
     fn text(&self) -> &'static str {
         match self {
             Self::Batch => "batch",
@@ -264,9 +275,14 @@ impl fmt::Display for FbKind {
             Self::Project(ProjectRole::NullPad { nulls }) => {
                 write!(f, "CudfProject{{build columns + {nulls} null}}")
             }
+            Self::Project(ProjectRole::Narrow) => write!(f, "CudfProject{{narrow}}"),
             Self::PlainProject => write!(f, "CudfProject"),
             Self::Aggregate { merge } => {
-                write!(f, "CudfAggregate{{{}}}", if *merge { "Merge" } else { "Partial" })
+                write!(
+                    f,
+                    "CudfAggregate{{{}}}",
+                    if *merge { "Merge" } else { "Partial" }
+                )
             }
             Self::Sort => write!(f, "CudfSort"),
             Self::SortPreservingMerge => write!(f, "CudfSortPreservingMerge"),

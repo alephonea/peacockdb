@@ -780,7 +780,9 @@ fn driven(kind: FbKind) -> Driven {
             JoinType::Inner | JoinType::LeftSemi => Driven::Handled,
             _ => Driven::Refused("a join type no shape here plans"),
         },
-        FbKind::Project(ProjectRole::ProbeKeys) | FbKind::Project(ProjectRole::NullPad { .. }) => {
+        FbKind::Project(ProjectRole::ProbeKeys)
+        | FbKind::Project(ProjectRole::NullPad { .. })
+        | FbKind::Project(ProjectRole::Narrow) => {
             Driven::Refused("the finish pass accumulates probe keys across batches (#136)")
         }
         FbKind::Sort | FbKind::SortPreservingMerge => Driven::Refused("no shape here plans a sort"),

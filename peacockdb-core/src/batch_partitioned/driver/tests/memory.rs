@@ -161,6 +161,7 @@ fn a_join_that_holds_its_build_side_reports_it_while_it_probes() {
         .source("build", vec![vec![spec(4, 512)]])
         .source("probe", vec![vec![spec(10, 80), spec(10, 80)]])
         .with_join(JoinRule {
+            empty_build_owes_its_probe: false,
             finish_rows: 0,
             build_residency: 4096,
         });

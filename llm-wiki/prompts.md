@@ -29,12 +29,6 @@ code itself — do not consult external note repositories.
 - **Write every outgoing message body to a file first**, then send it from the file
   (e.g. `msgq send <to> "$(cat msg.txt)"`) — inline bodies lose backticks and quotes to
   bash.
-- **Messages between agents are as brief as messages to the human.** State what is
-  needed, what changed, or what is wrong; nothing else. No capitalised banners, no
-  restating what the other agent just said back at them, no commentary on how well the
-  work went. A dispatch carries the task and its constraints, a report carries findings
-  and what proves them, an acknowledgement is a line. The receiving agent pays for every
-  sentence in context it could have spent on the code.
 - **Tickets** live in `llm-wiki/tickets.md` (GitHub issues are retired). New bugs and
   follow-ups get a ticket there; ticket IDs (`#NN`) are permanent.
 - **Task specs** go in `llm-wiki/tasks/`. If work on a task outlives one commit, commit

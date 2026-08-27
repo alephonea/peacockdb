@@ -9,6 +9,7 @@
 
 mod accounting;
 mod index;
+pub use index::post_order_of_every_node;
 #[cfg(test)]
 mod mock;
 mod partitioned;
@@ -42,6 +43,9 @@ pub enum CallKind {
     Accumulate,
     MarkDone,
     SetBuild,
+    /// A join lane whose build side ended with no batch — its scatter gave it no build
+    /// rows. No call was made and none will be: what the lane owed was nothing.
+    NoBuild,
     Probe,
     Finish,
     EndOfInput,

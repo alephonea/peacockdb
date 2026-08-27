@@ -46,6 +46,12 @@ pub(crate) enum LaneCall {
     Accumulate,
     MarkDone,
     SetBuild,
+    /// The build side ended with no batch. The executor says whether the lane owes
+    /// nothing — six of the nine join types do — and the lane drains from there.
+    NoBuild,
+    /// A probe batch for a lane that has no build side: released rather than probed, since
+    /// what it could have matched is not there.
+    DropProbe,
     Probe,
     Finish,
     /// No batch can arrive again, and this category has nothing to emit at the end — the
@@ -62,8 +68,10 @@ impl LaneCall {
         match self {
             Self::Exec | Self::Unload | Self::Accumulate => Some(0),
             Self::SetBuild => Some(BUILD_SLOT),
-            Self::Probe => Some(PROBE_SLOT),
-            Self::NextBatch | Self::MarkDone | Self::Finish | Self::EndOfInput => None,
+            Self::Probe | Self::DropProbe => Some(PROBE_SLOT),
+            Self::NextBatch | Self::MarkDone | Self::Finish | Self::NoBuild | Self::EndOfInput => {
+                None
+            }
         }
     }
 }
@@ -74,6 +82,8 @@ pub(crate) struct LaneSite<'a, B: Backend> {
     pub ctx: &'a B::Context,
     pub node: &'a dyn GpuNode,
     pub category: ExecutorCategory,
+    /// The node's children-first position, which is what a recipe is addressed by.
+    pub post_order: usize,
     pub lane: usize,
     pub slot: Slot,
 }
@@ -99,6 +109,9 @@ enum LaneState<B: Backend> {
     BatchAcc(B::BatchAcc),
     Build(B::Join),
     Probe(<B::Join as JoinExecutor<B>>::Probing),
+    /// A join whose build side was empty and which owes nothing: its probe batches still
+    /// arrive, and the lane reads them only to let them go.
+    Draining,
     Unload(B::Unload),
     Finished,
 }
@@ -165,15 +178,18 @@ impl<B: Backend> LaneDriver<B> {
             ExecutorCategory::Exec | ExecutorCategory::Unload => LaneCall::EndOfInput,
             ExecutorCategory::BatchAccumulator if avail.has[0] => LaneCall::Accumulate,
             ExecutorCategory::BatchAccumulator => LaneCall::MarkDone,
-            ExecutorCategory::Join if self.awaits_build() => {
-                // The build side declares SingleBatch, and a coalesce emits one even
-                // having accumulated nothing, so an empty build side is the plan's fault.
-                if !avail.has[BUILD_SLOT] {
-                    return Err(RunError::Protocol(
-                        "a join's build side finished without producing a batch".to_string(),
-                    ));
+            // A lane whose scatter gave its build side no rows: routine for a small table
+            // over many lanes, and the executor is asked what the type owes rather than
+            // the driver assuming the plan is at fault.
+            ExecutorCategory::Join if self.awaits_build() && !avail.has[BUILD_SLOT] => {
+                LaneCall::NoBuild
+            }
+            ExecutorCategory::Join if self.awaits_build() => LaneCall::SetBuild,
+            ExecutorCategory::Join if matches!(self.state, LaneState::Draining) => {
+                match avail.has[PROBE_SLOT] {
+                    true => LaneCall::DropProbe,
+                    false => LaneCall::EndOfInput,
                 }
-                LaneCall::SetBuild
             }
             ExecutorCategory::Join if avail.has[BUILD_SLOT] => {
                 return Err(RunError::Protocol(
@@ -300,6 +316,28 @@ impl<B: Backend> LaneDriver<B> {
                 self.state = LaneState::Probe(probing);
                 Ok(self.outcome(LaneOutputs::Device(Vec::new()), false, CallKind::SetBuild))
             }
+            LaneCall::NoBuild => {
+                let LaneState::Build(executor) = mem::replace(&mut self.state, LaneState::Draining)
+                else {
+                    return Err(self.wrong_state(site, "without_build"));
+                };
+                executor
+                    .without_build()
+                    .map_err(|e| failed(site, acct, None, e))?;
+                acct.forget(site.slot);
+                // Not finished: the probe side is still producing for this lane, and what
+                // it produces has to be read to be let go of.
+                Ok(self.outcome(LaneOutputs::Device(Vec::new()), false, CallKind::NoBuild))
+            }
+            LaneCall::DropProbe => {
+                let batch = self.expect_input(input, site)?;
+                acct.release(batch.bytes)?;
+                Ok(self.outcome(
+                    LaneOutputs::Device(Vec::new()),
+                    false,
+                    CallKind::ReleaseUnwanted,
+                ))
+            }
             LaneCall::Probe => {
                 let batch = self.expect_input(input, site)?;
                 let LaneState::Probe(executor) = &mut self.state else {
@@ -366,8 +404,8 @@ impl<B: Backend> LaneDriver<B> {
     }
 
     fn build(&mut self, site: &LaneSite<'_, B>) -> Result<(), RunError> {
-        let executors =
-            B::executors_for(site.ctx, site.node, site.lane).map_err(RunError::Backend)?;
+        let executors = B::executors_for(site.ctx, site.node, site.post_order, site.lane)
+            .map_err(RunError::Backend)?;
         if executors.category() != site.category {
             return Err(RunError::Backend(PlanError::Invalid(format!(
                 "{}: the backend built a {:?} executor for a {:?} node",

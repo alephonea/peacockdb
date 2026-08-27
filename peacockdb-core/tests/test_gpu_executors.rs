@@ -318,6 +318,9 @@ fn summing(output: &str) -> AggregateBody {
 // another target. The path keeps them under a directory named for this one.
 #[path = "test_gpu_executors/accumulate.rs"]
 mod accumulate;
+
+#[path = "test_gpu_executors/backend.rs"]
+mod backend;
 #[path = "test_gpu_executors/contract.rs"]
 mod contract;
 #[path = "test_gpu_executors/exec.rs"]

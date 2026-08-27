@@ -15,9 +15,9 @@ reference still resolves there.
 | Section | Open | Tickets |
 |---|--:|---|
 | [Critical correctness](#critical-correctness) | 15 | #166 #153 #80 #59 #46 #47 #60 #121 #122 #123 #118 #119 #120 #117 #41 |
-| [Blockers for disabled coverage](#blockers-for-disabled-coverage) | 17 | #169 #168 #158 #97 #23 #32 #65 #62 #91 #95 #57 #45 #63 #56 #55 #96 #143 |
-| [Performance / architecture](#performance--architecture) | 26 | #170 #155 #154 #152 #150 #149 #148 #19 #16 #20 #71 #101 #73 #110 #75 #136 #137 #138 #139 #140 #141 #147 #146 #145 #144 #142 |
-| [Infrastructure / process](#infrastructure--process) | 26 | #167 #164 #163 #159 #160 #161 #162 #113 #114 #116 #126 #134 #133 #132 #131 #130 #129 #128 #127 #172 #124 #125 #13 #94 #69 #49 |
+| [Blockers for disabled coverage](#blockers-for-disabled-coverage) | 19 | #169 #168 #158 #175 #173 #97 #23 #32 #65 #62 #91 #95 #57 #45 #63 #56 #55 #96 #143 |
+| [Performance / architecture](#performance--architecture) | 27 | #177 #170 #155 #154 #152 #150 #149 #148 #19 #16 #20 #71 #101 #73 #110 #75 #136 #137 #138 #139 #140 #141 #147 #146 #145 #144 #142 |
+| [Infrastructure / process](#infrastructure--process) | 28 | #176 #174 #167 #164 #163 #159 #160 #161 #162 #113 #114 #116 #126 #134 #133 #132 #131 #130 #129 #128 #127 #172 #124 #125 #13 #94 #69 #49 |
 
 ## Critical correctness
 
@@ -214,11 +214,41 @@ correctly; the batch-partitioned mode refuses it at plan time. A standing GPU ga
 not a new-mode regression — and no corpus query reaches it, since all 31 using `count(*)`
 carry a WHERE, GROUP BY or JOIN and the rule cannot fire.
 
-The fix is small and belongs to the new mode: the node is a **source that emits its constant
-rows**, so the executor has only to produce what the plan already holds — one lane, one
-batch. Scheduled into T17, with the driver: a source proves itself by what is pulled from it.
+The fix is small on the CPU and unavailable on a device: the node is a source of constant rows,
+and a table of literals made from no input is what the frozen surface has no call for — the same
+wall as [#173](#t173) and [#175](#t175). T17 was to have discharged it and did not: writing the
+CPU half alone makes the oracle answer a query the device refuses, and the oracle is what the
+device is checked against. Waits on the make-a-table-of-literals call all three want.
 Legacy would need the same node in the fbs to close its half,
 not worth doing for a shape neither benchmark has.
+
+<a id="t175"></a>
+### #175 — an empty build side leaves three join types owing rows they cannot make
+`empty_build_answers_nothing` decides what a lane answers when its build side produced no batch.
+Six types owe nothing and end the lane; Right, Full and RightAnti owe their probe side.
+
+Owing the probe side means a call over a build table that does not exist, which the frozen surface
+has no way to express — the same wall as [#173](#t173), reached from the join instead of the
+accumulator. Both backends refuse by name rather than inventing an answer.
+
+The corpus reaches it twice: q21 at bp-tp4-single, and tpcds q77, whose Right outer at four lanes
+gets no build side and owes its probe rows padded with NULLs. q77 is therefore out of the
+end-to-end list, with q2 carrying the union-that-cannot-interleave claim in its place — writing
+the CPU pad alone would make the oracle answer a query the device refuses.
+Unfreezing buys a pass-through of the probe side and the refusal goes.
+
+<a id="t173"></a>
+### #173 — the frozen surface cannot build a table out of nothing
+Every entry point loads a table by reading one, so a node owing rows it did not receive has no
+call to make. Three places hit it: a collapse of no handles, a merge of no runs, and a finish
+whose probe produced no keys and which owes an empty table or one of literals.
+
+Each refuses by name rather than inventing rows, and the CPU backend emits nothing in the same
+places so the two stay one engine. The exception is a global aggregate, which owes its identity
+row whatever arrived.
+
+Unfreezing buys a make-empty-of-schema call and the refusals go. Until then the refusal is the
+contract, and the shapes that reach it are the ones a lane can be empty in.
 
 <a id="t97"></a>
 ### #97 — Semi/anti/outer joins at real-8-way
@@ -325,6 +355,21 @@ rank/dense_rank gaps of #32 carry over unchanged.
 ## Performance / architecture
 
 <a id="t170"></a>
+<a id="t177"></a>
+### #177 — the finish join's intermediate is priced by the node's row, not by what it emits
+`schema_of` in `gpu_backend/join.rs` prices the finish join's output by the node's output schema.
+The finish emits the whole build side — plus the appended boolean for a mark join — so wherever the
+node carries a projection the resident model sees a narrower row than the device holds.
+
+It under-prices, which is the direction that matters: a budget that should refuse the call instead
+lets it run, and the failure arrives from the allocator rather than as the named refusal the
+accounting exists to produce. Pre-dates the narrowing project ([#175](#t175)'s neighbour work),
+which only makes it legible — before it, the finish emitted every build column and the node
+declared fewer, silently.
+
+Needs a device to check, which is why it is a ticket rather than T17's: a pricing fix nothing can
+run is a second guess on top of the first.
+
 ### #170 — a source whose lanes each hold one batch could say so, and three shortcuts would fire
 
 The loader declares `MultipleBatches` unconditionally
@@ -691,6 +736,32 @@ trip log, and `Underestimate` is the precedent for what one would look like. Rel
 
 ## Infrastructure / process
 
+<a id="t176"></a>
+### #176 — the CI coverage guard checks one direction only
+`every_rust_test_target_is_named_by_ci` fails when a target exists that no workflow runs. Nothing
+fails when a workflow names a target that does not exist.
+
+That way round is not silent, but it is expensive and late: cargo errors inside the cuDF leg after
+the C++ build and the dataset generation, so a typo or a step added ahead of its test file costs a
+full run to discover. The case: a `--test test_cpu_batch_partitioned` step was added three commits
+before the file, and both legs went red on it.
+
+The converse is nearly free — `workspace_test_targets()` and the `--test` line parsing both exist,
+so it is one assertion that every target pipeline.yml names is in the workspace set. The exemption
+list already gets this treatment; the step lines do not.
+
+<a id="t174"></a>
+### #174 — two clamps for one rule, and nothing compares them
+`RowRange::clamp` (executor.rs:139) and C++ `clamp_row_range` (node_session.cpp:498) implement the
+same row-range rule for the two backends, and no test reads both.
+
+Its own doc says the risk: the two answering differently "would be a divergence no test of either
+one alone could see". They are not even comparable as written — one returns `(offset, length)`,
+the other `(begin, end)` — so the four Rust cases and the ten C++ cases each prove one side.
+`executor_cases.inc` is this repo's answer to that shape: one table of inputs and expected answers
+that both engines read. The claim that landed with the second clamp, "RowRange::clamp is now the
+one clamp", is what this corrects.
+
 <a id="t167"></a>
 ### #167 — nothing proves a failed query gives its device memory back
 
@@ -811,6 +882,10 @@ already provisions parquet. Accepted risk until then: stale ✗ cells after an u
 plain inner joins plus an aggregate; mixed_join adds a residual range filter) and
 `join_int` (tp8-only oracle test, no tp1 row). Either add the missing GPU test rows or
 mark the cells intentionally-na with a reason.
+
+`nested_loop_left_join` is the fourth row and the one with a reason already: it was added for
+T17's end-to-end tests, which run no device, and its GPU columns belong to T19's enablement
+sweep.
 
 <a id="t126"></a>
 ### #126 — maybe_write_result_golden discards its removal result

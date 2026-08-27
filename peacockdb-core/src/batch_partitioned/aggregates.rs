@@ -74,7 +74,11 @@ pub fn resolve(name: &str) -> Result<AggSpec, PlanError> {
         "stddev_pop" => (AggFunc::Stddev, 0),
         "var" | "var_samp" | "variance" => (AggFunc::Var, 1),
         "var_pop" => (AggFunc::Var, 0),
-        other => return Err(PlanError::Unsupported(format!("aggregate {other}: no decomposition (#161)"))),
+        other => {
+            return Err(PlanError::Unsupported(format!(
+                "aggregate {other}: no decomposition (#161)"
+            )));
+        }
     };
     Ok(AggSpec { func, ddof })
 }
@@ -172,15 +176,17 @@ pub fn finalize(spec: AggSpec, state: &[Field], state_at: u32, out_type: &DataTy
             )
         }
         AggFunc::Stddev | AggFunc::Var => {
-            let ddof = Expr::Literal(datafusion::common::ScalarValue::Int64(Some(
-                spec.ddof as i64,
-            )));
-            let denominator = Expr::binary(
-                column(0),
-                BinaryOp::Minus,
-                ddof.clone(),
-                state[0].data_type().clone(),
-            );
+            // Every operand in the output's type, the count cast up to it before anything
+            // is subtracted. Two reasons, and both engines evaluate this expression: arrow
+            // refuses UInt64 - Int64 and Float64 / UInt64 outright rather than widening
+            // them, and a count below ddof would wrap rather than go negative in the
+            // count's own unsigned type — which is exactly the case the NULL arm is for.
+            let counted = Expr::Cast {
+                expr: Box::new(column(0)),
+                target: out_type.clone(),
+            };
+            let ddof = Expr::Literal(number_of(out_type, spec.ddof as f64));
+            let denominator = Expr::binary(counted, BinaryOp::Minus, ddof, out_type.clone());
             let quotient = Expr::binary(
                 column(2),
                 BinaryOp::Divide,
@@ -199,7 +205,7 @@ pub fn finalize(spec: AggSpec, state: &[Field], state_at: u32, out_type: &DataTy
                     Expr::binary(
                         denominator,
                         BinaryOp::LtEq,
-                        Expr::Literal(datafusion::common::ScalarValue::Int64(Some(0))),
+                        Expr::Literal(number_of(out_type, 0.0)),
                         DataType::Boolean,
                     ),
                     Expr::Literal(null_of(out_type)),
@@ -207,6 +213,18 @@ pub fn finalize(spec: AggSpec, state: &[Field], state_at: u32, out_type: &DataTy
                 else_expr: Some(Box::new(value)),
             }
         }
+    }
+}
+
+/// A number in the type an aggregate declares it outputs. Exhaustive on purpose: a
+/// dispersion output that is not a float is a decomposition that has changed, and picking
+/// a default here would move the arithmetic rather than say so.
+fn number_of(data_type: &DataType, value: f64) -> datafusion::common::ScalarValue {
+    use datafusion::common::ScalarValue;
+    match data_type {
+        DataType::Float64 => ScalarValue::Float64(Some(value)),
+        DataType::Float32 => ScalarValue::Float32(Some(value as f32)),
+        other => panic!("a stddev or variance declared {other}, which no aggregate does"),
     }
 }
 

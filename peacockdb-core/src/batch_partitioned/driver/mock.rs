@@ -6,8 +6,8 @@
 //! right moment. Sources are scripted per table name and per lane; every other category
 //! takes one rule for the whole plan, which is what keeps a test's setup readable.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 use datafusion::arrow::array::{Int64Array, RecordBatch};
 use datafusion::arrow::datatypes::{DataType, Field, Schema as ArrowSchema};
@@ -84,6 +84,10 @@ pub(super) enum EmitRule {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct JoinRule {
+    /// Whether a lane with no build batch owes its probe side rather than nothing — the
+    /// three join types that preserve unmatched probe rows, which no executor can answer
+    /// without a build table.
+    pub empty_build_owes_its_probe: bool,
     /// Rows the finish pass emits. Zero is a join that needs no finish.
     pub finish_rows: usize,
     /// Bytes the build side keeps resident until the join is done.
@@ -123,6 +127,12 @@ pub(super) struct Script {
     /// How many executor sets have been built. A lane builds on its first step, not
     /// before, and an eager build is invisible without a count.
     pub built: Arc<AtomicUsize>,
+    /// Every build, as the node's address and the post-order it was handed. The count
+    /// above says a set was built; this says which node the driver thought it was
+    /// building for, which is the only place that number is observable at all. An address
+    /// rather than a name, because a plan holds several nodes of a kind and a name would
+    /// pair a build with the wrong one of them.
+    pub built_at: Arc<Mutex<Vec<(usize, usize)>>>,
     /// Build an exec executor for every node, whatever its category — a backend wired to
     /// the wrong trait, which the driver has to catch where the set was built.
     pub miswired: bool,
@@ -136,6 +146,7 @@ impl Default for Script {
             accumulate: AccRule::CoalesceAll,
             emit: EmitRule::RoundRobin,
             join: JoinRule {
+                empty_build_owes_its_probe: false,
                 finish_rows: 0,
                 build_residency: 0,
             },
@@ -145,6 +156,7 @@ impl Default for Script {
             fails_at: None,
             miswired: false,
             built: Arc::new(AtomicUsize::new(0)),
+            built_at: Arc::new(Mutex::new(Vec::new())),
         }
     }
 }
@@ -503,6 +515,14 @@ impl JoinExecutor<Mock> for MockJoin {
             stats,
         ))
     }
+
+    /// A script says what a join owes with no build side, since a mock join has no type.
+    fn without_build(self) -> Result<(), BackendError> {
+        match self.script.join.empty_build_owes_its_probe {
+            false => Ok(()),
+            true => Err(BackendError::new("this lane's build side is empty")),
+        }
+    }
 }
 
 impl ProbingJoin<Mock> for MockProbing {
@@ -546,6 +566,13 @@ impl UnloadExecutor<Mock> for MockUnload {
     }
 }
 
+/// A node's identity as a number, which is what a recording can hold and compare. The
+/// vtable half of a trait-object pointer is not stable across casts, so only the data
+/// half is taken.
+pub(super) fn address_of(node: &dyn GpuNode) -> usize {
+    node as *const dyn GpuNode as *const () as usize
+}
+
 pub(super) fn cpu_batch(rows: usize) -> CpuBatch {
     let schema = Arc::new(ArrowSchema::new(vec![Field::new(
         "k",
@@ -570,9 +597,15 @@ impl Backend for Mock {
     fn executors_for(
         script: &Script,
         node: &dyn GpuNode,
+        post_order: usize,
         lane: usize,
     ) -> Result<NodeExecutors<Self>, PlanError> {
         script.built.fetch_add(1, Ordering::Relaxed);
+        script
+            .built_at
+            .lock()
+            .expect("the recording mutex")
+            .push((address_of(node), post_order));
         let script = script.clone();
         if script.miswired {
             return Ok(NodeExecutors::Exec(MockExec { script }));

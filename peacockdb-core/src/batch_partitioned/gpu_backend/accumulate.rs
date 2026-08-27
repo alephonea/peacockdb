@@ -197,6 +197,10 @@ pub struct Collapse {
 }
 
 impl Collapse {
+    pub fn held(&self) -> &[GpuBatch] {
+        &self.held
+    }
+
     fn accumulate_and_fetch(&mut self, batch: GpuBatch) -> CallResult<Vec<GpuBatch>> {
         self.held.push(batch);
         Ok((Vec::new(), CallStats::default()))
@@ -228,6 +232,10 @@ pub struct SortedRuns {
 }
 
 impl SortedRuns {
+    pub fn held(&self) -> &[GpuBatch] {
+        &self.held
+    }
+
     fn accumulate_and_fetch(&mut self, batch: GpuBatch) -> CallResult<Vec<GpuBatch>> {
         let (seq, kind) = self.sort;
         let (handle, stats) = execute_node(self.executor, seq, kind, &[hand_over(vec![batch])])?;
@@ -272,7 +280,7 @@ impl AggregateBatches {
         self.compactions
     }
 
-    fn held_bytes(&self) -> usize {
+    pub fn held_bytes(&self) -> usize {
         self.state.as_ref().map(Batch::byte_size).unwrap_or(0)
             + self.pending.iter().map(Batch::byte_size).sum::<usize>()
     }
@@ -334,6 +342,11 @@ pub struct GpuPartitionAccumulator {
 }
 
 impl GpuPartitionAccumulator {
+    /// What each lane is holding, for the accounting the driver sums.
+    pub fn per_lane(&self) -> impl Iterator<Item = &[GpuBatch]> {
+        self.per_lane.iter().map(|lane| lane.as_slice())
+    }
+
     pub fn merge_sorted(
         executor: *mut PeacockExecutor,
         recipe: &Recipe,

@@ -17,6 +17,11 @@ pub(crate) struct IndexedNode<'a> {
     pub children: Vec<usize>,
     pub parent: Option<usize>,
     pub lanes: usize,
+    /// This node's position in a children-first walk, which is what `RecipePlan` indexes
+    /// by and what a backend hands to `executors_for`. Pre-order is what the schedule
+    /// needs and post-order is what the recipes are addressed by; the two are computed
+    /// here together so nothing has to reconcile them later.
+    pub post_order: usize,
     /// The child's lane count, which is how many `Done` events a partition accumulator
     /// owes. Zero for every other category.
     pub input_lanes: usize,
@@ -40,7 +45,8 @@ impl<'a> PlanIndex<'a> {
     pub(crate) fn build(root: &'a dyn GpuNode) -> Result<Self, PlanError> {
         let mut nodes = Vec::new();
         let mut heights = Vec::new();
-        walk(root, 0, None, &mut nodes, &mut heights);
+        let mut post_order = 0;
+        walk(root, 0, None, &mut nodes, &mut heights, &mut post_order);
 
         for node in &mut nodes {
             node.ready_lanes = match node.category {
@@ -107,6 +113,7 @@ fn walk<'a>(
     parent: Option<usize>,
     nodes: &mut Vec<IndexedNode<'a>>,
     heights: &mut Vec<u32>,
+    post_order: &mut usize,
 ) -> usize {
     let index = nodes.len();
     let category = category_of(node);
@@ -120,12 +127,13 @@ fn walk<'a>(
         interval: node.row_interval(),
         ready_lanes: 0,
         slot_base: 0,
+        post_order: 0,
     });
     heights.push(height);
     let children: Vec<usize> = node
         .children()
         .into_iter()
-        .map(|child| walk(child, height + 1, Some(index), nodes, heights))
+        .map(|child| walk(child, height + 1, Some(index), nodes, heights, post_order))
         .collect();
     // A sink declares no layout of its own, so it runs the lanes its input hands it.
     let lanes = match node.kind().layout() {
@@ -140,6 +148,11 @@ fn walk<'a>(
     nodes[index].children = children;
     nodes[index].lanes = lanes;
     nodes[index].input_lanes = input_lanes;
+    // Children first, so this is the position `attach_recipes` gave the same node — the
+    // address a recipe is looked up by, and the one the FFI's seqs are numbered in. Taken
+    // from the walk the driver already makes rather than derived a third time.
+    nodes[index].post_order = *post_order;
+    *post_order += 1;
     index
 }
 
@@ -154,3 +167,20 @@ fn subtree_ranges(nodes: &[IndexedNode<'_>]) -> Vec<(usize, usize)> {
     }
     (0..nodes.len()).map(|index| (index, end[index])).collect()
 }
+
+/// Each node's children-first position, in the driver's own pre-order.
+///
+/// Exposed for one guard: that these are the positions `attach_recipes` gave the same
+/// nodes. Two numberings computed by two walks in two files — one at plan time, one at run
+/// time — agree by construction only until someone changes a walk, and nothing else
+/// compares them.
+pub fn post_order_of_every_node(root: &dyn GpuNode) -> Result<Vec<usize>, PlanError> {
+    Ok(PlanIndex::build(root)?
+        .nodes
+        .iter()
+        .map(|node| node.post_order)
+        .collect())
+}
+
+#[cfg(test)]
+mod tests;

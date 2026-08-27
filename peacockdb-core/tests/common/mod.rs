@@ -88,6 +88,14 @@ pub fn data_dir_for(dataset: &str, sf: &str) -> PathBuf {
 /// digest of something that is not a real buffer. So the path is held constant instead: a
 /// symlink whose location is the same on every machine.
 pub fn canonical_root() -> PathBuf {
+    // Once per process, not once per call: the staged name below is unique per PROCESS, so
+    // two threads pointing the link at the same instant collide on it — one create fails
+    // EEXIST, or one remove deletes the other's before its rename.
+    static LINK: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    LINK.get_or_init(point_canonical_root).clone()
+}
+
+fn point_canonical_root() -> PathBuf {
     let link = PathBuf::from("/tmp/peacock-plan-bytes-root");
     let real = testdata_root();
     // Re-pointed every run, since a stale link from another checkout would silently

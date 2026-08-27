@@ -16,7 +16,8 @@ use super::node::GpuNode;
 use super::nodes::ExecutorCategory;
 
 pub trait Backend: Sized {
-    /// GPU: the open `NodeSession`; CPU: ().
+    /// What an executor is built from besides its node: the GPU's open session and the
+    /// recipe plan its seqs address, the CPU's `TaskContext`.
     type Context;
     type Batch: super::batch::Batch;
     type Source: SourceExecutor<Self>;
@@ -31,9 +32,16 @@ pub trait Backend: Sized {
     /// needed because a loader's lane picks its own row groups out of the partitioner's
     /// mapping. Construction lives here rather than on the node so that a node describes
     /// what it computes and stops knowing that backends exist.
+    ///
+    /// `post_order` is the node's position in a children-first walk, which is the address
+    /// `RecipePlan` indexes by. It rides in from `PlanIndex`, which computes it in the
+    /// walk it already makes: the schedule needs pre-order and the recipes are addressed
+    /// post-order, and a backend deriving the second from the first would be a third walk
+    /// that agrees with the other two by coincidence.
     fn executors_for(
         ctx: &Self::Context,
         node: &dyn GpuNode,
+        post_order: usize,
         lane: usize,
     ) -> Result<NodeExecutors<Self>, super::error::PlanError>;
 }
@@ -173,6 +181,9 @@ mod tests {
                 fn set_build(self, _batch: $batch) -> CallResult<$probing> {
                     Ok(($probing, CallStats::default()))
                 }
+                fn without_build(self) -> Result<(), BackendError> {
+                    Ok(())
+                }
             }
             impl ProbingJoin<$backend> for $probing {
                 fn probe_and_fetch(&mut self, batch: $batch) -> CallResult<Vec<$batch>> {
@@ -202,6 +213,7 @@ mod tests {
                 fn executors_for(
                     _ctx: &(),
                     node: &dyn GpuNode,
+                    _post_order: usize,
                     _lane: usize,
                 ) -> Result<NodeExecutors<Self>, PlanError> {
                     match node.kind() {
