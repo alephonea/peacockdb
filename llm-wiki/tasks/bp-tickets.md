@@ -9,7 +9,10 @@ lives in `../tickets.md`, so a number is never two things and an older reference
 wherever it points.
 
 Otherwise the same rules, in `coding-style.md`: at most fifteen lines, at most two stating the
-problem, about code and never about documentation. Each ticket carries an `<a id="tNN">` anchor
+problem, about code and never about documentation. One exception, granted for this file: a ticket
+that carries a deferred fix in enough detail not to be re-derived may run to thirty. The cap is
+there so a triaging reader is not made to read a design document; a fix already worked out and
+then thrown away costs more than the lines do. Each ticket carries an `<a id="tNN">` anchor
 above its own header, which is what the cost widget's index resolves a link against.
 
 <a id="t181"></a>
@@ -31,22 +34,40 @@ q96. Those rows carry `#181` on their gpu columns.
 <a id="t182"></a>
 ### #182 — two accounting properties are out of reach, and no budgeted run survives
 
-Pricing a batch from the plan's schema disabled two cases. Neither property stopped being true,
-and with them off, those two sites were the only ones in the tree passing `Some(budget)` over a
-planned query — so the accountant's enforcement path is now exercised by unit cases over the mock
-backend and by nothing else, which is the state the budget case was written to end.
+Pricing a batch from the plan's schema disabled two cases in `test_cpu_batch_partitioned.rs`,
+both `#[ignore]`d rather than deleted so they stay in `--list`. Neither property stopped being
+true. Deferred deliberately: T18's bar was results and node stats, not memory.
 
-The budget case is [#179](../tickets.md#t179): `boundary()` searches upward from the observed peak,
-so "10057 also fits" says the peak is 10,057 and the trip is below it. Logical pricing raised the
-peak (8,222 to 10,057, a bitmap arrow never allocated) without raising the modelled transient as
-much, so a downward search settles it.
+**What it costs meanwhile.** Those two sites were the only ones in the tree passing `Some(budget)`
+over a planned query, so the accountant's enforcement path is now exercised by unit cases over the
+mock backend and by nothing else — eight `Executor` impls report a residency and a transient on
+real plans and nothing budgeted reads them. That is the state the budget case was written to end,
+and it is the reason to pick this up rather than either property on its own.
 
-The rebatcher case loses its query, not its premise. A rebatcher cannot move a *total* built from
-logical bytes, but a peak is what is resident at once and `GpuCoalesceAllBatches` holds its whole
-lane before emitting one batch — both live at the emit, a rows fact logical bytes carry.
-`nested-loop-join` has one batch per lane and its old 318-byte move was arrow reallocating it;
-`tpch/nested-limits` at `bp-tp4-rowgroup` can show it, at 3 ms a run. T17a's drain half is
-untouched — a drained lane changes rows per lane, so q16's 104.7 MB against 77.9 MB stands.
+**The budget case is [#179](../tickets.md#t179).** `boundary()` sets `(low, high) = (peak, peak * 8)`
+and searches upward, so its byte-below arm fails whenever `fits(peak)` — and "10058 fits, 10057
+also fits" says the peak is 10,057 and the trip is somewhere below it. Logical pricing raised the
+peak (8,222 to 10,057, a validity bitmap arrow never allocated) without raising the modelled
+transient as much, so the boundary fell under the floor the search starts from.
+
+Fix: when `fits(peak)`, search `(0, peak)` instead. Same bisection, same assertions, and the
+byte-below arm then means what it says. `boundary()`'s doc claims the peak is a floor because a
+pre-call check tests a modelled transient that can exceed what was held — true, and this is the
+case where it does not, so the doc wants the other direction named beside it.
+
+**The rebatcher case lost its query, not its premise.** A rebatcher cannot move a *total* built
+from logical bytes, but a peak is what is resident at once, and `GpuCoalesceAllBatches` holds its
+whole lane before emitting one batch — both live at the emit, a rows fact logical bytes carry.
+`nested-loop-join` cannot show it: one batch per lane, so the rebatcher merges one into one, and
+its old 318-byte move was arrow reallocating a single batch.
+
+Fix: repoint the second pair at `tpch/nested-limits` at `bp-tp4-rowgroup` (`BP_MODES[3]`), whose
+`part` loader is `partition_groups=[[[0],[1]]]` — two batches in one lane — and is the plan's peak
+node at 983,071 estimated against 1,600,062 source bytes. Three milliseconds a run. It is already
+in the corpus and in the injected set, so nothing new is declared.
+
+T17a's drain half is untouched: a drained lane changes rows per lane, so q16's 104.7 MB against
+77.9 MB stands.
 
 <a id="t183"></a>
 ### #183 — the device exports Utf8 where the sink declares Utf8View
