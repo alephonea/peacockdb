@@ -16,7 +16,7 @@ mod common;
 
 use std::path::{Path, PathBuf};
 
-use common::bp_mode::BP_MODES;
+use common::bp_mode::{BP_MODES, mode_named};
 use common::corpus_golden::{
     Regeneration, SKIPPED, cost_golden, cpu_golden, merge_section, merged_text, result_golden,
 };
@@ -154,19 +154,28 @@ fn a_cleared_bit_turns_a_real_section_into_a_marker() {
     );
 }
 
-/// The over-cap result keeps its section and says why. No query in the twenty produces one
-/// — the cap is about result size and they were chosen for small plans — so the shape is
-/// pinned here rather than left to the first query that trips it.
+/// The over-cap result keeps its section, says why, and names who decided — in that order.
+///
+/// Built by calling `over_cap` rather than by formatting a twin: nine sites read a leading
+/// SKIPPED as "this section holds no rows", `corpus_gpu` among them, so a mode line ahead of
+/// it would let a `golden_exact` device case compare against nothing. A hand-built body pins
+/// the test's own string and leaves that ordering asserted nowhere.
 #[test]
 fn an_over_cap_result_is_a_marker_and_not_a_deletion() {
     let declared = skeleton(&[("q1", true)]);
-    let body = format!("{SKIPPED}the result is 300000 bytes, at or above the 262144-byte cap\n");
+    let mode = mode_named("bp_tp4_sized");
+    let body = common::corpus::over_cap(Some(300_000), mode);
     let after = merged_text("", &declared, "q1", &body, Regeneration::Whole);
     assert_eq!(after, format!("== q1\n{body}"));
     let (_, held) = ordered_sections(&after).remove(0);
     assert!(
         held.starts_with(SKIPPED),
-        "a reader cannot tell why it is absent"
+        "a reader cannot tell why it is absent, and every SKIPPED reader now sees rows: {held}"
+    );
+    assert_eq!(
+        held.lines().nth(1),
+        Some(format!("mode={}", mode.name).as_str()),
+        "the marker must name its author on the SECOND line: {held}"
     );
 }
 
@@ -529,8 +538,8 @@ fn every_enabled_cell_has_a_section_with_content_and_every_disabled_one_a_marker
                 ordered_sections(&text).into_iter().collect();
             for row in rows.iter().filter(|r| r.dataset == dataset && r.sf == sf) {
                 let state = row.states.get(&column).map(String::as_str).unwrap_or("na");
-                let held = sections.get(&row.query);
-                let at = format!("{dataset} {} {}", mode.name, row.query);
+                let held = sections.get(&common::registry::stem(&row.query));
+                let at = format!("{dataset} {} {}", mode.name, common::registry::stem(&row.query));
                 match (state, held) {
                     ("enabled", None) => wrong.push(format!("{at}: enabled and has no section")),
                     ("enabled", Some(body)) if body.starts_with(SKIPPED) => {
@@ -551,6 +560,67 @@ fn every_enabled_cell_has_a_section_with_content_and_every_disabled_one_a_marker
     assert!(checked > 500, "only {checked} cells were checked");
 }
 
+/// Every section's `mode=` is the mode that would author it today.
+///
+/// The author is the LAST mode a query declares, so a cut removing trailing modes moves the
+/// authorship — and a section written by the old author is correct-looking, current and stale. The
+/// absent case is caught by the two tests that read the section; this is the present one, which
+/// nothing else looks at.
+///
+/// Read off `ordered_sections` rather than `sections_with_content`, and discriminating on a `mode=`
+/// line being PRESENT rather than on SKIPPED being absent: an over-cap section carries both, and it
+/// is the section this guard most needs to see.
+#[test]
+fn every_result_section_names_the_mode_that_would_author_it_now() {
+    let rows = common::registry::load_csv();
+    let mut compared = 0;
+    let mut markers = 0;
+    for (dataset, sf) in [("tpch", "1"), ("tpcds", "1")] {
+        let path = result_golden(dataset, sf);
+        let text = std::fs::read_to_string(&path).expect("the result golden");
+        for (query, body) in ordered_sections(&text) {
+            let Some(wrote) = body.lines().find_map(|l| l.strip_prefix("mode=")) else {
+                markers += 1;
+                continue;
+            };
+            let row = rows
+                .iter()
+                .find(|r| r.dataset == dataset && r.sf == sf && common::registry::stem(&r.query) == query)
+                .unwrap_or_else(|| panic!("{dataset}/{query}: a section with no registry row"));
+            // `enabled | skip` is the pair `declared_sections` uses to decide a query has a
+            // section at all, so counting only `enabled` would disagree with the writer about
+            // who the author is — and disagree on the rarest cells.
+            let author = BP_MODES.iter().rev().find(|mode| {
+                let column = format!("bp_cpu_{}", mode.ident().trim_start_matches("bp_"));
+                row.states.get(&column).is_some_and(|s| s == "enabled" || s == "skip")
+            });
+            assert_eq!(
+                Some(wrote),
+                author.map(|mode| mode.name),
+                "{dataset}/{query}: the section says {wrote} and the last mode it declares is {}",
+                author.map(|mode| mode.name).unwrap_or("none")
+            );
+            compared += 1;
+        }
+    }
+    // The exact count, derived rather than floored: every row with an authority has a
+    // section carrying that mode, so the two numbers are the same set counted twice. A
+    // floor of one passes on the day all but one stop being compared, which is the failure
+    // a guard over a whole corpus is most likely to have.
+    let expected = rows
+        .iter()
+        .filter(|r| ["tpch", "tpcds"].contains(&r.dataset.as_str()) && r.sf == "1")
+        .filter(|r| {
+            BP_MODES.iter().any(|mode| {
+                let column = format!("bp_cpu_{}", mode.ident().trim_start_matches("bp_"));
+                r.states.get(&column).is_some_and(|s| s == "enabled" || s == "skip")
+            })
+        })
+        .count();
+    println!("compared {compared} sections, {markers} markers");
+    assert_eq!(compared, expected, "every row with an authority has one section naming it");
+}
+
 /// The one golden whose key carries no mode names the mode that wrote it, and that mode has
 /// to be the authority: the LAST the query declares, in the fixed sequence. A section
 /// written by any other mode is one a filtered regeneration re-authored from a run that was
@@ -564,7 +634,7 @@ fn each_result_section_was_written_by_the_mode_entitled_to_write_it() {
         for (query, body) in ordered_sections(&text) {
             let row = rows
                 .iter()
-                .find(|r| r.dataset == dataset && r.sf == sf && r.query == query)
+                .find(|r| r.dataset == dataset && r.sf == sf && common::registry::stem(&r.query) == query)
                 .unwrap_or_else(|| panic!("{dataset}/{query}: a section with no registry row"));
             let entitled = BP_MODES.iter().rev().find(|mode| {
                 let column = format!("bp_cpu_{}", mode.ident().trim_start_matches("bp_"));

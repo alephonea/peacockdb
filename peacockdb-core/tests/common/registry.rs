@@ -154,6 +154,16 @@ pub struct CsvRow {
     pub tickets: Vec<String>,
 }
 
+/// The spelling everything but the CSV uses. The CSV's query column is a Rust identifier —
+/// the macro takes it as one — so a query is `scan_limit` there and `scan-limit` in every
+/// golden section, query file and case name. The two are compared in enough places that a
+/// hyphenated query matching no row reads as absent rather than as wrong: `authoritative_mode`
+/// returned None for the whole of T19's first batch and nothing went red. This is the one
+/// conversion, called at every point the two names meet.
+pub fn stem(query: &str) -> String {
+    query.replace('_', "-")
+}
+
 /// The 15 hand-assigned feature codes. Not derived from SQL and not asserted
 /// against it — but the SET is closed, so a typo'd code fails rather than silently
 /// creating a new one-off category that renders as an unknown chip in the widget.
@@ -466,7 +476,7 @@ pub fn assert_cross_mode_golden_invariant() {
             }) {
                 continue;
             }
-            let query = row.query.replace('_', "-");
+            let query = stem(&row.query);
             let golden = super::testdata_root()
                 .join(format!("goldens/{}.sf{}", row.dataset, row.sf))
                 .join(format!("{query}.{label}.cpu.txt"));

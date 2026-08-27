@@ -42,8 +42,7 @@ use peacockdb_core::batch_partitioned::schema::Schema;
 
 use super::rebuild::{key, lanes_of, rebuild, scan_of, schema_of, sorted, source};
 
-/// At most this many injected runs per query, chosen against the timing table in
-/// `llm-wiki/reports/injection-timing.md`: 30 is 212 s for the eleven queries serially,
+/// At most this many injected runs per query: 30 is 212 s for the eleven queries serially,
 /// and the cover the selector guarantees is 13 of them.
 pub const CAP: usize = 30;
 

@@ -80,13 +80,48 @@ include!("common/corpus_cases.inc");
 ///
 /// Derivable is why a CHECK can exist here, never why either value would be absent from the
 /// line. Read off the declaration and the committed golden, so it needs no run — which is
+/// A device cell exists only where the cpu has one at the same mode.
+///
+/// The device tier asserts read-only against the section the cpu authored AT THAT MODE, so a
+/// gpu cell whose cpu twin is off compares against a skipped marker and passes having checked
+/// nothing. It holds across all 600 cells today by six hand-chosen cells rather than by a
+/// rule, and the moment [#152] clears somebody enables device modes in bulk.
+///
+/// Read off the registry rather than the declarations: `CorpusDeclaration` carries the two
+/// oracles and not the modes, and a disabled mode submits no registration to compare.
+#[test]
+fn every_device_cell_has_a_cpu_cell_at_the_same_mode() {
+    let mut wrong: Vec<String> = Vec::new();
+    let mut checked = 0;
+    for row in common::registry::load_csv() {
+        for mode in &common::bp_mode::BP_MODES {
+            let suffix = mode.ident().trim_start_matches("bp_").to_string();
+            let live = |prefix: &str| {
+                row.states
+                    .get(&format!("{prefix}{suffix}"))
+                    .is_some_and(|s| s == "enabled" || s == "skip")
+            };
+            checked += 1;
+            if live("bp_gpu_") && !live("bp_cpu_") {
+                wrong.push(format!("{}/{} at {}", row.dataset, row.query, mode.name));
+            }
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "these device cells have no cpu cell at the same mode, so each compares against a \
+         marker and passes having checked nothing: {wrong:?}"
+    );
+    assert_eq!(checked, common::registry::load_csv().len() * common::bp_mode::BP_MODES.len());
+}
+
 /// what makes it catch the first `live_cpu` query BEFORE the rollout that needs it, rather
 /// than during.
 #[test]
 fn each_declarations_two_oracles_suit_each_other() {
     let mut wrong: Vec<String> = Vec::new();
     for declared in inventory::iter::<common::registry::CorpusDeclaration> {
-        let query = declared.query.replace('_', "-");
+        let query = common::registry::stem(declared.query);
         let authority = common::corpus::authoritative_mode(declared.dataset, declared.sf, &query);
         // A query with no enabled mode has no result section to reason about, and its
         // oracles are inert until one is enabled.
@@ -124,6 +159,64 @@ fn each_declarations_two_oracles_suit_each_other() {
         }
     }
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+/// A hyphenated query resolves its authority, and that authority is what silence would cost.
+///
+/// The CSV spells a query as an identifier and every golden section spells it with hyphens, so
+/// a reader comparing the two directly finds no row and answers None — and None is a legal
+/// answer here, meaning "no mode is enabled". So nothing writes the query's `.result.txt`
+/// section, nothing reads it, and the test above excuses the query at its `authority.is_none()`
+/// guard. T18's twenty are all `qNN` and cannot reach it; T19's first batch is five queries that
+/// can, `scan-limit` among them — which is the query that test was written for.
+#[test]
+fn a_hyphenated_query_resolves_its_authority_and_has_its_result_section() {
+    let rows = common::registry::load_csv();
+    let mut checked = 0;
+    for declared in inventory::iter::<common::registry::CorpusDeclaration> {
+        let query = common::registry::stem(declared.query);
+        if query == declared.query {
+            continue;
+        }
+        let row = rows
+            .iter()
+            .find(|r| r.dataset == declared.dataset && r.sf == declared.sf && r.query == declared.query)
+            .unwrap_or_else(|| panic!("{}/{query}: declared and not in the registry", declared.dataset));
+        // A query enabled at no mode has no authority to resolve, which is the same None for
+        // an entirely different reason — the one this test exists to tell apart.
+        if !row.states.iter().any(|(col, state)| col.starts_with("bp_cpu_") && state == "enabled") {
+            continue;
+        }
+        let authority = common::corpus::authoritative_mode(declared.dataset, declared.sf, &query);
+        assert!(
+            authority.is_some(),
+            "{}/{query} is enabled and resolves no authoritative mode. The registry spells it \
+             {} and this asked for {query}, so the row was never found — no result section is \
+             written, nothing checks it, and the oracle pairing above excuses the query.",
+            declared.dataset,
+            declared.query
+        );
+        common::corpus_golden::section_of(
+            &common::corpus_golden::result_golden(declared.dataset, declared.sf),
+            &query,
+        );
+        checked += 1;
+    }
+    // The exact count rather than a floor: a floor of one passes on the day all but one
+    // hyphenated query stops being checked, and the set is derivable from the same two
+    // sources the loop reads.
+    let expected = inventory::iter::<common::registry::CorpusDeclaration>
+        .into_iter()
+        .filter(|d| common::registry::stem(d.query) != d.query)
+        .filter(|d| {
+            rows.iter()
+                .find(|r| r.dataset == d.dataset && r.sf == d.sf && r.query == d.query)
+                .is_some_and(|r| {
+                    r.states.iter().any(|(col, state)| col.starts_with("bp_cpu_") && state == "enabled")
+                })
+        })
+        .count();
+    assert_eq!(checked, expected, "every enabled hyphenated query is checked, and only those");
 }
 
 /// The five `bp_cpu_` columns against what this binary declares, in both directions: a
