@@ -70,9 +70,7 @@ arrive from the human one at a time.
     retargets each child PR as its base merges. Never reorder or skip a link to merge
     something sooner.
   - Every commit is pushed, and the branch's PR is opened as soon as the first commit is
-    pushed — an unpushed commit is invisible to CI and to the reviewer, and a branch whose
-    PR waits for the work to look finished spends the whole task with no CI and no base for
-    the next link.
+    pushed — to start CI early in development
 - **You perform *all* git operations** (branch, commit, push, PR, merge). The developer
   and reviewer never mutate git state. Stage the paths you mean and read `git status` before
   committing: `git add -A <dir>` sweeps in whatever untracked files happen to sit there, and
