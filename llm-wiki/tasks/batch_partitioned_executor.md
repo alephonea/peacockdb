@@ -2087,7 +2087,7 @@ build-test.md).
 in Python, operators built with pandas, plans hand-built (no DataFusion, no planner) — an
 emulation of tree execution whose purpose is to settle the push model before any Rust
 exists. Lives in [`scripts/exec_model/`](../../scripts/exec_model/README.md); its tests run
-in CI (cost-report, plus the TPC-H set in cpp-cpu, which has the generated sf1).
+in CI (cost-report, plus the TPC-H set in dataset-matrix, which has the generated sf1).
 
 Done — struck through, and folded into this document where it changed a decision:
 
@@ -3171,10 +3171,10 @@ which is two tickets and not one.
 
 **The cost of running all of it is accepted for now.** 119 queries at five modes is about 595 cpu
 runs and as many on a device, against a corpus measurement nobody has: T17a's report covers
-eleven queries chosen for being the cheapest. Measured the way T17a did, serially and one row per query, in
-[corpus-tier-timing.md](../reports/corpus-tier-timing.md): 45.9 s for 87 cpu runs on one thread,
-26.2 s on the two CI uses, and a 1.34 GB peak of which one query is 1.28 GB. It gates nothing. The one thing that would force this open
-again is a job that stops finishing: pipeline.yml's cpp-cpu leg has already been lost once at
+eleven queries chosen for being the cheapest. Measured serially, one row per query: 45.9 s for 87
+cpu runs on one thread, 26.2 s on the two CI uses, and a 1.34 GB peak of which one query is
+1.28 GB. It gates nothing. The one thing that would force this open
+again is a job that stops finishing: pipeline.yml's dataset-matrix leg has already been lost once at
 fifty-eight minutes on a tier a fraction of this size, and the device leg runs
 `--test-threads=1` on one host.
 
@@ -3246,7 +3246,7 @@ output of this task besides the enabled rows. Not one line of `peacockdb-core/sr
 T18 left the goldens' own surface finished, so anything this task would have to change is by
 definition a query's blocker rather than the rollout's.
 
-**Three paths are edited by hand, two kinds of file move without being written, and a commit
+**Four paths are edited by hand, one kind of file moves without being written, and a commit
 touching anything else has stopped being a rollout.** By hand:
 
 - the shared `corpus_query!` list, one file that every binary includes and reads through its own
@@ -3261,6 +3261,48 @@ holds: no row in it today has a `disabled` cell and an empty ticket list, and th
 DataFusion cannot plan at all carry [#23](../tickets.md#t23) against an `na`. A rollout is the
 one thing that could break it, since it is the only task that turns cells off in bulk.
 
+**The invariant proves less than it sounds like**, and the gap is worth knowing before leaning on it:
+the tickets column is a per-row bag with no mapping to cells in either direction. A row already
+carrying a legacy ticket satisfies "no disabled cell with an empty list" the moment a bp cell goes
+off, with nobody having filed anything. Checked by hand at the rollout's close and the substance
+holds — all 33 numbers resolve, and each of the nine rows disabling a strict subset of cpu modes has
+a ticket naming those modes — but on six of the nine that ticket does not name the query, so a reader
+of `tpcds/q5` opens four tickets to find which one applies.
+
+**Two fixes ride along, both because the rollout is what breaks them.** The second is
+[#194](../tickets.md#t194): `base_total` (`cost-report/src/main.rs:1623`) reads a base-side cost two
+ways, and the git-ref arm — the one every PR uses — drops the `section` it was asked for and returns
+the first `peacockdb_cost=` in the file. Legacy goldens are one file per query, so the two arms agree
+there; the batch-partitioned per-mode files hold ~60 sections each, and this task is what fills them.
+So every bp row on the cost widget is baselined against whichever query sorts first — measured on
+`tpcds.sf1/bp-tp1-single-mini.cost.txt`, deltas from -99.6% to +341.3% against `q2`, none of them a
+cost change. The git arm takes the same `entry_total(text, section)` path as the directory arm, and
+the test is that the two arms agree on a multi-section file. The goldens are untouched: only the
+baseline was wrong.
+
+**The one test this task adds** asserts that every result section's
+`mode=` is its query's last declared cpu mode, and goes in `test_corpus_goldens.rs`. Closing its
+over-cap blind spot takes both halves. `over_cap`
+(`common/corpus.rs`) writes the `skipped: ` prefix and no `mode=`, so an over-cap section records
+everything except who produced it — and an over-cap section whose authority moved after a cut is
+exactly the stale case this guard exists to catch. Four sections are over cap today, all in
+`tpch.sf1/bp-mini.result.txt`: `q16` authored at `bp-tp1-rowgroup`, and `anti-join`,
+`filter-project` and `semi-join` at `bp-tp4-sized`. They rewrite when their authoring mode runs, so
+the guard's commit carries a four-section golden diff that the ticket has to explain.
+
+`over_cap` gains the mode, **as its second line, after the marker**. The prefix stays first because
+two readers use `starts_with(SKIPPED)` to mean *this section holds no rows*:
+`corpus_gpu.rs:120` decides `frozen` by it, and moving the mode ahead of it would let a
+`golden_exact` declaration pass against a section with no rows to compare. `corpus_gpu.rs:164` reads
+`mode=` as the first line, but only for a `golden_*` oracle, which `assert_oracle_suits_the_golden`
+has already refused for a marker — so an over-cap body never reaches it.
+
+The guard therefore discriminates on **a `mode=` line being present**, not on `SKIPPED` being absent:
+that set is the real sections and the over-cap ones, and it excludes `not enabled` markers, which
+carry no author because none exists. It reads `ordered_sections` directly rather than
+`sections_with_content`, whose prefix filter is what hid the over-cap case — and whose three
+existing callers are undisturbed, since none of them wants the over-cap sections either.
+
 Then the **golden sections** fill in: a query enabled at a mode stops carrying that mode's
 skipped marker and starts carrying its plan, its per-batch sizes and its costs. That is eleven
 files for the bench it belongs to — a `.cpu.txt` and a `.cost.txt` per mode, plus the one
@@ -3268,9 +3310,10 @@ files for the bench it belongs to — a `.cpu.txt` and a `.cost.txt` per mode, p
 it is modes × benches and does not grow with the corpus, so the hundredth query enabled moves
 the same eleven files as the first, where legacy would have added three more per (query, label)
 and did, 277 of them for tpch.sf1 alone. And **`build-test.md`'s counts** move with the case
-count, in the commit that moves them rather than in a later sweep.
+count — edited by hand like the three above, in the commit that moves them rather than in a later
+sweep, which is why they are the fourth and not a second kind of thing that moves by itself.
 
-**What it enables, and what stays out.** 119 of the corpus's 138 queries plan at all five modes
+**What it enables, and what stays out.** 120 of the corpus's 138 queries plan at all five modes
 today, which is the eligibility test — not legacy enablement, since a query legacy disabled may
 have been fixed since and the goldens are what know. Twenty are T18's, so a hundred are here:
 
@@ -3284,7 +3327,7 @@ runs, and its recipes do not attach — [#168](../tickets.md#t168)'s interval `S
 crossing to a device is what fails, not the plan. `cpu_modes` carries all five and `gpu_modes`
 none, which is the case the two mode arguments exist for.
 
-The nineteen that stay out, every one against a ticket that already exists:
+The eighteen that stay out, every one against a ticket that already exists:
 
 | held back | why | ticket |
 |---|---|---|
@@ -3311,6 +3354,88 @@ generating `INJECTED` from one declaration. Reintroducing it one level up, so th
 query from the injected tier would silently need a matching addition here, buys a duplicate mode
 run and costs the property that made the smaller list trustworthy.
 
+**A device cell's ticket names its FIRST failure, not its only one.** The causes are ordered by how
+far a plan gets: [#183](bp-tickets.md#t183) is the unload refusing an export, at the end of a plan
+that ran, and [#152](../tickets.md#t152) is a join refusing its second probe batch, earlier. So a
+mode whose join takes one probe batch reaches the unload and fails on the string, while a mode whose
+join takes two never gets there — the same query reporting two different causes, chosen by the
+partitioning rather than by its shape. `q18` is #152 at four modes and #183 at one.
+
+Any count of cells per ticket is therefore a count of first failures. Fixing one moves cells to
+another column rather than turning them green, and a cell's ticket is where a reader should start
+rather than the whole of what stands in the way.
+
+**The same shape appears on the cpu side, where the loser is not merely unmeasured but invisible.**
+Three ordering questions have turned up in the rollout — #152 versus #183, #152 versus #175, and
+#175 versus #189 on `tpcds/q77`, whose rollup made the hasher a candidate at exactly the three tp4
+modes where the empty build side refuses first. A disabled cell runs nothing, so whether #189 would
+also have rejected q77's grouping-set id cannot be read off the corpus at all; the question is not
+open pending a measurement, it is closed to measurement until #175 is fixed. Any claim that a ticket
+has been exhausted by the corpus should be read against that.
+
+**The sixth batch showed the rule cleanly.** Four unrelated queries — a semi-join with a correlated
+subquery, a five-way join, an eight-way join, an anti-join over a self-join — all fell the same way:
+#183 at `bp-tp1-single` and #152 at the other four modes, without exception. `bp-tp1-single` is the
+only mode whose joins happened to get a single probe batch, so it was the only one reaching the
+unload — a correlation the eleventh batch retired, below.
+
+The eighth batch narrowed that. #152 has two rows and only one is mode-sensitive: the build-side
+copy is about a second probe batch erasing what the first consumed, so a single probe batch avoids
+it, while the probe-side copy is refused at any batch count — one probe batch is still one copy.
+Which half a query meets is a property of its JOIN TYPE, inner copying the build and outer the
+probe: `tpcds/q97`'s outer join refuses at `bp-tp1-single` too and never reaches a second cause.
+
+The eleventh batch replaced the mode shorthand with a batch-count rule — #152's build half fires
+whenever a copying join's probe side arrives in more than one batch — and the fourteenth falsified
+it. `tpcds/q11` at `bp-tp1-single` has eleven Inner joins, all copying, with probe batch counts
+1,1,1,336,1,336,1,88,1,88,1 measured and recorded before the device ran; it reaches the unload and
+fails on #183. A copying join took 336 probe batches at that mode and did not refuse.
+
+So what decides it is **not known**. `tpcds/q71` and `tpcds/q2` refuse at `bp-tp1-single` and q11
+does not, and all three have copying joins with streaming probe sides there — whatever separates
+them is not something the goldens carry. The likeliest next question is what feeds the build side
+rather than what feeds the probe, since a build that is another node's handle is consumed by its
+first reader where one a scan re-materializes per call is not; that is readable in `cpp/src` and in
+the recipe writer rather than in the corpus, and it belongs to #152 rather than to a rollout.
+
+Three narrowings and one falsification, recorded because the alternative is a fourth version that
+fits every batch so far. What survives is that #152's two halves differ by join type.
+
+So the device column currently measures #152's reach rather than the engine's, and the two tickets
+are ordered: fixing #152 moves most of those cells to #183 rather than turning them green, and #183
+is one defect at one site. Those two, in that order, are what stand between this rollout and a
+device column that is not empty — with the caveat the seventh batch added: where
+`bp-tp1-single` gets past the join at all, it is not the mode that passes but the mode that gets far
+enough to find out what else is wrong, and each query it reaches has its own answer. q7 fails there on a string, q2 on a decimal, q8 on an integer,
+all at the unload. So #183 is not one defect at one site but one site with a family of type
+mismatches under it, and #187 and #191 are two more of that family rather than separate work.
+
+**A mode disabled after its file was last regenerated has no marker section**, and both golden
+checks report it as an absence rather than as the disablement it is. The merge writes markers for
+every declared section of a file, so regenerating any *enabled* query in that file fills the missing
+ones in. Neither test's message says so, and a batch that only disables modes therefore looks
+broken until an unrelated query is re-run.
+
+**#163 is what decides where this rollout lands, and the number is knowable in advance.**
+Seventeen of the fifty-six tpcds queries remaining after T19's ninth batch carry `avg`, whose count
+state that ticket disables at every mode on both engines. So roughly a third of the tail produces no
+cells at all: the ceiling is a hundred minus those seventeen, minus whatever else refuses whole,
+which put it near **83** rather than near a hundred — with #163 being most of the gap, as
+[#152](../tickets.md#t152) is most of the device column's. Neither is a rollout failure and neither
+is fixable here.
+
+**It closed at 68 fully enabled, 8 partially, 24 out entirely, 0 unreached** — 357 of 500 possible
+cpu cells, and **zero** device cells beyond the six T18 left. So 76 rather than the 83 predicted, and
+that miss is worth more than the number: the ceiling was computed twice, corrected from a wrong 88-to-90
+down to 83, and was still high, because both computations counted only the blockers known at the
+time. [#190](bp-tickets.md#t190) and [#192](bp-tickets.md#t192) arrived after the projection. **A
+ceiling derived from known causes is a bound on optimism, not a prediction** — unknown blockers only
+ever subtract.
+
+Seventeen `avg` queries were projected against #163 after the eleventh batch and all seventeen were
+RUN rather than declared. None failed to refuse and none refused for a different reason, which is
+what makes the tail a measurement rather than an assumption.
+
 **Roll out in batches of about five, not in one sweep.** A hundred queries enabled at once is a
 regeneration whose diff nobody reads and a failure nobody can attribute: eleven golden files move
 either way, so the batch size is the only thing that says which query moved which section. Five
@@ -3330,6 +3455,16 @@ T17 could not commit a device run, which is [#116](../tickets.md#t116)'s shape �
 coverage and no blocker — so the reason is recorded here rather than left for a reader to
 reconstruct from an empty column.
 
+**Four tasks were specced during T19 and none of them is T20's.** They came out of what the rollout
+found, and each closes tickets the device column is actually blocked on rather than shapes the corpus
+lacks: [`refcounted-tables.md`](refcounted-tables.md) for [#145](../tickets.md#t145) and
+[#152](../tickets.md#t152), [`casts.md`](casts.md) for [#183](bp-tickets.md#t183),
+[`wire-schema.md`](wire-schema.md) for [#187](bp-tickets.md#t187), and
+[`empty-answers.md`](empty-answers.md) for [#173](../tickets.md#t173) and
+[#175](../tickets.md#t175). Order matters twice: `casts.md` before `wire-schema.md`, which writes the
+schema `empty-answers.md` then reads. Between them they cover the two causes that hold 134 of the 138
+disabled device rows.
+
 **T20 — corpus shapes the benchmarks do not have.** The corpus is numeric-aggregate heavy, and
 this mode's risk sits in what it never sees: an audit of every `.cpu.txt` finds zero `OFFSET`s,
 zero `min`/`max` over a non-numeric column, and no query at all for several shapes the tickets
@@ -3338,13 +3473,21 @@ tables — no new dataset, no new scale factor — each justified by naming the 
 the ticket or code path that cares. Where a query needs engine work to run at all, that work is
 this task's too, which is what makes this the one task after T19 that still moves the planner.
 
+The premise has a measurement behind it rather than an intuition. Read off `bp-tp1-single.plans.txt`
+across T19's 61 enabled queries and the four largest held back, plan **size** varies enormously and
+plan **kind** hardly at all: node counts run 33 to 267 enabled, with q88 q64 q23 q75 at 447 399 354
+324 above every one of them, while distinct node kinds run 6 to 12 with a median of 9 — and 12 is
+what T18 already enters all eighteen kinds at once to avoid caring about. Two of the four largest
+plans are BELOW the median on kinds. So a rollout across this corpus tests scale, not surface, and
+no amount of it reaches the shapes below; that is why they have to be written rather than found.
+
 | Query shape | Why it is worth a query |
 |---|---|
 | `ORDER BY … LIMIT n OFFSET m` | every `GpuGlobalLimitExec` in the corpus has `skip=0`, so the offset half of both lowerings — the released prefix, the two straddling slices, and a pure offset that never satisfies — runs only in synthetic tests. T17 executes `nested-limits`, so what is left here is the legacy tiers; shape it away from [#166](../tickets.md#t166)'s two droppers, an outer limit above an aggregate and a limit inside a `UNION ALL` branch |
 | `min`/`max` over a string or date column | zero uses today; the merge is a string reduce, and nothing exercises one. Needs nothing new: `aggregates.rs` decomposes `Min`/`Max` without reference to type, and the generic reduce arm takes the input's |
 | a join on a nullable key | [#59](../tickets.md#t59) and [#80](../tickets.md#t80) both record that no corpus query has one, and this mode adds [#137](../tickets.md#t137)'s skew on top — every all-null key lands in one lane. #137's planner half comes with it: the translation inserts `GpuFilter(<key> IS NOT NULL)` under the feeding `GpuEmitPartitions`, on the sides whose unmatched rows are never emitted. Expect the query red on the anti-join's three-valued logic until #80 |
 | a shuffle keyed on a decimal | [#95](../tickets.md#t95)'s kernel throws on decimal keys; the batched mode shuffles more often than legacy, so this stops being latent. The largest item here, and not a query: dispatch by logical precision (≤18 → the low 8 LE bytes of the int128, >18 → the raw 16), the precision threaded through the partition FFI, and the murmur3 conformance gate extended to cover it — that gate is what makes CPU and GPU place a row in the same lane, so a decimal key it does not cover is a key the two engines may disagree on silently |
-| two `DISTINCT` arguments over different expressions | [#144](../tickets.md#t144) has no refusal of its own — `translate/aggregate.rs` refuses every distinct aggregate naming [#62](../tickets.md#t62) — so the translator learns to tell the two shapes apart and the query provokes a refusal that names its own ticket. A refusal pointing at the wrong ticket sends its reader to the wrong fix |
+| two `DISTINCT` arguments over different expressions | [#144](../tickets.md#t144) has no refusal of its own — `translate/aggregate.rs` refuses every distinct aggregate that REACHES it, naming [#62](../tickets.md#t62), and a single `count(distinct …)` does not reach it because DataFusion's `SingleDistinctToGroupBy` rewrites it to a grouping first. T19 confirmed that twice: `tpcds/q94` and `tpcds/q16` both carry the `count_distinct` feature code and both run at all five modes — q16's `count(DISTINCT cs_order_number)` appears in the select list and the ORDER BY, which is one expression written twice rather than two. So that feature code marks a shape this mode HANDLES, and anyone grepping the registry for a query to exercise #62 or #144 finds two that do not. So the translator learns to tell the two shapes apart and the query provokes a refusal that names its own ticket. A refusal pointing at the wrong ticket sends its reader to the wrong fix |
 | a wide `SELECT DISTINCT` | dedup whose state is the whole row rather than a few keys — the compaction threshold's worst case, where nothing merges and the doubling has to earn its keep |
 
 Each query lands in `testdata/{tpch,tpcds}-queries/` with registry rows and goldens through the

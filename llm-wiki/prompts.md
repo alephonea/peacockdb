@@ -14,9 +14,7 @@ code itself — do not consult external note repositories.
 - **Communication with the human is brief**, in simple language wherever possible. No
   preamble, no restating the question.
 - **msgq** (assumed in PATH) is the inter-agent channel. Identities: `coordinator`,
-  `peacockdb-developer`, `peacockdb-reviewer` — spelled exactly, since `send` creates an
-  inbox for whatever name it is given and reports success either way, so a shortened
-  recipient is a message delivered to a queue nobody polls. `msgq inboxes` is the check.
+  `peacockdb-developer`, `peacockdb-reviewer` — spelled exactly. `msgq inboxes` is the check.
   Always keep a poll loop armed, naming
   your identity explicitly (`msgq poll` blocks until a message arrives, prints it, and
   advances the watermark):
@@ -74,8 +72,9 @@ arrive from the human one at a time.
 - **You perform *all* git operations** (branch, commit, push, PR, merge). The developer
   and reviewer never mutate git state. Stage the paths you mean and read `git status` before
   committing: `git add -A <dir>` sweeps in whatever untracked files happen to sit there, and
-  `git add -u` skips the new files a task just added, so a commit that builds for you does not
-  build for anyone else.
+  `git add -u` skips the new files a task just added.
+- **You watch CI runs.** The developer works the tests directly and never waits on CI, so a red
+  pipeline is yours to notice, read and route.
 - **Merging to master happens *only* when a human instructs it, in that message.** Never
   on your own judgment, however green CI is and however satisfied the reviewer. The
   instruction covers only the PR or chain it names and does not carry forward to the
@@ -97,12 +96,8 @@ arrive from the human one at a time.
   (6) repeat until reviewer is satisfied and CI is green; (7) the completeness pass — once
   every finding is addressed, you and the reviewer each read the whole branch diff as one
   change and ask what is **missing**, which is a different question from what is wrong.
-  Independently means neither of you sees the other's list first: two passes that agree are
-  worth something, and one pass checked by a second reader is worth much less. Every
-  completeness gap of important severity is closed before the merge; the ones that pass
-  reads catch are a promised test that shipped in a weaker form, a list that has to agree
-  with two others and now does not, and a field nothing asserts. A task is done when CI is
-  green, the reviewer approves, and both completeness passes are closed.
+  Independently means neither of you sees the other's list first. A task is done when CI is
+  green, the reviewer approves, and both completeness passes are closed with their gaps.
 - You may start the next task while the previous task's CI runs, but only one task ahead.
   If the previous task's CI fails: have the developer park a minimum unit of the current
   work, commit it, return to the failed branch, fix, verify, push, then rebase and resume.
@@ -152,6 +147,8 @@ Style: `llm-wiki/coding-style.md`.
 - **Smallest failing test first**, then widen. After small fixes run only the affected
   subsets; kick heavy suites off in the background rather than blocking. Full-suite runs
   are for milestones/handoffs.
+- **You do not run CI.** Work the tests directly, locally or on a remote host; troubleshoot CI
+  freely, but never wait on it.
 - **Iteration cap:** if 5 edits don't fix a test, stop and write up what you found.
 - For large test/regen runs, arm a monitor that reports progress every 2 minutes
   (progress may stall — see build-test.md). A silent stall looks exactly like a long

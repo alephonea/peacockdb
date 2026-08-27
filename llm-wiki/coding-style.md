@@ -151,26 +151,10 @@ because both parameters are the same type.
 
 ### A doc comment reassigned by an insertion
 
-A doc block belongs to the declaration below it, so a type inserted above an existing one
-takes its documentation and leaves it with none. Nothing reads as missing and every cap
-still holds, which is why review passes it: `When` above `RunError` took `RunError`'s
-block, whose opening sentences described `RunError` and stated a contract the same task
-had disproved. After inserting a declaration, read each doc block's first sentence.
-
-It arrives two ways and only one is mechanical. Splitting a declaration in two leaves the lower
-one's block behind, separated from it by a blank line — decidable over a tree, and
-`no_declaration_carries_a_block_left_behind_by_a_split` is what decides it. Inserting a
-declaration above an existing one takes its whole block instead, contiguously, with nothing
-separating anything: that shape is invisible to the tree and visible only in a diff, as an added
-item whose preceding doc line was already there. Three instances shipped on one branch and the
-guard covers one of them, so the reading habit above is the cover for the other two rather than a
-belt beside a brace.
-
-The same mechanism outside code: `tickets.md` gives each ticket an `<a id="tNN">` above its
-header, and #177 inserted above #170 took #170's anchor, so every link to it — the contents
-table, the cost report — resolved to #177. Existence checks in both directions pass that, since
-every anchor still has a header and every header an anchor; what catches it is asserting each
-anchor sits above the header naming its own number.
+A doc block belongs to the declaration below it, so one inserted above takes it and leaves the
+original none — nothing reads as missing, which is why review passes it. A split leaves the block
+behind a blank line and a guard decides that; an insertion is contiguous and shows only in a diff,
+so read each block's first sentence. `tickets.md`'s `<a id>` anchors the same way: #177 took #170's.
 
 ### A thread-local as an output or side-channel argument
 
