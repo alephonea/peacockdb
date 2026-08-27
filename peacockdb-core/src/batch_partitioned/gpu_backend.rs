@@ -127,10 +127,19 @@ impl GpuExport {
     /// cross the boundary. `exports` is the plan's prediction about those same columns,
     /// derived where the plan was built.
     pub fn new(executor: *mut PeacockExecutor, schema: &ArrowSchema, exports: &Exports) -> Self {
+        let casts = exports.cast_ordinals();
+        // The two arguments are two derivations of one node's input, and nothing in the
+        // types says so: a pair from different nodes would index past the end at the cast.
+        assert!(
+            casts.iter().all(|at| (*at as usize) < schema.fields().len()),
+            "the sink's exports address column {} and its schema declares {} — the schema and              the exports are about different nodes",
+            casts.iter().max().copied().unwrap_or(0),
+            schema.fields().len()
+        );
         Self {
             executor,
             schema: Arc::new(schema.clone()),
-            casts: exports.cast_ordinals(),
+            casts,
         }
     }
 

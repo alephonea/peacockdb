@@ -78,10 +78,25 @@ pub fn export_type_for(declared: &DataType) -> Result<Export, PlanError> {
             }
         }
         DataType::Decimal128(_, _) => Export::Identity,
+        // The five `fb_to_type_id` answers `EMPTY` for. The wire carries them, so the column
+        // reaches the device with no type at all rather than being stopped on the way.
+        DataType::Null
+        | DataType::Float16
+        | DataType::Binary
+        | DataType::LargeBinary
+        | DataType::BinaryView => {
+            return Err(PlanError::Unsupported(format!(
+                "a {declared:?} column at the sink: the wire carries the type and cuDF maps it \
+                 to no type at all, so the device would export a typeless column"
+            )));
+        }
+        // Everything else, and a different sentence because a different thing is true of it:
+        // `convert_data_type` has no arm for it either, so the plan is refused at
+        // serialization and no sink is ever reached. Separated so that a type added to the
+        // wire lands here rather than being absorbed by a refusal that reads as considered.
         other => {
             return Err(PlanError::Unsupported(format!(
-                "a {other:?} column at the sink: the wire carries the type and cuDF maps it \
-                 to no type at all, so the device would export a typeless column"
+                "a {other:?} column at the sink: the wire has no encoding for the type"
             )));
         }
     })
@@ -137,5 +152,100 @@ impl Exports {
             .filter(|column| column.why == Divergence::StringType)
             .map(|column| column.ordinal)
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The wire's set, parsed out of `convert_data_type`'s match arms. Reading the source
+    /// rather than listing the types here, for the reason `node_kind_names` reads
+    /// `node_name`: a list written beside the check can miss what the match cannot.
+    fn wire_types() -> Vec<&'static str> {
+        const SOURCE: &str = include_str!("../plan_serializer.rs");
+        let body = SOURCE
+            .split_once("pub(crate) fn convert_data_type(")
+            .expect("plan_serializer.rs declares convert_data_type")
+            .1;
+        let body = body
+            .split_once("\n}")
+            .expect("convert_data_type has a body")
+            .0;
+        let names: Vec<&str> = body
+            .lines()
+            .filter_map(|line| line.trim().strip_prefix("ArrowDataType::"))
+            .filter_map(|rest| rest.split(['(', ' ']).next())
+            .collect();
+        // Against the arms rather than a floor, and minus one for the `other` arm: an arm
+        // this scan misses would sit outside the cover below, which is what the cover is for.
+        assert_eq!(
+            names.len() + 1,
+            body.matches("=>").count(),
+            "convert_data_type has {} arms and {} named a type — the scan is missing one",
+            body.matches("=>").count(),
+            names.len()
+        );
+        names
+    }
+
+    /// A value per wire type, since a parameterized arm carries no arguments to build from.
+    /// Exhaustive on purpose: a type added to the wire fails here naming itself rather than
+    /// defaulting to something that happens to pass.
+    fn value_of(name: &str) -> DataType {
+        match name {
+            "Null" => DataType::Null,
+            "Boolean" => DataType::Boolean,
+            "Int8" => DataType::Int8,
+            "Int16" => DataType::Int16,
+            "Int32" => DataType::Int32,
+            "Int64" => DataType::Int64,
+            "UInt8" => DataType::UInt8,
+            "UInt16" => DataType::UInt16,
+            "UInt32" => DataType::UInt32,
+            "UInt64" => DataType::UInt64,
+            "Float16" => DataType::Float16,
+            "Float32" => DataType::Float32,
+            "Float64" => DataType::Float64,
+            "Utf8" => DataType::Utf8,
+            "LargeUtf8" => DataType::LargeUtf8,
+            "Binary" => DataType::Binary,
+            "LargeBinary" => DataType::LargeBinary,
+            "Date32" => DataType::Date32,
+            "Date64" => DataType::Date64,
+            "Decimal128" => DataType::Decimal128(15, 2),
+            "Utf8View" => DataType::Utf8View,
+            "BinaryView" => DataType::BinaryView,
+            other => panic!("{other} reaches the wire and has no value here — add one"),
+        }
+    }
+
+    /// Totality as a property rather than as three examples. The catch-all makes every
+    /// unnamed type an `Err`, so a type that should be identity and was forgotten would be
+    /// refused with nothing going red; this is what notices.
+    #[test]
+    fn every_type_the_wire_carries_is_answered_and_the_five_typeless_ones_refuse() {
+        let typeless = ["Null", "Float16", "Binary", "LargeBinary", "BinaryView"];
+        let mut refused = 0;
+        for name in wire_types() {
+            let answer = export_type_for(&value_of(name));
+            assert_eq!(
+                answer.is_err(),
+                typeless.contains(&name),
+                "{name}: cuDF maps it to {}, and export_type_for {}",
+                if typeless.contains(&name) {
+                    "nothing"
+                } else {
+                    "a type"
+                },
+                if answer.is_err() {
+                    "refuses"
+                } else {
+                    "answers"
+                }
+            );
+            refused += usize::from(answer.is_err());
+        }
+        assert_eq!(refused, typeless.len(), "every typeless type is reached");
     }
 }

@@ -18,7 +18,7 @@ reference still resolves there.
 | [Critical correctness](#critical-correctness) | 15 | #166 #153 #80 #59 #46 #47 #60 #121 #122 #123 #118 #119 #120 #117 #41 |
 | [Blockers for disabled coverage](#blockers-for-disabled-coverage) | 19 | #169 #168 #158 #175 #173 #97 #23 #32 #65 #62 #91 #95 #57 #45 #63 #56 #55 #96 #143 |
 | [Performance / architecture](#performance--architecture) | 28 | #179 #177 #170 #155 #154 #152 #150 #149 #148 #19 #16 #20 #71 #101 #73 #110 #75 #136 #137 #138 #139 #140 #141 #147 #146 #145 #144 #142 |
-| [Infrastructure / process](#infrastructure--process) | 27 | #178 #176 #174 #167 #164 #163 #159 #160 #161 #162 #113 #114 #116 #126 #134 #133 #132 #131 #130 #129 #128 #127 #125 #13 #94 #69 #49 |
+| [Infrastructure / process](#infrastructure--process) | 29 | #196 #194 #178 #176 #174 #167 #164 #163 #159 #160 #161 #162 #113 #114 #116 #126 #134 #133 #132 #131 #130 #129 #128 #127 #125 #13 #94 #69 #49 |
 
 ## Critical correctness
 
@@ -748,6 +748,24 @@ tripped, so something can branch on it, but there is nowhere to record into — 
 trip log, and `Underestimate` is the precedent for what one would look like. Related: #91.
 
 ## Infrastructure / process
+
+<a id="t196"></a>
+### #196 — one target dir, two feature graphs: the moved rust-only tests cost the leg 13 minutes
+
+`Planner join capability` is the first `--features rust-only` cargo step in `dataset-matrix`, and it
+carries the whole rust-only build: 839s on a cold cache, 793s on a warm one. In its old home, the
+`cost-report` job on master, the same step took 42s.
+
+The warm number is the finding. The job's cargo cache is one target dir holding the default-feature
+build the rest of the leg needs, and a feature set is part of every cargo fingerprint, so the
+rust-only graph is not what comes back — restoring the cache saves 46 seconds of 839. `cost-report`
+was fast because rust-only was the only thing it built, so its cache was exactly that graph.
+build-test.md states the same rule for a workstation: never run cudf-feature builds in `./target`,
+they evict the rust-only cache and the reverse. This is that, in a job.
+
+The other six moved steps take 7-14s each: only the first invocation pays, so the cost is the build
+and not the tests. Options, none of them free: a second cache key for the rust-only graph, moving
+the seven back to a job that builds nothing else, or accepting 13 minutes on a leg that runs 26.
 
 <a id="t194"></a>
 ### #194 — the cost gate's git baseline ignores which section it was asked for
