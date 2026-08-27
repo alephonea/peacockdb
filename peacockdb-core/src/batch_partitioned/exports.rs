@@ -177,12 +177,25 @@ mod tests {
             .filter_map(|line| line.trim().strip_prefix("ArrowDataType::"))
             .filter_map(|rest| rest.split(['(', ' ']).next())
             .collect();
-        // Against the arms rather than a floor, and minus one for the `other` arm: an arm
-        // this scan misses would sit outside the cover below, which is what the cover is for.
+        // Against every mention, not against the arms: a merged arm — `A | B => …` on one
+        // line, or with the `|` wrapped onto the next — drops a name and an arm together, so
+        // an arm count balances while the second type leaves the cover. The five that map
+        // alike are what anyone would merge, so this is the shape to expect here.
+        assert_eq!(
+            names.len(),
+            body.matches("ArrowDataType::").count(),
+            "convert_data_type names {} types and the line scan found {} — a merged arm, and \
+             the scan has to take both sides of it",
+            body.matches("ArrowDataType::").count(),
+            names.len()
+        );
+        // A different mistake, and still worth its own line: an arm that names no type at all.
+        // Two merged arms leave this balanced, which is why it does not replace the count
+        // above.
         assert_eq!(
             names.len() + 1,
             body.matches("=>").count(),
-            "convert_data_type has {} arms and {} named a type — the scan is missing one",
+            "convert_data_type has {} arms and {} named a type — one arm names none",
             body.matches("=>").count(),
             names.len()
         );
