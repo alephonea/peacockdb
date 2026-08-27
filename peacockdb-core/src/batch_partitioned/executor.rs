@@ -63,8 +63,10 @@ pub trait BatchAccumulatorExecutor<B: Backend>: Executor {
     fn mark_done_and_fetch(self) -> CallResult<Vec<B::Batch>>;
 }
 
-pub enum LaneEvent<B: Backend> {
-    Batch(B::Batch),
+/// Parameterized by the BATCH rather than by the backend: an event carries a batch, and
+/// binding it to a whole backend would make the type unnameable until one exists.
+pub enum LaneEvent<B: super::batch::Batch> {
+    Batch(B),
     Done,
 }
 
@@ -74,7 +76,7 @@ pub trait PartitionAccumulatorExecutor<B: Backend>: Executor {
     fn accumulate_and_fetch(
         &mut self,
         partition: usize,
-        event: LaneEvent<B>,
+        event: LaneEvent<B::Batch>,
     ) -> CallResult<Vec<B::Batch>>;
 }
 
@@ -128,6 +130,16 @@ impl RowRange {
     pub fn covers(&self, n_rows: u64) -> bool {
         self.offset == 0 && self.length >= n_rows
     }
+
+    /// The rows of a batch this range actually names, as `(offset, length)`. The twin of
+    /// C++'s `clamp_row_range` (`node_session.cpp`), which the export and the slice share
+    /// so that the two cannot disagree — this is the same rule for the backend that never
+    /// crosses the ABI, and the two answering differently would be a divergence no test
+    /// of either one alone could see.
+    pub fn clamp(&self, n_rows: u64) -> (u64, u64) {
+        let offset = self.offset.min(n_rows);
+        (offset, self.length.min(n_rows - offset))
+    }
 }
 
 /// Unload is its own category because it is the one operator whose output is not
@@ -136,4 +148,47 @@ impl RowRange {
 /// and an unload instance is per lane — only the driver holds that count.
 pub trait UnloadExecutor<B: Backend>: Executor {
     fn unload(&mut self, batch: B::Batch, rows: RowRange) -> CallResult<CpuBatch>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RowRange;
+
+    /// The to-the-end sentinel is the case the clamp is written around: subtracting the
+    /// offset from the row count rather than adding it to the length is what keeps
+    /// `u64::MAX` from wrapping.
+    #[test]
+    fn a_range_to_the_end_takes_every_row_after_its_offset() {
+        assert_eq!(RowRange::WHOLE.clamp(4), (0, 4));
+        assert_eq!(
+            RowRange {
+                offset: 3,
+                length: u64::MAX,
+            }
+            .clamp(4),
+            (3, 1)
+        );
+    }
+
+    /// A fetch legitimately overruns the batch it straddles, and an offset past the end
+    /// names no rows rather than a negative count.
+    #[test]
+    fn a_range_past_the_end_clamps_to_what_is_there() {
+        assert_eq!(
+            RowRange {
+                offset: 1,
+                length: 100
+            }
+            .clamp(4),
+            (1, 3)
+        );
+        assert_eq!(
+            RowRange {
+                offset: 9,
+                length: 1
+            }
+            .clamp(4),
+            (4, 0)
+        );
+    }
 }

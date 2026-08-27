@@ -69,6 +69,7 @@ fn invalid(result: Result<(), PlanError>, mentions: &str) {
     }
 }
 
+mod aggregate;
 mod joins;
 
 #[test]

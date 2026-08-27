@@ -84,6 +84,31 @@ cannot account for -50% on joins. Both halves are now settled by one sweep.
 **Done.** The pool is now the only way the benchmarks run — there is no switch to turn it
 off and no outcome but a pool that the harness will record.
 
+<a id="t173"></a>
+### #173 — a collapse of nothing answers with a table that has no columns
+
+`GpuCoalesceAllBatches` over a lane that received no batch returns a handle whose table carries
+zero columns, so the export decodes a batch whose first column is out of bounds.
+`cudf::concatenate` of an empty view list has no schema to preserve, and the node's declared one
+is not reachable: `PlanNode.output_schema` exists on the wire but the recipe writer leaves it
+`None` (`recipe/writer.rs:102`, `:131`), which `WRITER_DIFFERENCES` records with the reason that
+nothing on the C++ side reads it.
+
+Decided rather than filled in: an empty lane emits nothing, on both backends, so the arm is
+unreachable from a correct driver and `node_session.cpp:302` throws on a zero-input collapse
+instead of answering with a schemaless table — the same shape as `execute_one`'s
+consumed-equals-provided check. Putting the schema on the wire for this one arm would move all 16
+digests in the payload golden to serve a case that no longer happens.
+
+Closes when the throw is in, a device test proves it goes red, the CPU executor emits nothing for
+an empty lane as the GPU one does, and the `WRITER_DIFFERENCES` reason says the arm that would
+have read a schema is now a refusal.
+
+**Done 2026-08-25**, by 462e018: the zero-input collapse throws, a device test constructs it
+through the ABI and shows it red, the CPU executor emits nothing for an empty lane as the GPU one
+does, and `WRITER_DIFFERENCES` records that the arm which would have read a schema is now a
+refusal.
+
 <a id="t135"></a>
 ### #135 — Column ordinals are enforced only by cuDF's `at()` and the final result
 Every column reference in the IR is an ordinal into the child's output table, and almost nothing
@@ -208,6 +233,27 @@ three-part fix — `with_fetch` through the rebuild, an fbs field the C++ reads,
 in the node display — would extend the wire format for a planner the batch-partitioned mode
 replaces, which plans from scratch and emits no such node. Whether the corpus reaches it was
 never established either way.
+
+<a id="t171"></a>
+### #171 — shad-gpu's benchmark tree is in an instrumentation this repo does not use
+
+Every record on the host carries per-node `setup_us`, `submit_us` and `device_us`; the committed
+form is a single `time_us`. Someone's instrumentation change ran there and its output stayed.
+Since `--pull-benchmarks` deletes nothing but overwrites everything it finds, any pull — including
+one after a single filtered case — rewrites all 127 committed files into that other format, which
+is what happened on 2026-08-21 and was reverted by hand.
+
+Two ways out and they are not equivalent. Either the split instrumentation is wanted, in which
+case it belongs in the repo with the goldens regenerated on purpose and the reader taught the new
+lines; or it is not, in which case the host's tree should be cleared so the next pull cannot
+resurrect it. Nobody has decided, and the cost of not deciding is paid by whoever pulls next
+without reading `build-test.md`.
+
+**Stale 2026-08-25.** Decided the other way round from the ticket's two options: shad-gpu is
+scratch space for benchmark experiments, and the committed records in git are the canonical ones.
+So neither the host's tree has to be cleared nor its instrumentation adopted — a pull brings back
+whatever the host holds, and what to keep is the puller's to read before committing, which
+`build-test.md` says at `--pull-benchmarks`.
 
 <a id="t53"></a>
 ### #53 — Deterministic multi-partition CPU node-by-node execution

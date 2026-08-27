@@ -427,7 +427,7 @@ impl PartitionAccumulatorExecutor<Mock> for MockPartAcc {
     fn accumulate_and_fetch(
         &mut self,
         _partition: usize,
-        event: LaneEvent<Mock>,
+        event: LaneEvent<MockBatch>,
     ) -> CallResult<Vec<MockBatch>> {
         let stats = self.script.stats();
         Ok(match event {

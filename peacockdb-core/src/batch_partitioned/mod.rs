@@ -9,12 +9,14 @@
 pub mod aggregates;
 pub mod backend;
 pub mod batch;
+pub mod cpu_backend;
 pub mod cpu_batch;
 pub mod driver;
 pub mod error;
 pub mod estimator;
 pub mod executor;
 pub mod expr;
+pub mod expr_physical;
 pub mod expr_translate;
 pub mod forwarder;
 pub mod layout;
@@ -30,6 +32,8 @@ pub mod schema;
 pub mod translate;
 pub(crate) mod validate;
 
+#[cfg(not(feature = "rust-only"))]
+pub mod gpu_backend;
 #[cfg(not(feature = "rust-only"))]
 pub mod gpu_batch;
 

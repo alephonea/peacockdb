@@ -3,19 +3,19 @@
 //! kinds are not tested here — the plan goldens run them over every corpus query, which is
 //! more coverage than a hand-built node would be.
 
-use super::*;
 use super::writer::Writer;
-use crate::generated::gpu_plan_generated::peacock::plan as fb;
-use crate::batch_partitioned::nodes::GpuFilter;
-use datafusion::common::ScalarValue;
+use super::*;
 use crate::batch_partitioned::aggregates::{AggCall, PlanAgg};
 use crate::batch_partitioned::expr::{BinaryOp, Expr, NamedExpr};
 use crate::batch_partitioned::layout::{BatchLayout, ColumnOrder, NodeKind, PartitionLayout};
+use crate::batch_partitioned::nodes::GpuFilter;
 use crate::batch_partitioned::nodes::aggregate::AggregateBody;
 use crate::batch_partitioned::nodes::join::{JoinFilterColumn, JoinSide, NestedLoopJoinType};
 use crate::batch_partitioned::nodes::{GpuAggregate, GpuJoin, GpuNestedLoopJoin};
+use crate::generated::gpu_plan_generated::peacock::plan as fb;
 use datafusion::arrow::datatypes::{DataType, Field, Schema as ArrowSchema};
 use datafusion::common::JoinType;
+use datafusion::common::ScalarValue;
 use std::any::Any;
 use std::sync::Arc;
 
@@ -414,7 +414,10 @@ fn a_batch_aggregate_runs_the_same_pair_at_a_compaction_and_at_done() {
         shape(&recipe),
         vec![
             (FbKind::CoalescePartitions, CallPattern::PerCompaction),
-            (FbKind::Aggregate { merge: true }, CallPattern::PerCompaction),
+            (
+                FbKind::Aggregate { merge: true },
+                CallPattern::PerCompaction
+            ),
         ],
         "the compaction is the done pass run early, which is what makes the threshold a \
          scheduling decision"
@@ -482,7 +485,10 @@ fn a_finalizing_merge_carries_its_finalize_in_a_project_of_its_own() {
         shape(&recipe),
         vec![
             (FbKind::CoalescePartitions, CallPattern::PerCompaction),
-            (FbKind::Aggregate { merge: true }, CallPattern::PerCompaction),
+            (
+                FbKind::Aggregate { merge: true },
+                CallPattern::PerCompaction
+            ),
             (FbKind::Project(ProjectRole::Finalize), CallPattern::AtDone),
         ],
         "the merge runs per compaction and the finalize once, at done"
@@ -619,4 +625,168 @@ fn a_payload_the_wire_cannot_carry_fails_the_plan_and_names_where() {
     assert!(said.contains("scalar value"), "{said}");
     assert!(said.contains("(#168)"), "{said}");
     assert!(said.contains(" at #"), "{said}");
+}
+
+/// `dim(k, label)` joined to `fact(fk, v)`, keeping one column of each side. The finish
+/// pass is the half that has to answer in the node's declared shape: the anti join emits
+/// every build column whatever the projection says, so what the pad project keeps is the
+/// whole question.
+fn projecting_left_join() -> GpuJoin {
+    GpuJoin::new(
+        Given::input(BatchLayout::SingleBatch, &["k", "label"]),
+        Given::input(BatchLayout::MultipleBatches, &["fk", "v"]),
+        JoinType::Left,
+        vec![(0, 0)],
+        None,
+        Vec::new(),
+        false,
+        Some(vec![1, 3]),
+        columns_of(&["label", "v"]),
+    )
+}
+
+/// The buffer a join's recipe addresses, so a case can read the payload rather than the
+/// call list.
+fn written(node: &GpuJoin) -> (Recipe, Vec<u8>) {
+    let mut writer = Writer::new();
+    let recipe = join::hash_join(
+        node,
+        &[&columns_of(&["k", "label"]), &columns_of(&["fk", "v"])],
+        &mut writer,
+    )
+    .expect("the join's payloads are writable")
+    .expect("a hash join drives the ABI");
+    let (bytes, _) = writer.finish().expect("one root");
+    (recipe, bytes)
+}
+
+#[test]
+fn a_finishing_joins_pad_project_emits_the_columns_the_node_declares() {
+    let node = projecting_left_join();
+    let (recipe, bytes) = written(&node);
+    let plan = flatbuffers::root::<fb::GpuPlan>(&bytes).expect("the buffer verifies");
+    let seq = *recipe
+        .seqs()
+        .last()
+        .expect("the pad project is the last call");
+    let project = node_at(&plan, seq)
+        .and_then(|node| node.node_as_cudf_project())
+        .expect("the last seq is the pad project");
+    let aliases: Vec<&str> = project.aliases().expect("named columns").iter().collect();
+    assert_eq!(
+        aliases,
+        vec!["label", "v"],
+        "the unmatched build rows leave in the node's own shape, not the build side's"
+    );
+}
+
+/// One name for one column. The key project builds the accumulated keys table and names
+/// its columns; the finish join is its only reader, so the name it uses to read them has
+/// to be the name they were given.
+#[test]
+fn the_finish_join_reads_the_accumulated_keys_under_the_names_they_carry() {
+    let node = projecting_left_join();
+    let (recipe, bytes) = written(&node);
+    let plan = flatbuffers::root::<fb::GpuPlan>(&bytes).expect("the buffer verifies");
+    let seqs = recipe.seqs();
+    let keys = node_at(&plan, seqs[0])
+        .and_then(|node| node.node_as_cudf_project())
+        .expect("the first call is the key project");
+    let named: Vec<&str> = keys.aliases().expect("named columns").iter().collect();
+
+    let finish = node_at(&plan, seqs[3])
+        .and_then(|node| node.node_as_cudf_hash_join())
+        .expect("the fourth call is the finish join");
+    let read: Vec<String> = finish
+        .keys()
+        .expect("the finish join has keys")
+        .iter()
+        .map(|key| {
+            key.right()
+                .and_then(|expr| expr.node_as_column_ref())
+                .expect("a key read by ordinal is a column")
+                .name()
+                .expect("a column has a name")
+                .to_string()
+        })
+        .collect();
+    assert_eq!(
+        read, named,
+        "the finish join reads the keys under other names than the project gave them"
+    );
+}
+
+/// Every cell of both dimensions — nine join types crossed with a residual filter — and
+/// one claim about each: the path this writer publishes and the path the CPU executor
+/// builds are the same path.
+///
+/// That is the assertion the defect was. A cell where one keeps probe keys and the other
+/// makes a single call is a residual dropped or a finish pass that never runs, and neither
+/// shows up as a failed call — so this goes red for whichever cell a later reader gets
+/// wrong rather than for the ones we thought to write down.
+#[test]
+fn the_recipe_and_the_executor_take_the_same_path_through_every_cell() {
+    use crate::batch_partitioned::cpu_backend::join::CpuJoin;
+    use datafusion::execution::context::SessionContext;
+
+    let types = [
+        JoinType::Inner,
+        JoinType::Left,
+        JoinType::Right,
+        JoinType::Full,
+        JoinType::LeftSemi,
+        JoinType::LeftAnti,
+        JoinType::LeftMark,
+        JoinType::RightSemi,
+        JoinType::RightAnti,
+    ];
+    let build = columns_of(&["k", "label"]);
+    let probe = columns_of(&["fk", "v"]);
+    let mut cells = 0;
+    for join_type in types {
+        for residual in [false, true] {
+            let node = join(join_type, residual, None);
+            let executor = CpuJoin::hash(
+                &node,
+                &build.fields,
+                &probe.fields,
+                SessionContext::new().task_ctx(),
+            );
+            if node.capability().is_err() {
+                assert!(
+                    executor.is_err(),
+                    "{join_type:?} with residual={residual} is refused by the matrix and \
+                     the executor built it anyway"
+                );
+                cells += 1;
+                continue;
+            }
+            let recipe = recipe_for(&node);
+            let recipe_finishes = recipe
+                .calls
+                .iter()
+                .any(|call| call.when == CallPattern::AtDone);
+            let executor = executor.expect("a cell the matrix allows is one the executor builds");
+            assert_eq!(
+                recipe_finishes,
+                executor.makes_a_finish_pass(),
+                "{join_type:?} with residual={residual}: the recipe {} and the executor {}",
+                if recipe_finishes {
+                    "finishes"
+                } else {
+                    "does not"
+                },
+                if executor.makes_a_finish_pass() {
+                    "does"
+                } else {
+                    "does not"
+                }
+            );
+            cells += 1;
+        }
+    }
+    assert_eq!(
+        cells, 18,
+        "nine types by two residuals, and every cell answered"
+    );
 }

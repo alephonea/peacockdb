@@ -6,7 +6,7 @@ anchor that the cost widget links to. Device labels are `tp<N>-<tier>` (micro=10
 mini=2GiB, standard=12GiB).
 
 A ticket carries a **Priority** line only when it is not medium; medium is the default.
-New tickets take the next free number (currently 172). Finished and lapsed tickets move to
+New tickets take the next free number (currently 174). Finished and lapsed tickets move to
 `llm-wiki/archive/archived-tickets.md` (Done / Stale) — numbers are never reused, so an old
 reference still resolves there.
 
@@ -17,7 +17,7 @@ reference still resolves there.
 | [Critical correctness](#critical-correctness) | 15 | #166 #153 #80 #59 #46 #47 #60 #121 #122 #123 #118 #119 #120 #117 #41 |
 | [Blockers for disabled coverage](#blockers-for-disabled-coverage) | 17 | #169 #168 #158 #97 #23 #32 #65 #62 #91 #95 #57 #45 #63 #56 #55 #96 #143 |
 | [Performance / architecture](#performance--architecture) | 26 | #170 #155 #154 #152 #150 #149 #148 #19 #16 #20 #71 #101 #73 #110 #75 #136 #137 #138 #139 #140 #141 #147 #146 #145 #144 #142 |
-| [Infrastructure / process](#infrastructure--process) | 27 | #171 #167 #164 #163 #159 #160 #161 #162 #113 #114 #116 #126 #134 #133 #132 #131 #130 #129 #128 #127 #172 #124 #125 #13 #94 #69 #49 |
+| [Infrastructure / process](#infrastructure--process) | 26 | #167 #164 #163 #159 #160 #161 #162 #113 #114 #116 #126 #134 #133 #132 #131 #130 #129 #128 #127 #172 #124 #125 #13 #94 #69 #49 |
 
 ## Critical correctness
 
@@ -384,11 +384,13 @@ needs the assert and not the observation. Land before [#155](#t155).
 ~L427), but a streamed probe calls the join seq once per batch and needs it B times.
 
 [#136](#t136) assumes the table is there and so does the recipe mapping in
-`tasks/batch_partitioned_executor.md`; neither says how. [#140](#t140) records the same
-constraint one axis over — one build feeding N lanes — and [#145](#t145) is the mechanism both
-want. Until then the choices are a device copy of the build side per probe batch, the cost
-streaming exists to avoid, or a single-batch probe, which the capability matrix already forces
-for filtered and non-inner-NLJ joins. The finish pass (#136) is unaffected either way.
+`tasks/batch_partitioned_executor.md`; neither says how. [#140](#t140) is the same constraint one
+axis over and [#145](#t145) is the mechanism both want.
+
+T16 confirmed both halves on a device. A build-side shape refuses its second probe batch, so only
+the semi family streams; and Left and Full outer have no device path at all, because their key
+project and their per-call join read the same probe batch and nothing copies it either. The finish
+pass's pad is proved on the CPU alone until #145.
 
 Whether the copy is tolerable is answerable from the goldens: each join's two
 `GpuCoalescePartitionsExec` lines carry both sides' `output_bytes`, and B copies cost `B ×
@@ -642,16 +644,16 @@ which gates [#141](#t141). Land after #19.
 `node_session.cpp` (~L265-272) deep-copies each range out, because a handle owns its memory.
 
 So every shuffle copies its whole input a second time and peaks at twice the data — the concrete
-form of [#91](#t91)'s repartition spike, on the batch-partitioned hot path, once per aggregate
-and once per join side. The change: `TableResult` (`plan_executor.h:13`) becomes a
-`shared_ptr<cudf::table> owner` plus a `cudf::table_view view` beside the names, and the scatter
-registers N handles sharing one owner. Mechanical but wide — 35 sites across 11 files touch
-`.table` / `->table`. **No ABI change**: a handle stays a `u64` and consume-on-use is unchanged,
-so the three-symbol budget is untouched. The cost to weigh: a slice pins its whole parent, so a
-skewed hash leaves one hot lane holding the pre-scatter table after the empty lanes finished —
-the peak halves, the tail lengthens, and a materialize-if-small threshold is the local fix. Also
-unlocks [#140](#t140). Tests: the GPU tiers stay byte-identical, plus a gtest releasing N−1
-handles and checking the survivor still reads.
+form of [#91](#t91)'s repartition spike, once per aggregate and once per join side. The change:
+`TableResult` (`plan_executor.h:13`) becomes a `shared_ptr<cudf::table> owner` plus a
+`cudf::table_view view`, and the scatter registers N handles sharing one owner. Mechanical but
+wide — 35 sites across 11 files touch `.table` / `->table`. **No ABI change**: a handle stays a
+`u64`. The cost to weigh: a slice pins its whole parent, so a skewed hash leaves one hot lane
+holding the pre-scatter table — the peak halves and the tail lengthens. Also unlocks
+[#140](#t140). Tests: the GPU tiers stay byte-identical, plus a gtest releasing N−1 handles and
+reading the survivor. A streamed join waits on it too: a handle is erased by its reader
+(`node_session.cpp:254`), so `Input::BuildSideCopy` has no build side after the first probe batch,
+and T16 refuses a second until this lands ([#152](#t152)).
 
 <a id="t144"></a>
 ### #144 — multiple DISTINCT arguments need a gid-multiplying expand
@@ -688,21 +690,6 @@ tripped, so something can branch on it, but there is nowhere to record into — 
 trip log, and `Underestimate` is the precedent for what one would look like. Related: #91.
 
 ## Infrastructure / process
-
-<a id="t171"></a>
-### #171 — shad-gpu's benchmark tree is in an instrumentation this repo does not use
-
-Every record on the host carries per-node `setup_us`, `submit_us` and `device_us`; the committed
-form is a single `time_us`. Someone's instrumentation change ran there and its output stayed.
-Since `--pull-benchmarks` deletes nothing but overwrites everything it finds, any pull — including
-one after a single filtered case — rewrites all 127 committed files into that other format, which
-is what happened on 2026-08-21 and was reverted by hand.
-
-Two ways out and they are not equivalent. Either the split instrumentation is wanted, in which
-case it belongs in the repo with the goldens regenerated on purpose and the reader taught the new
-lines; or it is not, in which case the host's tree should be cleared so the next pull cannot
-resurrect it. Nobody has decided, and the cost of not deciding is paid by whoever pulls next
-without reading `build-test.md`.
 
 <a id="t167"></a>
 ### #167 — nothing proves a failed query gives its device memory back
@@ -743,15 +730,15 @@ wrong-order subtree before the root.
 
 Three places compare types — union's branch check, the root against the DataFusion plan, and
 `types_across_the_edge` — and each compares one declared schema against another rather than
-deriving one from an expression.
-
-A `GpuProject` declaring `Decimal128(15,2)` where its expression produces `Decimal128(38,10)`
-therefore validates, and an aggregate's declared state types are checked nowhere —
-`nodes/aggregate.rs` does not mention `DataType`. A reference cannot carry the expectation
-either: `ColumnRef` is `{index, name}`, and only `Binary`, `Cast` and `ScalarFunction` carry a
-type. Both engines take their per-node bytes from the declared schema, so a wrong type costs
+deriving one from an expression. So a `GpuProject` declaring `Decimal128(15,2)` where its
+expression produces `Decimal128(38,10)` validates, and an aggregate's declared state types are
+checked nowhere. A reference cannot carry the expectation either: `ColumnRef` is `{index, name}`,
+and only `Binary`, `Cast` and `ScalarFunction` carry a type. Both engines take their per-node bytes from the declared schema, so a wrong type costs
 the same on each and moves no golden byte — `avg`'s state columns typed backwards is the case
-that shipped, and the T7 schema tests are what catch it today. Fix: derive each expression's
+that shipped, and the T7 schema tests are what catch it today. A device confirmed it in T16:
+cuDF's Welford count exports as Int64 where every plan declares UInt64, because `state_fields` is
+DataFusion's answer and nothing asks what produces the column. Same width, so nothing else moved.
+Fix: derive each expression's
 output type and compare it against the declared field, for the nodes that compute rather than
 carry. Same class as [#135](archive/archived-tickets.md#t135).
 

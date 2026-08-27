@@ -102,10 +102,14 @@ pub enum Input {
     /// The batch the call was scheduled for.
     Batch,
     /// A copy of it, because the call below consumes it and something else needs it too.
+    /// The surface has no copy symbol, so a recipe naming this is one an executor refuses
+    /// until [#145](../../../../llm-wiki/tickets.md#t145) — see #152.
     BatchCopy,
     /// The build side, handed over: the call consumes it and nothing needs it again.
     BuildSide,
-    /// A copy of the build side, because the next probe batch needs it as well (#152).
+    /// A copy of the build side, because the next probe batch needs it as well. Same
+    /// absence as [`Input::BatchCopy`]: the first call gets the handle and a second is
+    /// refused naming #152.
     BuildSideCopy,
     /// Every batch this lane accumulated.
     LaneBatches,

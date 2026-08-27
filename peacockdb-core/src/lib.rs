@@ -17,6 +17,7 @@ pub mod generated {
 pub mod node_executor;
 pub mod plan_serializer;
 pub mod resident;
+pub mod spark_partitioning;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

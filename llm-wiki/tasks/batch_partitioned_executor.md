@@ -832,10 +832,12 @@ becomes in this vocabulary; the **second** is what crosses the wire and what cuD
 which is where the frozen-surface claim is either true or not; the **third** works one
 example per mode end to end, from SQL to what a single lane actually does.
 
-None of it is paper. `scripts/exec_model` runs every row on two backends that share no join
-code — one joining with pandas, one emitting these seqs and interpreting them with these
-calls — at every batching and partitioning shape the layout injector can produce, and the
-seq sequences in the second table are asserted per mode.
+None of it is paper, and none of it is a device either. `scripts/exec_model` runs every row on
+two backends that share no join code — one joining with pandas, one emitting these seqs and
+interpreting them with these calls — at every batching and partitioning shape the layout injector
+can produce, and the seq sequences in the second table are asserted per mode. What a **device**
+runs is a smaller set, because a handle is erased by its reader and nothing copies one: the second
+table's last column says which, and [#145](../tickets.md#t145) is what grows it.
 
 **Mode, and the plan it becomes.**
 
@@ -878,17 +880,21 @@ the shuffle already did", not "no merge".
 
 **What crosses the wire, and what cuDF runs.**
 
-| Mode | fb seqs: per probe call / at finish | cuDF underneath |
-|---|---|---|
-| **Inner** | `CudfHashJoin{Inner, keys, filter, projection, null_equals_null}` / — | `inner_join(bk, pk, nulls)` → two gather maps → `gather(build, ·, DONT_CHECK)` + `gather(batch, ·, DONT_CHECK)` → column concat → residual: `build_column` + `apply_boolean_mask` → `projection` |
-| **Right outer** | `CudfHashJoin{Right}` / — | `left_join(pk, bk, nulls)` with the pair swapped back → `gather(build, ·, NULLIFY)` + `gather(batch, ·, DONT_CHECK)` |
-| **Left outer** | `CudfHashJoin{Inner}` + `CudfProject`(key ordinals) / `CudfCoalescePartitions` → `CudfHashJoin{LeftAnti}` → `CudfProject`(build columns + typed NULL literals) | per call as Inner; at finish `left_anti_join(bk, accumulated_keys, EQUAL)` → `gather` → one literal-only `compute_column` per padded column |
-| **Full outer** | `CudfHashJoin{Right}` + `CudfProject`(keys) / as Left outer | per call as Right outer; finish as Left outer |
-| **Build-side semi family** | `CudfProject`(key ordinals) / `CudfCoalescePartitions` → `CudfHashJoin{LeftSemi\|LeftAnti\|LeftMark}` | finish only: `left_semi_join` / `left_anti_join` (`filtered_join::semi_join` / `anti_join` where the header exists) → `gather`; mark scatters `true` into an all-false column and appends it |
-| **Probe-side semi family** | `CudfHashJoin{RightSemi\|RightAnti}` / — | `left_semi_join(pk, bk, nulls)` with the sides swapped, as the C++ does → `gather(batch, ·)` |
-| **Cross join** | `CudfCrossJoin` / — | `cross_join(build, batch)` |
-| **Nested-loop Inner** | `CudfNestedLoopJoin{Inner, filter, filter_columns}` / — | `conditional_inner_join(build, batch, ast)` → `gather` ×2; or `cross_join` → `build_column` → `apply_boolean_mask` when the predicate is not AST-able |
-| **Nested-loop Left** | one `CudfNestedLoopJoin{Left, filter}` / — | `conditional_left_join` → `gather(build, ·)` + `gather(probe, ·, NULLIFY)` |
+`Runs on` is what is proved, not what is possible: **device** means a device case runs it,
+**CPU** that only the CPU backend does, **refused** that the ABI cannot express it and the
+refusal is what the device test asserts.
+
+| Mode | fb seqs: per probe call / at finish | cuDF underneath | Runs on |
+|---|---|---|---|
+| **Inner** | `CudfHashJoin{Inner, keys, filter, projection, null_equals_null}` / — | `inner_join(bk, pk, nulls)` → two gather maps → `gather(build, ·, DONT_CHECK)` + `gather(batch, ·, DONT_CHECK)` → column concat → residual: `build_column` + `apply_boolean_mask` → `projection` | device, one probe batch ([#152](../tickets.md#t152)) |
+| **Right outer** | `CudfHashJoin{Right}` / — | `left_join(pk, bk, nulls)` with the pair swapped back → `gather(build, ·, NULLIFY)` + `gather(batch, ·, DONT_CHECK)` | CPU; a device would take one probe batch (#152) |
+| **Left outer** | `CudfHashJoin{Inner}` + `CudfProject`(key ordinals) / `CudfCoalescePartitions` → `CudfHashJoin{LeftAnti}` → `CudfProject`(build columns + typed NULL literals) | per call as Inner; at finish `left_anti_join(bk, accumulated_keys, EQUAL)` → `gather` → one literal-only `compute_column` per padded column | refused — no device path (#152) |
+| **Full outer** | `CudfHashJoin{Right}` + `CudfProject`(keys) / as Left outer | per call as Right outer; finish as Left outer | refused — no device path (#152) |
+| **Build-side semi family** | `CudfProject`(key ordinals) / `CudfCoalescePartitions` → `CudfHashJoin{LeftSemi\|LeftAnti\|LeftMark}` | finish only: `left_semi_join` / `left_anti_join` (`filtered_join::semi_join` / `anti_join` where the header exists) → `gather`; mark scatters `true` into an all-false column and appends it | device — LeftSemi, LeftAnti and LeftMark, each streamed and answered at done |
+| **Probe-side semi family** | `CudfHashJoin{RightSemi\|RightAnti}` / — | `left_semi_join(pk, bk, nulls)` with the sides swapped, as the C++ does → `gather(batch, ·)` | CPU; a device would take one probe batch (#152) |
+| **Cross join** | `CudfCrossJoin` / — | `cross_join(build, batch)` | CPU; a device would take one probe batch (#152) |
+| **Nested-loop Inner** | `CudfNestedLoopJoin{Inner, filter, filter_columns}` / — | `conditional_inner_join(build, batch, ast)` → `gather` ×2; or `cross_join` → `build_column` → `apply_boolean_mask` when the predicate is not AST-able | CPU; a device would take one probe batch (#152) |
+| **Nested-loop Left** | one `CudfNestedLoopJoin{Left, filter}` / — | `conditional_left_join` → `gather(build, ·)` + `gather(probe, ·, NULLIFY)` | CPU; a device would take one probe batch (#152) |
 
 **One worked example per mode.** `dim(k, label)` is the build side and `fact(fk, v)` the
 probe throughout, so the shapes are comparable; the plan column shows the join subtree only,
@@ -897,9 +903,9 @@ lane: `p` is any lane, and every lane does this.
 
 | Mode | SQL | batch-partitioned plan | inside lane `p`, in cuDF |
 |---|---|---|---|
-| **Inner** | `SELECT * FROM dim d JOIN fact f ON d.k = f.fk` | `GpuJoin{Inner, on d.k@0 = f.fk@0}`<br>`├─ build: GpuEmitPartitions(k) → GpuCoalesceAllBatches`<br>`└─ probe: GpuEmitPartitions(fk)` | build lands as one resident `cudf::table`; then per probe batch: copy the build handle (it is consumed), `inner_join` → two gather maps, `gather` each side, concat the columns, slice to the `projection`, hand the output up as a handle. Nothing at done |
+| **Inner** | `SELECT * FROM dim d JOIN fact f ON d.k = f.fk` | `GpuJoin{Inner, on d.k@0 = f.fk@0}`<br>`├─ build: GpuEmitPartitions(k) → GpuCoalesceAllBatches`<br>`└─ probe: GpuEmitPartitions(fk)` | build lands as one resident `cudf::table`; then per probe batch: the build handle is consumed and would have to be copied for the next batch (#152), `inner_join` → two gather maps, `gather` each side, concat the columns, slice to the `projection`, hand the output up as a handle. Nothing at done |
 | **Right outer** | `SELECT * FROM dim d RIGHT JOIN fact f ON d.k = f.fk` | same, `GpuJoin{Right}` | as Inner, but the map for the build side carries `JoinNoneValue` where the batch had no match, and that gather is `NULLIFY` — so this batch's unmatched probe rows come out with NULL build columns. Correct batch-locally: the build side was complete before the first probe call |
-| **Left outer** | `SELECT * FROM dim d LEFT JOIN fact f ON d.k = f.fk` | `GpuJoin{Left, on k@0 = fk@0}`<br>`├─ build: … → GpuCoalesceAllBatches`<br>`└─ probe: GpuEmitPartitions(fk)` | per probe batch, two calls: `CudfProject` off a copy of the batch keeps its key column (that is the lane's growing key table), and `CudfHashJoin{Inner}` off a copy of the build emits this batch's matches. At done: concat the key tables, `left_anti_join(build, keys)` → the build rows nothing ever matched, then one project that appends a typed NULL per probe column |
+| **Left outer** | `SELECT * FROM dim d LEFT JOIN fact f ON d.k = f.fk` | `GpuJoin{Left, on k@0 = fk@0}`<br>`├─ build: … → GpuCoalesceAllBatches`<br>`└─ probe: GpuEmitPartitions(fk)` | per probe batch, two calls: `CudfProject` off the batch keeps its key column (that is the lane's growing key table), and `CudfHashJoin{Inner}` off the build emits this batch's matches. Both reads want a copy that the surface cannot give, which is why this row is the one with no device path at all. At done: concat the key tables, `left_anti_join(build, keys)` → the build rows nothing ever matched, then one project that appends a typed NULL per probe column |
 | **Full outer** | `SELECT * FROM dim d FULL OUTER JOIN fact f ON d.k = f.fk` | same, `GpuJoin{Full}` | Right outer's per-batch call, Left outer's done call, and nothing else — the two halves are independent because unmatched probe rows are batch-local and unmatched build rows are not |
 | **Build-side semi family** | `SELECT * FROM dim d WHERE EXISTS (SELECT 1 FROM fact f WHERE f.fk = d.k)` | `GpuJoin{LeftSemi, on k@0 = fk@0}`<br>`├─ build: … → GpuCoalesceAllBatches`<br>`└─ probe: GpuEmitPartitions(fk)` | per probe batch: one `CudfProject`, keeping the key column. No join call, no build copy, no output. At done: concat the key tables and run `left_semi_join(build, keys)` — `anti_join` for NOT EXISTS, and the mark form scatters `true` into an all-false column and appends it. The whole lane's output is that one table |
 | **Probe-side semi family** | `SELECT * FROM fact f WHERE EXISTS (SELECT 1 FROM dim d WHERE d.k = f.fk)` | `GpuJoin{RightSemi, on k@0 = fk@0}`<br>`├─ build: … → GpuCoalesceAllBatches`<br>`└─ probe: GpuEmitPartitions(fk)` | per probe batch: copy the build handle, `left_semi_join(batch keys, build keys)` — the sides swapped, as the C++ does — then `gather` the batch by the returned indices. The batch's surviving rows leave immediately; nothing accumulates and there is no done call |
@@ -914,7 +920,9 @@ emit, doing the whole join in one call with no finish pass. That is what makes t
 cheap to trust.
 
 **Three shapes are refused at plan time**, per the scope rule for an unsupported shape
-inside a supported feature:
+inside a supported feature. Two more are refused at run time on a device, for the reason
+below rather than for anything about the shape: Left and Full outright, and a second probe
+batch on every family that needs the build side per call.
 
 - **Left, Right or Full with a residual filter — [#153](../tickets.md#t153), and it is a
   live defect in the shipping engine, not a limitation of this mode.**
@@ -934,12 +942,14 @@ inside a supported feature:
 reads, and no node duplicates one — passing the same handle twice to a concat fails on the
 second read, because the first erased it. So a build side probed by B batches is needed B
 times and exists once, which is [#152](../tickets.md#t152) exactly. Per family, per probe
-batch: the probe-local types (Inner, Right, RightSemi, RightAnti) need **one build-side
-copy**; Left and Full need that **plus a copy of the probe batch**, because the join
-consumes the batch and the key accumulation needs it too; the build-side semi family needs
-**none at all**, since its probe calls never touch the build side. [#145](../tickets.md#t145)'s
-refcounted handle removes all of them, and it is the one change that would let this mode
-stream a probe without a copy. The prototype counts every copy it takes, so the figure for
+batch: the probe-local types (Inner, Right, RightSemi, RightAnti) would need **one build-side
+copy**; Left and Full **that plus a copy of the probe batch**, because the join consumes the
+batch and the key accumulation needs it too; the build-side semi family **none at all**, since
+its probe calls never touch the build side. None of those copies can be taken — the surface has
+no symbol for one, and `slice_handle` moves rather than copies — so what the count actually
+predicts is where a device refuses: the probe-local types after one batch, Left and Full
+outright. [#145](../tickets.md#t145)'s refcounted handle is what turns each of them from a
+refusal into a copy, and then into no copy at all. The prototype counts every copy it takes, so the figure for
 a given plan is a test assertion rather than an estimate.
 
 **The `CudfCoalescePartitions` in those finish sequences is a concat, not a partition
@@ -957,8 +967,11 @@ Three things follow. It is *that* node because its arity is a call argument rath
 constant: the collapse arm concatenates whatever k handles the call hands it, and k here is
 a runtime number, how many batches this lane happened to see. (`CudfUnion` also
 concatenates, but declares its inputs in the node.) It fires only where k > 1 — one probe
-batch hands its key table straight to the finish join, none registers an empty one, which
-is what an empty lane means. And the word "partitions" in its name is the wire's
+batch hands its key table straight to the finish join. **What k = 0 does is the executor's
+answer, not the concat's**: a lane that saw no probe batch has no key table to hand over, and
+since a concat of nothing throws ([#173](../tickets.md#t173)) the finish has to answer from the
+build side alone — LeftAnti over an empty key table is every build row, which is what the CPU
+does and what the device must be made to do. And the word "partitions" in its name is the wire's
 vocabulary, not this mode's; `ScanBatch` sets the same trap in architecture.md.
 
 **Why keys and not the probe rows.** The alternative to accumulating keys is not "a smaller
@@ -1414,8 +1427,10 @@ its subtree once and never lifts — so the holds are O(nodes) per join and per 
 whole run rather than anything per step. The prototype instead re-derives the entire predicate
 every step: every node, every lane, and both hold chains to the root.
 
-A naive rescan survives as a test-only oracle, compared pick by pick over seeded random
-shapes, because an incremental schedule that disagrees with it is wrong by definition.
+A naive rescan survives as a test-only oracle
+([`the_incremental_schedule_picks_what_a_full_rescan_would`](../../peacockdb-core/src/batch_partitioned/driver/scheduler/tests.rs#L365)),
+compared pick by pick over seeded random shapes, because an incremental schedule that
+disagrees with it is wrong by definition.
 
 That is the whole of it, and the push behaviour falls out rather than being programmed.
 The moment a node produces a batch its parent is runnable at a strictly lower height, so
@@ -1637,16 +1652,17 @@ to be measured; each one holds for the Rust implementation and the case behind i
 - **A memory bound asserted at one partitioning is asserting about one shape of arrival.**
   Only a streamed probe accumulates; a single-batch probe accumulates once and finishes. Two
   corpus queries passed at one layout and failed at two others.
-- **Zero rows is not zero bytes, and a zero peak is a defect.** An empty lane still owes a
-  typed batch, which costs schema and no rows. Every run asserts a peak above zero and
+- **Zero rows is not zero bytes, and a zero peak is a defect.** A batch of no rows still costs
+  its schema; an empty lane emits no batch at all, on either backend, which is a different
+  thing and settled in T16. Every run asserts a peak above zero and
   `in_flight` back to zero at the end. `peak <= budget` is *not* among them, and T13 measured
   why: the peak is observed where a batch is held, and the post-check runs after the emitting
   executor's state has been forgotten, so a buffering node's transient — its state and its
   output alive together, which is exactly what `cudf::concatenate` holds — raises the peak
   without any check seeing it. What prices that transient is the pre-check, so an accumulator
   **must** include the output it is about to build in its `scratch_bytes`; a silent model is a
-  guard switched off, not a cheap call. That obligation is T15's, and the driver tests pin both
-  halves of it.
+  guard switched off, not a cheap call. That obligation is **T17's**, with the rest of the
+  accounting: `scratch_bytes` belongs to `Executor`, which no task before it implements.
 
 ## GPU execution through the frozen FFI
 
@@ -1869,6 +1885,13 @@ Given that, the remaining scheduling freedoms are pinned:
   the estimator charges, and which matches what a parallel driver will cost anyway. If a
   driver ever goes parallel, emission order is preserved with a reorder buffer or the
   goldens regenerate deliberately.
+- **No sort here preserves tie order.** DataFusion sorts through `sort_unstable_by`
+  (`lexsort_to_indices`) and cuDF's `sorted_order` is unstable too, so which of two tied rows an
+  ordered `LIMIT` returns is decided by neither engine's contract. Each is reproducible for a
+  given plan and input, which is what the scope note below asks for; equal answers across
+  batchings under ties is a stronger claim, and the tie-break that would buy it belongs with the
+  task that needs it. The accumulating sort still orders and slices rather than taking a top-N,
+  because a heap's selection moves with arrival and a slice's does not.
 - **`cudf::merge` tie order**: input tables are passed partition-major (partition 0's
   batches in stream order, then partition 1's, …) regardless of arrival order.
 - Order pinning is part of *result* determinism, not just golden stability: float
@@ -2323,8 +2346,10 @@ expected rather than avoided, since both are asking DataFusion for the same oper
 zero batches, one batch, ties for the merge (partition-major stability), fetch interaction, large
 batch counts, gid-carrying aggregate merges.
 
-**T16 — partition ops and joins.** `GpuEmitPartitions` (per-batch scatter, N=3 and large N, empty
-outputs for skewed hashes), `GpuMergePartitions`' round-robin rule, `GpuJoin` with
+**T16 — partition ops and joins.** `GpuEmitPartitions` (per-batch scatter at a small N and a
+large one, empty outputs for skewed hashes, and the lane each key lands in, asserted on both
+backends — co-partitioning is what every partitioned join rests on). `GpuMergePartitions` is not
+here: its mapping is `Forwarder`'s, from T13, and its service order is the driver's. `GpuJoin` with
 `set_build`/`probe_and_fetch`/`finish_and_fetch`, plus cross and nested-loop joins on the same
 trait. The [capability matrix](#join-capability-matrix) is emulated as a test table — per
 (type × layout): stream-vs-refuse, correctness against a hand-built oracle, the GPU finish pass via
@@ -2332,11 +2357,29 @@ key accumulation ([#136](../tickets.md#t136)), `null_equals_null` on the finish 
 pass is the one shape this mode invented with no device behind it after T21, which is why the
 matrix is emulated here rather than assumed.
 
-**How everything here is tested.** Small synthetic data, never parquet; plans hand-constructed
+**What a copy costs decides the matrix, and the copy does not exist yet.** Every handle is erased
+by its reader, and the frozen surface has no copy symbol, so a shape whose recipe names
+`BuildSideCopy` meets a second probe batch with a dead handle. The question T16 had to settle was
+whether to keep claiming those shapes stream and refuse until [#145](../tickets.md#t145), or make
+a single-batch probe the matrix's permanent rule. Over the 37 hash joins in the
+partitioned-tp8-standard goldens a copy would cost 0.08 of the probe stream at the median and more
+than it for 12, so a permanent single-batch rule would price every join at the worst one: the
+claims stand and the device refuses, naming [#152](../tickets.md#t152), with a test on the
+refusal.
+
+Left and Full outer go further and have **no device path at all** until then, which is #152's
+second row rather than its first: their key project and their per-call join read the same probe
+batch, so no ordering of the two leaves both an input. The finish pass's pad is therefore proved
+on the CPU alone, and the device test asserts the refusal.
+
+**How everything here is tested.** Small synthetic data, never the corpus; plans hand-constructed
 rather than planned, so a test names the shape it means instead of hoping a query produces it;
 `attach_recipes()` is fair game, since the recipe is what a GPU executor consumes. The oracle is
 hand-constructed too: an expected result written down, not derived by the code under test. CPU and
-GPU tests in separate targets so CI hosts split them.
+GPU tests in separate targets so CI hosts split them. A device test writes its own parquet, which
+is the ABI's doing rather than an exception: the four entry points load a table only by reading
+one, so a device test's input is a scan or nothing. What the rule excludes is tpch.minimal and the
+generated sf1, whose values nobody chose.
 
 **What this task does not do.** No driver: nothing here is hooked into the schedule, and every
 assertion is about one executor answering one call. That defers the whole class of claims that
@@ -2382,6 +2425,36 @@ It also inherits what the executors task could not assert without a driver: a li
 nothing whatever the offset, at most two batches sliced per query, the scan stopping — each a call
 or pull count — and `PlaceholderRowExec` ([#158](../tickets.md#t158)), which is a source and so
 proves itself by what a driver pulls from it.
+
+`PlanIndex` gets the unit tests it has never had, and they belong here because this is the first
+task whose failures would be read through it. Nothing tests it directly today: `PlanIndex::build`
+has one caller, and the scheduler tests derive their own subtree ranges from a parents array rather
+than taking the index's. Assert what the derivation decides rather than what a plan happens to
+produce — pre-order numbering and the contiguous subtree range that every hold rests on, `parent`
+and the snapshotted children, and the three counts a category changes: `ready_lanes` against
+`lanes` for a cross-lane accumulator and an emitter, `input_lanes` for the `Done` events a
+partition accumulator owes, and `slot_base` where it is lane-scoped against where it is not. Each
+of those is wrong far from where it shows.
+
+The row range the driver hands an unload is asserted before the call. `clamp_row_range` absorbs
+an offset past the end and a length past it, because a C ABI has to be total — but
+`RowInterval::range_of` cannot produce either, so the tolerance can only be reached by a driver
+whose `rows_seen` has drifted, and what that looks like is a `LIMIT` quietly returning short.
+Assert non-empty and within the batch where the driver builds the range, so the arithmetic names
+itself rather than being absorbed.
+
+The mock backend gets a handful of its own for the same reason one level up. Every assertion in
+`driver/tests/` is measured against it, so a mock that miscounts is 1255 lines of tests agreeing
+with the wrong answer and staying green. Pin what a script says against what the mock does — the
+scripted batch counts and sizes per source and lane, the skew pattern an emitter fills its lanes
+by, and an accumulator emitting where the script says it emits. A few cases, not a suite: what is
+being checked is that the instrument reads what it was set to.
+
+It starts by wiring the executors to their traits. `Backend` names seven associated types, so no
+earlier task can implement it — T16 finishes the last of them and none of them owns a source — and
+`Executor`'s `resident_bytes`/`scratch_bytes` are the memory accounting this task adds. So the
+executors arrive as inherent methods in the trait's shapes, and the first commit here is the one
+that makes the compiler check that.
 
 **Defects found here are fixed here.** Every task before this one proved its own layer against a
 fixture; the first thing to run all of them at once will find things about their joins, and

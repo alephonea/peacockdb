@@ -1196,7 +1196,9 @@ const WRITER_DIFFERENCES: [(&str, &str, &str); 5] = [
         "PlanNode",
         "output_schema",
         "nothing on the C++ side reads it — the executors take their types from each \
-         node's own payload",
+         node's own payload. The one arm that would have is the collapse of no input \
+         handles, which needed a schema to answer with and is a refusal instead (#173), \
+         so this stays absent rather than becoming a field written for one caller",
     ),
 ];
 

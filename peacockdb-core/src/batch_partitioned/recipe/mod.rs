@@ -25,7 +25,7 @@ use super::nodes::{
     GpuProject, GpuSort, GpuUnload, NodeRef, as_node_ref,
 };
 use super::schema::Schema;
-use aggregate_writer::Phase;
+use super::nodes::aggregate::Phase;
 use writer::Writer;
 
 pub use read::{check_seq_kinds, depth};

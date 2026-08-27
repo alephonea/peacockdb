@@ -212,7 +212,8 @@ jobs:
           # binary does not link libpeacock_gpu — a smaller link in the tier that has
           # already hit tmpfs/SIGBUS at link time. It shares this line's already-built
           # rust-only fingerprint, so it costs no extra dependency compile.
-          cargo test --no-run --features rust-only -p peacockdb-core --lib --test test_plan_bytes
+          cargo test --no-run --features rust-only -p peacockdb-core --lib --test test_plan_bytes \
+            --test test_cpu_executors
         env:
           CMAKE_GENERATOR: Ninja
           LD_LIBRARY_PATH: /opt/conda/lib
@@ -269,6 +270,11 @@ jobs:
           # ONLY — so before this line the lib unit tests ran locally and
           # never in CI. test_ci_coverage asserts this line exists.
           cargo test --features rust-only -p peacockdb-core --lib
+          # The executor contract both engines owe, from one table: this runs its rows on
+          # the CPU backend and the gpu-tests job runs the same rows on a device. Neither
+          # half proves the contract alone, which is why the table is shared rather than
+          # copied. Synthetic data written by the test, so no dataset and no device.
+          cargo test --features rust-only -p peacockdb-core --test test_cpu_executors
         env:
           CMAKE_GENERATOR: Ninja
           LD_LIBRARY_PATH: /opt/conda/lib
@@ -331,26 +337,19 @@ jobs:
       - name: Build and stage rust GPU test binaries
         run: |
           mkdir -p cpp/install/rust-tests
-          # test_gpu_full_table / test_gpu_partitioned = the MERGED per-query GPU
-          # verify (Phase 2 C2), split by execution mode: one GPU run per query
-          # asserts BOTH per-node rows + rows+schema cost vs the matching
-          # *.<mode>-<tp>-<tier>.cpu.txt goldens AND the final result. The
-          # node-by-node half is what catches intermediate divergences a whole-result
-          # check misses (e.g. q14's INTERSECT NULL-semantics regression), so it MUST
-          # gate. BOTH binaries must be staged — dropping either silently retires a
-          # whole execution mode.
-          # test_inc2_conformance = the live GPU↔CPU Spark-murmur3 partition-id gate
-          # (peacock FFI path vs comet, bit-exact) — the standing Inc2 hash gate.
-          # test_gpu_abi = the batch-partitioned ABI's three per-call symbols against a
-          # real device: the row-group override, the export range and the slice, plus the
-          # release skipped exactly where a call consumed the handle. Its companion
-          # test_gpu_batch needs no device and runs in the cpp-cpu tier instead.
-          # test_gpu_recipe_walk = the recipe plan the planner builds, driven by hand on a
-          # device: one walk making exactly the calls the recipes name, threading handles
-          # between them, with DataFusion on the same SQL as the oracle.
-          # One line on purpose: the coverage guard reads this array with a single
+          # The six GPU targets, one line each; build-test.md's test table is the detail.
+          # test_gpu_full_table / test_gpu_partitioned = the per-query GPU verify, split by
+          #   execution mode: each asserts the per-node cost tree against the matching
+          #   .cpu.txt golden AND the final result, which catches an intermediate divergence
+          #   a whole-result check misses. Staging one alone retires an execution mode.
+          # test_inc2_conformance = GPU vs comet Spark-murmur3 partition ids, bit-exact.
+          # test_gpu_abi = the batch-partitioned ABI's three per-call symbols on a device;
+          #   its companion test_gpu_batch needs no device and runs in cpp-cpu instead.
+          # test_gpu_recipe_walk = a recipe plan driven by hand, DataFusion as the oracle.
+          # test_gpu_executors = the exec executors, each handed its recipe and one batch.
+          # One line on purpose: the coverage guard reads the array below with a single
           # `lines().find`, so a continuation hides every target after the backslash.
-          for t in test_gpu_full_table test_gpu_partitioned test_inc2_conformance test_gpu_abi test_gpu_recipe_walk; do
+          for t in test_gpu_full_table test_gpu_partitioned test_inc2_conformance test_gpu_abi test_gpu_recipe_walk test_gpu_executors; do
             exec_path=$(cargo test --no-run -p peacockdb-core --test "$t" \
                 --message-format=json \
               | python3 -c '
