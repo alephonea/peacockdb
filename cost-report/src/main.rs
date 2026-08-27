@@ -17,11 +17,12 @@
 //! Emits a self-contained HTML page (inline CSS, for GitHub Pages) and a compact
 //! Markdown blob (for the upserted PR comment, keyed on [`SENTINEL`]).
 //!
-//! Usage:
-//!   cost-report [--testdata DIR] [--registry FILE] [--html FILE] [--md FILE]
-//!               [--site DIR] [--pages-url URL] [--sha SHA] [--repo OWNER/REPO]
+//! Usage — the flags here are `FLAGS`, and a test holds the two to each other:
+//!   cost-report [--testdata DIR] [--html FILE] [--site DIR]
+//!               [--md-legacy FILE] [--md-bp FILE]
+//!               [--pages-url URL] [--sha SHA] [--repo OWNER/REPO]
 //!               [--generated-at TS] [--published]
-//!               [--cost-diff --base REF|DIR]
+//!               [--cost-diff --base REF|DIR --md-diff FILE]
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
@@ -44,6 +45,31 @@ const SENTINEL: &str = "<!-- peacockdb-cost-report -->";
 /// Separate marker for the cost-regression gate widget, so it upserts as its own
 /// PR comment independently of the coverage/ratio report above.
 const DIFF_SENTINEL: &str = "<!-- peacockdb-cost-regression -->";
+
+/// GitHub refuses an issue-comment body over this, with a 422 that reads as a permissions
+/// problem rather than a size one. It is asserted against the REAL registry rather than a
+/// fixture: the input grows by a row per query enabled, and growth is the failure.
+const COMMENT_MAX_BYTES: usize = 65_536;
+
+/// Every flag this binary accepts, and the only place they are listed.
+///
+/// The parse-time rejection below reads THIS array rather than repeating a name, so the
+/// array cannot be right while the binary refuses something else — which is the bug it was
+/// written for with an extra step in it. `every_workflow_flag_is_one_the_binary_accepts`
+/// checks the workflow's invocations against it, in both directions: a caller passing a
+/// flag that no longer exists, and a flag nothing passes any more.
+const FLAGS: &[&str] = &[
+    "--testdata", "--html", "--site", "--md-legacy", "--md-bp", "--md-diff", "--pages-url",
+    "--published", "--sha", "--generated-at", "--repo", "--cost-diff", "--base",
+];
+
+/// The batch-partitioned tables go in their own comment: the four tables together exceed
+/// GitHub's 65,536-byte comment body by twice over, and a single dataset's table nearly
+/// fills one on its own, so no arrangement of them fits in one. Each markdown file carries
+/// its sentinel as its FIRST LINE and the workflow reads it from there — the upsert then
+/// works for any number of files and there is no constant to keep in agreement across two
+/// languages.
+const SENTINEL_BP: &str = "<!-- peacockdb-cost-report-bp -->";
 
 /// The execution-mode columns, in display order. `all_at_once` deliberately has no
 /// column: it is a whole-plan-at-once GPU path with no per-node breakdown, so a
@@ -489,7 +515,20 @@ fn main() {
     // When set, assemble the page-per-sha Pages site here instead of writing a
     // single --html file (master deploy); see `assemble_site`.
     let site = opt("--site", "");
-    let md_out = opt("--md", "");
+    // Two files because two comments: see `SENTINEL_BP`. `--md` is gone rather than
+    // repurposed — a flag that used to emit everything and now emits half is worse than one
+    // that no longer exists, so it is rejected by name. The gate renders one table and takes
+    // its own `--md-diff` rather than borrowing a name that means half a report.
+    if let Some(bad) = args.iter().find(|a| a.starts_with("--") && !FLAGS.contains(&a.as_str())) {
+        panic!(
+            "unknown flag {bad}: this binary accepts {FLAGS:?}. `--md` in particular is gone — the \
+             report writes two comments and the gate one, so pass --md-legacy and --md-bp, or \
+             --md-diff with --cost-diff."
+        );
+    }
+    let md_out = opt("--md-legacy", "");
+    let md_bp_out = opt("--md-bp", "");
+    let md_diff_out = opt("--md-diff", "");
     let pages_url = opt("--pages-url", PAGES_URL_DEFAULT);
     let published = args.iter().any(|a| a == "--published");
 
@@ -521,7 +560,7 @@ fn main() {
             &testdata,
             &opt("--base", ""),
             &opt("--html", "cost_diff.html"),
-            &md_out,
+            &md_diff_out,
             &links,
         );
         return;
@@ -630,12 +669,20 @@ fn main() {
         eprintln!("assembled page-per-sha site at {site}/");
     }
 
-    let md = render_markdown(&datasets, &pages_url, published, &links, freshness.as_deref());
-    if md_out.is_empty() {
-        print!("{md}");
-    } else {
-        std::fs::write(&md_out, &md).unwrap_or_else(|e| panic!("write {md_out}: {e}"));
-        eprintln!("wrote {md_out}");
+    for (out, part) in [(&md_out, MdPart::Legacy), (&md_bp_out, MdPart::BatchPartitioned)] {
+        let md = render_markdown(&datasets, &pages_url, published, &links, freshness.as_deref(), part);
+        assert!(
+            md.len() <= COMMENT_MAX_BYTES,
+            "the {part:?} comment is {} bytes against the {COMMENT_MAX_BYTES}-byte cap — GitHub \
+             refuses the body with a 422 that reads as a permissions error",
+            md.len()
+        );
+        if out.is_empty() {
+            print!("{md}");
+        } else {
+            std::fs::write(out, &md).unwrap_or_else(|e| panic!("write {out}: {e}"));
+            eprintln!("wrote {out}");
+        }
     }
 }
 
@@ -884,7 +931,7 @@ fn bp_cell_html(r: &Row, links: &Links, d: &Dataset, group: BpGroup) -> String {
             let at = d
                 .section_lines
                 .get(&stem)
-                .and_then(|lines| lines.get(&r.query))
+                .and_then(|lines| lines.get(&r.stem()))
                 .map(|line| format!("#L{line}"))
                 .unwrap_or_default();
             match (state == "enabled", links.golden_url(d.canon_rel, &stem, "txt")) {
@@ -984,11 +1031,14 @@ fn tickets_html(tickets: &[String], links: &Links) -> String {
     tickets.iter().map(|t| ticket_link(t, links)).collect::<Vec<_>>().join(" ")
 }
 
-fn tickets_md(tickets: &[String], links: &Links) -> String {
+/// Tickets as bare text, for the PR comment. Each anchor costs about 90 bytes against the
+/// four-byte number, and the comment is over its cap by twice over — the numbers stay
+/// greppable and the artifact is where a reader clicks.
+fn tickets_plain(tickets: &[String]) -> String {
     if tickets.is_empty() {
         return "—".to_string();
     }
-    tickets.iter().map(|t| ticket_link(t, links)).collect::<Vec<_>>().join(" ")
+    tickets.iter().map(|t| format!("#{t}")).collect::<Vec<_>>().join(" ")
 }
 
 /// Markdown counterpart of [`mode_cells_html`]. The PR comment's table is raw HTML
@@ -1185,11 +1235,11 @@ fn render_html(
         );
         for r in &d.rows {
             let stem = r.stem();
-            let dk_url = r.duckdb.and_then(|_| links.golden_url(d.canon_rel, &stem, "duckdb_cost.txt"));
             let cost = r.bp_peacockdb.as_ref().map(|(_, total)| *total);
             let cost_url = r.bp_peacockdb.as_ref().and_then(|(mode, _)| {
                 links.golden_url(d.canon_rel, &format!("{mode}-{BP_TIER}"), "cost.txt")
             });
+            let dk_url = r.duckdb.and_then(|_| links.golden_url(d.canon_rel, &stem, "duckdb_cost.txt"));
             let _ = write!(
                 s,
                 "<tr class=\"{}\"><td{}>{}</td>{}{}{}<td class=\"num sigma\">{}</td>\
@@ -1231,10 +1281,34 @@ fn full_report_ref(published: bool, pages_url: &str) -> String {
     }
 }
 
-fn render_markdown(datasets: &[Dataset], pages_url: &str, published: bool, links: &Links, freshness: Option<&str>) -> String {
+/// Which comment this markdown is, and therefore which tables it carries and which
+/// sentinel it opens with. See [`SENTINEL_BP`] for why there are two.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum MdPart {
+    Legacy,
+    BatchPartitioned,
+}
+
+fn render_markdown(
+    datasets: &[Dataset],
+    pages_url: &str,
+    published: bool,
+    links: &Links,
+    freshness: Option<&str>,
+    part: MdPart,
+) -> String {
     let mut s = String::new();
-    s.push_str(SENTINEL);
+    s.push_str(match part {
+        MdPart::Legacy => SENTINEL,
+        MdPart::BatchPartitioned => SENTINEL_BP,
+    });
     s.push('\n');
+
+    // Every anchor but the query cell's is dropped from the comment: 612 of them at ~98
+    // bytes of markup each is 60 KB, against a 65,536-byte body. The mode and cost cells
+    // lose their links by being handed a sha-less `Links`, which is what makes their urls
+    // `None` — the artifact keeps all of them.
+    let plain = Links { repo: links.repo.clone(), sha: None, tickets: links.tickets.clone() };
 
     let mut summary = String::new();
     for d in datasets {
@@ -1254,6 +1328,7 @@ fn render_markdown(datasets: &[Dataset], pages_url: &str, published: bool, links
     s.push('\n');
 
     for d in datasets {
+        if part == MdPart::Legacy {
         let _ = write!(
             s,
             // A raw HTML table, NOT a GFM pipe table. Two things the widget's
@@ -1273,9 +1348,6 @@ fn render_markdown(datasets: &[Dataset], pages_url: &str, published: bool, links
         );
         for r in &d.rows {
             let stem = r.stem();
-            let plan_url = r.peacockdb.and_then(|_| links.golden_url(d.canon_rel, &stem, &format!("{CPU_DEVICE}.cpu.txt")));
-            let cost_url = r.peacockdb.and_then(|_| links.golden_url(d.canon_rel, &stem, &format!("{CPU_DEVICE}.cost.txt")));
-            let dk_url = r.duckdb.and_then(|_| links.golden_url(d.canon_rel, &stem, "duckdb_cost.txt"));
             // Markdown can't set a row background, so flag the >threshold rows
             // with 🔴 — the comment-side equivalent of the HTML light-red row.
             let ratio_cell = match r.bucket() {
@@ -1293,16 +1365,18 @@ fn render_markdown(datasets: &[Dataset], pages_url: &str, published: bool, links
                     None => format!("<sub>{}</sub>", query_cell_md(&r.query, links.query_url(d.query_rel, &stem))),
                     Some(_) => query_cell_md(&r.query, links.query_url(d.query_rel, &stem)),
                 },
-                mode_cells_md(r, links, d.canon_rel),
-                peacock_cell_md(r.peacockdb, plan_url, cost_url),
-                cost_cell_md(r.duckdb, dk_url),
+                mode_cells_md(r, &plain, d.canon_rel),
+                peacock_cell_md(r.peacockdb, None, None),
+                cost_cell_md(r.duckdb, None),
                 ratio_cell,
                 if r.features.is_empty() { "—".to_string() } else { r.features.join(" ") },
-                tickets_md(&r.tickets, links),
+                tickets_plain(&r.tickets),
             );
         }
         s.push_str("</table>\n</details>\n\n");
+        }
 
+        if part == MdPart::BatchPartitioned {
         // The same table as the html's, in what markdown allows: no row background, so the
         // ratio cell carries the flag, and no hover, so the mode order is in the header.
         // A table that lands in one rendering and not the other is the failure to expect
@@ -1321,11 +1395,7 @@ fn render_markdown(datasets: &[Dataset], pages_url: &str, published: bool, links
         ));
         for r in &d.rows {
             let stem = r.stem();
-            let dk_url = r.duckdb.and_then(|_| links.golden_url(d.canon_rel, &stem, "duckdb_cost.txt"));
             let cost = r.bp_peacockdb.as_ref().map(|(_, total)| *total);
-            let cost_url = r.bp_peacockdb.as_ref().and_then(|(mode, _)| {
-                links.golden_url(d.canon_rel, &format!("{mode}-{BP_TIER}"), "cost.txt")
-            });
             let ratio_cell = match r.bp_bucket() {
                 "red" => format!("{} 🔴", ratio_or_dash(r.bp_ratio())),
                 _ => ratio_or_dash(r.bp_ratio()),
@@ -1340,14 +1410,15 @@ fn render_markdown(datasets: &[Dataset], pages_url: &str, published: bool, links
                 bp_cell_md(r, BpGroup::Plan),
                 bp_cell_md(r, BpGroup::Cpu),
                 bp_cell_md(r, BpGroup::Gpu),
-                peacock_cell_md(cost, None, cost_url),
-                cost_cell_md(r.duckdb, dk_url),
+                peacock_cell_md(cost, None, None),
+                cost_cell_md(r.duckdb, None),
                 ratio_cell,
                 if r.features.is_empty() { "—".to_string() } else { r.features.join(" ") },
-                tickets_md(&r.tickets, links),
+                tickets_plain(&r.tickets),
             );
         }
         s.push_str("</table>\n</details>\n\n");
+        }
     }
     let _ = write!(
         s,
@@ -1632,7 +1703,12 @@ fn base_total(base: &str, repo_path: &str, testdata: &Path, section: Option<&str
     if !out.status.success() {
         return None; // not in base → no baseline
     }
-    read_total_str(&String::from_utf8_lossy(&out.stdout), "peacockdb_cost=")
+    // The same reader as the directory arm. This arm dropped `section` and read the whole
+    // file, so every section of a per-mode `.cost.txt` was baselined against whichever query
+    // sorts first — the diff then reported swings in both directions and neither was a cost
+    // change. Legacy goldens are one file per query, so `section` is None there and the two
+    // arms agreed; per-mode files are what made the difference reachable.
+    entry_total(&String::from_utf8_lossy(&out.stdout), section)
 }
 
 /// Self-contained HTML artifact: only CHANGED queries, green row = improvement,
@@ -1848,6 +1924,47 @@ mod tests {
 
     /// The gate's red case, and the reason the reader had to change: read per file, a
     /// two-section golden whose SECOND section moved reports no change at all — the
+    /// The two arms of `base_total` return the same total for the same file.
+    ///
+    /// The git arm dropped `section` and read the whole file, so every section of a per-mode
+    /// `.cost.txt` was baselined against whichever query sorts first — a swing in both
+    /// directions that was never a cost change. `the_per_file_reader_misses_a_second_section
+    /// _that_moved` below already proves that reader blind; this asserts the caller stopped
+    /// using it. Legacy goldens are one file per query, so both arms agreed there and always
+    /// have.
+    #[test]
+    fn both_base_arms_read_the_same_section_of_a_multi_section_file() {
+        let repo_rel = "testdata/goldens/tpch.sf1/bp-tp4-sized-mini.cost.txt";
+        let out = std::process::Command::new("git")
+            .args(["show", &format!("HEAD:{repo_rel}")])
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .output()
+            .expect("git show");
+        assert!(out.status.success(), "{repo_rel} is not in HEAD");
+        let text = String::from_utf8_lossy(&out.stdout).to_string();
+        let sections = cost_sections(&text);
+        assert!(sections.len() > 1, "a single-section file cannot show the difference");
+        let query = sections.last().expect("a section").0.clone();
+        assert_ne!(query, sections[0].0, "the last section must not be the first");
+
+        // The directory arm, over a copy of exactly what the git arm reads.
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../target/base-arms-test");
+        let file = dir.join("goldens/tpch.sf1/bp-tp4-sized-mini.cost.txt");
+        std::fs::create_dir_all(file.parent().expect("a parent")).expect("mkdir");
+        std::fs::write(&file, &text).expect("write");
+
+        let testdata = Path::new("testdata");
+        let from_dir = base_total(dir.to_str().expect("utf8"), repo_rel, testdata, Some(&query));
+        let from_git = base_total("HEAD", repo_rel, testdata, Some(&query));
+        assert_eq!(from_dir, from_git, "the two arms disagree on {query}");
+        assert!(from_dir.is_some(), "neither arm found {query}");
+        assert_ne!(
+            from_git,
+            read_total_str(&text, "peacockdb_cost="),
+            "{query} must not share a total with the file's first section, or this proves nothing"
+        );
+    }
+
     /// first `peacockdb_cost=` is unmoved and is the only one a per-file read sees.
     #[test]
     fn the_per_file_reader_misses_a_second_section_that_moved() {
@@ -2385,8 +2502,12 @@ mod tests {
 
     /// A batch-partitioned row: enabled at two plan modes, one cpu, none on a device, with
     /// a cost the last enabled cpu mode carries.
+    ///
+    /// Its query is hyphenated on purpose. The registry spells one `scan_limit` and its golden
+    /// section `== scan-limit`, so a cell looking its anchor up under the registry's spelling
+    /// finds none and quietly links at the top of the file — which every `qNN` fixture passes.
     fn bp_row() -> Row {
-        let mut r = test_row("q6", &[("full_table_gpu", "enabled")], Some(100), Some(100));
+        let mut r = test_row("scan_limit", &[("full_table_gpu", "enabled")], Some(100), Some(100));
         for (column, state) in [
             ("bp_tp1_single", "enabled"),
             ("bp_tp1_rowgroup", "enabled"),
@@ -2408,7 +2529,7 @@ mod tests {
             rows: vec![bp_row()],
             section_lines: SectionLines::from([(
                 "bp-tp1-single.plans".to_string(),
-                BTreeMap::from([("q6".to_string(), 42)]),
+                BTreeMap::from([("scan-limit".to_string(), 42)]),
             )]),
         }
     }
@@ -2417,11 +2538,141 @@ mod tests {
     /// added to one and not the other is the failure to expect: the html is what a person
     /// looks at and the markdown is what the review actually reads, so neither standing in
     /// for the other is the point.
+    /// The comment body has a 65,536-byte cap and the four tables were 127 KB, of which 60 KB
+    /// was anchor markup. Both halves of the fix are asserted here: each part carries its own
+    /// sentinel and only its own tables, and the only link left in either is the query cell's.
+    /// The workflow's invocations and the binary's flags are one list, checked both ways.
+    ///
+    /// The forward direction is this hour's bug: `--md` was rejected by name while
+    /// pipeline.yml's gate still passed it, so the binary panicked, `set +e` swallowed it and
+    /// a dead flag read as a cost regression for an hour. The REVERSE is the one that would
+    /// go unnoticed for longer — a flag nothing passes any more is a feature nobody runs, and
+    /// nothing else would say so.
+    #[test]
+    fn every_workflow_flag_is_one_the_binary_accepts() {
+        let wf = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../.github/workflows/pipeline.yml"),
+        )
+        .expect("read pipeline.yml");
+        // Invocations span continuation lines, so the whole run: block is one haystack per
+        // call — a flag on a `\`-continued line belongs to the call above it.
+        let mut passed: BTreeSet<String> = BTreeSet::new();
+        let mut calls = 0;
+        let mut in_call = false;
+        for line in wf.lines() {
+            if line.contains("cargo run") && line.contains("-p cost-report") {
+                in_call = true;
+                calls += 1;
+            }
+            if in_call {
+                for word in line.split_whitespace() {
+                    // `--` alone is cargo's separator, not a flag of ours.
+                    if word.starts_with("--") && word.len() > 2 {
+                        passed.insert(word.trim_end_matches('\\').to_string());
+                    }
+                }
+                in_call = line.trim_end().ends_with('\\');
+            }
+        }
+        assert!(calls >= 2, "found {calls} cost-report invocations in pipeline.yml");
+
+        let known: BTreeSet<String> = FLAGS.iter().map(|f| f.to_string()).collect();
+        let unknown: Vec<&String> = passed.difference(&known).collect();
+        assert!(unknown.is_empty(), "pipeline.yml passes flags this binary refuses: {unknown:?}");
+        // The reverse direction, against the DOC rather than the workflow: three flags are
+        // local overrides with defaults (--testdata, --pages-url, --repo) and CI is right not
+        // to pass them, so "the workflow passes every flag" would be false by design. What
+        // must hold is that the documented surface and the accepted one are the same set —
+        // that is where a dropped flag shows, and the doc still advertised `--md` and a
+        // `--registry` that no longer exists when this test was written.
+        let doc: BTreeSet<String> = include_str!("main.rs")
+            .lines()
+            .take_while(|l| !l.starts_with("use "))
+            .flat_map(|l| l.split(|c: char| c.is_whitespace() || c == '[' || c == ']' || c == '|'))
+            .filter(|w| w.starts_with("--") && w.len() > 2)
+            .map(|w| w.to_string())
+            .collect();
+        assert_eq!(doc, known, "the usage doc and FLAGS name different sets");
+    }
+
+    /// Both comments fit, measured over the registry this repo actually has.
+    ///
+    /// A fixture cannot fail this: the body grows by a row per query the rollout enables, and
+    /// the four tables were 127 KB against a 65,536-byte cap before they were split. What is
+    /// asserted is the thing GitHub checks — bytes of the rendered body.
+    #[test]
+    fn both_pr_comments_fit_under_the_body_cap() {
+        let testdata = Path::new(env!("CARGO_MANIFEST_DIR")).join("../testdata");
+        let registry = Registry::load(&testdata.join("cost-registry.csv"));
+        let links = Links {
+            repo: "asymptote-tech/peacockdb".into(),
+            sha: Some("0".repeat(40)),
+            tickets: TicketIndex::default(),
+        };
+        let datasets = [
+            build_dataset("TPC-H", "testdata/goldens/tpch.sf1", "testdata/tpch-queries", &testdata.join("goldens/tpch.sf1"), &registry, "tpch"),
+            build_dataset("TPC-DS", "testdata/goldens/tpcds.sf1", "testdata/tpcds-queries", &testdata.join("goldens/tpcds.sf1"), &registry, "tpcds"),
+        ];
+        for part in [MdPart::Legacy, MdPart::BatchPartitioned] {
+            let body = render_markdown(&datasets, "https://p/", false, &links, None, part);
+            // The margin, not just the verdict: the body grows by a row per query enabled and
+            // T20 adds queries by design, so the number a later reader needs is how many more
+            // fit — a guard that only says "green" is one nobody can plan against.
+            let margin = COMMENT_MAX_BYTES.saturating_sub(body.len());
+            let per_row = body.len() / datasets.iter().map(|d| d.rows.len()).sum::<usize>().max(1);
+            println!(
+                "{part:?}: {} bytes of {COMMENT_MAX_BYTES}, {margin} spare — about {} more queries \
+                 at {per_row} bytes a row",
+                body.len(),
+                margin / per_row.max(1)
+            );
+            assert!(
+                body.len() <= COMMENT_MAX_BYTES,
+                "{part:?} is {} bytes against the {COMMENT_MAX_BYTES}-byte cap — GitHub refuses \
+                 this with a 422 that reads as a permissions error",
+                body.len()
+            );
+        }
+    }
+
+    #[test]
+    fn each_markdown_part_carries_its_own_tables_and_only_the_query_link() {
+        let linked = Links {
+            repo: "o/r".into(),
+            sha: Some("deadbeef".into()),
+            tickets: TicketIndex { open: ["163".to_string()].into_iter().collect(), ..Default::default() },
+        };
+        let mut d = bp_dataset();
+        d.rows[0].tickets = vec!["163".to_string()];
+        let legacy = render_markdown(std::slice::from_ref(&d), "https://p/", false, &linked, None, MdPart::Legacy);
+        let bp = render_markdown(std::slice::from_ref(&d), "https://p/", false, &linked, None, MdPart::BatchPartitioned);
+
+        assert!(legacy.starts_with(SENTINEL) && !legacy.contains(SENTINEL_BP));
+        assert!(bp.starts_with(SENTINEL_BP) && !bp.contains("operational</summary>"));
+        assert!(!legacy.contains("batch-partitioned</summary>"), "the legacy comment carries the bp table");
+        assert!(bp.contains("batch-partitioned</summary>"), "the bp comment lost its table");
+
+        // Every anchor in either part is the query cell's. A ticket, cost or mode-cell link
+        // returning is what put the comment over the cap.
+        for (part, text) in [("legacy", &legacy), ("bp", &bp)] {
+            for anchor in text.match_indices("<a href=\"") {
+                let tail = &text[anchor.0..];
+                assert!(
+                    tail.contains("tpch-queries/"),
+                    "{part}: an anchor that is not the query cell's: {}",
+                    &tail[..tail.len().min(90)]
+                );
+            }
+            assert!(text.contains("#163"), "{part}: ticket numbers must survive as text");
+            assert!(!text.contains("tickets.md#t163"), "{part}: a ticket link came back");
+        }
+    }
+
     #[test]
     fn both_renderings_carry_the_batch_partitioned_table() {
         let html = render_html(&[bp_dataset()], "https://p/", &no_links(), None, None);
         assert!(html.contains("batch-partitioned"), "{html}");
-        let md = render_markdown(&[bp_dataset()], "https://p/", false, &no_links(), None);
+        let md = render_markdown(&[bp_dataset()], "https://p/", false, &no_links(), None, MdPart::BatchPartitioned);
         assert!(md.contains("batch-partitioned"), "{md}");
         // Four leading spaces is a code block, whatever produced them — and what produced
         // them here was a `\` continuation after a `\n\n`, which carries the source's own
@@ -2511,13 +2762,13 @@ mod tests {
 
         let html = render_html(&[one_row_dataset()], "https://p/", &linked, None, None);
         assert!(html.contains(&format!("<a href=\"{url}\">q1</a>")));
-        let md = render_markdown(&[one_row_dataset()], "https://p/", false, &linked, None);
+        let md = render_markdown(&[one_row_dataset()], "https://p/", false, &linked, None, MdPart::Legacy);
         assert!(md.contains(&format!("<a href=\"{url}\">q1</a>")));
 
         // No sha → plain q1 cell, no query link.
         let html_plain = render_html(&[one_row_dataset()], "https://p/", &no_links(), None, None);
         assert!(html_plain.contains("<td>q1</td>") && !html_plain.contains("q1.sql"));
-        let md_plain = render_markdown(&[one_row_dataset()], "https://p/", false, &no_links(), None);
+        let md_plain = render_markdown(&[one_row_dataset()], "https://p/", false, &no_links(), None, MdPart::Legacy);
         assert!(md_plain.contains("<td>q1</td>") && !md_plain.contains("q1.sql"));
     }
 
