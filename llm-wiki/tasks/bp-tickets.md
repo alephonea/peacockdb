@@ -12,4 +12,18 @@ Otherwise the same rules, in `coding-style.md`: at most fifteen lines, at most t
 problem, about code and never about documentation. Each ticket carries an `<a id="tNN">` anchor
 above its own header, which is what the cost widget's index resolves a link against.
 
-No tickets yet — the rollout starts with T18.
+<a id="t180"></a>
+### #180 — a shuffled count(\*) merges to nullable against a non-nullable declaration
+
+`tpcds/q96` at `bp-tp4-single`, `bp-tp4-rowgroup` and `bp-tp4-sized`: "Column 'count(\*)' is
+declared as non-nullable but contains null values". Both tp1 modes are clean and stay enabled.
+
+A shuffle is what puts a state merge under the aggregate, so the three tp4 modes reach a path the
+tp1 ones do not — which is why this is scoped to modes rather than to the query. The declaration
+comes from DataFusion's schema for the final aggregate; what the merge produces is the engine's
+own answer, and the two disagree only on nullability, so the same width and the same bytes make it
+invisible to every golden that is not a run.
+
+Neighbour to [#163](../tickets.md#t163) rather than the same thing: that one is a declared type
+never checked against the expression producing it, this one is a declared *nullability* the merge
+contradicts at run time. Found by T18's stage-4 enablement, disabled at three of five modes.

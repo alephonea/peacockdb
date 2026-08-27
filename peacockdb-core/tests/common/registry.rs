@@ -87,15 +87,6 @@ pub const COLUMNS: [&str; 21] = [
     "bp_gpu_tp4_sized",
 ];
 
-/// The five batch-partitioned modes, in the fixed sequence the widget and the
-/// `.result.txt` authority both read: the last enabled one wins in each.
-pub const BP_MODES: [&str; 5] = [
-    "bp-tp1-single",
-    "bp-tp1-rowgroup",
-    "bp-tp4-single",
-    "bp-tp4-rowgroup",
-    "bp-tp4-sized",
-];
 
 /// Map a registration to its CSV column.
 ///
@@ -125,10 +116,11 @@ pub fn column_for(kind: &str, device: &str) -> Option<&'static str> {
 /// unlisted one is `None` and the registration is reported unmappable, rather than being
 /// silently binned into whichever column a prefix match reached first.
 fn bp_column(kind: &str, mode: &str) -> Option<&'static str> {
-    let suffix = BP_MODES.contains(&mode).then(|| mode.trim_start_matches("bp-"))?;
+    let known = super::bp_mode::BP_MODES.iter().any(|m| m.ident() == mode);
+    let suffix = known.then(|| mode.trim_start_matches("bp_"))?;
     COLUMNS
         .iter()
-        .find(|column| **column == format!("{kind}_{}", suffix.replace('-', "_")))
+        .find(|column| **column == format!("{kind}_{suffix}"))
         .copied()
 }
 

@@ -280,6 +280,10 @@ jobs:
           # planner would emit — a rebatcher at an interior edge, a drained lane,
           # zero-row batches, a degenerate hash. Needs sf1, generated above; no device.
           cargo test --features rust-only -p peacockdb-core --test test_cpu_batch_partitioned
+          # The corpus on the same path: every enabled query at every mode its line
+          # declares, answers against DataFusion. Needs sf1, so it lives here and not
+          # in the golden-only tier.
+          cargo test --features rust-only -p peacockdb-core --test test_cpu_bp_corpus
         env:
           CMAKE_GENERATOR: Ninja
           LD_LIBRARY_PATH: /opt/conda/lib

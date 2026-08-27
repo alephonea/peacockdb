@@ -764,6 +764,31 @@ fn the_registry_matches_the_goldens_in_both_directions() {
     }
 }
 
+/// The local table against `common::bp_mode`'s, which the corpus tiers and the registry
+/// read. Two spellings of the five modes exist on purpose — the per-mode test functions here spell their knobs out one by one, so a
+/// mode added to `MODES` and to no test function is caught — and this is what stops
+/// them being two different fives.
+#[test]
+fn the_local_mode_table_is_the_shared_one() {
+    let shared: Vec<(String, usize, String)> = common::bp_mode::BP_MODES
+        .iter()
+        .map(|mode| {
+            (
+                mode.name.to_string(),
+                mode.target_partitions,
+                format!("{:?}", mode.sizing),
+            )
+        })
+        .collect();
+    let local: Vec<(String, usize, String)> = MODES
+        .iter()
+        .map(|(name, target_partitions, sizing)| {
+            (name.to_string(), *target_partitions, format!("{sizing:?}"))
+        })
+        .collect();
+    assert_eq!(local, shared, "the mode tables have drifted");
+}
+
 /// Every mode has a golden and every golden has a mode. The per-mode test functions spell
 /// their knobs out one by one, so a mode added to `MODES` and to no test function would
 /// otherwise be checked by nobody — and its file would silently not exist.

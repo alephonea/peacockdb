@@ -60,6 +60,31 @@ fn knobs(target_partitions: usize, sizing: BatchSizing) -> PlanKnobs {
     }
 }
 
+/// The local table against `common::bp_mode`'s, which the corpus tiers and the registry
+/// read. Two spellings of the five modes exist on purpose — this tier indexes into `MODES` by position to name a shape a
+/// single case needs, which a struct table would not make shorter — and this is what stops
+/// them being two different fives.
+#[test]
+fn the_local_mode_table_is_the_shared_one() {
+    let shared: Vec<(String, usize, String)> = common::bp_mode::BP_MODES
+        .iter()
+        .map(|mode| {
+            (
+                mode.name.to_string(),
+                mode.target_partitions,
+                format!("{:?}", mode.sizing),
+            )
+        })
+        .collect();
+    let local: Vec<(String, usize, String)> = MODES
+        .iter()
+        .map(|(name, target_partitions, sizing)| {
+            (name.to_string(), *target_partitions, format!("{sizing:?}"))
+        })
+        .collect();
+    assert_eq!(local, shared, "the mode tables have drifted");
+}
+
 /// One query at every mode, against DataFusion on the same text.
 /// Whether a query also runs the injected shapes. An enum rather than a flag, because
 /// which of the two a call gets is the difference between five runs and up to thirty-five.

@@ -8,6 +8,8 @@
 #![allow(dead_code)]
 
 pub mod benchmark;
+pub mod bp_mode;
+pub mod corpus;
 pub mod cost_model;
 pub mod exec_mode;
 pub mod golden_text;

@@ -3188,8 +3188,21 @@ than as known bad, and T19 is where that is settled query by query.
 
 | bench | enabled here |
 |---|---|
-| tpch | `q6` `q1` `q14` `q19` `q12` `q13` `q15` `q17` `q3` `q10` |
-| tpcds | `q41` `q42` `q3` `q43` `q52` `q55` `q96` `q15` `q37` `q82` |
+| tpch | `q6` `q14` `q19` `q12` `q13` `q15` `q3` `q10` |
+| tpcds | `q41` `q42` `q3` `q43` `q52` `q55` `q96` (tp1 only) `q15` `q37` `q82` |
+
+Seventeen queries at 88 (query, mode) cases, not twenty: enabling them is what found that three do
+not run. `tpch/q1` and `tpch/q17` are out at every mode on [#163](../tickets.md#t163) — `avg`
+declares its count state `UInt64` and the accumulator produces `Int64`, which the ticket records
+from the device and which the cpu reaches too. `tpcds/q96` keeps both tp1 modes and loses the
+three tp4 ones to [#180](bp-tickets.md#t180), where a shuffle puts a state merge under a
+`count(*)` declared non-nullable.
+
+The set is not topped back up to twenty. It was chosen as the smallest queries carrying no ticket
+and two of them turned out to carry one, which is a fact about the corpus rather than a hole to
+fill — and q96 partially enabled is worth more than a replacement would be, since it is the only
+query here exercising the mode-scoped disablement the whole `cpu_modes`/`gpu_modes` shape exists
+for.
 
 **T19 — rollout.** Query-by-query enablement across the rest of the corpus on T18's macro,
 starting from the twenty it already carries. No production code changes, per T18: a query that
