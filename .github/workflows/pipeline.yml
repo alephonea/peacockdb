@@ -105,6 +105,21 @@ jobs:
       run:
         shell: bash
 
+    # Job level, not per step: every cargo invocation here needs both, and a step-level
+    # copy is a thing the next step added to this job can omit. The seven rust-only steps
+    # below arrived without one and the leg went red — flatc-fork's build script runs
+    # cmake, this image has ninja and no make, and a RUSTFLAGS that differs from the
+    # cached one recompiles the whole DataFusion stack, since it is part of every cargo
+    # fingerprint. Same argument as `defaults.run.shell` above.
+    env:
+      CMAKE_GENERATOR: Ninja
+      # Strip debug info from all Rust artifacts. The test binaries link the full
+      # DataFusion/Arrow stack plus libpeacock_gpu; with debuginfo the largest one
+      # (test_query_plan, with the TPC-DS suite merged in) overflows the container's
+      # tmpfs while lld writes its mmap'd output, crashing with SIGBUS. Debug info is
+      # dead weight for pass/fail CI.
+      RUSTFLAGS: "-C debuginfo=0"
+
     steps:
       - name: Install git
         if: matrix.cudf == '25.02'
@@ -128,8 +143,8 @@ jobs:
       # glibc; the two cudf images ship different glibc, so a flatc built on the
       # 26.02 image (GLIBC_2.38) fails to run on the older-glibc 25.02 image
       # ("GLIBC_2.38 not found" -> build.rs flatc panic). A shared key let 26.02
-      # poison 25.02's cache. Same RUSTFLAGS (-C debuginfo=0) as the build/run
-      # steps below, so restored artifacts fingerprint-match.
+      # poison 25.02's cache. The job's RUSTFLAGS (-C debuginfo=0) is what every cargo
+      # step here builds with, so restored artifacts fingerprint-match.
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
         with:
@@ -252,7 +267,8 @@ jobs:
       # distinct from a test failure, and build vs run time is legible (the
       # opt-level bump made the build phase much heavier). The two steps MUST
       # share a byte-identical env: cargo's fingerprint includes RUSTFLAGS, so any
-      # drift would make the run step silently recompile, defeating the split.
+      # drift would make the run step silently recompile, defeating the split. That is
+      # now structural for RUSTFLAGS and CMAKE_GENERATOR, which come from the job.
       - name: Build Rust tests
         run: |
           # EVERY target the run step invokes must be listed here, or its compile
@@ -278,20 +294,15 @@ jobs:
           cargo test --no-run --features rust-only -p peacockdb-core --lib --test test_plan_bytes \
             --test test_cpu_executors --test test_cpu_batch_partitioned
         env:
-          CMAKE_GENERATOR: Ninja
+          # The pair's own two only; CMAKE_GENERATOR and RUSTFLAGS come from the job.
           LD_LIBRARY_PATH: /opt/conda/lib
           CUDF_ROOT: /opt/conda
-          # Strip debug info from all Rust artifacts. The test binaries link the
-          # full DataFusion/Arrow stack plus libpeacock_gpu; with debuginfo the
-          # largest one (test_query_plan, with the TPC-DS suite merged in)
-          # overflows the container's tmpfs while lld writes its mmap'd output,
-          # crashing with SIGBUS. Debug info is dead weight for pass/fail CI.
-          RUSTFLAGS: "-C debuginfo=0"
 
       # Pure run: the targets were already compiled by "Build Rust tests" above
       # with the identical env below, so cargo finds matching fingerprints and
       # does NOT recompile here (no "Compiling …"). The env block must stay
-      # byte-identical to the build step — especially RUSTFLAGS.
+      # byte-identical to the build step; RUSTFLAGS, the one that matters most, is the
+      # job's and identical by construction.
       - name: Run Rust tests
         run: |
           # Batch-partitioned first: it is the mode under development, so its failures are
@@ -348,15 +359,9 @@ jobs:
           # in the golden-only tier.
           cargo test --features rust-only -p peacockdb-core --test test_cpu_bp_corpus
         env:
-          CMAKE_GENERATOR: Ninja
+          # The pair's own two only; CMAKE_GENERATOR and RUSTFLAGS come from the job.
           LD_LIBRARY_PATH: /opt/conda/lib
           CUDF_ROOT: /opt/conda
-          # Strip debug info from all Rust artifacts. The test binaries link the
-          # full DataFusion/Arrow stack plus libpeacock_gpu; with debuginfo the
-          # largest one (test_query_plan, with the TPC-DS suite merged in)
-          # overflows the container's tmpfs while lld writes its mmap'd output,
-          # crashing with SIGBUS. Debug info is dead weight for pass/fail CI.
-          RUSTFLAGS: "-C debuginfo=0"
 
   # Standalone build job for the shad-gpu artifact — runs in parallel with dataset-matrix
   # so gpu-tests can start as soon as the build is done, without waiting for the
