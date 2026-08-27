@@ -276,9 +276,9 @@ jobs:
           # copied. Synthetic data written by the test, so no dataset and no device.
           cargo test --features rust-only -p peacockdb-core --test test_cpu_executors
           # SQL in, rows out: every query planned and run at all five modes against
-          # DataFusion on the same SQL. The first tier where the planner, the recipes,
-          # the executors and both drivers run together rather than each against a
-          # fixture of the last one's shape. Needs sf1, generated above; no device.
+          # DataFusion on the same SQL, and eleven of them at injected layouts no
+          # planner would emit — a rebatcher at an interior edge, a drained lane,
+          # zero-row batches, a degenerate hash. Needs sf1, generated above; no device.
           cargo test --features rust-only -p peacockdb-core --test test_cpu_batch_partitioned
         env:
           CMAKE_GENERATOR: Ninja
@@ -689,6 +689,13 @@ jobs:
       # dataset, no GPU — so it stays in this cheap golden-only tier.
       - name: Cost goldens match plan-golden regeneration (Rust)
         run: cargo test --features rust-only -p peacockdb-core --test test_cost_model
+
+      # The injection mechanism against itself: the plan rebuild is identity per arm
+      # and per field, and the selector's output is a cover rather than a prefix.
+      # Reads no parquet — the plans are hand-built and the four cases are the ones
+      # that need no dataset — so this tier is its cheapest home.
+      - name: Layout injection mechanism (Rust)
+        run: cargo test --features rust-only -p peacockdb-core --test test_batch_partitioned_injection
 
       # Every peacockdb-core integration test target must be NAMED by some workflow
       # step above. CI does not sweep them as a set, so a new tests/test_*.rs is

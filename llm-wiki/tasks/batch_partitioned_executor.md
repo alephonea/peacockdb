@@ -2234,7 +2234,7 @@ trait needed nothing. One test moved tier against the list above: two IPC stream
 concatenate, so "the ranges are the whole" is asserted in `test_gpu_abi`, where arrow-rs decodes
 them, and the gtest holds the contract edges instead.
 
-**T14 — recipe-plan serialization.** The `GpuNode` → fb-seq mapping implemented, canonized and
+~~**T14 — recipe-plan serialization.**~~ The `GpuNode` → fb-seq mapping implemented, canonized and
 unit-tested. `attach_recipes()` runs after the plan is complete and hangs a recipe on each node
 that drives the GPU ABI; a node that makes no ABI call gets none, which is a fact about the node
 and so is worth reading off the plan. One function per node kind produces that node's recipe from
@@ -2284,7 +2284,7 @@ The proving set is the new unit tests and the golden target, and no legacy subse
 scoped it that way because the change is additive: a recipe is attached to a plan nothing reads
 yet, so the only tests whose result can move are the ones that read it.
 
-**T21 — a recipe plan on a live GPU, driven by hand.** It needs T14 and nothing else: no driver,
+~~**T21 — a recipe plan on a live GPU, driven by hand.**~~ It needs T14 and nothing else: no driver,
 no executors, no scheduling. A new test file on the shad-gpu tier plans a query over TPC-H sf1,
 loads the recipe plan T14 already built, and makes exactly the calls the recipes name, threading
 each call's output handle into the next one's input and exporting at the root. One helper does the
@@ -2322,67 +2322,30 @@ join's output order is not deterministic. What it deliberately leaves out is eve
 driver decides — batching, backpressure, arrival order — since every shape here is one batch;
 those arrive with the executors, and the driven end-to-end over every layout is T17's.
 
-What it proved and what it left. Ten fb kinds now have a device behind them — the ten the walk's
-`PROVEN` names, against the twenty-three labels the payload golden publishes. Labels rather than
-kinds, and the two are not one ruler: three of the twenty-three are one project shape at different
-null-pad widths, and the repartition label carries its lane counts, so the denominator reads as
-more unproven ground than there is. The numerator is the enforced half — checked both ways against
-what the queries actually made, so a kind claimed and never produced fails as loudly as a kind
-produced and never claimed. The reading that matters for the tasks after this one is which shapes
-those are: two of the three this mode invented ran, `AggregateMode::Merge` and the finalize
-project. The third did not. That is [#136](../tickets.md#t136)'s finish pass — probe keys per
-batch, the concat at done, the finish join, the pad project — because both joins that ran here
-reduce to a single legacy call. Untouched
-with it: the whole Right family, cross and nested-loop joins, both sort nodes, `slice_handle` and a
-ranged export. Each is refused by name in a `match` over every `FbKind`, so a variant added later
-stops the file compiling rather than going quietly unclassified.
+What has a device behind it. Ten fb kinds have run on one; every other is refused by name in a
+`match` over every `FbKind`, so a variant added later stops the file compiling rather than going
+quietly unclassified. Still unproven on hardware: [#136](../tickets.md#t136)'s finish pass — probe
+keys per batch, the concat at done, the finish join, the pad project — the whole Right family,
+cross and nested-loop joins, both sort nodes, `slice_handle` and a ranged export.
 
-Four defects came out of it, each the same shape: a field written once, read once, with the only
-reader on the far side of an ABI nobody had called. A scan carrying DataFusion's file-group list,
-so one file appeared once per lane. A finalize project emitting the finalized columns and not the
-keys. An aggregate that finalizes alone emitting no finalize project, which would have answered
-with state columns under finalized names on seventeen committed shapes. And — found last, by
-reading rather than by running — a recipe defaulting `grouping_sets`, `null_exprs` and
-`null_names`, so a ROLLUP's five sets would have reached the device as a plain group-by; the
-device happened to refuse it on a width mismatch, but that was this query's luck rather than a
-property of the class.
-
-A fifth thing came out of it that is not that shape, and is worth separating. The test written to
-guard the third — the aggregate that finalizes alone — was named for something its query does not
-do, and asserted counts that could not tell the two arms apart, since each contributes one init and
-one finalize. Adding the assertion its name implied turned it red on a device: the query's inner
-aggregate spans many batches and merges, and it is the outer one, reading that merge's single
-output batch, that finalizes itself. The arm was covered, by a node other than the one the test
-claimed, and nothing could have said so. It asserts adjacency now. A guard that cannot go red is
-not a guard, and this is what that looks like when the guard is new rather than old.
-
-Two things followed from how the fourth was found. The payload golden had been pinning it
-faithfully, which is why [build-test.md](../build-test.md) now says what a golden pinning a
-producer against itself does and does not prove — the first of the four was pinned the same way.
-And the writers are now compared at the level the field went missing at: which fields each one
-sets per fb table, read off the vtable and named from the fbs, so a field the legacy writer sets
-and this one defaults must carry a written reason or go red. Expressions were already compared
-byte for byte; node payloads were compared nowhere, which is why nothing said which kind of
-default this was.
-
-**T10, T15 and T16 — the executors, as one task.** All three land together on one branch, because
+~~**T10, T15 and T16 — the executors, as one task.**~~ All three land together on one branch, because
 they are one question asked of three node families: what does an executor do when the recipe
 already says which calls to make. Ordered inside the task as T10 then T15 then T16, since the
 accumulators and the joins are the Exec executors' shapes with state added.
 
-**T10 — Exec executors.** Filter, project, per-batch sort, aggregate (partial/single), unload
+~~**T10 — Exec executors.**~~ Filter, project, per-batch sort, aggregate (partial/single), unload
 (`GpuBatch → CpuBatch`, honouring the row range). The **GPU executor runs the recipe attached to
 its node** — the calls, in order, with the handles threaded — and reuses no legacy operator code:
 the recipe is the instruction set, and reaching into legacy operator internals would be a second
 path to the same kernels. The **CPU executor relays to DataFusion**, where reuse with legacy is
 expected rather than avoided, since both are asking DataFusion for the same operator.
 
-**T15 — accumulators.** `GpuCoalesceAllBatches`, `GpuAggregateBatches` (merge-only and finalizing),
+~~**T15 — accumulators.**~~ `GpuCoalesceAllBatches`, `GpuAggregateBatches` (merge-only and finalizing),
 `GpuAccumulateBatchesAndSort`, `GpuMergeSortedPartitions`, and the mid-plan `GpuLimit`. Edge cases:
 zero batches, one batch, ties for the merge (partition-major stability), fetch interaction, large
 batch counts, gid-carrying aggregate merges.
 
-**T16 — partition ops and joins.** `GpuEmitPartitions` (per-batch scatter at a small N and a
+~~**T16 — partition ops and joins.**~~ `GpuEmitPartitions` (per-batch scatter at a small N and a
 large one, empty outputs for skewed hashes, and the lane each key lands in, asserted on both
 backends — co-partitioning is what every partitioned join rests on). `GpuMergePartitions` is not
 here: its mapping is `Forwarder`'s, from T13, and its service order is the driver's. `GpuJoin` with
@@ -2426,7 +2389,7 @@ source proves itself by what the driver pulls from it. T17 then found it cannot 
 all while the surface is frozen — see the sixth entry under
 [What the frozen surface costs](#what-the-frozen-surface-costs-and-what-unfreezing-would-buy).
 
-**T17 — the whole path, under injection.** The first task in which SQL goes in and rows come out:
+~~**T17 — the whole path, under injection.**~~ The first task in which SQL goes in and rows come out:
 planning, the recipes, the executors and both drivers running together, rather than each proved
 against a fixture of the last one's shape. Every test starts from a query's text and ends at its
 results, so what is under test is the join between the pieces — which is the only part four tasks
@@ -2550,29 +2513,52 @@ rest on.
 
 **Prove the rewrite before using it, and a unit test is the right size.** A rebuild that drops a
 field is a plan that differs from the one under test for a reason nobody chose, and every result
-after it is then about a different query. The case is small: hand-built plans through
-`driver/plans.rs`, rebuilt with their own children, rendering byte-identical through the existing
-plan renderer. Hand-built rather than corpus, because the property is per arm and per field — a
-node built with a value in every optional field catches an arm that drops one, where a corpus plan
-covers only the combinations its queries happen to produce. `Filter` with and without a projection,
-`Limit` with and without a fetch, `Join` with a residual and without, and so on.
+after it is then about a different query. The case is small: hand-built plans rebuilt with their own
+children, identical in **debug output** — not in the rendered plan. The renderer is what a golden
+reads and it does not print everything: a loader's survivors and `can_be_null`, and an aggregate's
+intermediate schema, reach no plan line, so a rebuild that drops `can_be_null` renders identically
+and passes. Those are exactly the fields a corpus plan never varies, which is what would have made
+the rendering-only form a guard that cannot go red. Debug prints every field including the private
+ones and is the identity. Nothing in this case reads a committed file: the comparison is a plan
+against its own rebuild, so it holds without goldens and moves when neither of them does.
+
+**Make the field cover exhaustive rather than claimed.** Fixtures that populate every optional
+field are a hand-maintained list, and the failure it misses is the one that will happen: a field
+added to a node next quarter, no fixture varying it, the arm free to drop it, the test green.
+Three levels, and the third is the one worth building:
+
+- *arms* — the match over `NodeRef` is exhaustive, so a nineteenth kind fails to compile;
+- *kinds* — the fixture set is asserted to reach every variant, so a kind with no fixture is red;
+- *fields* — derive them from the debug output rather than listing them. Every field name a node's
+  debug prints must take **at least two distinct values across the fixture set**, because a field
+  constant everywhere is a field whose loss no fixture can detect. It goes red naming the field,
+  and it goes red the day the field is added rather than the day something depends on it.
+
+That last one is what makes the case exhaustive without reflection and without a maintained list.
+It is also a guard that can go red on its own, which on this chain has been the exception. Not through
+`driver/plans.rs` — it is `#[cfg(test)] mod plans`, so an integration test cannot see it, and its
+builders leave every optional field `None`, which is the half the property needs. The fixtures
+live beside `rebuild` and give each node a value in every optional field: `Filter` with a
+projection as well as without, `Limit` with a fetch, `Join` with a residual. A corpus plan covers
+only the combinations its queries happen to produce, and a fixture set of all-`None` nodes would
+let a dropped field through in silence.
 
 Cover the arms the way `every_node_kind_builds_the_executor_its_category_names` covers its own:
 assert the fixtures reach every `NodeRef` variant, so a kind added later is a compile error in the
 match and a red count here. It goes red by dropping one field from one arm. Nothing is injected
 until it passes, and no corpus query is needed to prove it.
 
-**Two mechanisms, because the dimensions are not the same kind of thing.** A rebatcher is a node —
+**Two mechanisms, two dimensions each, because the dimensions are not the same kind of thing.** A rebatcher is a node —
 it changes the tree, and it must be placeable anywhere a batch flows, not only above a source. The
 other three are behaviour a node does not carry: this engine's hash is Spark-murmur3 fixed in the
 emitter, and neither an empty lane nor a zero-row batch is a field of `GpuLoadParquet`.
 
 | Dimension | Mechanism | Why not the other one |
 |---|---|---|
-| a rebatcher, at any edge | tree rewrite: insert a node above the chosen child | wrapping an executor cannot do it — an exec is one batch in, one out, and a merging rebatch must hold batches across calls, which is an accumulator's job. A wrapper that held them would lie to the accountant and break the queue bound the driver guarantees |
-| a drained lane | wrap the source executor: produce nothing for that lane | not a node field |
+| a rebatcher, at any edge that still validates | tree rewrite: insert a node above the chosen child. One direction only — nothing below the loader splits a batch ([#142](../tickets.md#t142)), so the node is `GpuCoalesceAllBatches` merging a lane to one, and the finer direction is the mode axis already. A coalesce clears the sort order by construction, so an edge under a `GpuMergeSortedPartitions` or a limit-after-sort is refused at validation: assert the refusals are exactly that class rather than skipping those edges quietly, since a skipped edge is a hole nothing reports | wrapping an executor cannot do it — an exec is one batch in, one out, and a merging rebatch must hold batches across calls, which is an accumulator's job. A wrapper that held them would lie to the accountant and break the queue bound the driver guarantees |
+| a drained lane | tree rewrite: move that lane's row groups into another lane | **not** a wrap — a source producing nothing for a lane loses its rows, so every oracle comparison fails and the dimension is untestable. `partition_groups` is the mapping, so moving groups keeps the lane count and every row. Safe at every plan this mode produces: `co_partitioned()` requires one lane or a ByHash distribution on the join keys, so no join here rests on scan lane alignment — the shape the prototype needed `_is_shuffled_join` for and this mode does not have |
 | zero-row batches at a probability | wrap the source executor: emit an empty batch instead of advancing | not a node field; the driver already carries empty batches, so this exercises a path the operators have and this one does not |
-| a degenerate hash | wrap the emit executor: route every key to one lane | the emitter carries key *expressions*, not a hash function — ours is fixed |
+| a degenerate hash | wrap the emit executor: route every key to one lane. **Not compatible with a plan carrying Right, Full or RightAnti**: one lane holding every key leaves the others with an empty build side, and those three owe their probe side against one, which is [#175](../tickets.md#t175)'s refusal. Drop the dimension for those plans and pin the refusal with a case, so the drop is a rule a reader meets rather than an abort they rediscover | the emitter carries key *expressions*, not a hash function — ours is fixed |
 
 Lane counts are deliberately absent: `target_partitions` already varies them through the planner,
 and a lane count no planner would choose is the one dimension whose correctness rule the prototype
@@ -2595,14 +2581,21 @@ choosing *which* to run is a claim that has to be visible rather than a `take(30
    seeded: two runs choose the same 30, or a failure is not reproducible.
 3. **Run.** Each selected plan through the driver, every answer against the same oracle.
 
+**Render the oracle once per query.** Comparing renders both sides, so an oracle rendered per
+variant makes a query's cost grow with the number of variants for no reason — at thirty variants
+that is most of the tier. Render once, hold the text, compare every variant against it.
+
 **The oracle does not change and must not.** It is DataFusion on the same SQL, planned and
 collected once per query at `target_partitions=1`, compared against every variant. That is what
 makes injection meaningful: the answer is fixed by something that never saw the layout, so a
 layout that changes the answer is a defect rather than a disagreement between two of our own
 shapes. One oracle per query, not per variant — it is the expensive half and it is invariant.
 
-**Eleven queries: the ten cheapest, plus the interleave.** Injection multiplies runs, so it goes on
-the cheap end of the list. Scanned rows at sf1:
+**Eleven queries, and the cost axis is not the obvious one.** Injection multiplies runs, so it goes
+on the cheap end of the list — but *cheap* here is the size of the result, not of the scan. A run's
+cost is dominated by the oracle comparison, so `anti-join`, a `SELECT *` over 1.2M rows, is the
+most expensive member of a set picked by rows scanned. Scanned rows at sf1, which is the proxy the
+set was first chosen by and is kept here so the correction is legible:
 
 | Query | rows scanned | what it carries |
 |---|---:|---|
@@ -2616,9 +2609,10 @@ the cheap end of the list. Scanned rows at sf1:
 | tpcds q93 | 3,187,918 | Right outer, multi-key |
 | tpcds q97 | 4,361,952 | Full outer |
 | tpcds q2 | 4,401,864 | the union that cannot interleave |
-| tpcds q33 | 5,281,336 | the four-lane interleave — not among the cheapest, and here anyway |
+| tpcds q33 | 5,281,336 | the four-lane interleave — eleventh on cost, first on merit |
 
-q33 is the eleventh on cost and the first on merit: it is the only four-lane interleave in the
+q33 is in on merit, and it happens to cost little: eleventh of the seventeen, six heavier ones
+left out. It is the only four-lane interleave in the
 list, and an interleave is the one operator whose correctness *is* a lane correspondence — output
 lane p from lane p of each branch. Excluding the one shape a perturbed lane could break, to save
 0.9M rows over the tenth, would be picking the cheap set over the point of the exercise.
@@ -2628,12 +2622,29 @@ The six left out are the heavy end — q38, q87, `shuffle-stddev`, q20, `left-jo
 is the next one worth having: a Left outer's finish pass accumulates probe keys, so its residency
 is a function of how the batches arrive.
 
-**Shape of the change.** One new test library file carrying the decorator, the settings, the
-candidate derivation and the selector — `peacockdb-core/tests/common/injection.rs`, with the
-selector's own tests beside it, split into a second file only if it passes the 1000-line bar. Ten
-fixtures each gain one line: the macro grows a form that runs the injected set as well as the five
-modes, so an enabled query reads `end_to_end_injected!(tpcds, q45)` and everything else is
-unchanged. Nothing in `peacockdb-core/src` changes.
+**Shape of the change.** One new test library file carrying the wrappers, the settings, the
+candidate derivation, `rebuild` and the selector — `peacockdb-core/tests/common/injection.rs`,
+split into a second file only if it passes the 1000-line bar. The **tests** go in
+`test_cpu_batch_partitioned.rs`, not beside the mechanism: a `#[test]` under `tests/common/`
+compiles into every one of the 22 binaries that declare `mod common`, so it would run 22 times and
+be counted 22 times. A target of its own would avoid that and costs a `pipeline.yml` step and a
+`test_ci_coverage` entry, which is not worth it for two cases. The eleven
+fixtures are declared as one list: `injected_queries!` expands it into both the `INJECTED` const
+and the fixtures, so a query leaves the set only by leaving the list, and everything else is
+unchanged. One thing in `peacockdb-core/src` changes, and only its visibility: `validate()` becomes `pub`.
+The driver validates nothing — `check_canonical_form` is limit positions and no more — so an
+injected tree would have run unchecked, and a rewrite that broke a node's requirements would have
+answered rather than been refused. That is the failure this task must not have: an injector
+quietly generating plans the planner would never emit. It is also what makes the rebatcher's
+refusal a demonstration rather than a prediction, since `validate()` is what names the node and
+the order it broke.
+
+The cases split by dataset rather than by subject. Four need none — the identity case, the
+selector's cover, the rebatcher refusal and the degenerate-hash emit — and go in
+`tests/test_batch_partitioned_injection.rs` with its own `pipeline.yml` step and
+`test_ci_coverage` entry, so they run in seconds on any host. The two that need a query — the dimension demonstration, which plans
+`nested-loop-join` over sf1, and the injected corpus set — stay in the end-to-end file. A mechanism proof buried in a tier that takes minutes is one nobody runs
+while iterating.
 
 **Measure before capping, one run at a time.** T17's seventeen queries at five modes are 85 runs in
 4m39s at four threads. Eleven queries at up to 30 is 330, on the cheap end of the corpus — a number

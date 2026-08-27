@@ -6,7 +6,7 @@ anchor that the cost widget links to. Device labels are `tp<N>-<tier>` (micro=10
 mini=2GiB, standard=12GiB).
 
 A ticket carries a **Priority** line only when it is not medium; medium is the default.
-New tickets take the next free number (currently 174). Finished and lapsed tickets move to
+New tickets take the next free number (currently 180). Finished and lapsed tickets move to
 `llm-wiki/archive/archived-tickets.md` (Done / Stale) — numbers are never reused, so an old
 reference still resolves there.
 
@@ -16,8 +16,8 @@ reference still resolves there.
 |---|--:|---|
 | [Critical correctness](#critical-correctness) | 15 | #166 #153 #80 #59 #46 #47 #60 #121 #122 #123 #118 #119 #120 #117 #41 |
 | [Blockers for disabled coverage](#blockers-for-disabled-coverage) | 19 | #169 #168 #158 #175 #173 #97 #23 #32 #65 #62 #91 #95 #57 #45 #63 #56 #55 #96 #143 |
-| [Performance / architecture](#performance--architecture) | 27 | #177 #170 #155 #154 #152 #150 #149 #148 #19 #16 #20 #71 #101 #73 #110 #75 #136 #137 #138 #139 #140 #141 #147 #146 #145 #144 #142 |
-| [Infrastructure / process](#infrastructure--process) | 28 | #176 #174 #167 #164 #163 #159 #160 #161 #162 #113 #114 #116 #126 #134 #133 #132 #131 #130 #129 #128 #127 #172 #124 #125 #13 #94 #69 #49 |
+| [Performance / architecture](#performance--architecture) | 28 | #179 #177 #170 #155 #154 #152 #150 #149 #148 #19 #16 #20 #71 #101 #73 #110 #75 #136 #137 #138 #139 #140 #141 #147 #146 #145 #144 #142 |
+| [Infrastructure / process](#infrastructure--process) | 27 | #178 #176 #174 #167 #164 #163 #159 #160 #161 #162 #113 #114 #116 #126 #134 #133 #132 #131 #130 #129 #128 #127 #125 #13 #94 #69 #49 |
 
 ## Critical correctness
 
@@ -181,22 +181,16 @@ designing: nothing yet says a thousand-node plan is a shape this mode should pro
 ### #168 — the fbs ScalarValue has no interval, so one join residual has no payload
 
 `ScalarValue` has no interval variant, and `testdata/tpch-queries/mixed-join.sql` adds one to a
-column — `l_shipdate BETWEEN o_orderdate AND o_orderdate + INTERVAL '90' DAY` — so folding cannot
-reach it and that join's recipe has no writable payload.
+column, so folding cannot reach it and that join's recipe has no writable payload.
 
-It is the only query in either bench with the shape: `mixed-join` is the fixture that pairs an
-equi-key with a non-equi residual, and every other corpus interval sits between two literals and
-folds away before serialization. Nothing regressed, either — the legacy path refuses the same
-literal at `serialize_scalar_value`'s unsupported-scalar arm, `mixed_join` has never been staged
-in `gpu_cases.inc`, and its coverage is a plan golden plus a CPU exec case at tp8-mini. No GPU
-path in this engine has ever carried an interval literal; what changed is that the golden now
-says so, where before it lived in an `Err` nobody reads.
+It is the only query in either bench with the shape — every other corpus interval folds away
+before serialization — and nothing regressed: the legacy path refuses the same literal at
+`serialize_scalar_value`, `mixed_join` was never staged in `gpu_cases.inc`, and no GPU path here
+has carried one. What changed is that the golden says so, not an `Err` nobody reads.
 
-Kinds, seqs and handles do not depend on an expression being writable, so the recipe renders as
-it always did and the payload of that one node reads `unavailable:` with the reason. That holds
-because the placeholder adopts the children already taken for the node it replaces — a
-`CudfUnion` over them rather than a leaf. A leaf orphans those subtrees, and an unreachable node
-is never indexed, so every seq above the failure would shift while the rendering said nothing.
+That node's payload reads `unavailable:` with the reason, and the placeholder adopts the children
+already taken for the node it replaces: a leaf would orphan those subtrees and shift every seq
+above the failure while the rendering said nothing.
 
 Closing it is a third appended `ScalarValue` variant plus the C++ arm, on the terms the other two
 took ([the spec's constraints](tasks/batch_partitioned_executor.md#scope-and-constraints)). Not
@@ -354,7 +348,24 @@ rank/dense_rank gaps of #32 carry over unchanged.
 
 ## Performance / architecture
 
-<a id="t170"></a>
+<a id="t179"></a>
+### #179 — nothing shows a rebatcher moving an enforced budget boundary
+
+Whether batch sizes can reach the accountant's binding pre-call check at all is open: two
+candidates failed structurally rather than by accident, so this is about the model, not a gap.
+
+`GpuCoalesceAllBatches` carries the largest estimate in none of the 120 `--- memory ---`
+sections at `bp-tp4-rowgroup` — `GpuEmitPartitions` in 77, `GpuJoin` in 20, `GpuUnload` in 12 —
+so a rebatcher grows a node beside the binding one. `nested-loop-join`'s coalescer is 115 bytes
+against a 2,679-byte join. Of the two queries carrying their largest at a loader,
+`tpch/nested-limits` does move its peak under `Rebatch::AboveSources` (4,915,680 to 8,000,480,
+the 1.63x its goldens predict) while its budget is peak+1 both times: `limit=28` means the
+modelled megabytes are never the transient that binds.
+
+A second thing falls out: `boundary()` in `test_cpu_batch_partitioned.rs` searches upward from
+the observed peak, so a query whose trip is below it reports an untested floor — the trip assert
+catches that rather than passing. Answering this needs a downward search, a different claim.
+
 <a id="t177"></a>
 ### #177 — the finish join's intermediate is priced by the node's row, not by what it emits
 `schema_of` in `gpu_backend/join.rs` prices the finish join's output by the node's output schema.
@@ -370,6 +381,7 @@ declared fewer, silently.
 Needs a device to check, which is why it is a ticket rather than T17's: a pricing fix nothing can
 run is a second guess on top of the first.
 
+<a id="t170"></a>
 ### #170 — a source whose lanes each hold one batch could say so, and three shortcuts would fire
 
 The loader declares `MultipleBatches` unconditionally
@@ -736,6 +748,21 @@ trip log, and `Underestimate` is the precedent for what one would look like. Rel
 
 ## Infrastructure / process
 
+<a id="t178"></a>
+### #178 — two CI runs share the GPU host, and the pool is sized for one
+`gpu-tests` uses a per-run `REMOTE_DIR` so two runs do not overwrite each other's files, and
+nothing stops their test binaries running at the same time.
+
+Single-tenant GPU is an invariant this repo states and enforces *within* a process — GPU binaries
+run `--test-threads=1` because cuDF and RMM share one process-wide pool. Across runs it is enforced
+by nothing, and the RMM pool master installed makes the collision loud: two jobs overlapping by
+under two minutes gave `std::bad_alloc: out_of_memory` in `pool_memory_resource` on three sf40
+tests, at 14.38 GiB peak on a 139.7 GiB device — not a full device, two pools.
+
+It reads as a flaky GPU tier, which is the expensive way to meet it: the failure is in whichever
+run started second and re-running it alone passes. A concurrency group on the job, keyed on the
+host rather than the ref, is the fix.
+
 <a id="t176"></a>
 ### #176 — the CI coverage guard checks one direction only
 `every_rust_test_target_is_named_by_ci` fails when a target exists that no workflow runs. Nothing
@@ -1006,26 +1033,6 @@ the test suite references. Same shape as the binary orphans that `--delete` just
 state on a remote host no provisioning path owns, so nobody can say whether it is stale
 or load-bearing. Not deleted, because something outside this repo may read it. Establish
 what wrote them and either bring them under the sweep or remove them.
-
-<a id="t172"></a>
-### #172 — test_batch_partitioned_plans.rs is over the 1000-line bar
-`peacockdb-core/tests/test_batch_partitioned_plans.rs` is 1300 lines against
-coding-style.md's "under 1000". It was 599 at master and crossed the bar mid-chain, at
-1045; T21's writer comparison put it 300 over. The natural seam is that comparison and its
-fbs parsing — `fbs_offset_fields`, `fields_set`, `written_fields`, `WRITER_DIFFERENCES` and
-the test over them, which read a schema and two writers and share nothing with the golden
-assert/compare helpers around them. [#124](#t124) is the precedent: pre-existing, accepted
-at its size, and cut when someone is in the file for another reason.
-
-<a id="t124"></a>
-### #124 — common/mod.rs is over the 1000-line bar
-`peacockdb-core/tests/common/mod.rs` is 1359 lines against coding-style.md's "under 1000".
-Pre-existing, and each refactor has moved it the right way while leaving it over:
-`common/exec_mode.rs` first, then `common/benchmark.rs` (the GPU benchmark harness, 294
-lines, split out as it was written rather than after). The obvious next extraction is
-~250 lines of `macro_rules!` into `common/macros.rs` — which no longer suffices on its
-own, so whoever takes this should expect a second cut, most likely the golden
-assert/compare helpers. Accepted at 1359 for now.
 
 <a id="t125"></a>
 ### #125 — `elsewhere` parameter in assert_registry_matches_csv is dead

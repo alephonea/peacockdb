@@ -307,22 +307,69 @@ struct TicketIndex {
     archived: BTreeSet<String>,
 }
 
+/// The number an anchor line declares, or `None` for a line that has none — including the
+/// two pages' own prose about the convention, which spells the anchor with `tNN`.
+fn anchor_number(line: &str) -> Option<String> {
+    let (_, rest) = line.split_once("<a id=\"t")?;
+    let number: String = rest.chars().take_while(char::is_ascii_digit).collect();
+    (!number.is_empty()).then_some(number)
+}
+
+/// The ticket numbers a wiki file anchors, each checked against the header it sits above.
+/// Placement is the half existence cannot see: a header inserted above an existing anchor
+/// takes that anchor's link, and both directions of an existence check still pass, since
+/// every header has an anchor and every anchor a header. Stacked anchors are skipped past
+/// rather than refused outright, so the one they resolve to is judged on the header it
+/// actually reaches.
+fn anchored_numbers(text: &str) -> Result<BTreeSet<String>, String> {
+    let lines: Vec<&str> = text.lines().collect();
+    let mut found = BTreeSet::new();
+    for (at, line) in lines.iter().enumerate() {
+        let Some(number) = anchor_number(line) else {
+            continue;
+        };
+        let header = lines[at + 1..]
+            .iter()
+            .find(|next| !next.trim().is_empty() && anchor_number(next).is_none());
+        match header {
+            Some(header) if names_ticket(header, &number) => {
+                found.insert(number);
+            }
+            Some(header) => {
+                return Err(format!(
+                    "<a id=\"t{number}\"> resolves to {}, which is not #{number}",
+                    header.trim()
+                ));
+            }
+            None => return Err(format!("<a id=\"t{number}\"> has no header below it")),
+        }
+    }
+    Ok(found)
+}
+
+/// Whether a header line is this ticket's own. The trailing digit check is what keeps
+/// `### #17` from answering for `t170`.
+fn names_ticket(header: &str, number: &str) -> bool {
+    header
+        .trim_start()
+        .strip_prefix("### #")
+        .and_then(|rest| rest.strip_prefix(number))
+        .is_some_and(|tail| !tail.starts_with(|c: char| c.is_ascii_digit()))
+}
+
 impl TicketIndex {
     /// Both files, by their anchors: every ticket carries `<a id="tNN">` wherever it
-    /// lives, which is the same thing the links point at.
+    /// lives, which is the same thing the links point at, and each above its own header.
     fn load(wiki: &Path) -> Self {
         let numbers = |path: PathBuf| -> BTreeSet<String> {
             let text = std::fs::read_to_string(&path).unwrap_or_else(|e| {
                 eprintln!("cost-report: cannot read {}: {e}", path.display());
                 std::process::exit(1);
             });
-            text.match_indices("<a id=\"t")
-                .filter_map(|(at, marker)| {
-                    let rest = &text[at + marker.len()..];
-                    let number: String = rest.chars().take_while(char::is_ascii_digit).collect();
-                    (!number.is_empty()).then_some(number)
-                })
-                .collect()
+            anchored_numbers(&text).unwrap_or_else(|misplaced| {
+                eprintln!("cost-report: {}: {misplaced}", path.display());
+                std::process::exit(1);
+            })
         };
         Self {
             open: numbers(wiki.join("tickets.md")),
@@ -1499,6 +1546,37 @@ mod tests {
         );
         // A number nothing has ever used is a link to nowhere, and says so.
         assert_eq!(index.path_for("99999"), None);
+    }
+
+    /// Placement, which the case above cannot see: it asserts `170` resolves, and it passed
+    /// while #170's anchor sat above #177's header. Built from strings rather than from the
+    /// wiki, so the red case is reachable without an edit to `tickets.md` that would then
+    /// have to be undone.
+    #[test]
+    fn an_anchor_must_sit_above_its_own_header() {
+        let numbers = |text: &str| {
+            anchored_numbers(text).map(|found| found.into_iter().collect::<Vec<_>>())
+        };
+        let placed = "<a id=\"t170\"></a>\n### #170 — a ticket\n\nbody\n\n\
+                      <a id=\"t177\"></a>\n\n### #177 — another\n";
+        assert_eq!(
+            numbers(placed),
+            Ok(vec!["170".to_string(), "177".to_string()]),
+            "an anchor above its own header loads, blank lines between them or not"
+        );
+        // The shape that shipped: #177 inserted above #170's anchor, so every link to
+        // #t170 landed on #177. The inner anchor is skipped past rather than refused, so
+        // the error names the header #170 actually reached.
+        let stacked = numbers("<a id=\"t170\"></a>\n<a id=\"t177\"></a>\n### #177 — another\n")
+            .expect_err("a header that is not the anchor's own is refused");
+        assert!(stacked.contains("t170") && stacked.contains("#177"), "{stacked}");
+        // A prefix is not a match, or #17 would answer for #170.
+        assert!(numbers("<a id=\"t170\"></a>\n### #17 — a ticket\n").is_err());
+        assert!(numbers("<a id=\"t17\"></a>\n### #170 — a ticket\n").is_err());
+        // An anchor with nothing under it resolves to nowhere, which is the same defect.
+        assert!(numbers("<a id=\"t170\"></a>\n\n").is_err());
+        // The convention as the two pages describe it in prose is not an anchor.
+        assert_eq!(numbers("each ticket carries an `<a id=\"tNN\">` anchor\n"), Ok(vec![]));
     }
 
     /// The three row shapes, and the merge. PlanOnly is covered here deliberately:
