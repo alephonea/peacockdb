@@ -13,50 +13,17 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use peacockdb_core::batch_partitioned::node::GpuNode;
-use peacockdb_core::batch_partitioned::plan::{BatchSizing, PlanKnobs, plan_batch_partitioned};
+use peacockdb_core::batch_partitioned::plan::{PlanKnobs, plan_batch_partitioned};
 use peacockdb_core::batch_partitioned::plan_text::{
     Payloads, render_plan, render_plan_memory, render_plan_recipes,
 };
 use peacockdb_core::batch_partitioned::recipe::{attach_recipes, check_seq_kinds, depth, node_at};
 use peacockdb_core::batch_partitioned::{ExecutorCategory, category_of};
-use peacockdb_core::config::MemoryLimit;
 use peacockdb_core::generated::gpu_plan_generated::peacock::plan as fb;
 
+use common::bp_mode::{BP_MODES, BpMode, mode_named};
+use common::golden_text::{ordered_sections, section_differences};
 use common::{data_dir_for, golden_dir_for, queries_dir_for};
-
-/// The tier `bp-tp4-sized` is canonized at — the one mode that reads a budget, so changing
-/// this regenerates that file alone. Mini is the tier the legacy plan and `.cpu.txt` goldens
-/// use, so a figure here reads against one from there; the memory summary line records it
-/// per query.
-const BUDGET: u64 = MemoryLimit::Mini.bytes() as u64;
-
-/// A scan reading less than this stops being worth splitting: it has nothing to gain from
-/// lanes and would pay a shuffle for them.
-///
-/// From the sf1 measurement at full projection: the largest table that must stay on one lane
-/// is tpcds date_dim at 4,006,445 bytes, the smallest that must not is tpcds web_returns at
-/// 8,041,397, and tpch supplier at 1,532,237 sets the floor. 5 MiB sits in that gap nearer
-/// the lower end, so date_dim would have to grow 31% to cross it and web_returns shrink 35%.
-/// It reads the projected bytes of the surviving row groups, so a narrow scan of a big table
-/// falls below it — the rule working, not a value to retune.
-const SMALL_TABLE_BYTES: u64 = 5 * 1024 * 1024;
-
-struct Mode {
-    name: &'static str,
-    knobs: PlanKnobs,
-}
-
-fn mode(name: &'static str, target_partitions: usize, sizing: BatchSizing) -> Mode {
-    Mode {
-        name,
-        knobs: PlanKnobs {
-            target_partitions,
-            sizing,
-            budget: BUDGET,
-            small_table_bytes: SMALL_TABLE_BYTES,
-        },
-    }
-}
 
 fn queries(dataset: &str) -> Vec<(String, PathBuf)> {
     let mut found: Vec<(String, PathBuf)> = std::fs::read_dir(queries_dir_for(dataset))
@@ -73,9 +40,9 @@ fn queries(dataset: &str) -> Vec<(String, PathBuf)> {
     found
 }
 
-async fn render_bench(dataset: &str, sf: &str, mode: &Mode) -> String {
+async fn render_bench(dataset: &str, sf: &str, mode: &BpMode) -> String {
     let ctx = peacockdb_core::register_tables_for(
-        peacockdb_core::build_session_state(mode.knobs.target_partitions),
+        peacockdb_core::build_session_state(mode.knobs().target_partitions),
         &data_dir_for(dataset, sf),
     )
     .await
@@ -85,7 +52,7 @@ async fn render_bench(dataset: &str, sf: &str, mode: &Mode) -> String {
     for (name, path) in queries(dataset) {
         let sql = std::fs::read_to_string(&path).expect("the query text");
         text.push_str(&format!("== {name}\n"));
-        text.push_str(&render_query(&ctx, &sql, mode.knobs).await);
+        text.push_str(&render_query(&ctx, &sql, mode.knobs()).await);
     }
     text
 }
@@ -147,7 +114,7 @@ fn relative_to_testdata(text: &str) -> String {
         .replace(root.trim_start_matches('/'), "testdata")
 }
 
-fn golden(dataset: &str, sf: &str, mode: &Mode) -> PathBuf {
+fn golden(dataset: &str, sf: &str, mode: &BpMode) -> PathBuf {
     golden_dir_for(dataset, sf).join(format!("{}.plans.txt", mode.name))
 }
 
@@ -177,161 +144,6 @@ fn assert_or_update(path: &Path, actual: &str) {
     );
 }
 
-/// Every query whose section moved, one short line each. One file holds every query, so a
-/// whole-file `assert_eq!` says only that a two-megabyte golden differs — and a plan line
-/// runs past a thousand characters, which the CI log drops, so even the dump it prints
-/// arrives unreadable. One line per query, each naming the column that moved, is what
-/// survives the log and what a person can scan.
-fn section_differences(canonical: &str, actual: &str) -> Vec<String> {
-    let expected = ordered_sections(canonical);
-    let produced = ordered_sections(actual);
-    let mut said = Vec::new();
-    for (position, (name, body)) in expected.iter().enumerate() {
-        let Some((produced_name, produced_body)) = produced.get(position) else {
-            said.push(format!(
-                "{name}: in the golden, and the run produced no section there"
-            ));
-            continue;
-        };
-        if produced_name != name {
-            said.push(format!(
-                "section {position}: `{name}` in the golden and `{produced_name}` in the run"
-            ));
-            continue;
-        }
-        if produced_body != body {
-            said.push(format!("{name}: {}", line_difference(body, produced_body)));
-        }
-    }
-    for (name, _) in produced.iter().skip(expected.len()) {
-        said.push(format!(
-            "{name}: produced by the run, and the golden has no such section"
-        ));
-    }
-    if said.is_empty() && canonical != actual {
-        said.push("every section matches — a header or a trailing byte moved".to_string());
-    }
-    said
-}
-
-/// The first line of a section that differs, as the column it differs at and a window
-/// either side. A plan line is long enough that printing two of them whole says less than
-/// pointing at the character, and a long line is the one the log drops.
-fn line_difference(expected: &str, actual: &str) -> String {
-    for (number, (want, got)) in expected.lines().zip(actual.lines()).enumerate() {
-        if want == got {
-            continue;
-        }
-        let at = want
-            .char_indices()
-            .zip(got.char_indices())
-            .find(|((_, a), (_, b))| a != b)
-            .map(|((index, _), _)| index)
-            .unwrap_or_else(|| want.len().min(got.len()));
-        let rest = expected
-            .lines()
-            .zip(actual.lines())
-            .skip(number + 1)
-            .filter(|(want, got)| want != got)
-            .count();
-        return format!(
-            "line {}, column {at} — expected `{}` — actual `{}`{}",
-            number + 1,
-            window(want, at),
-            window(got, at),
-            if rest > 0 {
-                format!(" (+{rest} more lines)")
-            } else {
-                String::new()
-            }
-        );
-    }
-    format!(
-        "{} lines in the golden and {} in the run",
-        expected.lines().count(),
-        actual.lines().count()
-    )
-}
-
-/// 40 characters either side of `at`, elided at both ends — narrow enough that a run of
-/// them stays inside what a CI log carries per line.
-fn window(line: &str, at: usize) -> String {
-    let start = at.saturating_sub(40);
-    let end = (at + 40).min(line.len());
-    let start = (start..=at)
-        .find(|i| line.is_char_boundary(*i))
-        .unwrap_or(at);
-    let end = (at..=end)
-        .rev()
-        .find(|i| line.is_char_boundary(*i))
-        .unwrap_or(at);
-    format!(
-        "{}{}{}",
-        if start > 0 { "…" } else { "" },
-        &line[start..end],
-        if end < line.len() { "…" } else { "" }
-    )
-}
-
-/// Sections in file order: `(query, body)` at each `== ` header, names as the file writes
-/// them. `sections_of` below reads the same shape into a map for the registry check, which
-/// wants lookup rather than order.
-fn ordered_sections(text: &str) -> Vec<(String, String)> {
-    let mut sections: Vec<(String, String)> = Vec::new();
-    for line in text.lines() {
-        match line.strip_prefix("== ") {
-            Some(header) => sections.push((header.to_string(), String::new())),
-            None => {
-                if let Some((_, body)) = sections.last_mut() {
-                    body.push_str(line);
-                    body.push('\n');
-                }
-            }
-        }
-    }
-    sections
-}
-
-#[test]
-fn a_section_that_moved_is_named_with_the_column_that_moved() {
-    let golden = "== q1\nGpuUnload\n  GpuSort: lanes=1\n== q2\nGpuUnload\n";
-    let run = "== q1\nGpuUnload\n  GpuSort: lanes=4\n== q2\nGpuUnload\n";
-    let said = section_differences(golden, run);
-    assert_eq!(said.len(), 1, "{said:?}");
-    assert!(said[0].starts_with("q1: line 2, column "), "{said:?}");
-    assert!(
-        said[0].contains("lanes=1") && said[0].contains("lanes=4"),
-        "{said:?}"
-    );
-}
-
-#[test]
-fn a_section_missing_from_one_side_says_which_side() {
-    let both = "== q1\nGpuUnload\n== q2\nGpuUnload\n";
-    let short = "== q1\nGpuUnload\n";
-    assert!(
-        section_differences(both, short)[0].starts_with("q2: in the golden"),
-        "{:?}",
-        section_differences(both, short)
-    );
-    assert!(
-        section_differences(short, both)[0].starts_with("q2: produced by the run"),
-        "{:?}",
-        section_differences(short, both)
-    );
-}
-
-#[test]
-fn sections_out_of_order_are_named_by_position() {
-    let golden = "== q1\nGpuUnload\n== q2\nGpuUnload\n";
-    let run = "== q2\nGpuUnload\n== q1\nGpuUnload\n";
-    let said = section_differences(golden, run);
-    assert!(
-        said[0].starts_with("section 0: `q1` in the golden"),
-        "{said:?}"
-    );
-}
-
 // --- the payload golden ------------------------------------------------------
 //
 // One file, one mode, twelve queries: what each call actually hands the executor, which
@@ -344,7 +156,7 @@ fn sections_out_of_order_are_named_by_position() {
 /// accumulating sort and a compaction real rather than degenerate. Not the sized mode:
 /// that one moves whenever the estimator does, and this file should move when a payload
 /// does.
-const PAYLOAD_MODE: (&str, usize, BatchSizing) = ("bp-tp4-rowgroup", 4, BatchSizing::OneBatchPerRowGroup);
+const PAYLOAD_MODE: &str = "bp_tp4_rowgroup";
 
 /// The queries, and the rule for adding one.
 ///
@@ -419,7 +231,7 @@ fn digest_of(bytes: &[u8]) -> String {
 
 #[tokio::test]
 async fn the_payload_golden_carries_what_each_call_hands_the_executor() {
-    let mode = mode(PAYLOAD_MODE.0, PAYLOAD_MODE.1, PAYLOAD_MODE.2);
+    let mode = mode_named(PAYLOAD_MODE);
     let mut text = String::new();
     for dataset in ["tpch", "tpcds"] {
         let wanted: Vec<&str> = PAYLOAD_QUERIES
@@ -434,7 +246,7 @@ async fn the_payload_golden_carries_what_each_call_hands_the_executor() {
         // over them — are the same on every machine. `test_plan_bytes` holds the legacy
         // wire form still the same way, and for the same reason.
         let ctx = peacockdb_core::register_tables_for(
-            peacockdb_core::build_session_state(mode.knobs.target_partitions),
+            peacockdb_core::build_session_state(mode.knobs().target_partitions),
             &common::canonical_data_dir(dataset, "1"),
         )
         .await
@@ -451,7 +263,7 @@ async fn the_payload_golden_carries_what_each_call_hands_the_executor() {
                 .create_physical_plan()
                 .await
                 .expect("the query plans");
-            let (tree, _) = plan_batch_partitioned(&plan, mode.knobs).expect("this mode runs it");
+            let (tree, _) = plan_batch_partitioned(&plan, mode.knobs()).expect("this mode runs it");
             let recipes = attach_recipes(tree.as_ref()).expect("a plan's recipes are structural");
             text.push_str(&format!("== {dataset} {name}\n"));
             text.push_str(&format!("sha256={}\n", digest_of(recipes.bytes())));
@@ -519,14 +331,14 @@ fn digests_of(text: &str) -> std::collections::BTreeMap<String, String> {
 /// with `Payloads::Omitted` and never open the buffer at all.
 #[tokio::test]
 async fn every_published_seq_addresses_the_kind_its_recipe_claims() {
-    let mode = mode(PAYLOAD_MODE.0, PAYLOAD_MODE.1, PAYLOAD_MODE.2);
+    let mode = mode_named(PAYLOAD_MODE);
     let mut checked = 0;
     let mut faults: Vec<String> = Vec::new();
     let mut uncrossable: Vec<String> = Vec::new();
     let mut deepest = (0usize, String::new());
     for dataset in ["tpch", "tpcds"] {
         let ctx = peacockdb_core::register_tables_for(
-            peacockdb_core::build_session_state(mode.knobs.target_partitions),
+            peacockdb_core::build_session_state(mode.knobs().target_partitions),
             &data_dir_for(dataset, "1"),
         )
         .await
@@ -539,7 +351,7 @@ async fn every_published_seq_addresses_the_kind_its_recipe_claims() {
             };
             // A query this mode refuses has no recipes to check; a query it plans has to
             // publish seqs that resolve.
-            let Ok((tree, _)) = plan_batch_partitioned(&plan, mode.knobs) else {
+            let Ok((tree, _)) = plan_batch_partitioned(&plan, mode.knobs()) else {
                 continue;
             };
             match attach_recipes(tree.as_ref()) {
@@ -598,7 +410,8 @@ const NOT_RUNNABLE: &[(&str, &str, &str)] = &[("tpch", "mixed-join", "168")];
 fn every_query_that_cannot_cross_the_wire_is_declared_and_every_declaration_is_true() {
     let mut found: Vec<(String, String)> = Vec::new();
     for (dataset, sf) in [("tpch", "1"), ("tpcds", "1")] {
-        for (name, ..) in MODES {
+        for mode in &BP_MODES {
+            let name = mode.name;
             let path = golden_dir_for(dataset, sf).join(format!("{name}.plans.txt"));
             for (query, body) in ordered_sections(&std::fs::read_to_string(&path).expect("a golden"))
             {
@@ -630,11 +443,11 @@ fn every_query_that_cannot_cross_the_wire_is_declared_and_every_declaration_is_t
             .count();
         assert_eq!(
             carried,
-            MODES.len(),
+            BP_MODES.len(),
             "{dataset}/{query} is declared under #{ticket} but carries the line in {carried} of \
              the {} modes — a plan that crosses in one mode and not another is a finding, and a \
              declaration that has become false is stale",
-            MODES.len()
+            BP_MODES.len()
         );
     }
 }
@@ -708,7 +521,8 @@ fn the_payload_golden_covers_every_kind_and_call_shape_the_modes_produce() {
 
     let mut wanted = std::collections::BTreeSet::new();
     for (dataset, sf) in [("tpch", "1"), ("tpcds", "1")] {
-        for (name, ..) in MODES {
+        for mode in &BP_MODES {
+            let name = mode.name;
             let text = std::fs::read_to_string(
                 golden_dir_for(dataset, sf).join(format!("{name}.plans.txt")),
             )
@@ -760,30 +574,18 @@ fn the_payload_golden_covers_every_kind_and_call_shape_the_modes_produce() {
     );
 }
 
-async fn check(dataset: &str, sf: &str, mode: Mode) {
+async fn check(dataset: &str, sf: &str, mode: &BpMode) {
     let actual = render_bench(dataset, sf, &mode).await;
     assert_or_update(&golden(dataset, sf, &mode), &actual);
 }
 
-/// The five modes, as the goldens and the registry columns name them: the three batching
-/// forms crossed with the lane counts that make them distinct. Each label names its own
-/// form, so no label means one thing at one lane count and another at the other. There is
-/// no tp1 sized mode because at one lane a source takes essentially the whole budget, which
-/// collapses Sized to Off. Only the last reads a budget.
-const MODES: [(&str, usize, BatchSizing); 5] = [
-    ("bp-tp1-single", 1, BatchSizing::OneBatchPerLane),
-    ("bp-tp1-rowgroup", 1, BatchSizing::OneBatchPerRowGroup),
-    ("bp-tp4-single", 4, BatchSizing::OneBatchPerLane),
-    ("bp-tp4-rowgroup", 4, BatchSizing::OneBatchPerRowGroup),
-    ("bp-tp4-sized", 4, BatchSizing::Budgeted),
-];
 
 #[tokio::test]
 async fn tpch_bp_tp1_single() {
     check(
         "tpch",
         "1",
-        mode("bp-tp1-single", 1, BatchSizing::OneBatchPerLane),
+        mode_named("bp_tp1_single"),
     )
     .await;
 }
@@ -793,7 +595,7 @@ async fn tpch_bp_tp1_rowgroup() {
     check(
         "tpch",
         "1",
-        mode("bp-tp1-rowgroup", 1, BatchSizing::OneBatchPerRowGroup),
+        mode_named("bp_tp1_rowgroup"),
     )
     .await;
 }
@@ -803,7 +605,7 @@ async fn tpch_bp_tp4_single() {
     check(
         "tpch",
         "1",
-        mode("bp-tp4-single", 4, BatchSizing::OneBatchPerLane),
+        mode_named("bp_tp4_single"),
     )
     .await;
 }
@@ -813,14 +615,14 @@ async fn tpch_bp_tp4_rowgroup() {
     check(
         "tpch",
         "1",
-        mode("bp-tp4-rowgroup", 4, BatchSizing::OneBatchPerRowGroup),
+        mode_named("bp_tp4_rowgroup"),
     )
     .await;
 }
 
 #[tokio::test]
 async fn tpch_bp_tp4_sized() {
-    check("tpch", "1", mode("bp-tp4-sized", 4, BatchSizing::Budgeted)).await;
+    check("tpch", "1", mode_named("bp_tp4_sized")).await;
 }
 
 #[tokio::test]
@@ -828,7 +630,7 @@ async fn tpcds_bp_tp1_single() {
     check(
         "tpcds",
         "1",
-        mode("bp-tp1-single", 1, BatchSizing::OneBatchPerLane),
+        mode_named("bp_tp1_single"),
     )
     .await;
 }
@@ -838,7 +640,7 @@ async fn tpcds_bp_tp1_rowgroup() {
     check(
         "tpcds",
         "1",
-        mode("bp-tp1-rowgroup", 1, BatchSizing::OneBatchPerRowGroup),
+        mode_named("bp_tp1_rowgroup"),
     )
     .await;
 }
@@ -848,7 +650,7 @@ async fn tpcds_bp_tp4_single() {
     check(
         "tpcds",
         "1",
-        mode("bp-tp4-single", 4, BatchSizing::OneBatchPerLane),
+        mode_named("bp_tp4_single"),
     )
     .await;
 }
@@ -858,14 +660,14 @@ async fn tpcds_bp_tp4_rowgroup() {
     check(
         "tpcds",
         "1",
-        mode("bp-tp4-rowgroup", 4, BatchSizing::OneBatchPerRowGroup),
+        mode_named("bp_tp4_rowgroup"),
     )
     .await;
 }
 
 #[tokio::test]
 async fn tpcds_bp_tp4_sized() {
-    check("tpcds", "1", mode("bp-tp4-sized", 4, BatchSizing::Budgeted)).await;
+    check("tpcds", "1", mode_named("bp_tp4_sized")).await;
 }
 
 /// The registry's five `bp_` columns against the goldens, in both directions: every cell
@@ -876,8 +678,8 @@ async fn tpcds_bp_tp4_sized() {
 fn the_registry_matches_the_goldens_in_both_directions() {
     let rows = common::registry::load_csv();
     for (dataset, sf) in [("tpch", "1"), ("tpcds", "1")] {
-        for (name, target_partitions, sizing) in MODES {
-            let mode = mode(name, target_partitions, sizing);
+        for mode in &BP_MODES {
+            let name = mode.name;
             let sections = sections_of(&golden(dataset, sf, &mode));
             let column = name.replace('-', "_");
 
@@ -918,15 +720,15 @@ fn the_registry_matches_the_goldens_in_both_directions() {
     }
 }
 
-/// Every mode has a golden and every golden has a mode. The per-mode test functions spell
-/// their knobs out one by one, so a mode added to `MODES` and to no test function would
-/// otherwise be checked by nobody — and its file would silently not exist.
+/// Every mode has a golden and every golden has a mode. The per-mode test functions name
+/// one mode each, so a mode added to the table and to no test function would otherwise be
+/// checked by nobody — and its file would silently not exist.
 #[test]
 fn every_mode_has_a_golden_and_every_golden_has_a_mode() {
     for (dataset, sf) in [("tpch", "1"), ("tpcds", "1")] {
-        let mut expected: Vec<String> = MODES
+        let mut expected: Vec<String> = BP_MODES
             .iter()
-            .map(|(name, ..)| format!("{name}.plans.txt"))
+            .map(|mode| format!("{}.plans.txt", mode.name))
             .collect();
         expected.sort();
         let mut found: Vec<String> = std::fs::read_dir(golden_dir_for(dataset, sf))
@@ -948,7 +750,8 @@ fn every_mode_has_a_golden_and_every_golden_has_a_mode() {
 #[test]
 fn no_refusal_in_a_golden_carries_a_host_path() {
     for (dataset, sf) in [("tpch", "1"), ("tpcds", "1")] {
-        for (name, ..) in MODES {
+        for mode in &BP_MODES {
+            let name = mode.name;
             let path = golden_dir_for(dataset, sf).join(format!("{name}.plans.txt"));
             let text = std::fs::read_to_string(&path).expect("a golden");
             // Every line, not only those opening with `refused`: the error text carries
@@ -1000,7 +803,8 @@ fn every_refusal_names_a_ticket_that_exists() {
         .map(|name| std::fs::read_to_string(wiki.join(name)).expect("the ticket list"))
         .collect::<String>();
     for (dataset, sf) in [("tpch", "1"), ("tpcds", "1")] {
-        for (name, ..) in MODES {
+        for mode in &BP_MODES {
+            let name = mode.name;
             let text = std::fs::read_to_string(
                 golden_dir_for(dataset, sf).join(format!("{name}.plans.txt")),
             )
@@ -1225,9 +1029,9 @@ async fn every_field_the_legacy_writer_sets_is_set_here_or_declared_a_difference
     let mut legacy: std::collections::BTreeMap<String, BTreeSet<usize>> = Default::default();
     let mut recipe: std::collections::BTreeMap<String, BTreeSet<usize>> = Default::default();
     for (dataset, sf) in [("tpch", "1"), ("tpcds", "1")] {
-        let mode = mode(PAYLOAD_MODE.0, PAYLOAD_MODE.1, PAYLOAD_MODE.2);
+        let mode = mode_named(PAYLOAD_MODE);
         let ctx = peacockdb_core::register_tables_for(
-            peacockdb_core::build_session_state(mode.knobs.target_partitions),
+            peacockdb_core::build_session_state(mode.knobs().target_partitions),
             &data_dir_for(dataset, sf),
         )
         .await
@@ -1240,7 +1044,7 @@ async fn every_field_the_legacy_writer_sets_is_set_here_or_declared_a_difference
             let Ok(plan) = frame.create_physical_plan().await else {
                 continue;
             };
-            if let Ok((tree, _)) = plan_batch_partitioned(&plan, mode.knobs)
+            if let Ok((tree, _)) = plan_batch_partitioned(&plan, mode.knobs())
                 && let Ok(recipes) = attach_recipes(tree.as_ref())
             {
                 merge(&mut recipe, written_fields(recipes.bytes()));
@@ -1331,11 +1135,11 @@ fn merge(
 async fn the_index_and_the_recipes_number_the_same_nodes_the_same_way() {
     // Four lanes at row-group granularity: lanes and many batches at once, which is the
     // mode whose trees branch most.
-    let mode = mode("bp-tp4-rowgroup", 4, BatchSizing::OneBatchPerRowGroup);
+    let mode = mode_named("bp_tp4_rowgroup");
     let mut checked = 0;
     for dataset in ["tpch", "tpcds"] {
         let ctx = peacockdb_core::register_tables_for(
-            peacockdb_core::build_session_state(mode.knobs.target_partitions),
+            peacockdb_core::build_session_state(mode.knobs().target_partitions),
             &data_dir_for(dataset, "1"),
         )
         .await
@@ -1348,7 +1152,7 @@ async fn the_index_and_the_recipes_number_the_same_nodes_the_same_way() {
             let Ok(plan) = frame.create_physical_plan().await else {
                 continue;
             };
-            let Ok((tree, _)) = plan_batch_partitioned(&plan, mode.knobs) else {
+            let Ok((tree, _)) = plan_batch_partitioned(&plan, mode.knobs()) else {
                 continue;
             };
             let Ok(recipes) = attach_recipes(tree.as_ref()) else {

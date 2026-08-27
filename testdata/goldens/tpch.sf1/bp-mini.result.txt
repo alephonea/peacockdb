@@ -1,0 +1,130 @@
+== q1
+skipped: not enabled at any mode
+== q3
+mode=bp-tp4-sized
++------------+-------------+-------------+----------------+
+| l_orderkey | revenue     | o_orderdate | o_shippriority |
++------------+-------------+-------------+----------------+
+| 1188320    | 384537.9359 | 1995-03-09  | 0              |
+| 2300070    | 367371.1452 | 1995-03-13  | 0              |
+| 2435712    | 378673.0558 | 1995-02-26  | 0              |
+| 2456423    | 406181.0111 | 1995-03-05  | 0              |
+| 2628192    | 373133.3094 | 1995-02-22  | 0              |
+| 3459808    | 405838.6989 | 1995-03-04  | 0              |
+| 4878020    | 378376.7952 | 1995-03-12  | 0              |
+| 492164     | 390324.0610 | 1995-02-19  | 0              |
+| 5521732    | 375153.9215 | 1995-03-13  | 0              |
+| 993600     | 371407.4595 | 1995-03-05  | 0              |
++------------+-------------+-------------+----------------+
+== q6
+mode=bp-tp4-sized
++----------------+
+| revenue        |
++----------------+
+| 123141078.2283 |
++----------------+
+== q10
+mode=bp-tp4-sized
++-----------+--------------------+-------------+-----------+----------------+------------------------------------------+-----------------+------------------------------------------------------------------------------------------------------------------+
+| c_custkey | c_name             | revenue     | c_acctbal | n_name         | c_address                                | c_phone         | c_comment                                                                                                        |
++-----------+--------------------+-------------+-----------+----------------+------------------------------------------+-----------------+------------------------------------------------------------------------------------------------------------------+
+| 101998    | Customer#000101998 | 637029.5667 | 3790.89   | UNITED KINGDOM | 0,ORojfDdyMca2E2H                        | 33-593-865-6378 | ost carefully. slyly regular packages cajole about the blithely final ideas. permanently daring deposit          |
+| 110246    | Customer#000110246 | 566842.9815 | 7763.35   | VIETNAM        | UgsLFL3rendATzcHi                        | 31-943-426-9837 | ow carefully. blithely careful packages hag                                                                      |
+| 115640    | Customer#000115640 | 569341.1933 | 6436.10   | ARGENTINA      | 6yKLIRRAirUmBjKNO6Z3                     | 11-411-543-4901 | ffily ironic deposits. blithely specia                                                                           |
+| 115831    | Customer#000115831 | 596423.8672 | 5098.10   | FRANCE         | AlMpPnmtGrOFrDMUs5VLo EIA,Cg,Rw5TBuBoKiO | 16-715-386-3788 | unts nag carefully final packages. express theodolites are regular ac                                            |
+| 125341    | Customer#000125341 | 633508.0860 | 4983.51   | GERMANY        | 9YRcnoUPOM7Sa8xymhsDHdQg                 | 17-582-695-5962 | ly furiously brave packages. quickly regular dugouts kindle furiously carefully bold theodolites.                |
+| 142549    | Customer#000142549 | 563537.2368 | 5085.99   | INDONESIA      | pJAmChWXct HNjPzgoBUOgAHduwwIR           | 19-955-562-2398 | . slyly bold packages nag quickly against the unusual deposits. express asymptotes detect furiously pending, eve |
+| 143347    | Customer#000143347 | 721002.6948 | 2557.47   | EGYPT          | ,Q9Ml3w0gvX                              | 14-742-935-3718 | endencies sleep. slyly express deposits nag carefully around the even tithes. slyly regular                      |
+| 146149    | Customer#000146149 | 557254.9865 | 1791.55   | ROMANIA        |  STLwtlaB6                               | 29-744-164-6487 | nic, special instructions. multipliers run carefully blithely iro                                                |
+| 147946    | Customer#000147946 | 576455.1320 | 2030.13   | ALGERIA        | Jqdt1kHAJtuTqHQK,B7 3tJh                 | 10-886-956-3143 | ly pending platelets. ironic requests haggle alongside of the furiou                                             |
+| 23431     | Customer#000023431 | 554269.5360 | 3381.86   | ROMANIA        | kKI5,CJAJQjQRQtOdCiFQ                    | 29-915-458-2654 | the final sentiments. carefully ironic packages                                                                  |
+| 25501     | Customer#000025501 | 620269.7849 | 7725.04   | ETHIOPIA       | sr4VVVe3xCJQ2oo2QEhi19D,pXqo6kOGaSn2     | 15-874-808-6793 | y ironic foxes hinder according to the furiously permanent dolphins. pending ideas integrate blithely from       |
+| 39922     | Customer#000039922 | 584878.1134 | 7321.11   | GERMANY        | 2KtWzW,FYkhdWBfobp6SFXWYKjvU9            | 17-147-757-8036 | ironic deposits sublate furiously. carefully regular theodolites along the b                                     |
+| 52528     | Customer#000052528 | 556397.3509 | 551.79    | ARGENTINA      | elsyt8c9Z,7ch                            | 11-208-192-3205 | olphins. blithely silent platelets affix carefully even platelets. ca                                            |
+| 54289     | Customer#000054289 | 585603.3918 | 5583.02   | IRAN           | x3ouCpz6,pRNVhajr0CCQG1                  | 20-834-292-4707 |  cajole furiously after the quickly unusual fo                                                                   |
+| 57040     | Customer#000057040 | 734235.2455 | 632.87    | JAPAN          | nICtsILWBB                               | 22-895-641-3466 | ep. blithely regular foxes promise slyly furiously ironic depend                                                 |
+| 60838     | Customer#000060838 | 679127.3077 | 2454.77   | BRAZIL         | VWmQhWweqj5hFpcvhGFBeOY9hJ4m             | 12-913-494-9813 | tes. final instructions nag quickly according to                                                                 |
+| 6226      | Customer#000006226 | 576783.7606 | 2230.09   | UNITED KINGDOM | TKbxS1dbkGMtaa,KOi26lbip4P0tPbWK0        | 33-657-701-3391 | nal packages are alongside of the quickly bold deposits. carefully                                               |
+| 73606     | Customer#000073606 | 568656.8578 | 1785.67   | JAPAN          | vx9,7ACVtoKnLcoAHGNYDF                   | 22-437-653-6966 | uests cajole according to the foxe                                                                               |
+| 84223     | Customer#000084223 | 594998.0239 | 528.65    | UNITED KINGDOM | Eq51o UpQ4RBr  fYTdrZApDsPV4pQyuPq       | 33-442-824-8191 | longside of the slyly final deposits. blithely final platelets about the blithely i                              |
+| 922       | Customer#000000922 | 576767.5333 | 3869.25   | GERMANY        | rsR9lRxyTdHbDOVt8nYbwjK5vAWH9sB          | 17-945-916-9648 | cuses cajole carefully regular idea                                                                              |
++-----------+--------------------+-------------+-----------+----------------+------------------------------------------+-----------------+------------------------------------------------------------------------------------------------------------------+
+== q12
+mode=bp-tp4-sized
++------------+-----------------+----------------+
+| l_shipmode | high_line_count | low_line_count |
++------------+-----------------+----------------+
+| MAIL       | 6202            | 9324           |
+| SHIP       | 6200            | 9262           |
++------------+-----------------+----------------+
+== q13
+mode=bp-tp4-sized
++---------+----------+
+| c_count | custdist |
++---------+----------+
+| 0       | 50004    |
+| 1       | 20       |
+| 10      | 6668     |
+| 11      | 6004     |
+| 12      | 5600     |
+| 13      | 5029     |
+| 14      | 4473     |
+| 15      | 4463     |
+| 16      | 4410     |
+| 17      | 4445     |
+| 18      | 4531     |
+| 19      | 4805     |
+| 2       | 128      |
+| 20      | 4507     |
+| 21      | 4168     |
+| 22      | 3742     |
+| 23      | 3189     |
+| 24      | 2700     |
+| 25      | 2090     |
+| 26      | 1653     |
+| 27      | 1177     |
+| 28      | 901      |
+| 29      | 564      |
+| 3       | 408      |
+| 30      | 378      |
+| 31      | 242      |
+| 32      | 133      |
+| 33      | 72       |
+| 34      | 52       |
+| 35      | 32       |
+| 36      | 20       |
+| 37      | 8        |
+| 38      | 4        |
+| 39      | 1        |
+| 4       | 1010     |
+| 40      | 3        |
+| 41      | 3        |
+| 5       | 1957     |
+| 6       | 3273     |
+| 7       | 4680     |
+| 8       | 5890     |
+| 9       | 6563     |
++---------+----------+
+== q14
+mode=bp-tp4-sized
++-------------------+
+| promo_revenue     |
++-------------------+
+| 16.38077862639554 |
++-------------------+
+== q15
+mode=bp-tp4-sized
++-----------+--------------------+-------------------+-----------------+---------------+
+| s_suppkey | s_name             | s_address         | s_phone         | total_revenue |
++-----------+--------------------+-------------------+-----------------+---------------+
+| 8449      | Supplier#000008449 | 5BXWsJERA2mP5OyO4 | 20-469-856-8873 | 1772627.2087  |
++-----------+--------------------+-------------------+-----------------+---------------+
+== q17
+skipped: not enabled at any mode
+== q19
+mode=bp-tp4-sized
++--------------+
+| revenue      |
++--------------+
+| 3083843.0578 |
++--------------+

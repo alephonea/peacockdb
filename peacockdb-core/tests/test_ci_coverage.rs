@@ -62,6 +62,7 @@ const INTENTIONALLY_NOT_IN_CI: &[(&str, Exemption)] = &[
     // are CPU-emulated) and it owns the cost-registry check for the partitioned_cpu
     // column — leaving it out of CI would let a CSV row claim coverage no test
     // provides.
+    ("test_gpu_bp_corpus", Exemption::GpuJob),
     ("test_ci_coverage", Exemption::NotRun("this test")),
 ];
 
@@ -478,4 +479,103 @@ fn the_three_gpu_target_lists_agree() {
 /// The `<crate>:<target>` form build-test.sh matches on, for failure messages.
 fn qualified((krate, target): &(String, String)) -> String {
     format!("{krate}:{target}")
+}
+
+/// Every line that runs a staged rust GPU binary, out of a committed runner.
+///
+/// All of them rather than the first, because a first-match reader is checking whichever
+/// invocation happens to come first and excusing a retry or a variant added below it. Scoped
+/// to the rust loop and read line-wise, since both shortcuts are false-green here: the C++
+/// loop above it in each file uses the same `$t` and rightly passes no flag, and every rust
+/// invocation carries a comment saying the flag is mandatory, so a file-wide `contains`
+/// survives the edit that matters — the flag dropped from the command, the comment left.
+fn rust_gpu_runner_invocations(rel: &str) -> Vec<String> {
+    let text = std::fs::read_to_string(repo_root().join(rel)).unwrap_or_else(|e| panic!("read {rel}: {e}"));
+    let mut after_header = text.lines().skip_while(|l| !is_rust_gpu_runner_loop_header(l));
+    after_header.next().unwrap_or_else(|| {
+        panic!(
+            "{rel} has no `for t in …rust-tests/*` loop — the runner was reshaped, and the \
+             single-tenant GPU invariant now rests on a loop this guard cannot find"
+        )
+    });
+    let found: Vec<String> = after_header
+        .take_while(|l| !l.trim_start().starts_with("done"))
+        .filter(|l| is_rust_gpu_runner_invocation(l))
+        .map(|l| l.trim().to_string())
+        .collect();
+    assert!(
+        !found.is_empty(),
+        "{rel}'s rust-tests loop runs no binary as `\"\\$t\" …` — the invocation was renamed or \
+         moved out of the loop, and this guard now reads nothing"
+    );
+    found
+}
+
+fn is_rust_gpu_runner_loop_header(line: &str) -> bool {
+    line.contains("for t in") && line.contains("rust-tests/")
+}
+
+/// Is this the line that executes the binary, rather than a comment about it?
+fn is_rust_gpu_runner_invocation(line: &str) -> bool {
+    line.trim_start().starts_with("\"\\$t\"")
+}
+
+/// Single-tenant GPU is one flag on two committed runner lines and nothing else. cuDF and
+/// RMM share a process-wide pool, so `--test-threads=1` is what keeps the device to one test
+/// at a time — and `test_gpu_bp_corpus.rs` spends it further, setting environment variables
+/// in an `unsafe` block whose safety argument is that flag. Dropping it from either runner
+/// makes that argument false, and until this test existed nothing said so.
+#[test]
+fn both_gpu_runners_pass_test_threads_one() {
+    for rel in [".github/workflows/pipeline.yml", "scripts/build-test-shadgpu.sh"] {
+        for line in rust_gpu_runner_invocations(rel) {
+            assert!(
+                line.contains("--test-threads=1"),
+                "{rel} runs a staged GPU binary without --test-threads=1:\n  {line}\n\
+                 cuDF/RMM share one process-wide pool, so concurrent cases OOM the device, and \
+                 the env-var writes in test_gpu_bp_corpus.rs are sound only while this flag holds."
+            );
+        }
+    }
+}
+
+/// The reader's own guard, over the three ways it could report false coverage: a comment
+/// standing in for the command, the C++ loop standing in for the rust one, and the first
+/// invocation standing in for the rest.
+#[test]
+fn the_runner_reader_takes_every_rust_command_and_not_a_comment_or_the_cpp_loop() {
+    let flagged: fn(&&str) -> bool = |l| l.contains("--test-threads=1");
+    let read = |block: &str| -> Vec<String> {
+        block
+            .lines()
+            .skip_while(|l| !is_rust_gpu_runner_loop_header(l))
+            .take_while(|l| !l.trim_start().starts_with("done"))
+            .filter(|l| is_rust_gpu_runner_invocation(l))
+            .map(|l| l.trim().to_string())
+            .collect()
+    };
+
+    // (1) the flag dropped from the command, its comment left above it.
+    let dropped = "for t in $REMOTE_DIR/cpp/install/rust-tests/*; do\n\
+                   \x20 # --test-threads=1: cuDF/RMM share one process-wide pool.\n\
+                   \x20 \"\\$t\" --nocapture > \"\\$tlog\" 2>&1\n\
+                   done";
+    assert!(dropped.contains("--test-threads=1"), "a file-wide search is green on this");
+    assert!(!read(dropped).iter().any(|l| flagged(&l.as_str())), "the command has lost the flag");
+
+    // (2) the C++ loop first, sharing the same `$t`: taking the file's first invocation reads
+    // that one and never reaches the rust loop. (3) a second invocation added inside the rust
+    // loop — a retry — unflagged, which a reader that stops at the first would excuse.
+    let both_loops = "for t in $REMOTE_DIR/cpp/install/bin/peacock_*_tests; do\n\
+                      \x20 \"\\$t\" > \"\\$tlog\" 2>&1\n\
+                      done\n\
+                      for t in $REMOTE_DIR/cpp/install/rust-tests/*; do\n\
+                      \x20 \"\\$t\" --nocapture --test-threads=1 > \"\\$tlog\" 2>&1\n\
+                      \x20 \"\\$t\" --nocapture --ignored > \"\\$tlog\" 2>&1\n\
+                      done";
+    let first = both_loops.lines().find(|l| is_rust_gpu_runner_invocation(l)).expect("a line");
+    assert!(!flagged(&first), "the C++ invocation is the file's first");
+    let rust = read(both_loops);
+    assert_eq!(rust.len(), 2, "both rust invocations are read: {rust:?}");
+    assert!(flagged(&rust[0].as_str()) && !flagged(&rust[1].as_str()), "the retry is unflagged");
 }

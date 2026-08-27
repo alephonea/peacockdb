@@ -5,15 +5,18 @@
 //! as well when the whole input was read and thrown away.
 
 mod budget;
+mod counts;
 mod failure;
 mod flow;
 mod instrument;
 mod limit;
 mod memory;
+mod render;
 mod stress;
 mod wiring;
 
 use super::mock::{Mock, Script};
+use super::index::PlanIndex;
 use super::partitioned::{Driver, RunReport};
 use super::{CallKind, StepError, TraceEvent};
 use crate::batch_partitioned::error::RunError;
@@ -99,6 +102,32 @@ fn assert_accounted(report: &RunReport) {
         report.peak_bytes > 0,
         "a run that peaked at zero observed nothing"
     );
+}
+
+/// The conservation law, lane for lane: every row a node emitted was taken by its parent or
+/// left standing by an early exit, and a row in neither vanished. That is a defect no
+/// inequality can see, which is why it sits beside `in_flight_bytes` returning to zero and
+/// `holds == releases` rather than in place of them. The tree is walked through the index
+/// the report is addressed by, so nothing here re-derives a child list.
+fn assert_conserved(root: &dyn GpuNode, report: &RunReport) {
+    let index = PlanIndex::build(root).expect("the tree the run was made over indexes");
+    for (node, indexed) in index.nodes.iter().enumerate() {
+        for (slot, child) in indexed.children.iter().enumerate() {
+            for lane in 0..report.lanes_of[*child] {
+                let emitted: u64 = report.emitted[*child][lane]
+                    .iter()
+                    .map(|batch| batch.rows)
+                    .sum();
+                assert_eq!(
+                    report.consumed[node][slot][lane] + report.abandoned[*child][lane],
+                    emitted,
+                    "{} slot {slot} lane {lane}: against {}",
+                    indexed.node.name(),
+                    index.nodes[*child].node.name()
+                );
+            }
+        }
+    }
 }
 
 fn protocol_error(result: Result<RunReport, RunError>, mentions: &str) {

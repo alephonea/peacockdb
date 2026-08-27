@@ -78,10 +78,11 @@ pub fn gpu_label_device(mode: ExecMode, label: &str) -> String {
 
 /// How a CPU run's result is compared against the DataFusion oracle.
 ///
-/// BOTH variants run the SAME oracle: plain DataFusion at `target_partitions = 1`
-/// (`build_session_state(1)`). Only the float tolerance differs — which is why this is
-/// an oracle-comparison mode and not a different kind of test, and why it is an
-/// argument rather than a second macro name.
+/// EVERY variant runs the SAME oracle: plain DataFusion at `target_partitions = 1`
+/// (`build_session_state(1)`). What differs is what is asked of it — the whole answer,
+/// the whole answer to a tolerance, or the count and the containment where the SQL
+/// determines no more than those. That is why this is an oracle-comparison mode and not a
+/// different kind of test, and why it is an argument rather than a second macro name.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CpuOracle {
     /// Exact sorted-string equality. The default.
@@ -93,13 +94,19 @@ pub enum CpuOracle {
     /// EXACT either way — a ULP does not change a float's byte width — so this
     /// loosens the result compare only, never `assert_cpu_cost_canonical`.
     DataFusionApproximate,
+    /// The count and the containment, for a query whose SQL does not determine which
+    /// rows come back — an unordered `LIMIT n OFFSET m`. What it does determine is asked
+    /// of the same session: the count is `max(0, min(n, |unlimited| - m))` and the rows
+    /// are a sub-MULTISET of the unlimited answer, compared as a multiset because set
+    /// membership passes a run that returned one row twice where the oracle has it once.
+    DataFusionSubset,
 }
 
 impl CpuOracle {
     /// The `rel_tol` handed to the result compare. `None` = exact.
     pub fn rel_tol(self) -> Option<f64> {
         match self {
-            CpuOracle::DataFusionExact => None,
+            CpuOracle::DataFusionExact | CpuOracle::DataFusionSubset => None,
             CpuOracle::DataFusionApproximate => Some(1e-12),
         }
     }
@@ -111,23 +118,24 @@ pub fn cpu_oracle_mode(s: &str) -> CpuOracle {
     match s {
         "data_fusion_exact" => CpuOracle::DataFusionExact,
         "data_fusion_approximate" => CpuOracle::DataFusionApproximate,
+        "data_fusion_subset" => CpuOracle::DataFusionSubset,
         other => panic!(
             "cpu result test: unknown oracle keyword '{other}' \
-             (expected data_fusion_exact|data_fusion_approximate)"
+             (expected data_fusion_exact|data_fusion_approximate|data_fusion_subset)"
         ),
     }
 }
 
 /// Whether a CPU run writes the frozen `.result.txt` golden under UPDATE_CANONICAL.
 ///
-/// INVARIANT: [`ResultGolden::Write`] exactly for the (query, golden-label) pairs a
-/// golden-asserting GPU test consumes (`golden_exact` / `golden_approx` /
-/// `golden_approx_std`) — so `full_table-tp1-standard` and the `partitioned-tp8-standard`
-/// real-partitioning goldens, but NOT `full_table-tp8-mini` (no GPU consumer) and not
-/// oracle-mode queries (>256 KB result → the GPU uses the live oracle, no golden).
-/// Skip-when-should-be-write fails loud (missing golden); write-when-should-be-skip is
-/// an orphan golden written but never read — the silent case this gate exists to
-/// prevent.
+/// Legacy-only, and retires with the legacy modes: the batch-partitioned mode declares a
+/// query's CPU and GPU coverage in one macro, so whether a golden is consumed is derived
+/// there rather than declared (T18 in the task spec).
+///
+/// INVARIANT: [`Write`] exactly for the (query, golden-label) pairs a golden-asserting GPU
+/// test consumes (`golden_exact`/`golden_approx`/`golden_approx_std`) — not
+/// `full_table-tp8-mini`, which has no consumer, nor `live_cpu` queries. Skip-when-write
+/// fails loud; write-when-skip is an orphan golden, the silent case this gate prevents.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ResultGolden {
     Write,

@@ -168,6 +168,12 @@ impl Scheduler {
         }
     }
 
+    /// Whether this node's own interval was satisfied. What the golden's `early_exit=`
+    /// marker names, so a reader of a smaller number knows which limit produced it.
+    pub(crate) fn is_satisfied(&self, node: usize) -> bool {
+        self.satisfied[node]
+    }
+
     /// Any satisfied node at all — the run ended early, so in-flight batches are dropped
     /// rather than reported as stranded.
     pub(crate) fn any_satisfied(&self) -> bool {

@@ -280,6 +280,10 @@ jobs:
           # planner would emit — a rebatcher at an interior edge, a drained lane,
           # zero-row batches, a degenerate hash. Needs sf1, generated above; no device.
           cargo test --features rust-only -p peacockdb-core --test test_cpu_batch_partitioned
+          # The corpus on the same path: every enabled query at every mode its line
+          # declares, answers against DataFusion. Needs sf1, so it lives here and not
+          # in the golden-only tier.
+          cargo test --features rust-only -p peacockdb-core --test test_cpu_bp_corpus
         env:
           CMAKE_GENERATOR: Ninja
           LD_LIBRARY_PATH: /opt/conda/lib
@@ -354,7 +358,7 @@ jobs:
           # test_gpu_executors = the exec executors, each handed its recipe and one batch.
           # One line on purpose: the coverage guard reads the array below with a single
           # `lines().find`, so a continuation hides every target after the backslash.
-          for t in test_gpu_full_table test_gpu_partitioned test_inc2_conformance test_gpu_abi test_gpu_recipe_walk test_gpu_executors; do
+          for t in test_gpu_full_table test_gpu_partitioned test_inc2_conformance test_gpu_abi test_gpu_recipe_walk test_gpu_executors test_gpu_bp_corpus; do
             exec_path=$(cargo test --no-run -p peacockdb-core --test "$t" \
                 --message-format=json \
               | python3 -c '
@@ -568,14 +572,24 @@ jobs:
             echo "==> ran \$ran_any C++ test binaries"
 
             echo "==> rust GPU integration tests"
+            # Same zero-test guard the C++ loop above carries, in libtest's wording: a
+            # rust binary whose cases all vanished exits 0 and says nothing, so the staging
+            # array would go on excusing a target that verifies nothing.
             for t in $REMOTE_DIR/cpp/install/rust-tests/*; do
               [ -x "\$t" ] || continue
-              echo "--- \$(basename \$t)"
+              tname=\${t##*/}
+              echo "--- \$tname"
               # --test-threads=1: cuDF/RMM share one process-wide pool; running
               # several GPU tests concurrently OOMs the device and poisons the
               # CUDA context, cascading into bad_alloc/cudaErrorIllegalAddress
               # for every later test. Sequential is mandatory.
-              "\$t" --nocapture --test-threads=1 || rc=1
+              tlog=$REMOTE_DIR/\$tname.rust.log
+              "\$t" --nocapture --test-threads=1 > "\$tlog" 2>&1 || rc=1
+              cat "\$tlog"
+              if grep -q "^running 0 tests" "\$tlog"; then
+                echo "::error::\$tname ran 0 tests — nothing was verified"
+                rc=1
+              fi
             done
 
             exit \$rc
@@ -689,6 +703,18 @@ jobs:
       # dataset, no GPU — so it stays in this cheap golden-only tier.
       - name: Cost goldens match plan-golden regeneration (Rust)
         run: cargo test --features rust-only -p peacockdb-core --test test_cost_model
+
+      # The one reader of the golden text format, against strings rather than files:
+      # no dataset, no executor, so it belongs beside the cost model in this tier.
+      # Every other golden assertion in the tree is a comparison through it.
+      - name: The golden text format, read back (Rust)
+        run: cargo test --features rust-only -p peacockdb-core --test test_golden_format
+
+      # The corpus goldens against their own arithmetic — conservation, lane counts,
+      # the loader prefix, the root against the result. Committed files only, so it
+      # belongs here rather than in the tier that has the dataset.
+      - name: Corpus goldens against their own redundancy (Rust)
+        run: cargo test --features rust-only -p peacockdb-core --test test_corpus_goldens
 
       # The injection mechanism against itself: the plan rebuild is identity per arm
       # and per field, and the selector's output is a cover rather than a prefix.

@@ -8,12 +8,19 @@
 #![allow(dead_code)]
 
 pub mod benchmark;
+pub mod bp_mode;
+pub mod corpus;
+pub mod corpus_golden;
+#[cfg(not(feature = "rust-only"))]
+pub mod corpus_gpu;
 pub mod cost_model;
 pub mod exec_mode;
+pub mod golden_text;
 pub mod injection;
 pub mod join_fixture;
 pub mod rebuild;
 pub mod registry;
+pub mod result_text;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -510,10 +517,13 @@ pub fn assert_results_match(
     query: &str,
 ) {
     let Some(tol) = rel_tol else {
-        assert_eq!(
-            batches_to_sorted_str(actual),
-            batches_to_sorted_str(expected),
-            "result for {query} differs from oracle (exact compare)"
+        // Digests rather than two rendered tables: `assert_eq!` evaluates both arguments
+        // before comparing a byte, so the exact arm materialized the whole answer twice to
+        // answer yes or no. The excerpt is built only where the answer is no.
+        assert!(
+            result_text::results_agree(expected, actual),
+            "result for {query} differs from oracle (exact compare)\n{}",
+            result_text::first_difference(expected, actual)
         );
         return;
     };
@@ -533,13 +543,15 @@ pub fn assert_results_match(
             let floats: Vec<usize> = (0..s.fields().len())
                 .filter(|&i| s.field(i).data_type() == &DataType::Float64)
                 .collect();
+            // One formatter per keyed column, not per cell: the float columns are not
+            // keyed on and are never formatted, and the rest are built once for the batch.
+            let keyed: Vec<(usize, ArrayFormatter<'_>)> = (0..s.fields().len())
+                .filter(|c| !floats.contains(c))
+                .map(|c| (c, ArrayFormatter::try_new(b.column(c), &opts).unwrap()))
+                .collect();
             for r in 0..b.num_rows() {
                 let mut key = String::new();
-                for c in 0..s.fields().len() {
-                    if floats.contains(&c) {
-                        continue;
-                    }
-                    let f = ArrayFormatter::try_new(b.column(c), &opts).unwrap();
+                for (_, f) in &keyed {
                     key.push_str(&f.value(r).to_string());
                     key.push('\u{1}');
                 }
@@ -632,7 +644,7 @@ pub fn maybe_write_result_golden(batches: &[RecordBatch], golden_path: &Path) {
 /// cell can't reorder the sorted lines and break pairing — same idea as
 /// `assert_results_match`'s float path), and every numeric cell must agree within
 /// `tol` relative error. Used for the result-golden approx path (q14/q39).
-fn assert_sorted_str_approx(golden: &str, actual: &str, tol: f64, query: &str) {
+pub fn assert_sorted_str_approx(golden: &str, actual: &str, tol: f64, query: &str) {
     use std::collections::HashMap;
 
     fn split_cells(line: &str) -> Vec<String> {
@@ -1076,9 +1088,12 @@ pub async fn assert_gpu_nodes_match_golden(
 ///                  beyond the 1e-12 convention. 1e-11 = ~5× headroom, still 11
 ///                  significant digits. CPU-side #13 approx tests stay at 1e-12;
 ///                  this looser tol is GPU-cuDF-specific (#94-adjacent).
-/// `Oracle`       = live CPU-oracle compare, NO golden — for results too large to
+/// `LiveCpu`      = live CPU-oracle compare, NO golden — for results too large to
 ///                  commit as text (>= RESULT_GOLDEN_MAX_BYTES, e.g. anti-join's
 ///                  ~240MB/1.2M rows). R4 preserved: still result-validated, live.
+///                  Named for the choice it makes — a live run rather than a frozen
+///                  file — since inside an argument called `gpu_oracle`, `oracle` said
+///                  only that an oracle is an oracle.
 /// `Skip`         = per-node only (non-deterministic LIMIT; tp8-only escape).
 #[cfg(not(feature = "rust-only"))]
 #[derive(Clone, Copy)]
@@ -1086,7 +1101,7 @@ pub enum GpuResultMode {
     GoldenExact,
     GoldenApprox,
     GoldenApproxStddev,
-    Oracle,
+    LiveCpu,
     Skip,
 }
 
@@ -1097,10 +1112,10 @@ pub fn gpu_result_mode(s: &str) -> GpuResultMode {
         "golden_exact" => GpuResultMode::GoldenExact,
         "golden_approx" => GpuResultMode::GoldenApprox,
         "golden_approx_std" => GpuResultMode::GoldenApproxStddev,
-        "oracle" => GpuResultMode::Oracle,
+        "live_cpu" => GpuResultMode::LiveCpu,
         "skip" => GpuResultMode::Skip,
         other => panic!(
-            "gpu test macro: unknown result mode '{other}' (expected golden_exact|golden_approx|golden_approx_std|oracle|skip)"
+            "gpu test macro: unknown result mode '{other}' (expected golden_exact|golden_approx|golden_approx_std|live_cpu|skip)"
         ),
     }
 }
@@ -1168,7 +1183,7 @@ pub async fn assert_gpu_query(
             Some(1e-11),
             &qlabel,
         ),
-        GpuResultMode::Oracle => {
+        GpuResultMode::LiveCpu => {
             // Result too large to commit as a golden → validate against a LIVE CPU
             // oracle run (exact). Still result-validated (R4), just not frozen.
             let cpu = CpuExecutor::new_mode(&data_dir, partitions, budget, mode.partition_mode())

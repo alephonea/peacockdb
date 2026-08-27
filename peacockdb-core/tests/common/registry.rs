@@ -49,14 +49,38 @@ pub struct RegistryEntry {
 
 inventory::collect!(RegistryEntry);
 
+/// One `corpus_query!` line as declared, whatever it expanded to. Separate from
+/// [`RegistryEntry`], which is per enabled (query, mode): this is per QUERY, and it is
+/// submitted by the `none` arm too, so a declaration with no cases is still readable.
+///
+/// What reads it is the pairing between the two oracles, which is a property of the line
+/// rather than of a run.
+#[derive(Debug)]
+pub struct CorpusDeclaration {
+    pub dataset: &'static str,
+    pub sf: &'static str,
+    pub query: &'static str,
+    pub cpu_oracle: &'static str,
+    pub gpu_oracle: &'static str,
+}
+
+inventory::collect!(CorpusDeclaration);
+
 /// The CSV's per-mode columns, in file order.
 ///
-/// The five `bp_` columns are the batch-partitioned mode's plan enablement, one per
-/// mode — the three batching forms crossed with the lane counts that make them distinct. They are the one group no test macro registers: that mode's plan goldens are
-/// one file per mode rather than one file per query, so what declares a cell is the
-/// golden's section for that query, and `test_batch_partitioned_plans` is what holds
-/// the two to each other in both directions.
-pub const COLUMNS: [&str; 11] = [
+/// Three groups for the batch-partitioned mode, one per thing that can be enabled
+/// independently. The five `bp_` columns are plan enablement, and they are the one group
+/// no test macro registers: that mode's plan goldens are one file per mode rather than one
+/// file per query, so what declares a cell is the golden's section for that query, and
+/// `test_batch_partitioned_plans` is what holds the two to each other in both directions.
+/// The `bp_cpu_` and `bp_gpu_` columns are execution, declared by `corpus_query!` through
+/// this inventory — one per engine because a query can be correct at five modes on the cpu
+/// and at two on a device.
+///
+/// Flat rather than a repeated group: the file has two independent readers, `registry.rs`
+/// and `cost-report`, and both parse by header name. A repeated group would need the two to
+/// agree on a decoding convention as well, which is one more place to drift.
+pub const COLUMNS: [&str; 21] = [
     "plan",
     "ftc_tp1",
     "ftc_tp8",
@@ -68,6 +92,16 @@ pub const COLUMNS: [&str; 11] = [
     "bp_tp4_single",
     "bp_tp4_rowgroup",
     "bp_tp4_sized",
+    "bp_cpu_tp1_single",
+    "bp_cpu_tp1_rowgroup",
+    "bp_cpu_tp4_single",
+    "bp_cpu_tp4_rowgroup",
+    "bp_cpu_tp4_sized",
+    "bp_gpu_tp1_single",
+    "bp_gpu_tp1_rowgroup",
+    "bp_gpu_tp4_single",
+    "bp_gpu_tp4_rowgroup",
+    "bp_gpu_tp4_sized",
 ];
 
 /// Map a registration to its CSV column.
@@ -87,8 +121,23 @@ pub fn column_for(kind: &str, device: &str) -> Option<&'static str> {
         "ftc" => Some(if device.starts_with("tp1") { "ftc_tp1" } else { "ftc_tp8" }),
         "gpu_full_table" => Some("full_table_gpu"),
         "gpu_partitioned" => Some("partitioned_gpu"),
+        "bp_cpu" | "bp_gpu" => bp_column(kind, device),
         _ => None,
     }
+}
+
+/// A corpus registration's column: its engine and the mode it ran at. The mode really is
+/// carried per registration — one macro invocation expands to a case per enabled mode — so
+/// this composes rather than looks up, and the mode set is checked exhaustively: an
+/// unlisted one is `None` and the registration is reported unmappable, rather than being
+/// silently binned into whichever column a prefix match reached first.
+fn bp_column(kind: &str, mode: &str) -> Option<&'static str> {
+    let known = super::bp_mode::BP_MODES.iter().any(|m| m.ident() == mode);
+    let suffix = known.then(|| mode.trim_start_matches("bp_"))?;
+    COLUMNS
+        .iter()
+        .find(|column| **column == format!("{kind}_{suffix}"))
+        .copied()
 }
 
 /// A parsed CSV row.
@@ -233,6 +282,19 @@ pub fn load_csv() -> Vec<CsvRow> {
                 i + 2
             );
         }
+        // A cell turned off names the ticket that explains it. Bulk disablement is what a
+        // rollout does, and a row that says only "not here" is one nobody can act on or
+        // close — the ticket is what makes it findable when the blocker clears.
+        let off = COLUMNS
+            .iter()
+            .filter(|col| states.get(**col).is_some_and(|state| state == "disabled"))
+            .count();
+        assert!(
+            off == 0 || !tickets.is_empty(),
+            "{}:{}: {off} disabled cells and no ticket — name the one that explains them",
+            path.display(),
+            i + 2
+        );
         rows.push(CsvRow {
             dataset: f[0].to_string(),
             sf: f[1].to_string(),

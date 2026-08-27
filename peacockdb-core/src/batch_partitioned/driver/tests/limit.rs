@@ -18,7 +18,7 @@ fn six_batches() -> Script {
 #[test]
 fn a_root_adjacent_limit_stops_the_run_early() {
     let report = run(chain(0, Some(15)).as_ref(), &six_batches());
-    assert!(report.early_exit);
+    assert!(!report.satisfied.is_empty());
     assert_eq!(
         count(&report, CallKind::NextBatch),
         2,
@@ -31,7 +31,7 @@ fn a_root_adjacent_limit_stops_the_run_early() {
 #[test]
 fn without_the_limit_the_same_plan_drains_everything() {
     let report = run(unload(filter(source("part", 1))).as_ref(), &six_batches());
-    assert!(!report.early_exit);
+    assert!(report.satisfied.is_empty());
     assert_eq!(count(&report, CallKind::NextBatch), 6);
     assert_eq!(rows_returned(&report), 60);
 }
@@ -107,7 +107,10 @@ fn the_count_is_across_lanes_and_not_per_lane() {
 #[test]
 fn a_zero_fetch_unloads_nothing_at_all_and_the_plan_still_completes() {
     let report = run(chain(0, Some(0)).as_ref(), &six_batches());
-    assert!(report.early_exit, "satisfied before a single step");
+    assert!(
+        !report.satisfied.is_empty(),
+        "satisfied before a single step"
+    );
     assert_eq!(count(&report, CallKind::Unload), 0);
     assert_eq!(count(&report, CallKind::UnloadRange), 0);
     assert_eq!(rows_returned(&report), 0);
@@ -119,7 +122,7 @@ fn a_zero_fetch_unloads_nothing_at_all_and_the_plan_still_completes() {
 fn an_offset_with_no_fetch_never_exits_early() {
     let report = run(chain(25, None).as_ref(), &six_batches());
     assert!(
-        !report.early_exit,
+        report.satisfied.is_empty(),
         "no prefix determines a pure offset, so it can only drop and trim"
     );
     assert_eq!(
@@ -149,7 +152,7 @@ fn the_early_exit_reaches_through_a_shuffle() {
     let plan = unload_limited(merge(emit(source("part", 1), 4)), 0, Some(6));
     let script = Script::default().source("part", vec![vec![spec(8, 64); 5]]);
     let report = run(plan.as_ref(), &script);
-    assert!(report.early_exit);
+    assert!(!report.satisfied.is_empty());
     assert!(
         count(&report, CallKind::NextBatch) < 5,
         "the hold reached the scan through the merge and the emit"
@@ -167,7 +170,7 @@ fn a_mid_plan_limit_stops_its_own_subtree_and_holds_nothing() {
     let plan = unload(filter(limit(merge(source("part", 1)), 0, Some(12))));
     let script = Script::default().source("part", vec![vec![spec(10, 80); 6]]);
     let report = run(plan.as_ref(), &script);
-    assert!(report.early_exit);
+    assert!(!report.satisfied.is_empty());
     assert_eq!(
         count(&report, CallKind::NextBatch),
         2,
@@ -189,7 +192,7 @@ fn a_satisfied_limit_reports_done_so_the_node_above_it_can_finish() {
     let plan = unload(coalesce_all(limit(merge(source("part", 1)), 0, Some(12))));
     let script = Script::default().source("part", vec![vec![spec(10, 80); 6]]);
     let report = run(plan.as_ref(), &script);
-    assert!(report.early_exit);
+    assert!(!report.satisfied.is_empty());
     assert_eq!(
         count(&report, CallKind::MarkDone),
         1,

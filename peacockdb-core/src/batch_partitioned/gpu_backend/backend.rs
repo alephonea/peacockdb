@@ -131,10 +131,15 @@ impl Backend for GpuBackend {
                 NodeExecutors::PartitionEmitter(GpuEmitter::new(executor, recipe, &out(node))?)
             }
             NodeRef::Join(join) => {
+                // A join that answers in one call has no finish pass, so what its per-call
+                // type would be is a question with no answer — asking it is the defect, and
+                // the `unreachable!` behind it is doing its job. The cpu backend guards on
+                // the same capability at `cpu_backend/join.rs`, and one question answered
+                // two ways is how the two backends drift.
+                let one_call = join.capability()?.answers_in_one_call();
                 // The key table this lane accumulates is the probe's key columns under the
                 // probe's names, which is what the key project the recipe names emits.
-                let keys = per_call_join_type(join.join_type)
-                    .is_none()
+                let keys = (!one_call && per_call_join_type(join.join_type).is_none())
                     .then(|| key_schema(&input(1), &join.keys));
                 NodeExecutors::Join(GpuJoin::new(
                     executor,

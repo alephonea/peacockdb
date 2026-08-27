@@ -1953,8 +1953,8 @@ bare-`LIMIT` queries (TPC-DS q28, q32, q38, q97) limit an already-single-row agg
 ## Goldens, registry, widget
 
 **Device labels**: `bp-<tp1|tp4>-<single|rowgroup|sized>`, minus `bp-tp1-sized` which does
-not exist, with the budget tier suffixed for execution goldens as in legacy
-(`q1.bp-tp4-sized-mini.cpu.txt`). The label names the batching form rather than a
+not exist, with the budget tier suffixed for execution goldens
+(`bp-tp4-sized-mini.cpu.txt`, one file holding every query in sections — see T18). The label names the batching form rather than a
 single/batched pair, because `batched` meant `PerRowGroup` at tp1 and `Sized` at tp4 — one
 word for two behaviours, which is the shape coding-style.md warns about. The
 `partition_mode`-style label lookups stay explicit parameters at call sites, per the
@@ -1992,8 +1992,9 @@ than an invisible one.
 because in this mode it decides what a parent may assume: `lanes=N, batches=single|multiple`
 on every node, plus `hashed_on=[…]` and `sorted_on=[…]` where the layout carries them.
 Those two print only when specified, so their absence is `NotSpecified` and reads as the
-fact it is. The execution goldens' per-partition sub-line gains `out_batches` beside its row
-and byte counts — that half arrives with T19, since nothing executes this mode yet.
+fact it is. The execution goldens drop legacy's per-partition sub-line, whose numbers the
+per-batch lists below carry per batch rather than per lane — that half arrives with T18, since
+nothing executes this mode yet.
 
 **Every node that carries a `fetch` prints it.** A merge that turns 80 rows into 10 must say
 so on its own line; today only `GpuSortExec` does, and the merge above it is silent (see
@@ -2003,8 +2004,9 @@ on the `GpuLimit` mid-plan, on the `GpuUnload` root-adjacent.
 
 **Types move into the plan golden, not the execution golden.** The declared output schema
 per node — `name:type` per column — is a plan fact, so it belongs beside the layout in
-`<mode>.plans.txt` and is not repeated per query in `.cpu.txt`, which stays a record of what
-execution produced. Printing it there is what makes the explicit casts legible: a
+`<mode>.plans.txt` and is not repeated per query in `.cpu.txt`. Both files carry the node line
+and its fields — `.cpu.txt` is a plan golden that also holds what execution produced, which is
+what lets one comparison catch a plan that moved and a row count that moved, as legacy's does. Printing it there is what makes the explicit casts legible: a
 `Decimal128(38, 6)` in a `final` expression means nothing without the state column's declared
 scale beside it. What it does not do is check anything — a golden records what the planner
 declared, and the declaration is exactly what a wrong type would move. The check that a
@@ -2047,11 +2049,12 @@ section the tree stays byte-identical and the diff says which it was. A section 
 sibling file because nothing consumes the memory data on its own, and cross-referencing two
 files to ask whether a node's estimate suits its layout is worse than scrolling.
 
-**Execution goldens** follow the legacy flow exactly: the CPU executor authors
-`.cpu.txt`/`.result.txt` under `UPDATE_CANONICAL=1`, `.cost.txt` derives from `.cpu.txt`
-× `cost_model.conf`, the GPU asserts read-only. New-mode `.cpu.txt` shows full
-`PartitionLayout` per node and per-partition `output_batch_count`; ~10 queries across the
-corpus additionally freeze `batch-info.cpu.txt` with per-batch row counts and byte sizes.
+**Execution goldens** keep the legacy roles and not its file layout: the CPU executor authors
+`.cpu.txt`/`.result.txt`, `.cost.txt` derives from `.cpu.txt` × `cost_model.conf`, and the GPU
+asserts read-only — over one file per mode rather than one per query, which is T18's. New-mode `.cpu.txt` shows full
+`PartitionLayout` per node, and under each node one line carrying the rows and bytes of every
+batch it emitted, per lane — see T18, which is also where the record stopped being a separate
+file for a chosen few queries.
 `cost_model.conf` gains the new node names (every node type appearing in a `.cpu.txt`
 must be in exactly one category — the conf enforces it).
 
@@ -2061,7 +2064,8 @@ targets named in `pipeline.yml` steps (the `test_ci_coverage` guard enforces thi
 automatically).
 
 **Widget**: two new tables (TPC-H, TPC-DS) repeating the existing structure — plan (five
-cells, one per mode), CPU (five), GPU (five) — fed from the new CSV columns. Window
+cells, one per mode), CPU (five), GPU (five) — fed from the new CSV columns, and rendered
+into both of `cost-report`'s outputs: the markdown PR comment and the html site. Window
 queries render plan ✗ (#143). Peacock cost, DuckDB cost and ratio columns mirror the
 legacy ones; when not all five modes are enabled, cost uses the last mode in the sequence
 of five where CPU execution is enabled.
@@ -2071,7 +2075,8 @@ of five where CPU execution is enabled.
 Tasks in dependency order, and the numbers now ascend with it. T13 is the one that does not:
 it landed early, because both drivers over a mock backend needed none of T9–T12, and it keeps
 its number because commits and reviews already name it. T21 sits out of order for the same
-reason — it was split off T14 after it had been narrowed, and a number is never reused. T11 and T12 were retired in the same
+reason — it was split off T14 after it had been narrowed — and the tail of the list runs
+T20, T22 because 21 is spent. T11 and T12 were retired in the same
 renumbering — their work is T15 and T16 — so a number is never reused and an older reference
 still resolves. Each task is one developer hand-off with its own proving tests.
 Legacy tests stay green throughout — every task that touches shared code runs the
@@ -2492,7 +2497,7 @@ parking those behind tickets would leave the path unproven in exactly the way th
 end. T21 is the precedent: it was meant to be one test file and it found four defects, each a
 rule held by a doc comment with nothing reading it, and one guard that could not go red.
 
-**T17a — layout injection over corpus queries.** T17 runs seventeen queries at five modes and
+~~**T17a — layout injection over corpus queries.**~~ (done). T17 runs seventeen queries at five modes and
 calls it injection; it is not. Each of the five is a plan the planner would have chosen anyway —
 `(target_partitions, sizing)` re-planned, with `small_table_bytes` and the budget constant. The
 prototype's [`LayoutInjector`](../../scripts/exec_model/operators/injection.py) does a different
@@ -2671,14 +2676,667 @@ minus q33 would be the obvious cut and the wrong one, for the reason q33 is in t
 Where a query is dropped entirely, say which dimension lost a carrier and why the remaining ones
 cover it.
 
-**T18 — corpus shapes the benchmarks do not have, and goldens that stop multiplying by
-query.** Two halves. The corpus is numeric-aggregate heavy, and this mode's risk sits in what
-it never sees: an audit of every `.cpu.txt` finds zero `OFFSET`s, zero `min`/`max` over a
-non-numeric column, and no query at all for several shapes the tickets already describe as
-unexercised. Add a small set of hand-written queries over the **existing** tables — no new
-dataset, no new scale factor — each justified by naming the feature it reaches and the ticket
-or code path that cares. Where a query needs engine work to run at all, that work is this
-task's too:
+**T18 — infra for running corpus queries.** T17 proved the path on seventeen queries and T17a
+injected layouts into eleven; the corpus is 39 tpch and 99 tpcds, each at five modes on two
+engines. What stands between the two is not more test cases but a way to declare one. This task
+builds that. It was split out of T20, which carried both this and the new query shapes, once it
+was clear the rollout needed the infra before it needed either.
+
+**One declaration per query.** `corpus_query!(dataset, sf, query, cpu_modes, gpu_modes,
+cpu_oracle, gpu_oracle)`, where the two mode arguments are a bitwise or over the five planning
+modes the plan goldens already carry. A query's whole coverage is then one line that can be read
+and diffed, rather than up to ten macro invocations that can disagree with each other. It expands
+to one test case per (query, enabled mode) on each engine, so `cargo test <query>` names exactly
+the runs that query has — which is what makes the filtered regeneration below possible at all.
+
+The CPU and GPU cases go in **different binaries**, as the legacy pair does: the GPU targets are
+staged to shad-gpu by the gpu-tests job, and `test_ci_coverage` verifies that job's array names
+them. One macro writing into two binaries is the reason the mode arguments are separate — a query
+can be enabled on the CPU at four modes and on a device at one.
+
+**The oracle keywords already exist and are taken unchanged.** `cpu_oracle` is
+`data_fusion_exact | data_fusion_approximate | data_fusion_subset`: one oracle, plain DataFusion
+at `target_partitions = 1`, asked three ways — the whole answer, the whole answer at a 1e-12
+relative tolerance where the sole divergence is float summation reassociation, and the count and
+containment alone where the SQL does not determine which rows (see the unordered `LIMIT` below).
+The third is new; the first two are legacy's, unchanged. `gpu_oracle` is
+`golden_exact | golden_approx | golden_approx_std | live_cpu | skip`: the frozen result compared
+exactly, at 1e-12, at 1e-11 where cuDF's variance diverges further than the convention allows,
+against a live CPU run where the result is too large to commit, and not at all for a query whose
+row order is undetermined. A second vocabulary for the same choice is how two families drift, so
+these are the legacy sets or they are a rename of them, never a parallel set — and `live_cpu` is
+that rename, applied to legacy's ten call sites in the same commit. Legacy spells it `oracle`,
+which inside an argument named `gpu_oracle` says only that an oracle is an oracle, while the
+choice it actually makes is between a frozen result and a live one.
+
+There is no seventh argument for whether the run writes `.result.txt`. Legacy carries one
+(`result_golden` / `no_result_golden`) because its producer and consumer are declared in
+different files, and an orphan golden — written by a CPU case no GPU case reads — is silent
+where a missing one is loud. Here both sides are in one declaration, so the predicate is
+`gpu_oracle` naming a golden at any enabled mode, and the pairing cannot be stated wrongly.
+
+**Goldens stop being one file per query.** Today each query carries its own `.cpu.txt`,
+`.cost.txt` and `.result.txt` per mode, which is how `testdata/goldens/` reached 277 files for
+tpch.sf1 and 625 for tpcds.sf1. This mode takes the shape its plan goldens already took: one
+`.cpu.txt` and one `.cost.txt` per mode, each holding every query in `== <query>` sections, and
+one `.result.txt` across all modes. The comparator is the plan goldens' own `section_differences`
+— it names what moved, what is missing and what is out of order, and it has unit tests — so this
+is a second caller rather than a second differ.
+
+A query whose bit is clear for a mode still has a section in that mode's files, carrying a marker
+that says it was skipped. An absent section and a skipped one are different facts and the file has
+to hold both: a query that stopped planning is a regression, a query never enabled at that mode is
+a decision, and a format that renders them alike loses the only artifact that could tell them
+apart.
+
+**`.result.txt` is one entry per query**, keyed by the query alone. The modes are supposed to
+agree on results, so one of them authors it: the last mode the query declares in the fixed
+sequence of five — `bp-tp4-sized` for most. Its authority comes from the declaration and not from
+what happened to run, which is what keeps it well defined under a filtered regeneration. A run
+that does not include the authoritative mode leaves the section untouched; it is the one golden
+whose key carries no mode, so it is the one a partial regen could otherwise re-author from a mode
+that is not the authority, with the body's own line moving to say so and nobody reading it. The
+section still records which mode produced it: the key carries no mode because there is one entry,
+and the body names one because where the modes disagree, that disagreement is what the file exists
+to make visible. A result at or above `RESULT_GOLDEN_MAX_BYTES` (256 KB) keeps its section and
+carries a marker saying so, rather than being deleted — and the cap is reached while rendering
+rather than after it. Legacy renders the whole answer to one string and then measures it, so
+`anti-join`'s 1.2 million rows are materialized in full to discover they are 240 MB and unwanted.
+Here the rows are rendered one at a time against a running total and the whole set is dropped the
+moment it passes the cap, so the peak is the cap and one row rather than the answer. Which also
+settles the sort: a set that is never going to be written is never sorted — the legacy path deletes it, which reads as
+"no golden" and as "golden not applicable" identically, and `build-test.md` states the old rule
+and is corrected in the same commit.
+
+**`live_cpu` is what the device uses when no frozen result can serve it, and there are two such
+cases rather than one.** The first is legacy's: a result over the cap has no golden to compare
+against, so the device is held to a live cpu run instead. The second falls out of this mode and
+has no legacy counterpart — `.result.txt` holds one entry per query, authored by one mode, while
+the device runs at every mode the query enables. Where the rows are the same at every mode that
+is one golden serving five runs, which is the point of the single entry. Where they are not, it
+is one golden that only one of them can match: `scan-limit` at `bp-tp1-single` returns different
+rows from the `bp-tp4-sized` section, and `golden_exact` would fail on a correct device. So a
+query whose `cpu_oracle` is `data_fusion_subset` writes `live_cpu` as its `gpu_oracle`, and is
+compared against a cpu run at the *same* mode — where both walk one driver over one plan and the
+rows are determined again.
+
+**Written at the call site, never inferred from the argument beside it.** Every argument is
+required and says what it means; a `gpu_oracle` deduced from a `cpu_oracle` is a behaviour
+selected implicitly by an input, which is the shape `coding-style.md` names as an antipattern and
+which this macro exists to avoid — seven arguments so a query's whole coverage reads off one
+line. That both conditions are derivable is why a *check* can exist, never why a value would be
+absent: a `golden_exact` where the cap or the subset oracle applies is asserted red, since it is a
+test that fails on correct behaviour, and a `live_cpu` where neither applies is asserted red too,
+since it spends a device-side live run on a comparison a committed file makes faster and harder.
+
+**Every result comparison decides before it materializes, and today none of them do.** Three
+places take the same wrong order and the fix is one idea applied three times. Containment collects
+the unlimited answer and renders every row; the cap renders the whole result and then measures it;
+and `assert_results_match`'s exact arm is `assert_eq!(render(actual), render(expected))`, whose
+arguments Rust evaluates eagerly — so both sides are materialized in full to answer a yes-or-no
+question, half a gigabyte of `String` for `anti-join`, and the rendering exists for the failure
+message rather than for the comparison.
+
+The exact arm becomes a digest: render a row, hash it, drop the string, sort the hashes, hash the
+sequence. Memory goes from the answer to eight bytes a row, the verdict is unchanged, and nothing
+is rendered on the green path at all. On a mismatch it re-streams and prints a bounded excerpt
+around the first differing row — which is not a courtesy but the same lesson `section_differences`
+carries, that a dump too large to read is a dump nobody reads, and a 240 MB `assert_eq!` diff is
+that failure three orders of magnitude over. The tolerance arm keeps its map, because a digest
+cannot express "within 1e-12"; it stops formatting the columns it does not key on.
+
+This is legacy's comparator and the legacy tiers get it too, which is the point rather than a side
+effect — `anti-join` at `full_table-tp1-standard` renders 240 MB twice on every green run today.
+No verdict changes, so no green test moves.
+
+**A `live_cpu` comparison runs once per mode, beside the device run it checks.** It cannot reuse
+another mode's answer: where the SQL does not fix the row set, a cpu run at `bp-tp4-sized` is no
+more an authority on what the device returns at `bp-tp1-single` than the frozen section was, which
+is the reason this value exists at all. Same rule for the over-cap case even though its result is
+mode-invariant — the test is already per (query, mode), so same-mode costs nothing extra and one
+rule beats two that differ by a condition a reader has to check.
+
+What it costs is on the device leg, which is the leg that runs `--test-threads=1` on one host: a
+`live_cpu` query executes twice per mode there, once on the device and once on the cpu backend
+through the same driver. Legacy carries ten such queries and this mode adds `scan-limit`, so at
+five modes it is on the order of fifty extra cpu runs on the gpu host. Named here rather than
+discovered in a job duration, and it is part of the cost the corpus tier accepts rather than a
+separate decision.
+
+This is not the `result_golden` case one paragraph up. That argument is omitted because it has no
+degrees of freedom left once the rest of the line is written — legacy needs the keyword only
+because its producer and consumer live in different files. `gpu_oracle` has five values, and the
+constraint pins it in two cases out of five.
+
+A section can therefore turn from content into a marker, and back, as a result crosses the
+threshold. Nothing guards that transition and nothing should: at a fixed scale factor a result's
+size moves only when its answer moves, which is the thing every other check in the tier is
+already watching. The marker is there so the file says why a result is absent, not to absorb a
+size that oscillates.
+
+**A run that stopped early says so, on its own line.** A satisfied limit ends the run with work
+undone: lanes that were never pulled, row groups never read, batches produced and never consumed.
+Every one of those shows up in the annotations as a smaller number, and a smaller number with no
+stated cause is indistinguishable from a plan that produced less — which is the absent-versus-
+skipped confusion this tier exists to prevent, one level down. So each section opens with
+`early_exit=<node>@<ordinal>` naming the limit that was satisfied, or `early_exit=none`. Always
+present, never inferred from absence: a query that ran to completion is a fact the file states.
+It is stable, because [the determinism rules](#determinism-rules) pin the schedule — which
+batches were consumed before the limit was met is fixed for a plan.
+
+Beside it, `rows_skipped=N` on each node that has any: rows released without an unload call,
+which the driver already counts per node precisely because the rows returned look identical
+either way. It is the saving a limit buys, and the golden is where it becomes visible.
+
+**A batch emitted and never consumed is still emitted.** It is counted where it enters a queue,
+so it is in its producer's `batch_rows` and `batch_bytes` whether or not the parent ever took it;
+what the parent took is its `in_rows`. The gap between the two is the work a limit threw away,
+per child and per lane, and it is the quantity `early_exit` exists to explain — without the
+marker it reads as a node that emitted more than its parent wanted, which is a defect
+everywhere else.
+
+The same rule decides the cost, and the answer is not the intuitive one: `.cost.txt` prices what
+was produced, not what was used, because the device did that work and holding those bytes is what
+the budget was spent on. A query that exits early is genuinely cheaper than one that does not,
+and the batches it produced before exiting are genuinely not free.
+
+Where the drop begins is bounded rather than recorded, and does not need a third list. Queues are
+FIFO and arrival order is pinned, so what a parent took is a prefix of the child's lane — the
+cumulative sum of `batch_rows[j]` reaching `in_rows`, ending mid-batch only where a limit sliced a
+straddling one. So `in_rows[child][j]` lies between two adjacent prefix sums of that child's lane,
+which is a tighter check than `<=` on the total and is the form to assert.
+
+**Two checks change shape under it, and both get stronger rather than weaker.** The loader
+identity — `batch_rows` having `partition_groups`' exact shape — is a plan-against-run
+comparison, and early exit is exactly when the run does less than the plan. Per lane it becomes a
+prefix, and per lane rather than over the flattened shape: `batch_rows[j]` is a prefix of
+`partition_groups[j]` — its own lane's list, aligned from the start because a scan reads its
+groups in order — with an empty lane allowed, and every lane equal on a run whose marker says
+`none`. The scheduler stops where it is, so one run can have lane 0 complete, lane 1 short and
+lane 2 empty. Compared flattened, that run either goes red or forces the check down to a total
+length, which no longer says a batch lines up with the row groups that made it — the whole reason
+the nesting is there.
+The `in_rows` identity needs no marker at all, because `abandoned` is rendered beside it. That was
+decided against a count rather than a hunch: keying the arithmetic on the marker would soften it
+to `<=` at every node of an early-exiting section, and 84 of 99 tpcds queries carry a `LIMIT` — of
+the 67 with a committed result golden, 35 return 100 rows or more, so the limit really fires. Half
+the bench, not a handful. The marker is also not precise enough to carry arithmetic: it is
+`any_satisfied()`, so a query returning exactly 100 rows sets it while consuming everything, and
+the weakening would apply where nothing was skipped.
+
+So the conservation law does the work — `consumed + abandoned == emitted`, one statement over the
+file and over the report, rather than a law in the driver's tests and a weakening of it in the
+golden. Same family as `in_flight_bytes` returning to zero and `holds == releases`, which the
+report already carries: a batch that vanishes without being either consumed or abandoned is a
+defect no inequality can see. Deciding it now costs one optional field in a format gaining five;
+after T19 it costs regenerating eleven files per bench across a hundred queries.
+
+The marker keeps the two jobs it is good at: telling a reader the run stopped early, and keying
+the loader's prefix, which `abandoned` cannot close — a row group never read produced no batch to
+abandon.
+
+**Several test cases now write one file, and that is the task's one real hazard.** A whole-file
+write is last-writer-wins, which would drop every other query's section and leave a green run. So
+a regenerating write takes an advisory lock on the file, merges its section, and publishes by
+writing a sibling and renaming onto the name — the rename because a crash mid-write must not
+leave a truncated golden, which `point_canonical_root` already does for the same reason.
+
+**The lock is on the file, not in the process, and the distinction is load-bearing.** Libtest runs
+a binary's cases as threads in one process, so a `Mutex` would serialize them — but that is a
+guarantee about one binary, and what makes it sufficient here is the separate fact that only the
+CPU binary writes. An invariant, not a property of the language: the next writing binary breaks it
+with nothing red, `cargo nextest` runs each case in its own process and would silently reduce a
+mutex to no lock at all, and two shells regenerating at once are outside any of it. The
+`canonical_root` comment records the same surprise one level down — two binaries reaching one path
+at the same time, fixed with an atomic rename rather than a lock, because a lock in one process
+could not see the other. `std::fs::File::lock` is stable on the toolchain in use, so this costs no
+dependency.
+
+**Partial regeneration follows from that.** A filtered run regenerates only the sections its cases
+produced and leaves every other section as it is, under an environment variable of its own rather
+than by widening `UPDATE_CANONICAL`, whose contract is a whole file. `PCK_TEST_FILTER` already
+scopes which cases run, so the mechanism has a caller before it has a second one. What must
+survive is the distinction above: a filtered regen that cannot tell "did not run" from "stopped
+planning" deletes coverage silently, which is exactly what a golden exists to prevent.
+
+**`.cost.txt` stays a pure function of its `.cpu.txt` and `cost_model.conf`**, so the derivation
+is per section rather than per file, and `test_cost_model` re-derives every one.
+
+**The GPU side reads what the CPU side wrote**, as in legacy: per-node plan shape and the
+input/output statistics against that mode's `.cpu.txt` always, and `.result.txt` where the
+`gpu_oracle` names a golden. It never writes either, and ignores the regeneration variable
+rather than honouring it — a device that can author its own golden proves nothing against it.
+
+One thing is easier here than in legacy, and worth not spending twice. Legacy's two engines run
+separate executors, so the two rendering the same tree is a coincidence the golden exists to
+check; here `batch_partitioned_driver` is generic over the backend, so both engines walk one
+driver and report through one `RunReport`. The rendering is therefore written once, and what the
+golden still checks is the answer the device gave, not the shape of the report it came in.
+
+**Registry.** The five `bp_*` columns exist and mean plan enablement, declared by the golden's
+section rather than by a macro — `test_batch_partitioned_plans` holds the two to each other in
+both directions. Execution needs its own columns, five per engine, and those are macro-declared
+through the existing link-time inventory, so the widget's three groups each have a source that
+something checks. Adding ten columns to a seventeen-column csv is the point to decide whether the
+row stays flat or the modes become a repeated group; the inventory tests are what must keep
+working either way.
+
+**Widget.** A batch-partitioned table per bench, repeating the legacy structure — peacockdb cost,
+duckdb cost, ratio, features, tickets — with the four mode columns replaced by three: planning,
+cpu execution, gpu execution. Each holds one cell per mode. A planning cell links to that query's
+section in `<mode>.plans.txt`, which is also where its refusal is, so an enabled query and a
+refused one link to the same file and differ only in what the reader lands on. A cpu cell links to
+the query's section in that mode's `.cpu.txt`. Where not all modes are enabled, the cost columns
+use the last mode in the sequence for which cpu execution is enabled, as the legacy rule does for
+its own last mode.
+
+**The cost-regression gate is a third rendering, and it degrades silently unless this task
+changes it.** `--cost-diff` compares each `.cost.txt` against the same path at the PR's base and
+upserts its own PR comment: improvements green, regressions red, and a non-zero exit that fails
+the build. It is where a cost win becomes visible, so the new mode belongs in it. But it is
+written for one file per query — `collect_cost_goldens` globs `*.cost.txt`, `read_total` takes
+the *first* `peacockdb_cost=` line in a file, and `diff_label` takes the filename's first
+dot-segment as the query name. Point that at `bp-tp4-sized-mini.cost.txt` and it picks the file
+up, reads whichever query's section happens to be first, and labels the number with the mode: a
+wrong row, rendered confidently, gating the build. The glob is what keeps it quiet — the files
+are found, so nothing reports them missing.
+
+So the differ becomes section-aware in the same way the comparator did: a row per (query, mode),
+totals read per section, the label carrying both. `cost_diff` itself is unchanged, since it
+already works over a map of label to number; what changes is what fills the map. Its unit tests
+are the pattern to extend, and the red case is a two-section file whose second section moved —
+the per-file reader reports no change, the section reader reports one.
+
+**There are two widgets, and both get the table.** `cost-report` renders the same data twice —
+`--md`, a markdown blob upserted as one PR comment keyed on a sentinel, and `--html`, the site
+published to Pages from master. Close to identical rather than identical, and the differences
+are the ones a format forces: markdown cannot set a row background, so a row over the ratio
+threshold is flagged in the cell instead, and the mode cells have a markdown counterpart to
+`mode_cells_html` rather than sharing it. A table added to one and not the other is the failure
+to expect here, because the html is what a person looks at and the markdown is what the review
+actually reads.
+
+**No production change that alters what the engine computes, here or in T19.** A query that
+does not run is disabled with a ticket, never fixed in passing: a fix made while enabling one
+query is a fix nothing else in the branch proves, and the diff under review stops being the
+infra. What this task does touch in `peacockdb-core/src` is the goldens' own surface and nothing
+else — the node renderer per [Node display](#node-display) (`name@ordinal` references, layout in
+place of the lane count, `fetch` and the aggregate lists wherever carried, schema in the plan
+golden only), the per-batch line below, `cost_model.conf` entries for all eighteen node kinds at
+once rather than as each is first seen — held there by a case red on a nineteenth, derived from
+the exhaustive `as_node_ref` the way the writer's field cover is, since entered-at-once is a
+moment and T19's "no `cost_model.conf`" rule needs a property — and
+per-node emitted rows and bytes on `RunReport` — the one thing the engine does not already
+report. Everything else the
+comparison needs is there: `Batch` gives rows and bytes on both backends, the device's coming
+through the frozen ABI's `PeacockNodeStats` priced against the declared schema, and
+`trace`'s per-event `outputs` sums to `out_batches` per lane. What is absent is a per-node total
+of what each node emitted; the driver reads both numbers already, for the accountant and the
+limit interval, and keeps only aggregates. `rows_seen` is not the emitted total and must not be
+reused as one — it counts rows arriving at a node for the limit rule, which is `in_rows` summed
+over lanes rather than anything a node produced. Plus the
+`pipeline.yml` steps `test_ci_coverage` requires, which are not engine code at all. Three more landed than that list, each approved on its own and each recorded here rather than
+only in the exchange that approved it: `CpuBatch::byte_size` pricing from the plan's schema, which
+is the one the headline forbids by name and which moved every budget decision in the engine; the
+`gpu_backend` guard closing [#181](bp-tickets.md#t181); and `driver/mod.rs`'s `mod index` going
+`pub(crate)` so the renderer walks the driver's own index rather than a second pre-order.
+
+Naming that surface is what gives the rule an edge, and the edge only holds against a list that
+is true: T19 has none of these seven left to touch, and T20 is where the engine moves again.
+
+**Every node carries what it consumed and the size of every batch it emitted**, as parallel
+structures on one continuation line under the node:
+
+    GpuLoadParquet: table=lineitem, partition_groups=[[[0,1],[2,3]],[[4],[5,6,7]]], lanes=2, …
+      in_rows=[] batch_rows=[[1500304,1500303],[1500304,1500304]] batch_bytes=[[31881456,31881440],[31881472,31881455]]
+
+Lanes outermost and batches within, which is `partition_groups`' own nesting — so on a loader,
+element `i` of lane `j` in all three lines is one batch, and the row groups that produced it sit
+at the same index as its size.
+
+`in_rows` is what the node consumed, per lane, nested by child rather than flat — a filter reads
+`in_rows=[[860160,737280,…]]` and a join reads both of its sides. No space after a comma, which
+is `partition_groups`' committed convention — the two nestings are read index for index and the
+tail case is a 96-batch lane. Legacy prints one `in_rows`
+per partition and it is the first child's, so a join's build side appears nowhere on the join's
+own line; here the two sides differ in kind and the capability matrix turns on which is which,
+so a format that can only show one of them is one that hides the interesting half. A source has
+no children and prints `[]`, which is not the same as a child that consumed nothing. It is the
+one figure the batch lists cannot imply, and the reason legacy's sub-line is dropped rather than
+merely thinned: rows in against rows out, on the node's own line, is what makes a selectivity or
+a skew visible without walking the tree.
+
+Rows and bytes are separate lists rather than pairs because each is then a column a reader scans
+down and a diff reports as one moved number; the cost is that a batch's two figures are not
+adjacent, which the shared indexing is what makes navigable. All on one line, so a node stays one
+entry however many batches it has.
+
+This is where the per-batch record lives, rather than in a `batch-info.cpu.txt` for a chosen ten:
+a separate file for a subset was worth it only while the figures were too bulky for every node,
+and at a median of one batch and a p90 of six they are not. The tail is what to watch — the
+worst source in the corpus is tpcds `inventory` at `bp-tp1-rowgroup` with 96 batches in one
+lane, about two kilobytes across the two lists — so the comparator reports a moved section by
+name and never dumps the line.
+
+**A failing query is disabled with a ticket in [`bp-tickets.md`](bp-tickets.md)**, not in the
+main list. Rollout tickets arrive in bulk when a sweep hits a wall and close in bulk when it is
+cleared, which is not what a triage pass reads for. The ID space is shared, so a number is never
+two things. `TicketIndex::load` reads two files and gains a third here, and it is
+not cosmetic: `cost-report` already exits 1 when a ticket the registry names resolves in neither
+file, so the first rollout ticket filed in `bp-tickets.md` fails the cost-report job until the
+index reads it.
+
+**What proves the infra, since every way it fails is quiet.** A dropped section, a filtered
+regeneration that deletes coverage, a skipped marker a reader cannot tell from an absent one — none
+of these turn a run red on their own, so each gets a case that goes red on demand, built from
+strings rather than by editing a golden and undoing it:
+
+- two writers interleaved at the merge keep both sections, and the same case with the lock
+  removed loses one — a lock nothing can be shown to need is a lock the next refactor drops.
+  Forced rather than raced: two threads that merely start together prove nothing on a fast
+  machine and fail on a loaded one, so the overlap is imposed — a barrier between read and write,
+  or the merge driven directly with a second writer's section already on disk. Every case here
+  is deterministic or it is not a case: this tier's whole claim is that a golden means something,
+  and a test that passes on the third run is a golden that means nothing;
+- a filtered regeneration rewrites its own sections and leaves every other byte identical;
+- a section absent because its case did not run and one absent because the query stopped planning
+  are distinguished, and the run that confuses them fails;
+- a skipped marker round-trips: a query whose bit is clear writes one, and clearing a bit that was
+  set turns a real section into a marker rather than deleting it;
+- both of `cost-report`'s renderings carry the new table, asserted per rendering rather than once;
+- the section reader and the per-file reader disagree on a two-section file whose second section
+  moved, which is the cost gate's red case.
+
+**Three things have to agree, and the inventory test becomes the place they do.** Legacy holds
+the macro invocations and `cost-registry.csv` to each other in both directions, per binary,
+because `inventory` collects per linked binary. The corpus tier adds a third leg: the goldens.
+Every `corpus_query!` registration means an enabled cell, every enabled cell means a
+registration, and every enabled (query, mode) means a golden section carrying content rather than
+a skipped marker — with the converse holding too, since a `disabled` cell whose section is full
+is coverage nobody is reading. The plan columns stay declared by the goldens alone, as they are
+today; what is new is the execution columns being declared by the macro and checked against both.
+One consequence to state rather than discover: the gpu half of this runs only on the gpu host,
+because that is where its registrations are linked, so a gpu-column drift does not go red on the
+cpu leg.
+
+**Soundness is checked against the file's own redundancy, not with regular expressions.** A
+regexp says a line looks like a line. What is wanted is whether the numbers mean anything, and
+the format carries the same quantity more than once by design, so the checks are arithmetic and
+cheap:
+
+- a node's `out_rows` is the sum of its `batch_rows` lanes, and `out_bytes` of its `batch_bytes`.
+  A batch is counted where it enters a queue, so a scatter output dropped for being empty is not
+  one — the sums are unaffected either way, and the batch count then means what flowed;
+- the lane count of those lists is the `lanes=N` on the node line;
+- a node's `in_rows` for child *k* equals that child's `out_rows`, **per lane and not only in
+  total**: the index is the *child's* lane, so it lines up with that child's own `batch_rows`
+  entry for entry. Indexing by the consuming node's lanes would make the identity checkable only
+  in aggregate wherever the two counts differ, which is every emitter, merge and accumulator —
+  the nodes it is most worth checking. An equality on every run, because the node renders
+  `abandoned` after its own `batch_bytes` — rows `release_in_flight` dropped, per lane, omitted
+  where zero and so absent from every node of every run that drained. It sits on the node that
+  *emitted*, because that is whose output queue was dropped, so the law crosses parent to child
+  exactly as `in_rows` already does. The law is
+  `consumed + abandoned == the child's emitted`, with no marker in it and no `<=` anywhere. The
+  two exceptions this once named were measured and are both wrong: dropping a probe batch is
+  consuming it, and a satisfied limit falls short at whichever node the schedule stopped at rather
+  than at the limit;
+- on a loader, `batch_rows` has `partition_groups`' exact shape, which is the correspondence that
+  nesting was chosen for;
+- the root's `out_rows` is the row count in `.result.txt`, which the oracle checked.
+
+That last one is the interesting one, and the rest are worth more than they look. The cost tree
+has no external oracle — the golden is written by the run it will later check — but a file that
+contradicts itself is a file a renderer got wrong, and a renderer is most of what could be wrong.
+It is a weak oracle rather than none, and it is free: the redundancy is already committed.
+
+**Reading it back needs one parser, and there are already two and a half.** What exists:
+`ordered_sections` and `section_differences`, which split on `== <query>` and report what moved,
+private to `test_batch_partitioned_plans.rs`; `parse_node_line` in `common/cost_model.rs`, which
+finds `output_bytes=` and takes the leading identifier, private, and enough for the cost
+derivation and nothing else; and `read_total_str` in `cost-report`, another crate reading a
+`key=` off a line. None of them knows a tree, a lane, or a nested list, which is what the
+arithmetic above asks for.
+
+So: the comparator moves into `tests/common/`, where both corpus binaries can reach it — and that
+move is owed anyway, since `test_batch_partitioned_plans.rs` is at 1418 lines against a
+thousand-line cap. `parse_node_line` grows from `(type, bytes)` into the node's fields and its
+indent depth, and `cost_text_from_cpu` becomes a caller, so the cost derivation and the soundness
+checks read one structure rather than two that agree by luck. `cost-report` stays separate, since
+it reads a total out of `.cost.txt` and never a node line; what must not drift between the crates
+is the `== <query>` convention itself, which is why it is written here rather than inferred from
+whichever file a reader opens first.
+
+A fourth parser is the thing to refuse. Three readers of one format already disagree about what a
+node line is, and the format is about to carry four more fields.
+
+**Consolidating them saves no code, and that is not the reason to do it.** All the parsing in the
+tree is about ninety lines: `ordered_sections` is fifteen, `parse_node_line` seventeen,
+`cost-report`'s `field` and `read_total_str` thirteen between them, and the rest is
+`section_differences` reporting. A parser that knows a tree, a lane and a nested list is larger
+than the three it replaces, so the change adds lines. What it buys is one definition of the
+format at the moment the format gains four fields — the divergence is the cost, never the
+duplication.
+
+**The crate boundary is where consolidation stops, on purpose.** `cost-report`'s `[dependencies]`
+is empty, and deliberately: it builds in seconds in the cpu tier because it pulls in neither the
+executor nor a device. Making it depend on `peacockdb-core` to share thirteen lines of `key=`
+reading trades a stated property for nothing, and a new workspace crate for the same thirteen
+lines is worse. It needs the convention, not the code — `== <query>` sections, one
+`peacockdb_cost=` per section.
+
+So pin the convention with a fixture rather than with shared code: one committed two-section
+sample that `cost-report`'s unit tests and the test-side parser's unit tests both read, each
+asserting the same extracted values. The two readers then diverge red without either crate
+depending on the other, which is the property that was actually wanted.
+
+**An unordered `LIMIT` runs at every mode, and drops the DataFusion oracle rather than the
+mode.** Legacy canonizes `scan_limit` at tp1 because at tp>1 its rows and its per-node bytes vary
+run to run. That is a property of legacy's executor, not of this one:
+[the determinism rules](#determinism-rules) pin the schedule and require that one plan run twice
+gives one answer byte for byte, so a section here is stable at every mode. What those rules
+explicitly do not promise is agreement *across* plans — tp1 and tp4 may return different rows
+where the SQL does not determine which, which is what an unordered `LIMIT` is.
+
+So the mode is fine and the comparison is what narrows: DataFusion single-stream is not an
+authority on *which* ten rows a four-lane plan returns. It is still an authority on the rest, and
+an unordered limit determines more than it looks. The count is `max(0, min(n, |unlimited| - m))`
+for `LIMIT n OFFSET m` — written with the offset from the start, because the zero-skip form is a
+rule that goes wrong on the first query that carries one and T20 adds those deliberately. And the
+rows are a sub-*multiset* of the unlimited result, compared as a multiset and not as a set: set
+membership passes a run that returned one row twice where the oracle has it once, which is a
+live failure mode for a limit over a join. Both are asked of the session that
+already runs, neither needs the two plans to agree on which rows, and together they catch what a
+frozen golden cannot: a limit dropped, an offset ignored, rows invented, the wrong table sliced.
+
+That is the third `cpu_oracle` value, and it is named for what it checks rather than for what it
+declines to — the count and the containment, against `data_fusion_exact`'s whole answer. So no
+query's answer is frozen with no external check, `scan-limit` included. The device is held to the
+cpu's section on top of that, which is a real check rather than a fallback: both engines walk one
+driver over one plan with emission order pinned, so disagreeing means one of them broke the
+schedule.
+
+Two limits to state with it. An *ordered* `LIMIT` with ties at the boundary is not covered:
+neither `sort_unstable_by` nor cuDF's `sorted_order` is stable, so which tied row survives is
+decided by neither engine's contract and cpu-gpu agreement is not owed. And the scope is small —
+the determinism section counts one corpus query with a bare `LIMIT` whose rows are undetermined,
+`tpch-queries/scan-limit.sql`; the other four limit an already-single-row aggregate.
+
+**A query carries every mode it is correct at, and a ticket for the ones it is not.** Not a
+default to be tuned: all five where all five run and agree with the oracle, and where some do
+not, the ones that do are enabled and the rest are `disabled` against a ticket naming which modes
+and why. That is what makes the mode arguments a set rather than a switch, and it is the same
+rule on both engines — a query can be correct at five modes on the cpu and at two on a device,
+which is two tickets and not one.
+
+**The cost of running all of it is accepted for now.** 119 queries at five modes is about 595 cpu
+runs and as many on a device, against a corpus measurement nobody has: T17a's report covers
+eleven queries chosen for being the cheapest. Measured the way T17a did, serially and one row per query, in
+[corpus-tier-timing.md](../reports/corpus-tier-timing.md): 45.9 s for 87 cpu runs on one thread,
+26.2 s on the two CI uses, and a 1.34 GB peak of which one query is 1.28 GB. It gates nothing. The one thing that would force this open
+again is a job that stops finishing: pipeline.yml's cpp-cpu leg has already been lost once at
+fifty-eight minutes on a tier a fraction of this size, and the device leg runs
+`--test-threads=1` on one host.
+
+**A first enablement freezes whatever the run produced, and only half of it has an oracle.** The
+answer does: `assert_cpu_results_match_datafusion` builds a separate plain-DataFusion session at
+`target_partitions = 1` and compares against it unconditionally, before and regardless of any
+golden write, so a wrong answer cannot be frozen — and that comparison is the standing check on
+every later run too, not a first-enablement rite. The `.cpu.txt` does not: under a regeneration
+it is written with no comparison, and nothing independent says the plan should have that shape or
+that an interior node emitted that many rows. The root is anchored — its `out_rows` is the
+result's row count, which the oracle checked — and every node below it is taken on trust.
+
+What later covers some of it is the device asserting against the same file read-only, and it is
+worth being exact about which half of that assertion carries information. The tree carries none:
+`batch_partitioned_driver` is generic over the backend, so both engines walk one driver over one
+plan and produce the same shape by construction rather than by agreeing. That is the design and
+not a weakness of it — the walk being identical is what makes the two engines comparable at all.
+The evidence is the rows and the bytes: the same walk, and the device's numbers against the
+CPU's. The tree assertion stays anyway, because it costs nothing and goes red on the day that
+construction stops holding, which is the only day it could ever say anything.
+
+So enabling a hundred queries is an ordinary act for the answers, and for the interior of the
+cost tree it rests on two engines producing the same counts through one walk. The mitigation is
+the one T19 already has: batches of five, where a tree that looks wrong is still attributable.
+
+**`build-test.md` gains rows, not only counts**: one per new tier in the category table, and
+three in the golden table — the per-mode `.cpu.txt` and `.cost.txt` and the one `.result.txt` —
+each naming the partial-regeneration variable beside `UPDATE_CANONICAL`. That table's existing
+`.result.txt` row says the golden is deleted above 256 KB, which is the rule this task replaces,
+so the row is split rather than edited: legacy keeps its sentence and the new mode states its own.
+
+**And enough queries to prove the infra**: about ten tpch and about ten tpcds at sf1, enabled on
+the macro as it is built — **on both engines**, at every one of the five modes each is correct at,
+under the same rule and with the same tickets. The device half is not deferred to the rollout. An
+infra whose gpu path has never run is an infra T19 would debug at the same time as its first
+query, which is the thing staging this task exists to prevent, and the `gpu_oracle` argument,
+`live_cpu`, the read-only assert against the cpu's section and the staging array are all surface
+that means nothing until a device has walked it. They are chosen by plan size off the committed goldens rather than by
+taste, because the constraint is not what can plan — all 22 tpch benchmark queries already plan
+and attach recipes at all five modes, as do 81 of the 99 tpcds — but what is small enough that a
+failure is legible. The tpch ten are the smallest carrying no ticket: q6, q1, q14, q19, q12, q13,
+q15, q17, q3, q10. The tpcds ten are q41, q42, q3, q43, q52, q55, q96, q15, q37, q82. A legacy
+ticket on a row is not automatically a blocker here — [#97](../tickets.md#t97) is the real-8-way
+join blocker and this is a different executor — so those rows are held back as unknown rather
+than as known bad, and T19 is where that is settled query by query.
+
+| bench | enabled here |
+|---|---|
+| tpch | `q6` `q14` `q19` `q12` `q13` `q15` `q3` `q10` |
+| tpcds | `q41` `q42` `q3` `q43` `q52` `q55` `q96` (tp1 only) `q15` `q37` `q82` |
+
+Seventeen queries at 88 (query, mode) cases, not twenty: enabling them is what found that three do
+not run. `tpch/q1` and `tpch/q17` are out at every mode on [#163](../tickets.md#t163) — `avg`
+declares its count state `UInt64` and the accumulator produces `Int64`, which the ticket records
+from the device and which the cpu reaches too. `tpcds/q96` keeps both tp1 modes and loses the
+three tp4 ones to [#180](bp-tickets.md#t180), where a shuffle puts a state merge under a
+`count(*)` declared non-nullable.
+
+The set is not topped back up to twenty. It was chosen as the smallest queries carrying no ticket
+and two of them turned out to carry one, which is a fact about the corpus rather than a hole to
+fill — and q96 partially enabled is worth more than a replacement would be, since it is the only
+query here exercising the mode-scoped disablement the whole `cpu_modes`/`gpu_modes` shape exists
+for.
+
+**T19 — rollout.** Query-by-query enablement across the rest of the corpus on T18's macro,
+starting from the twenty it already carries. No production code changes, per T18: a query that
+does not run is disabled with a ticket in [`bp-tickets.md`](bp-tickets.md), which is the whole
+output of this task besides the enabled rows. Not one line of `peacockdb-core/src` moves here:
+T18 left the goldens' own surface finished, so anything this task would have to change is by
+definition a query's blocker rather than the rollout's.
+
+**Three paths are edited by hand, two kinds of file move without being written, and a commit
+touching anything else has stopped being a rollout.** By hand:
+
+- the shared `corpus_query!` list, one file that every binary includes and reads through its own
+  arm, as `gpu_cases.inc` is read today — so a query is enabled once, not once per engine;
+- `testdata/cost-registry.csv`, cells rather than rows: all 138 corpus queries already have one;
+- [`bp-tickets.md`](bp-tickets.md), for what a query is disabled on — a whole query, or the
+  subset of modes it is wrong at, which is the commoner case and the one whose ticket has to name
+  the modes or the next reader re-derives them.
+
+Every cell this task turns off carries a ticket, which is an invariant the registry already
+holds: no row in it today has a `disabled` cell and an empty ticket list, and the four queries
+DataFusion cannot plan at all carry [#23](../tickets.md#t23) against an `na`. A rollout is the
+one thing that could break it, since it is the only task that turns cells off in bulk.
+
+Then the **golden sections** fill in: a query enabled at a mode stops carrying that mode's
+skipped marker and starts carrying its plan, its per-batch sizes and its costs. That is eleven
+files for the bench it belongs to — a `.cpu.txt` and a `.cost.txt` per mode, plus the one
+`.result.txt` across modes — and twenty-two for a commit spanning both. The number is the point:
+it is modes × benches and does not grow with the corpus, so the hundredth query enabled moves
+the same eleven files as the first, where legacy would have added three more per (query, label)
+and did, 277 of them for tpch.sf1 alone. And **`build-test.md`'s counts** move with the case
+count, in the commit that moves them rather than in a later sweep.
+
+**What it enables, and what stays out.** 119 of the corpus's 138 queries plan at all five modes
+today, which is the eligibility test — not legacy enablement, since a query legacy disabled may
+have been fixed since and the goldens are what know. Twenty are T18's, so a hundred are here:
+
+| bench | enabled here |
+|---|---|
+| tpch (29) | `aggregate-groupby` `anti-join` `cross-join` `filter-project` `hash-join` `join-int` `left-join` `mixed-join` `nested-limits` `nested-loop-join` `nested-loop-left-join` `q11` `q16` `q18` `q2` `q20` `q21` `q22` `q4` `q5` `q7` `q8` `q9` `rollup-over-join` `scan-limit` `semi-join` `shuffle-additive` `shuffle-additive-avg` `shuffle-stddev` |
+| tpcds (71) | `q1` `q10` `q11` `q13` `q14` `q16` `q17` `q18` `q19` `q2` `q21` `q22` `q23` `q24` `q25` `q26` `q29` `q30` `q31` `q32` `q33` `q34` `q35` `q38` `q39` `q4` `q40` `q45` `q46` `q48` `q5` `q50` `q54` `q56` `q58` `q59` `q6` `q60` `q61` `q62` `q64` `q65` `q66` `q68` `q69` `q7` `q71` `q73` `q74` `q75` `q76` `q77` `q78` `q79` `q8` `q80` `q81` `q83` `q84` `q85` `q87` `q88` `q9` `q90` `q91` `q92` `q93` `q94` `q95` `q97` `q99` |
+
+`tpch/mixed-join` is CPU-only and the one query whose two engines differ: it plans, validates and
+runs, and its recipes do not attach — [#168](../tickets.md#t168)'s interval `ScalarValue`, so the
+crossing to a device is what fails, not the plan. `cpu_modes` carries all five and `gpu_modes`
+none, which is the case the two mode arguments exist for.
+
+The nineteen that stay out, every one against a ticket that already exists:
+
+| held back | why | ticket |
+|---|---|---|
+| tpcds `q12` `q20` `q36` `q44` `q47` `q49` `q51` `q53` `q57` `q63` `q67` `q89` `q98` | the planner refuses `WindowAggExec` and `BoundedWindowAggExec` — the one feature regression against legacy, which plans all thirteen | [#143](../tickets.md#t143) |
+| tpcds `q27` `q70` `q72` `q86` | DataFusion 45 does not physical-plan them at all, so they are dead in legacy too (`plan_status=fail`) | [#23](../tickets.md#t23) |
+| tpcds `q28` | a `DISTINCT` inside `count(DISTINCT …)`, refused by name | [#62](../tickets.md#t62) |
+
+Window functions stay disabled and are not this task's to fix — [#143](../tickets.md#t143) calls
+it the blocker for ever retiring the legacy modes, which is a decision above a rollout.
+
+**Seventeen of these hundred are already run by T17's tier, and the overlap is deliberate.**
+`test_cpu_batch_partitioned` runs six queries at the five modes and eleven more at the modes plus
+the injected shapes; every one of the seventeen falls in this task's list and none in T18's —
+tpch `left-join` `q20` `q21` `shuffle-stddev` `anti-join` `nested-limits` `nested-loop-join`
+`nested-loop-left-join`, tpcds `q38` `q87` `q2` `q8` `q16` `q33` `q45` `q93` `q97`. They are not
+excluded, and a reader who finds the duplication should leave it.
+
+The two tiers ask different questions of the same query: the injected one asks whether the
+drivers tolerate a layout no planner would emit, over one plan; the corpus one asks whether the
+answer, the plan and the costs match a golden, across the whole bench. Neither answers for the
+other. And a corpus list defined by subtracting another list is a set held in prose — which is
+exactly the defect T17a's completeness pass found in its own fixture list and closed by
+generating `INJECTED` from one declaration. Reintroducing it one level up, so that removing a
+query from the injected tier would silently need a matching addition here, buys a duplicate mode
+run and costs the property that made the smaller list trustworthy.
+
+**Roll out in batches of about five, not in one sweep.** A hundred queries enabled at once is a
+regeneration whose diff nobody reads and a failure nobody can attribute: eleven golden files move
+either way, so the batch size is the only thing that says which query moved which section. Five
+is small enough that a red run names its cause without bisecting and large enough that the
+regeneration cost is amortised. Each batch is its own commit — the five queries, their registry
+cells, the sections they filled, and whatever went to `bp-tickets.md` — so the history reads as
+the rollout it was, and a batch that goes wrong is reverted without taking the ninety-five with
+it.
+
+Nothing else, and the list is still short enough to read off a diff: no `cost_model.conf`,
+because T18 enters all eighteen node kinds at once rather than as each is first seen — an
+exhaustive set entered piecemeal is one whose next gap is a rollout's problem; no `pipeline.yml` or `test_ci_coverage`,
+because the targets exist by then; no `registry.rs`, whose columns are T18's.
+
+That sweep is where T17's `nested-loop-left-join` gets its GPU columns. They ship `na` because
+T17 could not commit a device run, which is [#116](../tickets.md#t116)'s shape — a cell with no
+coverage and no blocker — so the reason is recorded here rather than left for a reader to
+reconstruct from an empty column.
+
+**T20 — corpus shapes the benchmarks do not have.** The corpus is numeric-aggregate heavy, and
+this mode's risk sits in what it never sees: an audit of every `.cpu.txt` finds zero `OFFSET`s,
+zero `min`/`max` over a non-numeric column, and no query at all for several shapes the tickets
+already describe as unexercised. Add a small set of hand-written queries over the **existing**
+tables — no new dataset, no new scale factor — each justified by naming the feature it reaches and
+the ticket or code path that cares. Where a query needs engine work to run at all, that work is
+this task's too, which is what makes this the one task after T19 that still moves the planner.
 
 | Query shape | Why it is worth a query |
 |---|---|
@@ -2689,62 +3347,12 @@ task's too:
 | two `DISTINCT` arguments over different expressions | [#144](../tickets.md#t144) has no refusal of its own — `translate/aggregate.rs` refuses every distinct aggregate naming [#62](../tickets.md#t62) — so the translator learns to tell the two shapes apart and the query provokes a refusal that names its own ticket. A refusal pointing at the wrong ticket sends its reader to the wrong fix |
 | a wide `SELECT DISTINCT` | dedup whose state is the whole row rather than a few keys — the compaction threshold's worst case, where nothing merges and the doubling has to earn its keep |
 
-Each query lands in `testdata/{tpch,tpcds}-queries/` with registry rows and goldens through
-the existing generators. Keep the set small: every query multiplies across enabled modes and
-tiers, which is why the corpus grew the way it did — and which is the other half of this task.
+Each query lands in `testdata/{tpch,tpcds}-queries/` with registry rows and goldens through the
+existing generators. Keep the set small: every query multiplies across enabled modes and tiers,
+which is why the corpus grew the way it did — and why T18 comes first, so that the multiplication
+lands in sections of a file rather than in files.
 
-**Goldens stop being one file per query.** Today each query carries its own `.cpu.txt`,
-`.cost.txt` and `.result.txt` per mode, which is how `testdata/goldens/` reached 271 files for
-tpch.sf1 and 625 for tpcds.sf1. This mode's goldens take the shape the plan goldens already
-took: one `.cpu.txt` and one `.cost.txt` **per mode**, and one `.result.txt`
-across all modes, each holding every query one after another in `== <query>` sections. The
-comparator is the plan goldens' own — it names what moved, what is missing and what is out of
-order, and it has unit tests — so this is a second caller rather than a second differ.
-
-A test case is still one query. That is the whole difficulty: several test cases now write one
-file, cargo runs them in parallel, and a whole-file write is last-writer-wins, which drops every
-other query's section and leaves a green run. So a write merges by section, and it is the same
-class of defect as the `canonical_root` race — two threads in one binary reaching one path.
-
-**Partial regeneration follows from that, and is the part to get right.** A filtered run
-regenerates only the sections its test cases produced and leaves the rest as they are. The
-distinction that must survive is between a section absent because its test did not run and a
-section absent because the query stopped planning: collapse the two and a filtered regen deletes
-coverage silently, which is exactly what a golden exists to prevent. `PCK_TEST_FILTER` already
-scopes runs this way, so the mechanism has a user before it has a second one.
-
-Three rules the files carry:
-
-- **`.result.txt` is written from the last mode enabled in the run.** The modes are supposed to
-  agree on results, so which one wrote it should not matter — and where it does, that is the
-  divergence the file exists to catch. So the section records which mode produced it; otherwise
-  the disagreement is invisible in the artifact that would have shown it.
-- **A result over 256 KB is marked in place, not dropped.** Today the file is deleted above that
-  size and the GPU test falls back to a live oracle, which reads as "no golden" and as "golden
-  not applicable" identically. The section stays and carries the marker, so the reason is in the
-  file. `build-test.md` says the old rule and is corrected in the same commit.
-- **`.cost.txt` stays a pure function of its `.cpu.txt` and `cost_model.conf`.** `test_cost_model`
-  re-derives every one, so the derivation is per section after the reshaping, not per file.
-
-**The registry the widget will read is this task's; the widget is T19's.** Splitting them that way
-keeps the rows honest — the registry is what the inventory tests check, and a table that renders
-before anything verifies its rows is a table nobody can trust.
-
-**T19 — rollout.** New macros `cpu_batch_partitioned_result_test` /
-`gpu_batch_partitioned_test`; the node renderer per [Node display](#node-display)
-(`name@ordinal` references, layout in place of the lane count, `fetch` and the aggregate
-lists wherever carried, schema in the plan golden only); `.cpu.txt`/`.cost.txt` wiring incl.
-`cost_model.conf` entries for the new node names; `batch-info.cpu.txt` for ~10 queries;
-`pipeline.yml` steps (satisfying `test_ci_coverage`); widget tables with
-the cost-column rule and the #143 plan ✗ cells. Then query-by-query enablement across the
-corpus, tickets filed per newly discovered blocker, as with the legacy rollout.
-
-That sweep is where T17's `nested-loop-left-join` gets its GPU columns. They ship `na` because
-T17 could not commit a device run, which is [#116](../tickets.md#t116)'s shape — a cell with no
-coverage and no blocker — so the reason is recorded here rather than left for a reader to
-reconstruct from an empty column.
-
-**T20 — per-node benchmarks for the new mode.** Port `peacock_gpu_benchmarks` to the
+**T22 — per-node benchmarks for the new mode.** Port `peacock_gpu_benchmarks` to the
 batch-partitioned executor, keeping the protocol that makes its numbers comparable: one
 discarded warm-up, ten measured runs, the **2nd-smallest by `total_us`** reported whole, and
 the floor measured over 200 samples. The run counts stay compile-time constants
