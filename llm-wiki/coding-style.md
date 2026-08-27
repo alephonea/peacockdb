@@ -79,7 +79,9 @@ the exception rather than as the example.
   describing it. What runs longer is a design document wearing a ticket's number — put it
   in `llm-wiki/tasks/` and let the ticket point at it. The cap is also what keeps the list
   usable: a reader triaging 75 tickets reads headers and first lines, so a ticket that
-  buries its problem statement on line 20 is not being read at all.
+  buries its problem statement on line 20 is not being read at all. One exception: a ticket
+  carrying a deferred fix, at the detail that stops the next reader re-deriving it, may run to
+  thirty. A fix worked out and then thrown away costs more than the lines do.
 - **A ticket is about code, never about documentation.** A stale sentence, a dead link, a
   count that no longer adds up, a widget rendering any of them — fix it in the commit that
   found it. Documentation is anything whose product is prose for a reader: `llm-wiki/`, code

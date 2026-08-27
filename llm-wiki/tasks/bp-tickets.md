@@ -9,10 +9,8 @@ lives in `../tickets.md`, so a number is never two things and an older reference
 wherever it points.
 
 Otherwise the same rules, in `coding-style.md`: at most fifteen lines, at most two stating the
-problem, about code and never about documentation. One exception, granted for this file: a ticket
-that carries a deferred fix in enough detail not to be re-derived may run to thirty. The cap is
-there so a triaging reader is not made to read a design document; a fix already worked out and
-then thrown away costs more than the lines do. Each ticket carries an `<a id="tNN">` anchor
+problem, about code and never about documentation. The deferred-fix exception to the
+fifteen-line cap is stated there and applies here. Each ticket carries an `<a id="tNN">` anchor
 above its own header, which is what the cost widget's index resolves a link against.
 
 <a id="t181"></a>
