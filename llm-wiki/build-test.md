@@ -258,16 +258,25 @@ cost-report ──► deploy-pages (master push only)          s3-datasets
 - **dataset-matrix** — two matrix legs, each in a RAPIDS container: `cudf: 25.02`
   (`rapidsai/base:25.02-cuda12.0-py3.12`) and `cudf: 26.02`
   (`rapidsai/base:25.10a-cuda12-py3.12` — the leg's label is ahead of its image, #129).
-  Both legs do the same work: C++ build through the shared `.github/actions/cpp-build`
-  composite (conda gcc + ccache + pinned cmake/ninja), `ctest --test-dir cpp/build -L cpu`,
+  Both legs do the C++ build through the shared `.github/actions/cpp-build` composite
+  (conda gcc + ccache + pinned cmake/ninja), `ctest --test-dir cpp/build -L cpu`,
   generate + validate sf1 (pinned DuckDB — the TPC-DS dsdgen column types drift between
   releases and would move every plan golden), then the CPU rust tiers:
   `test_plan_serialiser`, `test_query_plan`, `test_cpu_full_table`,
   `test_cpu_executor_misc`, `test_cpu_oom`, `test_node_executor`, `test_query_plan_misc`,
   `test_cpu_partitioned`, `test_batch_partitioned_plans`, `test_gpu_batch` (which links the
   FFI but touches no device), `peacockdb-ffi --test test_ffi`,
-  plus rust-only `test_plan_bytes` and `--lib`. Build and run are separate steps whose env blocks must
-  stay byte-identical, or the run step recompiles.
+  plus rust-only `test_plan_bytes`, `--lib`, `test_cpu_executors`,
+  `test_cpu_batch_partitioned` and `test_cpu_bp_corpus`.
+  The steps needing neither the generated dataset nor a device run on the 25.02 leg alone,
+  since a rust-only test cannot see cuDF and a second leg would report the same failure twice:
+  the exec-model python, `test_planner_join_capability`, `test_planner_join_refusals`,
+  `test_null_analysis`, `test_cost_model`, `test_golden_format`, `test_corpus_goldens`
+  and `test_batch_partitioned_injection`.
+  `CMAKE_GENERATOR` and `RUSTFLAGS` are job-level: cargo's fingerprint includes RUSTFLAGS,
+  so a step carrying its own recompiles the dependency tree, and the image has ninja and no
+  make, which flatc-fork's cmake needs told. Build and run are still separate steps, and
+  their remaining env must stay byte-identical or the run step recompiles.
 - **cpp-build-2502** — builds the 25.02 C++ side, bundles the Arrow/Parquet runtime libs,
   and stages `test_gpu_full_table`, `test_gpu_partitioned`, `test_inc2_conformance`,
   `test_gpu_abi`, `test_gpu_recipe_walk` and `test_gpu_executors` as the
