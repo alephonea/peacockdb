@@ -171,11 +171,11 @@ gpu_case!(tpch, 1, shuffle_stddev, partitioned_tp8_standard, golden_approx_std);
 // PartitionMode::Partitioned joins per-partition (child0[p] ⋈ child1[p]), matching
 // vanilla DataFusion (all q17 joins are Partitioned 8→8) and the GPU C++ MAP arm.
 // q17: mixed count/avg/stddev over 7 real-8-way joins (golden_approx_std for the
-// GPU-cuDF-M2 stddev). join_int: minimal 1-key fact-dim join (oracle mode).
+// GPU-cuDF-M2 stddev). join_int: minimal 1-key fact-dim join (live_cpu mode).
 gpu_case!(tpcds, 1, q17, partitioned_tp8_standard, golden_approx_std);
 gpu_case!(tpch, 1, join_int, partitioned_tp8_standard, live_cpu);
 // (#97-a) Real-8-way per-partition NON-inner Partitioned joins (semi=RightSemi,
-// anti=RightAnti, left=Left, each 8→8). oracle mode (>256KB results): the GPU output
+// anti=RightAnti, left=Left, each 8→8). live_cpu mode (>256KB results): the GPU output
 // is checked against a LIVE CPU-oracle run, so anti's NOT-IN null handling is gated
 // at both levels.
 gpu_case!(tpch, 1, semi_join, partitioned_tp8_standard, live_cpu);

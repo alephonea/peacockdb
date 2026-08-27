@@ -94,7 +94,7 @@ tpcds,1,q92,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enable
 tpcds,1,q93,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,na,na,na,na,na,na,na,na,na,na,ok,top_n outer_join,97
 tpcds,1,q94,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,na,na,na,na,na,na,na,na,na,na,ok,anti_join semi_join corr_subquery count_distinct top_n,97 59 80 62
 tpcds,1,q95,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,na,na,na,na,na,na,na,na,na,na,ok,semi_join corr_subquery count_distinct top_n,97 62
-tpcds,1,q96,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,enabled,enabled,disabled,disabled,disabled,na,na,na,na,na,ok,top_n,
+tpcds,1,q96,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,enabled,enabled,disabled,disabled,disabled,na,na,na,na,na,ok,top_n,180
 tpcds,1,q97,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,na,na,na,na,na,na,na,na,na,na,ok,corr_subquery top_n outer_join,97
 tpcds,1,q98,enabled,enabled,enabled,na,enabled,na,disabled,disabled,disabled,disabled,disabled,na,na,na,na,na,na,na,na,na,na,ok,window_functions,32 143
 tpcds,1,q99,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,na,na,na,na,na,na,na,na,na,na,ok,top_n,

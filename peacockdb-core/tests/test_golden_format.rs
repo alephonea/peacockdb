@@ -148,3 +148,233 @@ fn nothing_else_in_a_golden_reads_as_a_node_line() {
         );
     }
 }
+
+// --- the subset oracle -------------------------------------------------------
+//
+// `data_fusion_subset` has no user among the twenty — `scan-limit` is its only one and
+// arrives with T19 — so its parts are exercised here rather than first running during a
+// rollout, where a bad tail parse fails on somebody else's change.
+
+use common::corpus::{owed_rows, take_rows, wanted_rows, without_its_limit};
+
+fn tail_of(sql: &str) -> (String, u64, Option<u64>) {
+    without_its_limit(sql, "a test")
+}
+
+#[test]
+fn a_trailing_limit_is_taken_off_the_body() {
+    assert_eq!(
+        tail_of("SELECT * FROM lineitem LIMIT 10;"),
+        ("SELECT * FROM lineitem ".to_string(), 0, Some(10))
+    );
+    assert_eq!(
+        tail_of("SELECT * FROM lineitem LIMIT 10 OFFSET 5"),
+        ("SELECT * FROM lineitem ".to_string(), 5, Some(10))
+    );
+    assert_eq!(
+        tail_of("select * from t limit 3 offset 1 ;").1,
+        1,
+        "the keywords are matched without regard to case"
+    );
+}
+
+/// The inner limit stays: a query can carry one, and what this strips is the outer one.
+#[test]
+fn only_the_last_limit_comes_off() {
+    let (body, skip, fetch) =
+        tail_of("SELECT k FROM (SELECT k FROM t LIMIT 40 OFFSET 5) x LIMIT 20 OFFSET 3");
+    assert!(body.contains("LIMIT 40 OFFSET 5"), "{body}");
+    assert_eq!((skip, fetch), (3, Some(20)));
+}
+
+#[test]
+#[should_panic(expected = "has no limit")]
+fn a_query_with_no_limit_declaring_this_oracle_fails() {
+    tail_of("SELECT * FROM lineitem");
+}
+
+#[test]
+#[should_panic(expected = "is not `LIMIT n [OFFSET m]`")]
+fn junk_after_the_interval_fails_rather_than_being_trimmed() {
+    tail_of("SELECT * FROM t LIMIT 10 ORDER BY k");
+}
+
+#[test]
+#[should_panic(expected = "is not `LIMIT n [OFFSET m]`")]
+fn an_offset_with_no_number_fails() {
+    tail_of("SELECT * FROM t LIMIT 10 OFFSET");
+}
+
+/// A tail that merely contains the word is not an interval. `rfind` reaches inside an
+/// identifier, so this is the case that says the parse checks what it found.
+#[test]
+#[should_panic(expected = "is not `LIMIT n [OFFSET m]`")]
+fn a_column_named_for_the_keyword_is_not_an_interval() {
+    tail_of("SELECT credit_limit FROM t");
+}
+
+#[test]
+fn the_count_is_what_the_interval_leaves() {
+    assert_eq!(wanted_rows(100, 0, Some(10)), 10, "the plain case");
+    assert_eq!(
+        wanted_rows(100, 95, Some(10)),
+        5,
+        "a limit past what is left"
+    );
+    assert_eq!(wanted_rows(4, 10, Some(10)), 0, "an offset past the end");
+    assert_eq!(wanted_rows(0, 0, Some(10)), 0, "nothing to limit");
+    assert_eq!(wanted_rows(100, 3, None), 97, "an offset with no limit");
+}
+
+/// The case set membership passes and this must not: a run returning one row twice where
+/// the unlimited answer holds it once.
+#[test]
+fn a_row_returned_twice_is_not_contained_in_an_answer_holding_it_once() {
+    let twice = rows(&["a", "a"]);
+    let once = rows(&["a", "b"]);
+    let mut owed = owed_rows(&twice);
+    take_rows(&mut owed, &once);
+    assert_eq!(
+        owed.values().sum::<usize>(),
+        1,
+        "the second copy was accounted for by a row the oracle holds once"
+    );
+
+    let mut owed = owed_rows(&rows(&["a"]));
+    take_rows(&mut owed, &once);
+    assert!(
+        owed.is_empty(),
+        "one copy is contained in an answer holding one"
+    );
+}
+
+fn rows(values: &[&str]) -> Vec<datafusion::arrow::array::RecordBatch> {
+    use std::sync::Arc;
+
+    use datafusion::arrow::array::{RecordBatch, StringArray};
+    use datafusion::arrow::datatypes::{DataType, Field, Schema};
+
+    let schema = Arc::new(Schema::new(vec![Field::new("k", DataType::Utf8, true)]));
+    let column = Arc::new(StringArray::from(values.to_vec()));
+    vec![RecordBatch::try_new(schema, vec![column]).expect("a batch")]
+}
+
+// --- a doc block a split left behind -----------------------------------------
+
+/// Two `///` groups separated by a blank line above one item: the lower group is that
+/// item's, and the upper one belonged to a declaration that is no longer there. Splitting a
+/// function in two and moving only the code leaves this, and nothing reads as missing —
+/// every cap still holds and the build is green.
+///
+/// It covers the SPLIT shape only. The other half of the antipattern is a declaration
+/// INSERTED above an existing one, which takes its whole block and leaves no blank line
+/// anywhere; that is a property of a diff rather than of a tree, and no check here sees it.
+/// The reading habit named in `coding-style.md` is what covers it.
+#[test]
+fn no_declaration_carries_a_block_left_behind_by_a_split() {
+    let mut stranded: Vec<String> = Vec::new();
+    for path in rust_sources() {
+        let text = std::fs::read_to_string(&path).expect("a source file");
+        for (line, at) in stranded_blocks(&text) {
+            stranded.push(format!("{}:{}: {line}", path.display(), at + 1));
+        }
+    }
+    assert!(
+        stranded.is_empty(),
+        "a doc block sits above a blank line and another block — the upper one belonged to \
+         a declaration that is gone:\n{}",
+        stranded.join("\n")
+    );
+}
+
+/// The first line of each stranded group, with its line number. A group qualifies when a
+/// `///` run is followed by a blank line, then another `///` run, then an item.
+fn stranded_blocks(text: &str) -> Vec<(String, usize)> {
+    let lines: Vec<&str> = text.lines().collect();
+    let doc = |at: usize| {
+        lines
+            .get(at)
+            .is_some_and(|l| l.trim_start().starts_with("///"))
+    };
+    let blank = |at: usize| lines.get(at).is_some_and(|l| l.trim().is_empty());
+    let mut found = Vec::new();
+    let mut at = 0;
+    while at < lines.len() {
+        if !doc(at) || (at > 0 && (doc(at - 1) || blank_run_above(&lines, at))) {
+            at += 1;
+            continue;
+        }
+        let upper = at;
+        let mut cursor = at;
+        while doc(cursor) {
+            cursor += 1;
+        }
+        if blank(cursor) && doc(cursor + 1) {
+            let mut lower = cursor + 1;
+            while doc(lower) {
+                lower += 1;
+            }
+            if lines.get(lower).is_some_and(|l| !l.trim().is_empty()) {
+                found.push((lines[upper].trim().to_string(), upper));
+            }
+        }
+        at = cursor;
+    }
+    found
+}
+
+/// Whether the line above is blank AND the one above that is a doc line — which means this
+/// run is the LOWER half of a pair already reported, not the start of a new one.
+fn blank_run_above(lines: &[&str], at: usize) -> bool {
+    at >= 2 && lines[at - 1].trim().is_empty() && lines[at - 2].trim_start().starts_with("///")
+}
+
+fn rust_sources() -> Vec<std::path::PathBuf> {
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let mut found = Vec::new();
+    for dir in ["src", "tests"] {
+        walk(&root.join(dir), &mut found);
+    }
+    assert!(found.len() > 50, "only {} sources were read", found.len());
+    found
+}
+
+fn walk(dir: &std::path::Path, into: &mut Vec<std::path::PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        match path.is_dir() {
+            true => walk(&path, into),
+            false if path.extension().is_some_and(|e| e == "rs") => into.push(path),
+            false => {}
+        }
+    }
+}
+
+/// The guard's own cases, since the tree is green and a check with nothing to find is one
+/// nobody can tell from a check that does not work.
+#[test]
+fn the_split_guard_finds_the_shape_and_nothing_else() {
+    let split = "/// Left behind by a split.\n\n/// The item's own block.\nfn item() {}\n";
+    assert_eq!(stranded_blocks(split).len(), 1, "the shape it exists for");
+
+    let contiguous = "/// One block.\n/// Second line.\nfn item() {}\n";
+    assert!(
+        stranded_blocks(contiguous).is_empty(),
+        "an insertion takes the whole block and leaves no blank line — out of scope"
+    );
+
+    let two_items = "/// One item.\nfn a() {}\n\n/// Another item.\nfn b() {}\n";
+    assert!(
+        stranded_blocks(two_items).is_empty(),
+        "two documented items in a row are not a stranded block"
+    );
+
+    let module_doc = "//! A module.\n\n/// An item.\nfn a() {}\n";
+    assert!(
+        stranded_blocks(module_doc).is_empty(),
+        "a module doc is not one"
+    );
+}

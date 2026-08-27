@@ -18,14 +18,14 @@ use datafusion::execution::context::SessionContext;
 
 use peacockdb_core::batch_partitioned::cpu_backend::backend::CpuBackend;
 use peacockdb_core::batch_partitioned::driver::{RunReport, batch_partitioned_driver};
-use peacockdb_core::batch_partitioned::plan::{BatchSizing, PlanKnobs, plan_batch_partitioned};
+use peacockdb_core::batch_partitioned::plan::plan_batch_partitioned;
 use peacockdb_core::batch_partitioned::{GpuNode, RunError, When};
-use peacockdb_core::config::MemoryLimit;
 
 use common::injection::{
     CAP, Dimensions, Drain, Empties, Injected, InjectedContext, Injection, PlannedMode, Rebatch,
     SEED, apply, node_count, planned_mode, select,
 };
+use common::bp_mode::{BP_MODES, BpMode};
 use common::{assert_results_match, batches_to_sorted_str, data_dir_for, queries_dir_for};
 
 /// Where a Welford merge is the only divergence: this mode decomposes the aggregate into
@@ -33,57 +33,6 @@ use common::{assert_results_match, batches_to_sorted_str, data_dir_for, queries_
 /// digits differ by reassociation. The legacy GPU tier uses the same figure for the same
 /// reason (`golden_approx_std`).
 const WELFORD_TOLERANCE: f64 = 1e-11;
-
-/// The tier the mode goldens are written at, so a failure here reads against a committed
-/// plan rather than against a shape nothing else records.
-const BUDGET: u64 = MemoryLimit::Mini.bytes() as u64;
-const SMALL_TABLE_BYTES: u64 = 5 * 1024 * 1024;
-
-/// The five shapes the plan goldens hold, which is the injection set: one lane and one
-/// batch is the degenerate end, row-group granularity is the finest the mapping expresses,
-/// and the sized mode is the only one a budget moves. A query answering differently at two
-/// of these has a bug that no single shape would have shown.
-const MODES: [(&str, usize, BatchSizing); 5] = [
-    ("bp-tp1-single", 1, BatchSizing::OneBatchPerLane),
-    ("bp-tp1-rowgroup", 1, BatchSizing::OneBatchPerRowGroup),
-    ("bp-tp4-single", 4, BatchSizing::OneBatchPerLane),
-    ("bp-tp4-rowgroup", 4, BatchSizing::OneBatchPerRowGroup),
-    ("bp-tp4-sized", 4, BatchSizing::Budgeted),
-];
-
-fn knobs(target_partitions: usize, sizing: BatchSizing) -> PlanKnobs {
-    PlanKnobs {
-        target_partitions,
-        sizing,
-        budget: BUDGET,
-        small_table_bytes: SMALL_TABLE_BYTES,
-    }
-}
-
-/// The local table against `common::bp_mode`'s, which the corpus tiers and the registry
-/// read. Two spellings of the five modes exist on purpose — this tier indexes into `MODES` by position to name a shape a
-/// single case needs, which a struct table would not make shorter — and this is what stops
-/// them being two different fives.
-#[test]
-fn the_local_mode_table_is_the_shared_one() {
-    let shared: Vec<(String, usize, String)> = common::bp_mode::BP_MODES
-        .iter()
-        .map(|mode| {
-            (
-                mode.name.to_string(),
-                mode.target_partitions,
-                format!("{:?}", mode.sizing),
-            )
-        })
-        .collect();
-    let local: Vec<(String, usize, String)> = MODES
-        .iter()
-        .map(|(name, target_partitions, sizing)| {
-            (name.to_string(), *target_partitions, format!("{sizing:?}"))
-        })
-        .collect();
-    assert_eq!(local, shared, "the mode tables have drifted");
-}
 
 /// One query at every mode, against DataFusion on the same text.
 /// Whether a query also runs the injected shapes. An enum rather than a flag, because
@@ -132,9 +81,10 @@ async fn sql_answers_match_datafusion(
     // most of the tier. The tolerance path indexes rather than renders and keeps its own.
     let expected_rows = tolerance.is_none().then(|| sorted_rows(&expected)).flatten();
     let mut planned = Vec::new();
-    for (name, target_partitions, sizing) in MODES {
+    for mode in &BP_MODES {
+        let name = mode.name;
         let ctx = peacockdb_core::register_tables_for(
-            peacockdb_core::build_session_state(target_partitions),
+            peacockdb_core::build_session_state(mode.target_partitions),
             &data_dir,
         )
         .await
@@ -146,7 +96,7 @@ async fn sql_answers_match_datafusion(
             .create_physical_plan()
             .await
             .expect("the query has a physical plan");
-        let (tree, _memory) = plan_batch_partitioned(&plan, knobs(target_partitions, sizing))
+        let (tree, _memory) = plan_batch_partitioned(&plan, mode.knobs())
             .unwrap_or_else(|error| panic!("{dataset}/{query} at {name}: {error}"));
         run_and_check(
             tree.as_ref(),
@@ -480,9 +430,10 @@ async fn a_limit_slices_at_most_two_batches_and_stops_the_scan() {
     let sql = std::fs::read_to_string(queries_dir_for("tpch").join("nested-limits.sql"))
         .expect("the query text");
     let mut most_offered = 0;
-    for (name, target_partitions, sizing) in MODES {
+    for mode in &BP_MODES {
+        let name = mode.name;
         let ctx = peacockdb_core::register_tables_for(
-            peacockdb_core::build_session_state(target_partitions),
+            peacockdb_core::build_session_state(mode.target_partitions),
             &data_dir,
         )
         .await
@@ -494,7 +445,7 @@ async fn a_limit_slices_at_most_two_batches_and_stops_the_scan() {
             .create_physical_plan()
             .await
             .expect("the query has a physical plan");
-        let (tree, _memory) = plan_batch_partitioned(&plan, knobs(target_partitions, sizing))
+        let (tree, _memory) = plan_batch_partitioned(&plan, mode.knobs())
             .unwrap_or_else(|error| panic!("nested-limits at {name}: {error}"));
         let offered = batches_offered(tree.as_ref());
         let report = batch_partitioned_driver::<CpuBackend>(tree.as_ref(), &ctx.task_ctx(), None)
@@ -595,9 +546,10 @@ async fn a_query_has_a_smallest_budget_that_fits_and_trips_a_byte_below_it() {
     let data_dir = data_dir_for("tpch", "1");
     let sql = std::fs::read_to_string(queries_dir_for("tpch").join("nested-loop-join.sql"))
         .expect("the query text");
-    let (name, target_partitions, sizing) = MODES[3];
+    let mode = &BP_MODES[3];
+    let name = mode.name;
     let ctx = peacockdb_core::register_tables_for(
-        peacockdb_core::build_session_state(target_partitions),
+        peacockdb_core::build_session_state(mode.target_partitions),
         &data_dir,
     )
     .await
@@ -609,7 +561,7 @@ async fn a_query_has_a_smallest_budget_that_fits_and_trips_a_byte_below_it() {
         .create_physical_plan()
         .await
         .expect("the query has a physical plan");
-    let (tree, _memory) = plan_batch_partitioned(&plan, knobs(target_partitions, sizing))
+    let (tree, _memory) = plan_batch_partitioned(&plan, mode.knobs())
         .unwrap_or_else(|error| panic!("nested-loop-join at {name}: {error}"));
 
     let watching = batch_partitioned_driver::<CpuBackend>(tree.as_ref(), &ctx.task_ctx(), None)
@@ -681,9 +633,10 @@ async fn the_model_is_compared_against_what_the_calls_measured() {
     let data_dir = data_dir_for("tpch", "1");
     let sql = std::fs::read_to_string(queries_dir_for("tpch").join("filter-project.sql"))
         .expect("the query text");
-    let (name, target_partitions, sizing) = MODES[3];
+    let mode = &BP_MODES[3];
+    let name = mode.name;
     let ctx = peacockdb_core::register_tables_for(
-        peacockdb_core::build_session_state(target_partitions),
+        peacockdb_core::build_session_state(mode.target_partitions),
         &data_dir,
     )
     .await
@@ -695,7 +648,7 @@ async fn the_model_is_compared_against_what_the_calls_measured() {
         .create_physical_plan()
         .await
         .expect("the query has a physical plan");
-    let (tree, _memory) = plan_batch_partitioned(&plan, knobs(target_partitions, sizing))
+    let (tree, _memory) = plan_batch_partitioned(&plan, mode.knobs())
         .unwrap_or_else(|error| panic!("filter-project at {name}: {error}"));
     let report = batch_partitioned_driver::<CpuBackend>(tree.as_ref(), &ctx.task_ctx(), None)
         .expect("the run finishes");
@@ -729,9 +682,10 @@ async fn an_injected_run_makes_different_calls_from_the_plan_it_came_from() {
         .expect("the query text");
     // The one mode with batching off, so the small-table rule leaves every source at four
     // lanes and there is a lane to drain.
-    let (name, target_partitions, sizing) = MODES[2];
+    let mode = &BP_MODES[2];
+    let name = mode.name;
     let ctx = peacockdb_core::register_tables_for(
-        peacockdb_core::build_session_state(target_partitions),
+        peacockdb_core::build_session_state(mode.target_partitions),
         &data_dir,
     )
     .await
@@ -743,7 +697,7 @@ async fn an_injected_run_makes_different_calls_from_the_plan_it_came_from() {
         .create_physical_plan()
         .await
         .expect("the query has a physical plan");
-    let (tree, _memory) = plan_batch_partitioned(&plan, knobs(target_partitions, sizing))
+    let (tree, _memory) = plan_batch_partitioned(&plan, mode.knobs())
         .unwrap_or_else(|error| panic!("nested-loop-join at {name}: {error}"));
 
     let run = |injection: Injection| {
@@ -834,9 +788,10 @@ async fn a_degenerate_hash_under_a_right_outer_is_refused_by_name() {
     let data_dir = data_dir_for("tpcds", "1");
     let sql =
         std::fs::read_to_string(queries_dir_for("tpcds").join("q93.sql")).expect("the query text");
-    let (name, target_partitions, sizing) = MODES[2];
+    let mode = &BP_MODES[2];
+    let name = mode.name;
     let ctx = peacockdb_core::register_tables_for(
-        peacockdb_core::build_session_state(target_partitions),
+        peacockdb_core::build_session_state(mode.target_partitions),
         &data_dir,
     )
     .await
@@ -848,7 +803,7 @@ async fn a_degenerate_hash_under_a_right_outer_is_refused_by_name() {
         .create_physical_plan()
         .await
         .expect("the query has a physical plan");
-    let (tree, _memory) = plan_batch_partitioned(&plan, knobs(target_partitions, sizing))
+    let (tree, _memory) = plan_batch_partitioned(&plan, mode.knobs())
         .unwrap_or_else(|error| panic!("q93 at {name}: {error}"));
     assert!(
         planned_mode(name, tree.as_ref()).owes_probe_when_empty,
@@ -949,12 +904,12 @@ struct PlannedQuery {
 }
 
 impl PlannedQuery {
-    async fn plan(dataset: &str, query: &str, mode: (&'static str, usize, BatchSizing)) -> Self {
-        let (name, target_partitions, sizing) = mode;
+    async fn plan(dataset: &str, query: &str, mode: &BpMode) -> Self {
+        let name = mode.name;
         let sql = std::fs::read_to_string(queries_dir_for(dataset).join(format!("{query}.sql")))
             .expect("the query text");
         let ctx = peacockdb_core::register_tables_for(
-            peacockdb_core::build_session_state(target_partitions),
+            peacockdb_core::build_session_state(mode.target_partitions),
             &data_dir_for(dataset, "1"),
         )
         .await
@@ -966,7 +921,7 @@ impl PlannedQuery {
             .create_physical_plan()
             .await
             .expect("the query has a physical plan");
-        let (tree, _memory) = plan_batch_partitioned(&plan, knobs(target_partitions, sizing))
+        let (tree, _memory) = plan_batch_partitioned(&plan, mode.knobs())
             .unwrap_or_else(|error| panic!("{query} at {name}: {error}"));
         let lanes = planned_mode(name, tree.as_ref()).lanes;
         Self { ctx, tree, lanes }
@@ -1053,7 +1008,7 @@ fn boundaries_under(
 async fn an_injected_shape_moves_what_the_query_holds() {
     // Batching off, so the small-table rule leaves the sources at four lanes and there is a
     // lane whose row groups can move.
-    let q16 = PlannedQuery::plan("tpcds", "q16", MODES[2]).await;
+    let q16 = PlannedQuery::plan("tpcds", "q16", &BP_MODES[2]).await;
     let (as_planned, drained) = boundaries_under(
         &q16,
         Injection {
@@ -1069,11 +1024,11 @@ async fn an_injected_shape_moves_what_the_query_holds() {
 
     // The drain's complement: a query whose residency only a rebatcher reaches, because a
     // lane it could move row groups out of is what this one does not have.
-    let nested_loop = PlannedQuery::plan("tpch", "nested-loop-join", MODES[3]).await;
+    let nested_loop = PlannedQuery::plan("tpch", "nested-loop-join", &BP_MODES[3]).await;
     assert_eq!(
         nested_loop.lanes, 1,
         "nested-loop-join at {} planned more than one lane, so a drain reaches it too",
-        MODES[3].0
+        BP_MODES[3].name
     );
     let (as_planned, rebatched) = boundaries_under(
         &nested_loop,

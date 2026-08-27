@@ -209,10 +209,14 @@ fn node_kind_names() -> Vec<&'static str> {
         .filter_map(|line| line.split_once("=> \"")?.1.split_once('"'))
         .map(|(name, _)| name)
         .collect();
-    assert!(
-        names.len() >= 18,
-        "node_name has {} arms, which is fewer than the kinds that existed when this was \
-         written — the parse is reading the wrong thing",
+    // Against the arms, not against a floor: an arm this scan misses — a long one rustfmt
+    // wrapped onto two lines — would leave its kind quietly outside the taxonomy check,
+    // which is the shape of failure the check exists to prevent one level up.
+    assert_eq!(
+        names.len(),
+        body.matches("=>").count(),
+        "node_name has {} arms and {} were parsed — the scan is missing one",
+        body.matches("=>").count(),
         names.len()
     );
     names

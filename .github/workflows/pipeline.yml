@@ -710,6 +710,12 @@ jobs:
       - name: The golden text format, read back (Rust)
         run: cargo test --features rust-only -p peacockdb-core --test test_golden_format
 
+      # The corpus goldens against their own arithmetic — conservation, lane counts,
+      # the loader prefix, the root against the result. Committed files only, so it
+      # belongs here rather than in the tier that has the dataset.
+      - name: Corpus goldens against their own redundancy (Rust)
+        run: cargo test --features rust-only -p peacockdb-core --test test_corpus_goldens
+
       # The injection mechanism against itself: the plan rebuild is identity per arm
       # and per field, and the selector's output is a cover rather than a prefix.
       # Reads no parquet — the plans are hand-built and the four cases are the ones

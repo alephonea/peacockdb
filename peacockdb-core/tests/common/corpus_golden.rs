@@ -101,17 +101,21 @@ pub fn assert_or_merge(
         false => format!("{body}\n"),
     };
     match regeneration() {
-        Regeneration::No => {
-            let canonical = section_of(path, query);
-            assert!(
-                canonical == body,
-                "{}: `{query}` moved — {}",
-                path.display(),
-                line_difference(&canonical, &body)
-            );
-        }
+        Regeneration::No => assert_section(path, query, &body),
         mode => merge(path, dataset, sf, columns, query, &body, mode),
     }
+}
+
+/// Verify one section and never write, whatever the run was asked to regenerate. What the
+/// device side uses: a device that can author its own golden proves nothing against it.
+pub fn assert_section(path: &Path, query: &str, body: &str) {
+    let canonical = section_of(path, query);
+    assert!(
+        canonical == body,
+        "{}: `{query}` moved — {}",
+        path.display(),
+        line_difference(&canonical, body)
+    );
 }
 
 /// Merge one section into the file under an advisory lock, and publish by rename.
@@ -121,11 +125,12 @@ pub fn assert_or_merge(
 /// those and nothing else — not `cargo nextest`, which gives each case its own process, and
 /// not two shells regenerating at once. The rename is for the other half: a crash mid-write
 /// must not leave a truncated golden.
-fn merge(
+///
+/// The read is inside the critical section, which is the whole point: a writer that read
+/// before another wrote would publish a file missing the other's section.
+pub fn merge_section(
     path: &Path,
-    dataset: &str,
-    sf: &str,
-    columns: &[&str],
+    declared: &[(String, Option<String>)],
     query: &str,
     body: &str,
     mode: Regeneration,
@@ -143,10 +148,23 @@ fn merge(
     let mut text = String::new();
     file.read_to_string(&mut text)
         .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
-    let merged = merged_text(&text, dataset, sf, columns, query, body, mode);
+    let merged = merged_text(&text, declared, query, body, mode);
     publish(path, &merged);
     // Explicit rather than left to the drop, so the unlock is ordered after the rename.
     let _ = file.unlock();
+}
+
+fn merge(
+    path: &Path,
+    dataset: &str,
+    sf: &str,
+    columns: &[&str],
+    query: &str,
+    body: &str,
+    mode: Regeneration,
+) {
+    let declared = declared_sections(dataset, sf, columns);
+    merge_section(path, &declared, query, body, mode);
 }
 
 /// The file as it will be written: every declared query in declaration order, this one's
@@ -156,11 +174,9 @@ fn merge(
 /// rather than filled with a marker: a filtered run cannot produce it and has no standing
 /// to say it is skipped, and the read path names it as missing, which is what a golden is
 /// for. A disabled one always renders its marker, since that fact needs no run.
-fn merged_text(
+pub fn merged_text(
     text: &str,
-    dataset: &str,
-    sf: &str,
-    columns: &[&str],
+    declared: &[(String, Option<String>)],
     query: &str,
     body: &str,
     mode: Regeneration,
@@ -170,9 +186,8 @@ fn merged_text(
         Some(section) => section.1 = body.to_string(),
         None => held.push((query.to_string(), body.to_string())),
     }
-    let declared = declared_sections(dataset, sf, columns);
     let mut out = String::new();
-    for (name, marker) in &declared {
+    for (name, marker) in declared {
         match (marker, held.iter().find(|(held, _)| held == name)) {
             (Some(marker), _) => push_section(&mut out, name, marker),
             (None, Some((_, body))) => push_section(&mut out, name, body),
@@ -206,7 +221,11 @@ fn push_section(out: &mut String, name: &str, body: &str) {
 ///
 /// `columns` is one column for a per-mode file and all five for the result golden, which
 /// holds one entry per query across the modes: enabled anywhere is enabled there.
-fn declared_sections(dataset: &str, sf: &str, columns: &[&str]) -> Vec<(String, Option<String>)> {
+pub fn declared_sections(
+    dataset: &str,
+    sf: &str,
+    columns: &[&str],
+) -> Vec<(String, Option<String>)> {
     registry::load_csv()
         .into_iter()
         .filter(|row| row.dataset == dataset && row.sf == sf)

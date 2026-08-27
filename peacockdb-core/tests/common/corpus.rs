@@ -5,6 +5,9 @@
 //! [`corpus_cases.inc`](corpus_cases.inc), included by each, so the two engines' coverage
 //! is read off one line per query rather than two lists that can disagree.
 
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
+
 use datafusion::arrow::array::RecordBatch;
 use datafusion::execution::context::SessionContext;
 use peacockdb_core::batch_partitioned::cpu_backend::backend::CpuBackend;
@@ -18,7 +21,7 @@ use super::cost_model::CostModel;
 use super::exec_mode::{CpuOracle, cpu_oracle_mode};
 use super::{
     RESULT_GOLDEN_MAX_BYTES, assert_results_match, batches_to_sorted_str, corpus_golden,
-    data_dir_for, queries_dir_for, registry, total_rows,
+    data_dir_for, queries_dir_for, registry, result_text, total_rows,
 };
 
 /// A query planned and run at one mode, with everything a caller needs to check it.
@@ -28,10 +31,16 @@ pub struct CpuRun {
     pub batches: Vec<RecordBatch>,
 }
 
-/// Plan `query` at `mode` and run it on the CPU backend. Panics naming the query and the
-/// mode: a corpus case's whole context is those two, and a bare planner error names
-/// neither.
-pub async fn run_cpu(dataset: &str, sf: &str, query: &str, mode: &BpMode) -> CpuRun {
+/// Plan `query` at `mode`. Panics naming the query and the mode: a corpus case's whole
+/// context is those two, and a bare planner error names neither. The session comes back
+/// with the tree because both engines need it — the cpu backend runs against its task
+/// context and the device's oracle runs against the same session.
+pub async fn plan_at(
+    dataset: &str,
+    sf: &str,
+    query: &str,
+    mode: &BpMode,
+) -> (SessionContext, Box<dyn GpuNode>) {
     let what = format!("{dataset}/{query} at {}", mode.name);
     let ctx = session_for(dataset, sf, mode.target_partitions).await;
     let plan = ctx
@@ -46,6 +55,13 @@ pub async fn run_cpu(dataset: &str, sf: &str, query: &str, mode: &BpMode) -> Cpu
     // The planner's own check, made again: the driver asks only for canonical form, so a
     // tree that met neither would run and answer.
     validate::validate(tree.as_ref()).unwrap_or_else(|e| panic!("{what} is not a plan: {e}"));
+    (ctx, tree)
+}
+
+/// Plan and run on the CPU backend, with the two accounting assertions every run makes.
+pub async fn run_cpu(dataset: &str, sf: &str, query: &str, mode: &BpMode) -> CpuRun {
+    let what = format!("{dataset}/{query} at {}", mode.name);
+    let (ctx, tree) = plan_at(dataset, sf, query, mode).await;
     let report = batch_partitioned_driver::<CpuBackend>(tree.as_ref(), &ctx.task_ctx(), None)
         .unwrap_or_else(|e| panic!("{what}: {e}"));
     let batches = report
@@ -78,61 +94,138 @@ pub async fn assert_answer(
     batches: &[RecordBatch],
 ) {
     let what = format!("{dataset}/{query} at {}", mode.name);
-    let oracle = cpu_oracle_mode(oracle);
-    let sql = query_text(dataset, query);
-    let ctx = session_for(dataset, sf, 1).await;
-    match oracle {
+    match cpu_oracle_mode(oracle) {
         CpuOracle::DataFusionSubset => {
-            let (unlimited, skip, fetch) = without_its_limit(&sql, &what);
-            let whole = collect(&ctx, &unlimited, &what).await;
-            assert_subset_of(batches, &whole, skip, fetch, &what);
+            assert_subset_of_unlimited(dataset, sf, query, batches, &what).await
         }
-        _ => {
-            let expected = collect(&ctx, &sql, &what).await;
+        oracle => {
+            let expected = oracle_answer(dataset, sf, query, &what).await;
             assert_results_match(&expected, batches, oracle.rel_tol(), &what);
         }
     }
 }
 
-/// What an unordered `LIMIT` does determine: how many rows come back, and that each was in
-/// the unlimited answer. Compared as a multiset — set membership passes a run that returned
-/// one row twice where the oracle has it once, which a limit over a join can produce.
-fn assert_subset_of(
+/// The oracle's answer, once per query rather than once per (query, mode). Five modes are
+/// held to one answer, so running it five times is four runs of the most expensive thing
+/// this tier does. Held for the process, which is the trade: the answers of a tier's worth
+/// of queries stay resident so that none of them is computed twice.
+async fn oracle_answer(dataset: &str, sf: &str, query: &str, what: &str) -> Arc<Vec<RecordBatch>> {
+    static ANSWERS: OnceLock<Mutex<HashMap<String, Arc<Vec<RecordBatch>>>>> = OnceLock::new();
+    let answers = ANSWERS.get_or_init(|| Mutex::new(HashMap::new()));
+    let key = format!("{dataset}/{sf}/{query}");
+    if let Some(held) = answers.lock().expect("the oracle cache").get(&key) {
+        return held.clone();
+    }
+    let ctx = session_for(dataset, sf, 1).await;
+    let answer = Arc::new(collect(&ctx, &query_text(dataset, query), what).await);
+    answers
+        .lock()
+        .expect("the oracle cache")
+        .insert(key, answer.clone());
+    answer
+}
+
+/// What an unordered `LIMIT` does determine, asked of the same session: how many rows come
+/// back, and that each was in the unlimited answer.
+///
+/// Neither question collects that answer. The count is a `count(*)` over the same body, and
+/// the containment streams the body past a map of the rows that came back — six million
+/// rows for `scan-limit`, which collected would be an OOM on a 15 GiB host rather than a
+/// slow test.
+async fn assert_subset_of_unlimited(
+    dataset: &str,
+    sf: &str,
+    query: &str,
     batches: &[RecordBatch],
-    whole: &[RecordBatch],
-    skip: u64,
-    fetch: Option<u64>,
     what: &str,
 ) {
-    let available = total_rows(whole) as u64;
-    let wanted = match fetch {
-        Some(n) => n.min(available.saturating_sub(skip)),
-        None => available.saturating_sub(skip),
-    };
+    let (body, skip, fetch) = without_its_limit(&query_text(dataset, query), what);
+    let ctx = session_for(dataset, sf, 1).await;
+    let available = count_of(&ctx, &body, what).await;
     assert_eq!(
         total_rows(batches) as u64,
-        wanted,
+        wanted_rows(available, skip, fetch),
         "{what}: an unordered limit does not fix which rows, but it fixes how many"
     );
-    let mut held = counted(whole);
-    for row in rows_of(batches) {
-        let count = held.get_mut(&row).unwrap_or_else(|| {
-            panic!("{what}: a row came back that the unlimited answer does not hold:\n{row}")
-        });
-        assert!(
-            *count > 0,
-            "{what}: a row came back more often than the unlimited answer holds it:\n{row}"
-        );
-        *count -= 1;
+    assert_contained_in(&ctx, &body, batches, what).await;
+}
+
+/// `max(0, min(n, |unlimited| - m))` for `LIMIT n OFFSET m`: an offset past the end returns
+/// nothing, and a limit past what is left returns what is left.
+pub fn wanted_rows(available: u64, skip: u64, fetch: Option<u64>) -> u64 {
+    let after_skip = available.saturating_sub(skip);
+    match fetch {
+        Some(n) => n.min(after_skip),
+        None => after_skip,
     }
 }
 
-fn counted(batches: &[RecordBatch]) -> std::collections::HashMap<String, usize> {
-    let mut counts = std::collections::HashMap::new();
-    for row in rows_of(batches) {
-        *counts.entry(row).or_insert(0) += 1;
+/// Every returned row was in the unlimited answer, counted as a MULTISET: set membership
+/// passes a run that returned one row twice where the oracle holds it once, which a limit
+/// over a join can produce. The unlimited side is streamed and never held.
+async fn assert_contained_in(
+    ctx: &SessionContext,
+    body: &str,
+    batches: &[RecordBatch],
+    what: &str,
+) {
+    use futures::StreamExt;
+
+    let mut owed = owed_rows(batches);
+    let mut stream = ctx
+        .sql(body)
+        .await
+        .unwrap_or_else(|e| panic!("{what}: the oracle does not plan the unlimited body: {e}"))
+        .execute_stream()
+        .await
+        .unwrap_or_else(|e| panic!("{what}: the oracle does not run the unlimited body: {e}"));
+    while !owed.is_empty() {
+        let Some(batch) = stream.next().await else {
+            break;
+        };
+        let batch = batch.unwrap_or_else(|e| panic!("{what}: the oracle stream failed: {e}"));
+        take_rows(&mut owed, std::slice::from_ref(&batch));
     }
-    counts
+    assert!(
+        owed.is_empty(),
+        "{what}: {} row(s) came back more often than the unlimited answer holds them, the \
+         first being:\n{}",
+        owed.values().sum::<usize>(),
+        owed.keys().next().expect("a row")
+    );
+}
+
+/// The rows a run returned, counted — what the containment check owes the oracle.
+pub fn owed_rows(batches: &[RecordBatch]) -> HashMap<String, usize> {
+    let mut owed: HashMap<String, usize> = HashMap::new();
+    for row in rows_of(batches) {
+        *owed.entry(row).or_insert(0) += 1;
+    }
+    owed
+}
+
+/// Strike off what this slice of the unlimited answer accounts for.
+pub fn take_rows(owed: &mut HashMap<String, usize>, batches: &[RecordBatch]) {
+    for row in rows_of(batches) {
+        if let Some(count) = owed.get_mut(&row) {
+            *count -= 1;
+            if *count == 0 {
+                owed.remove(&row);
+            }
+        }
+    }
+}
+
+async fn count_of(ctx: &SessionContext, body: &str, what: &str) -> u64 {
+    let counted = collect(ctx, &format!("SELECT count(*) FROM ({body})"), what).await;
+    let column = counted
+        .first()
+        .expect("a count returns a row")
+        .column(0)
+        .as_any()
+        .downcast_ref::<datafusion::arrow::array::Int64Array>()
+        .expect("count(*) is Int64");
+    column.value(0) as u64
 }
 
 /// One rendered line per row, which is what makes a multiset comparison cheap and its
@@ -148,7 +241,7 @@ fn rows_of(batches: &[RecordBatch]) -> Vec<String> {
 /// last `limit` in the text, since a query can hold an inner one; anything else after it
 /// panics rather than being trimmed, so a query declaring this oracle without an unordered
 /// limit fails loudly instead of being compared against itself.
-fn without_its_limit(sql: &str, what: &str) -> (String, u64, Option<u64>) {
+pub fn without_its_limit(sql: &str, what: &str) -> (String, u64, Option<u64>) {
     let body = sql.trim().trim_end_matches(';');
     let at = body
         .to_ascii_lowercase()
@@ -268,6 +361,20 @@ pub fn authoritative_mode(dataset: &str, sf: &str, query: &str) -> Option<&'stat
     })
 }
 
+/// Why a result has no section. The size is named where it is known — where the lower
+/// bound tripped, the run stopped counting on purpose and says so rather than finishing the
+/// sum to put a number in a marker.
+fn over_cap(bytes: Option<usize>) -> String {
+    let size = match bytes {
+        Some(bytes) => format!("is {bytes} bytes"),
+        None => "passes".to_string(),
+    };
+    format!(
+        "{}the result {size} the {RESULT_GOLDEN_MAX_BYTES}-byte cap\n",
+        corpus_golden::SKIPPED
+    )
+}
+
 /// The one entry this query has, and the mode that wrote it. A result at or above the cap
 /// keeps its section and says why rather than being deleted: absent and not-applicable read
 /// alike, and only one of them is a regression.
@@ -278,14 +385,19 @@ fn assert_result_section(
     mode: &BpMode,
     batches: &[RecordBatch],
 ) {
-    let rendered = batches_to_sorted_str(batches);
-    let body = match rendered.len() >= RESULT_GOLDEN_MAX_BYTES {
-        true => format!(
-            "{}the result is {} bytes, at or above the {RESULT_GOLDEN_MAX_BYTES}-byte cap\n",
-            corpus_golden::SKIPPED,
-            rendered.len()
-        ),
-        false => format!("mode={}\n{rendered}\n", mode.name),
+    // Sized before it is built, and the cells alone are a lower bound on the table: an
+    // answer far above the cap costs one row of memory rather than being rendered whole,
+    // sorted, and then discarded for being too large. Under the bound it is rendered once
+    // and measured exactly, so the cap still means the same bytes it always did.
+    let body = match result_text::exceeds_rendered_size(batches, RESULT_GOLDEN_MAX_BYTES) {
+        true => over_cap(None),
+        false => {
+            let rendered = batches_to_sorted_str(batches);
+            match rendered.len() >= RESULT_GOLDEN_MAX_BYTES {
+                true => over_cap(Some(rendered.len())),
+                false => format!("mode={}\n{rendered}\n", mode.name),
+            }
+        }
     };
     let columns: Vec<String> = BP_MODES.iter().map(cpu_column).collect();
     let columns: Vec<&str> = columns.iter().map(String::as_str).collect();

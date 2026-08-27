@@ -211,3 +211,103 @@ fn window(line: &str, at: usize) -> String {
         if end < line.len() { "…" } else { "" }
     )
 }
+
+/// A node as an execution golden records it: its line, and the per-batch record beneath.
+///
+/// `in_rows` is nested by child and then by that child's lane; `batch_rows` and
+/// `batch_bytes` by this node's lane and then by batch. `abandoned` is per lane and
+/// present only where a run left something behind, and `rows_skipped` is a total.
+pub struct RunNode<'a> {
+    pub line: NodeLine<'a>,
+    pub in_rows: Vec<Vec<u64>>,
+    pub batch_rows: Vec<Vec<u64>>,
+    pub batch_bytes: Vec<Vec<u64>>,
+    pub abandoned: Vec<u64>,
+    pub rows_skipped: u64,
+    /// Indices into the same vector. Depth is the tree, so the parent of a node is the
+    /// nearest one above it at one less.
+    pub children: Vec<usize>,
+}
+
+/// One `.cpu.txt` section: the early-exit marker and every node under it, in file order.
+///
+/// Panics on a line the format does not allow, since a section is written by our own
+/// renderer — a shape nobody produces is a defect to name, not a case to tolerate.
+pub fn parse_run_section(body: &str) -> (String, Vec<RunNode<'_>>) {
+    let mut lines = body.lines();
+    let marker = lines
+        .next()
+        .and_then(|line| line.strip_prefix("early_exit="))
+        .expect("a section opens with its early_exit marker")
+        .to_string();
+    let mut nodes: Vec<RunNode<'_>> = Vec::new();
+    let mut open: Vec<usize> = Vec::new();
+    for line in lines {
+        if line.trim().is_empty() {
+            continue;
+        }
+        if let Some(node) = parse_node_line(line) {
+            let depth = node.depth;
+            open.truncate(depth);
+            if let Some(parent) = open.last() {
+                let at = nodes.len();
+                nodes[*parent].children.push(at);
+            }
+            open.push(nodes.len());
+            nodes.push(RunNode {
+                line: node,
+                in_rows: Vec::new(),
+                batch_rows: Vec::new(),
+                batch_bytes: Vec::new(),
+                abandoned: Vec::new(),
+                rows_skipped: 0,
+                children: Vec::new(),
+            });
+            continue;
+        }
+        let node = nodes.last_mut().expect("a per-batch line under no node");
+        for field in line.split_whitespace() {
+            let (key, value) = field
+                .split_once('=')
+                .expect("a `key=value` per-batch field");
+            match key {
+                "in_rows" => node.in_rows = nested_numbers(value),
+                "batch_rows" => node.batch_rows = nested_numbers(value),
+                "batch_bytes" => node.batch_bytes = nested_numbers(value),
+                "abandoned" => node.abandoned = flat_numbers(value),
+                "rows_skipped" => node.rows_skipped = value.parse().expect("a row count"),
+                other => panic!("unknown per-batch field `{other}` in: {line}"),
+            }
+        }
+    }
+    (marker, nodes)
+}
+
+/// `[[1,2],[3]]` — the bracket style every nested list in the format renders in.
+fn nested_numbers(text: &str) -> Vec<Vec<u64>> {
+    let inner = text
+        .strip_prefix('[')
+        .and_then(|text| text.strip_suffix(']'))
+        .unwrap_or_else(|| panic!("not a nested list: {text}"));
+    if inner.is_empty() {
+        return Vec::new();
+    }
+    inner
+        .split_inclusive(']')
+        .map(|lane| flat_numbers(lane.trim_start_matches(',')))
+        .collect()
+}
+
+fn flat_numbers(text: &str) -> Vec<u64> {
+    let inner = text
+        .strip_prefix('[')
+        .and_then(|text| text.strip_suffix(']'))
+        .unwrap_or_else(|| panic!("not a list: {text}"));
+    match inner.is_empty() {
+        true => Vec::new(),
+        false => inner
+            .split(',')
+            .map(|number| number.parse().expect("a number in a list"))
+            .collect(),
+    }
+}

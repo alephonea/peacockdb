@@ -12,7 +12,7 @@
 //! call site so golden-vs-live-oracle is visible at a glance:
 //!   golden_exact  = static result golden, exact compare (fail-closed: missing panics);
 //!   golden_approx = static result golden, 1e-12 float-tolerant (q14/q39);
-//!   oracle        = live CPU-oracle compare, NO golden — for results too large to
+//!   live_cpu      = live CPU-oracle compare, NO golden — for results too large to
 //!                   commit as text (>= 256KB; e.g. anti-join ~240MB/1.2M rows);
 //!   skip          = per-node only (non-deterministic LIMIT).
 //! per-node cost is ALWAYS asserted (read-only) regardless of mode.
