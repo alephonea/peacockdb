@@ -2285,6 +2285,65 @@ mod tests {
         }
     }
 
+    /// The registry read through its own loader, from a committed csv rather than from a
+    /// `states` map built by hand.
+    ///
+    /// Every other widget test starts downstream of `load`, so all of them passed while
+    /// `load` read only `MODE_COLUMNS` and every batch-partitioned cell rendered `na` — a
+    /// table of em-dashes, present and plausible and wrong. This is the only case that
+    /// crosses the seam the defect was on.
+    #[test]
+    fn the_loader_reads_the_batch_partitioned_columns() {
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../testdata/fixtures/two-row-registry.csv");
+        let registry = Registry::load(&path);
+        let rows: Vec<&RegistryRow> = registry.for_dataset("tpch").collect();
+        assert_eq!(rows.len(), 2);
+        let q6 = rows.iter().find(|r| r.query == "q6").expect("q6");
+        assert_eq!(
+            q6.states.get("bp_tp1_single").map(String::as_str),
+            Some("enabled"),
+            "the loader did not read the plan columns"
+        );
+        assert_eq!(
+            q6.states.get("bp_cpu_tp1_single").map(String::as_str),
+            Some("enabled")
+        );
+        assert_eq!(
+            q6.states.get("bp_gpu_tp1_single").map(String::as_str),
+            Some("enabled")
+        );
+        let q1 = rows.iter().find(|r| r.query == "q1").expect("q1");
+        assert_eq!(
+            q1.states.get("bp_cpu_tp1_single").map(String::as_str),
+            Some("disabled"),
+            "a disabled cell must not read as `na` either"
+        );
+    }
+
+    /// And what that reaches: a cell built from a loaded row is not five em-dashes.
+    #[test]
+    fn a_loaded_row_renders_a_batch_partitioned_cell_with_content() {
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../testdata/fixtures/two-row-registry.csv");
+        let registry = Registry::load(&path);
+        let dataset = build_dataset(
+            "TPC-H",
+            "testdata/goldens/tpch.sf1",
+            "testdata/tpch-queries",
+            std::path::Path::new("testdata/goldens/tpch.sf1"),
+            &registry,
+            "tpch",
+        );
+        let q6 = dataset.rows.iter().find(|r| r.query == "q6").expect("q6");
+        assert_eq!(bp_cell_md(q6, BpGroup::Plan), "✓✓———");
+        assert_ne!(
+            bp_cell_md(q6, BpGroup::Cpu),
+            "—————",
+            "every mode read as `na`, which is what an unread column looks like"
+        );
+    }
+
     /// A batch-partitioned row: enabled at two plan modes, one cpu, none on a device, with
     /// a cost the last enabled cpu mode carries.
     fn bp_row() -> Row {
@@ -2321,6 +2380,16 @@ mod tests {
         assert!(html.contains("batch-partitioned"), "{html}");
         let md = render_markdown(&[bp_dataset()], "https://p/", false, &no_links(), None);
         assert!(md.contains("batch-partitioned"), "{md}");
+        // Four leading spaces is a code block, whatever produced them — and what produced
+        // them here was a `\` continuation after a `\n\n`, which carries the source's own
+        // indentation into the output. `contains` cannot see it: an indented header still
+        // contains its text. Asserted by the class rather than by the line, so a reflow of
+        // any string in this function is caught rather than this one instance.
+        assert!(
+            !md.lines().any(|line| line.starts_with("    ")),
+            "a markdown line is indented four spaces, which GitHub renders as a code block \
+             rather than as what it is:\n{md}"
+        );
         // Five glyphs per cell, one per mode, and the modes named where a hover cannot.
         assert!(md.contains(&BP_MODES.join(", ")), "{md}");
         for rendering in [&html, &md] {

@@ -1,0 +1,3 @@
+dataset,sf,query,plan,ftc_tp1,ftc_tp8,partitioned_cpu,full_table_gpu,partitioned_gpu,bp_tp1_single,bp_tp1_rowgroup,bp_tp4_single,bp_tp4_rowgroup,bp_tp4_sized,bp_cpu_tp1_single,bp_cpu_tp1_rowgroup,bp_cpu_tp4_single,bp_cpu_tp4_rowgroup,bp_cpu_tp4_sized,bp_gpu_tp1_single,bp_gpu_tp1_rowgroup,bp_gpu_tp4_single,bp_gpu_tp4_rowgroup,bp_gpu_tp4_sized,plan_status,features,tickets
+tpch,1,q6,enabled,na,enabled,na,na,na,enabled,enabled,na,na,na,enabled,na,na,na,na,enabled,na,na,na,na,ok,,
+tpch,1,q1,enabled,na,na,na,na,na,enabled,na,na,na,na,disabled,na,na,na,na,na,na,na,na,na,ok,,
