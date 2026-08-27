@@ -8,8 +8,11 @@ use peacockdb_core::batch_partitioned::plan::{BatchSizing, PlanKnobs};
 use peacockdb_core::config::MemoryLimit;
 
 /// The tier every mode is planned at. The plan goldens are written here, so a failure
-/// anywhere reads against a committed plan rather than a shape nothing records.
-pub const BUDGET: u64 = MemoryLimit::Mini.bytes() as u64;
+/// anywhere reads against a committed plan rather than a shape nothing records. The
+/// execution goldens carry its label in their names, so the budget and the filename cannot
+/// name different tiers.
+pub const TIER: MemoryLimit = MemoryLimit::Mini;
+pub const BUDGET: u64 = TIER.bytes() as u64;
 
 /// Below this a table is small enough to broadcast rather than shuffle.
 pub const SMALL_TABLE_BYTES: u64 = 5 * 1024 * 1024;

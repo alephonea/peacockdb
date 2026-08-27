@@ -4,7 +4,7 @@ Code and tests are authoritative; this page maps them.
 
 ## Test categories
 
-**Grand total: 1829 test cases — Rust 1395, C++ 65, Python 369.** The Python figure includes the 93 corpus queries, which only a manual dispatch runs. The header is the sum of the N column, and the rows below it count cases: a target's own `--list` total is larger, because its registry test is counted once in Registry ↔ CSV rather than again in each tier it belongs to. Comparing a row against a target total is how this page gets mistakenly reported as drifting.
+**Grand total: 1830 test cases — Rust 1396, C++ 65, Python 369.** The Python figure includes the 93 corpus queries, which only a manual dispatch runs. The header is the sum of the N column, and the rows below it count cases: a target's own `--list` total is larger, because its registry test is counted once in Registry ↔ CSV rather than again in each tier it belongs to. Comparing a row against a target total is how this page gets mistakenly reported as drifting.
 
 **Runs** — `cpp-cpu` = pipeline.yml's cpp-cpu job, both cuDF legs · `cost-report` = the
 cost-report job · `shad-gpu` = CI GPU job on the remote host, `--test-threads=1` ·
@@ -35,7 +35,7 @@ and `2gpu` rows also runs locally; large CPU batches go to verda.
 | GpuBatch surface (Rust) | what the batch reports, and that `consume` hands the handle over without releasing it. Needs no device: the release is null-guarded on the executor, so a CPU tier is its home | [test_gpu_batch](../peacockdb-core/tests/test_gpu_batch.rs) | cpp-cpu | 3 |
 | GPU all-at-once smoke (Rust) | whole-plan `peacock_execute` FFI; retires with [#110](tickets.md) | [scan_nation](../peacockdb-core/tests/test_gpu_executor_misc.rs#L18) | manual | 6 |
 | GPU per-node timing (Rust) | measures, asserts nothing: one `.benchmark.txt` per case, same list as the two GPU tiers ([`gpu_cases.inc`](../peacockdb-core/tests/common/gpu_cases.inc)), so a case returning to either tier arrives here too | [run_gpu_benchmark](../peacockdb-core/tests/peacock_gpu_benchmarks.rs) | manual | 128 |
-| Cost-model goldens (Rust) | `.cost.txt` derivation from `.cpu.txt` × `cost_model.conf` | [cost_goldens_match_and_total_is_byte_identical](../peacockdb-core/tests/test_cost_model.rs#L36) | cost-report | 2 |
+| Cost-model goldens (Rust) | `.cost.txt` derivation from `.cpu.txt` × `cost_model.conf` | [cost_goldens_match_and_total_is_byte_identical](../peacockdb-core/tests/test_cost_model.rs#L36) | cost-report | 3 |
 | Planner join capability (Rust) | every hash join type crossed with a residual filter, the co-partitioning and lane rules, and the null analysis both ways; writes its own parquet, so no dataset | [test_planner_join_capability](../peacockdb-core/tests/test_planner_join_capability.rs) | cost-report | 13 |
 | Null analysis rules (Rust) | every rule in the can-this-column-be-NULL pass, on hand-built nodes — a source declares a not-nullable column here, which no corpus fixture can | [a_scalar_function_can_be_null_even_over_operands_that_cannot](../peacockdb-core/tests/test_null_analysis.rs) | cost-report | 8 |
 | Planner join refusals (Rust) | every shape the planner refuses, from the SQL that provokes it; each asserts its ticket is in the message a user sees | [test_planner_join_refusals](../peacockdb-core/tests/test_planner_join_refusals.rs) | cost-report | 10 |
@@ -165,6 +165,9 @@ live in `testdata/`.
 | `bp-recipe-payloads.txt` | `test_batch_partitioned_plans` with `UPDATE_CANONICAL=1`<br>**and** `PEACOCK_REWRITE_RECIPE_BYTES=1` | sf1 parquet, and the fixed `/tmp` symlink `test_plan_bytes` uses — without it the payloads carry this machine's paths and so does the digest | <sub>tpch_and_tpcds_<br>recipe_payloads</sub> |
 | `….cpu.txt` | the CPU executor under `UPDATE_CANONICAL=1` — never the GPU | sf1 parquet | CPU exec tiers; the GPU tiers assert against it read-only |
 | `….cost.txt` | derived from the sibling `.cpu.txt` text × `cost_model.conf` | `.cpu.txt`, `cost_model.conf` | CPU exec tiers + `test_cost_model` (re-derives and compares) |
+| `<mode>-<tier>.cpu.txt` | the corpus cpu tier under `UPDATE_CANONICAL=1` (merge and prune) or `PCK_UPDATE_SECTIONS=1` (merge only) — never the GPU | sf1 parquet; one file per mode, a `== <query>` section each | the corpus cpu tier writes and verifies; the device tier verifies read-only |
+| `<mode>-<tier>.cost.txt` | derived from the sibling `.cpu.txt` **section**, × `cost_model.conf` | that `.cpu.txt`, `cost_model.conf` | the corpus cpu tier + `test_cost_model`, which re-derives every section independently |
+| `bp-<tier>.result.txt` | the last mode a query DECLARES, under either variable; a run without that mode leaves the section alone | sf1 parquet; one section per query, its `mode=` line naming the author | the corpus cpu tier; the device tier where `gpu_oracle` names a golden |
 | `….result.txt` | the CPU oracle under `UPDATE_CANONICAL=1`; deleted above 256 KB so the GPU test falls back to a live oracle | sf1 parquet | CPU exec tiers; GPU tiers in `golden_exact`/`golden_approx` mode |
 | `<q>.duckdb_cost.txt` | `gen_duckdb_cost.sh --gen`<br>(DuckDB 1.5.4, `threads=1`, pyarrow 19.0.1) | committed pass-1 profiles ∩ pass-2 dynamic-filter bounds ∩ parquet row-group stats | the cost-report widget (directional signal, not a test) |
 | `tpch.sf40/duckdb_<q>.csv`, `.count.csv` | `gen_duckdb_goldens.sh --sf 40`<br>on shad-gpu | sf40 parquet, query text from `tpch_query_sql.sh` | `peacock_tpch_tests` / `peacock_tpchv_tests` |

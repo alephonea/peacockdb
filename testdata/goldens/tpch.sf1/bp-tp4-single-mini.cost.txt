@@ -1,0 +1,132 @@
+== q1
+skipped: not enabled at this mode
+== q3
+storage_read_bytes=167753584 # GpuScanExec, GpuLoadParquet
+cuda_filter_bytes=147370816 # GpuFilterExec, GpuFilter
+cuda_hash_join_bytes=3833520 # GpuHashJoinExec, GpuJoin
+cuda_aggregate_bytes=1353408 # GpuAggregateExec, GpuAggregate, GpuAggregateBatches
+cuda_sort_bytes=375040 # GpuSortExec, GpuSortPreservingMergeExec, GpuSort, GpuAccumulateBatchesAndSort, GpuMergeSortedPartitions
+cuda_join_bytes=0 # GpuNestedLoopJoinExec, GpuCrossJoinExec, GpuNestedLoopJoin, GpuCrossJoin
+cuda_window_bytes=0 # GpuWindowExec
+cuda_limit_bytes=0 # GpuGlobalLimitExec, GpuLimit
+cuda_shuffle_bytes=300315400 # GpuRepartitionExec, GpuInterleaveExec, GpuCoalescePartitionsExec, GpuUnionExec, GpuEmitPartitions, GpuMergePartitions, GpuUnion, GpuInterleave
+cuda_passthrough_bytes=3419264 # GpuCoalesceBatchesExec, GpuProjectExec, GpuProject, GpuCoalesceAllBatches
+vram_to_ram_bytes=1664 # GpuUnload
+ram_to_vram_bytes=0 # (placeholder, no node mapping)
+cuda_decompress_bytes=0 # (placeholder, no node mapping)
+cuda_rle_decode_bytes=0 # (placeholder, no node mapping)
+peacockdb_cost=624422696
+== q6
+storage_read_bytes=51119616 # GpuScanExec, GpuLoadParquet
+cuda_filter_bytes=3654016 # GpuFilterExec, GpuFilter
+cuda_hash_join_bytes=0 # GpuHashJoinExec, GpuJoin
+cuda_aggregate_bytes=1008 # GpuAggregateExec, GpuAggregate, GpuAggregateBatches
+cuda_sort_bytes=0 # GpuSortExec, GpuSortPreservingMergeExec, GpuSort, GpuAccumulateBatchesAndSort, GpuMergeSortedPartitions
+cuda_join_bytes=0 # GpuNestedLoopJoinExec, GpuCrossJoinExec, GpuNestedLoopJoin, GpuCrossJoin
+cuda_window_bytes=0 # GpuWindowExec
+cuda_limit_bytes=0 # GpuGlobalLimitExec, GpuLimit
+cuda_shuffle_bytes=448 # GpuRepartitionExec, GpuInterleaveExec, GpuCoalescePartitionsExec, GpuUnionExec, GpuEmitPartitions, GpuMergePartitions, GpuUnion, GpuInterleave
+cuda_passthrough_bytes=112 # GpuCoalesceBatchesExec, GpuProjectExec, GpuProject, GpuCoalesceAllBatches
+vram_to_ram_bytes=112 # GpuUnload
+ram_to_vram_bytes=0 # (placeholder, no node mapping)
+cuda_decompress_bytes=0 # (placeholder, no node mapping)
+cuda_rle_decode_bytes=0 # (placeholder, no node mapping)
+peacockdb_cost=54775312
+== q10
+storage_read_bytes=210950481 # GpuScanExec, GpuLoadParquet
+cuda_filter_bytes=60069568 # GpuFilterExec, GpuFilter
+cuda_hash_join_bytes=15859847144 # GpuHashJoinExec, GpuJoin
+cuda_aggregate_bytes=62679984 # GpuAggregateExec, GpuAggregate, GpuAggregateBatches
+cuda_sort_bytes=29828064 # GpuSortExec, GpuSortPreservingMergeExec, GpuSort, GpuAccumulateBatchesAndSort, GpuMergeSortedPartitions
+cuda_join_bytes=0 # GpuNestedLoopJoinExec, GpuCrossJoinExec, GpuNestedLoopJoin, GpuCrossJoin
+cuda_window_bytes=0 # GpuWindowExec
+cuda_limit_bytes=0 # GpuGlobalLimitExec, GpuLimit
+cuda_shuffle_bytes=16808344033 # GpuRepartitionExec, GpuInterleaveExec, GpuCoalescePartitionsExec, GpuUnionExec, GpuEmitPartitions, GpuMergePartitions, GpuUnion, GpuInterleave
+cuda_passthrough_bytes=13309253784 # GpuCoalesceBatchesExec, GpuProjectExec, GpuProject, GpuCoalesceAllBatches
+vram_to_ram_bytes=11841784 # GpuUnload
+ram_to_vram_bytes=0 # (placeholder, no node mapping)
+cuda_decompress_bytes=0 # (placeholder, no node mapping)
+cuda_rle_decode_bytes=0 # (placeholder, no node mapping)
+peacockdb_cost=46352814842
+== q12
+storage_read_bytes=93156096 # GpuScanExec, GpuLoadParquet
+cuda_filter_bytes=5485024 # GpuFilterExec, GpuFilter
+cuda_hash_join_bytes=32340864 # GpuHashJoinExec, GpuJoin
+cuda_aggregate_bytes=172624 # GpuAggregateExec, GpuAggregate, GpuAggregateBatches
+cuda_sort_bytes=1064 # GpuSortExec, GpuSortPreservingMergeExec, GpuSort, GpuAccumulateBatchesAndSort, GpuMergeSortedPartitions
+cuda_join_bytes=0 # GpuNestedLoopJoinExec, GpuCrossJoinExec, GpuNestedLoopJoin, GpuCrossJoin
+cuda_window_bytes=0 # GpuWindowExec
+cuda_limit_bytes=0 # GpuGlobalLimitExec, GpuLimit
+cuda_shuffle_bytes=160265200 # GpuRepartitionExec, GpuInterleaveExec, GpuCoalescePartitionsExec, GpuUnionExec, GpuEmitPartitions, GpuMergePartitions, GpuUnion, GpuInterleave
+cuda_passthrough_bytes=52080968 # GpuCoalesceBatchesExec, GpuProjectExec, GpuProject, GpuCoalesceAllBatches
+vram_to_ram_bytes=376 # GpuUnload
+ram_to_vram_bytes=0 # (placeholder, no node mapping)
+cuda_decompress_bytes=0 # (placeholder, no node mapping)
+cuda_rle_decode_bytes=0 # (placeholder, no node mapping)
+peacockdb_cost=343502216
+== q13
+storage_read_bytes=121972320 # GpuScanExec, GpuLoadParquet
+cuda_filter_bytes=23749760 # GpuFilterExec, GpuFilter
+cuda_hash_join_bytes=24628044 # GpuHashJoinExec, GpuJoin
+cuda_aggregate_bytes=25211352 # GpuAggregateExec, GpuAggregate, GpuAggregateBatches
+cuda_sort_bytes=2304 # GpuSortExec, GpuSortPreservingMergeExec, GpuSort, GpuAccumulateBatchesAndSort, GpuMergeSortedPartitions
+cuda_join_bytes=0 # GpuNestedLoopJoinExec, GpuCrossJoinExec, GpuNestedLoopJoin, GpuCrossJoin
+cuda_window_bytes=0 # GpuWindowExec
+cuda_limit_bytes=0 # GpuGlobalLimitExec, GpuLimit
+cuda_shuffle_bytes=49912032 # GpuRepartitionExec, GpuInterleaveExec, GpuCoalescePartitionsExec, GpuUnionExec, GpuEmitPartitions, GpuMergePartitions, GpuUnion, GpuInterleave
+cuda_passthrough_bytes=2409104 # GpuCoalesceBatchesExec, GpuProjectExec, GpuProject, GpuCoalesceAllBatches
+vram_to_ram_bytes=864 # GpuUnload
+ram_to_vram_bytes=0 # (placeholder, no node mapping)
+cuda_decompress_bytes=0 # (placeholder, no node mapping)
+cuda_rle_decode_bytes=0 # (placeholder, no node mapping)
+peacockdb_cost=247885780
+== q14
+storage_read_bytes=19734640 # GpuScanExec, GpuLoadParquet
+cuda_filter_bytes=3040000 # GpuFilterExec, GpuFilter
+cuda_hash_join_bytes=53090928 # GpuHashJoinExec, GpuJoin
+cuda_aggregate_bytes=3808 # GpuAggregateExec, GpuAggregate, GpuAggregateBatches
+cuda_sort_bytes=0 # GpuSortExec, GpuSortPreservingMergeExec, GpuSort, GpuAccumulateBatchesAndSort, GpuMergeSortedPartitions
+cuda_join_bytes=0 # GpuNestedLoopJoinExec, GpuCrossJoinExec, GpuNestedLoopJoin, GpuCrossJoin
+cuda_window_bytes=0 # GpuWindowExec
+cuda_limit_bytes=0 # GpuGlobalLimitExec, GpuLimit
+cuda_shuffle_bytes=36284680 # GpuRepartitionExec, GpuInterleaveExec, GpuCoalescePartitionsExec, GpuUnionExec, GpuEmitPartitions, GpuMergePartitions, GpuUnion, GpuInterleave
+cuda_passthrough_bytes=73155472 # GpuCoalesceBatchesExec, GpuProjectExec, GpuProject, GpuCoalesceAllBatches
+vram_to_ram_bytes=160 # GpuUnload
+ram_to_vram_bytes=0 # (placeholder, no node mapping)
+cuda_decompress_bytes=0 # (placeholder, no node mapping)
+cuda_rle_decode_bytes=0 # (placeholder, no node mapping)
+peacockdb_cost=185309688
+== q15
+storage_read_bytes=33582920 # GpuScanExec, GpuLoadParquet
+cuda_filter_bytes=18078528 # GpuFilterExec, GpuFilter
+cuda_hash_join_bytes=5361552 # GpuHashJoinExec, GpuJoin
+cuda_aggregate_bytes=3416880 # GpuAggregateExec, GpuAggregate, GpuAggregateBatches
+cuda_sort_bytes=4639968 # GpuSortExec, GpuSortPreservingMergeExec, GpuSort, GpuAccumulateBatchesAndSort, GpuMergeSortedPartitions
+cuda_join_bytes=0 # GpuNestedLoopJoinExec, GpuCrossJoinExec, GpuNestedLoopJoin, GpuCrossJoin
+cuda_window_bytes=0 # GpuWindowExec
+cuda_limit_bytes=0 # GpuGlobalLimitExec, GpuLimit
+cuda_shuffle_bytes=19902632 # GpuRepartitionExec, GpuInterleaveExec, GpuCoalescePartitionsExec, GpuUnionExec, GpuEmitPartitions, GpuMergePartitions, GpuUnion, GpuInterleave
+cuda_passthrough_bytes=14748864 # GpuCoalesceBatchesExec, GpuProjectExec, GpuProject, GpuCoalesceAllBatches
+vram_to_ram_bytes=2319984 # GpuUnload
+ram_to_vram_bytes=0 # (placeholder, no node mapping)
+cuda_decompress_bytes=0 # (placeholder, no node mapping)
+cuda_rle_decode_bytes=0 # (placeholder, no node mapping)
+peacockdb_cost=102051328
+== q17
+skipped: not enabled at this mode
+== q19
+storage_read_bytes=637749152 # GpuScanExec, GpuLoadParquet
+cuda_filter_bytes=10328352 # GpuFilterExec, GpuFilter
+cuda_hash_join_bytes=6944 # GpuHashJoinExec, GpuJoin
+cuda_aggregate_bytes=2352 # GpuAggregateExec, GpuAggregate, GpuAggregateBatches
+cuda_sort_bytes=0 # GpuSortExec, GpuSortPreservingMergeExec, GpuSort, GpuAccumulateBatchesAndSort, GpuMergeSortedPartitions
+cuda_join_bytes=0 # GpuNestedLoopJoinExec, GpuCrossJoinExec, GpuNestedLoopJoin, GpuCrossJoin
+cuda_window_bytes=0 # GpuWindowExec
+cuda_limit_bytes=0 # GpuGlobalLimitExec, GpuLimit
+cuda_shuffle_bytes=30008804 # GpuRepartitionExec, GpuInterleaveExec, GpuCoalescePartitionsExec, GpuUnionExec, GpuEmitPartitions, GpuMergePartitions, GpuUnion, GpuInterleave
+cuda_passthrough_bytes=12483888 # GpuCoalesceBatchesExec, GpuProjectExec, GpuProject, GpuCoalesceAllBatches
+vram_to_ram_bytes=112 # GpuUnload
+ram_to_vram_bytes=0 # (placeholder, no node mapping)
+cuda_decompress_bytes=0 # (placeholder, no node mapping)
+cuda_rle_decode_bytes=0 # (placeholder, no node mapping)
+peacockdb_cost=690579604

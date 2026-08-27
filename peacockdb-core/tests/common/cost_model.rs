@@ -95,4 +95,24 @@ impl CostModel {
         out.push_str(&format!("peacockdb_cost={}", total.round() as u64));
         out
     }
+
+    /// The same derivation over a `.cpu.txt` that holds every query in `== <query>`
+    /// sections: one cost block per section, in the order the source file holds them. A
+    /// section carrying a marker rather than a run is copied through — a query skipped at
+    /// this mode has no bytes to price, and dropping its section would make the two files
+    /// disagree about which queries exist.
+    pub fn cost_text_from_sections(&self, cpu_text: &str, ctx: &str) -> String {
+        let mut out = String::new();
+        for (query, body) in super::golden_text::ordered_sections(cpu_text) {
+            out.push_str(&format!("== {query}\n"));
+            match body.starts_with(super::corpus_golden::SKIPPED) {
+                true => out.push_str(&body),
+                false => {
+                    out.push_str(&self.cost_text_from_cpu(&body, &format!("{ctx} {query}")));
+                    out.push('\n');
+                }
+            }
+        }
+        out
+    }
 }

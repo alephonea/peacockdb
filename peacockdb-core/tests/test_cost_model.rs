@@ -22,14 +22,28 @@ fn sum_output_bytes(cpu_text: &str) -> u64 {
     cpu_text
         .lines()
         .filter_map(|l| l.find(KEY).map(|p| &l[p + KEY.len()..]))
-        .map(|tail| tail.chars().take_while(|c| c.is_ascii_digit()).collect::<String>().parse::<u64>().unwrap())
+        .map(|tail| {
+            tail.chars()
+                .take_while(|c| c.is_ascii_digit())
+                .collect::<String>()
+                .parse::<u64>()
+                .unwrap()
+        })
         .sum()
 }
 
+/// Σ of every `peacockdb_cost=` in the text — one in a legacy cost golden, one per section
+/// in a corpus one, and the sum is what the `.cpu.txt` beside it has to account for either
+/// way.
 fn cost_total(cost_text: &str) -> u64 {
     const KEY: &str = "peacockdb_cost=";
-    let line = cost_text.lines().find(|l| l.starts_with(KEY)).expect("cost text missing total footer");
-    line[KEY.len()..].parse().unwrap()
+    let totals: Vec<u64> = cost_text
+        .lines()
+        .filter_map(|line| line.strip_prefix(KEY))
+        .map(|total| total.parse().expect("a cost total"))
+        .collect();
+    assert!(!totals.is_empty(), "cost text missing total footer");
+    totals.iter().sum()
 }
 
 #[test]
@@ -44,22 +58,39 @@ fn cost_goldens_match_and_total_is_byte_identical() {
     ];
     let mut cpu_files: Vec<PathBuf> = dirs
         .iter()
-        .flat_map(|d| std::fs::read_dir(d).unwrap_or_else(|e| panic!("read_dir {}: {e}", d.display())))
+        .flat_map(|d| {
+            std::fs::read_dir(d).unwrap_or_else(|e| panic!("read_dir {}: {e}", d.display()))
+        })
         .map(|e| e.unwrap().path())
         .filter(|p| p.to_str().map(|s| s.ends_with(".cpu.txt")).unwrap_or(false))
         .filter(|p| match &filter {
-            Some(f) => p.file_name().and_then(|n| n.to_str()).map(|n| n.contains(f.as_str())).unwrap_or(false),
+            Some(f) => p
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n.contains(f.as_str()))
+                .unwrap_or(false),
             None => true,
         })
         .collect();
     cpu_files.sort();
-    assert!(!cpu_files.is_empty(), "no .cpu.txt goldens matched (filter {filter:?})");
+    assert!(
+        !cpu_files.is_empty(),
+        "no .cpu.txt goldens matched (filter {filter:?})"
+    );
 
     let mut mismatches: Vec<String> = Vec::new();
     for cpu_path in &cpu_files {
         let name = cpu_path.file_name().and_then(|s| s.to_str()).unwrap();
         let cpu_text = std::fs::read_to_string(cpu_path).unwrap();
-        let actual = model.cost_text_from_cpu(&cpu_text, name);
+        // A corpus golden holds every query in sections and its cost golden mirrors them,
+        // so the derivation is per section there and per file for the legacy one-query
+        // form. Decided by what the file holds rather than by its name: the two forms are
+        // distinguishable, and a name convention is a second thing to keep true.
+        let sectioned = cpu_text.starts_with("== ");
+        let actual = match sectioned {
+            true => model.cost_text_from_sections(&cpu_text, name),
+            false => model.cost_text_from_cpu(&cpu_text, name),
+        };
 
         // Invariant: total == Σ output_bytes in the .cpu.txt (multipliers all 1.0).
         let total = cost_total(&actual);
@@ -76,12 +107,21 @@ fn cost_goldens_match_and_total_is_byte_identical() {
             continue;
         }
         match std::fs::read_to_string(&cost_path) {
-            Ok(golden) if golden.trim_end() == actual => {}
-            Ok(_) => mismatches.push(format!("{name}: .cost.txt does not match (run with UPDATE_CANONICAL=1)")),
-            Err(_) => mismatches.push(format!("{}: missing (run with UPDATE_CANONICAL=1)", cost_path.display())),
+            Ok(golden) if golden.trim_end() == actual.trim_end() => {}
+            Ok(_) => mismatches.push(format!(
+                "{name}: .cost.txt does not match (run with UPDATE_CANONICAL=1)"
+            )),
+            Err(_) => mismatches.push(format!(
+                "{}: missing (run with UPDATE_CANONICAL=1)",
+                cost_path.display()
+            )),
         }
     }
-    assert!(mismatches.is_empty(), "cost golden mismatches:\n{}", mismatches.join("\n"));
+    assert!(
+        mismatches.is_empty(),
+        "cost golden mismatches:\n{}",
+        mismatches.join("\n")
+    );
 }
 
 #[test]
@@ -135,7 +175,10 @@ fn every_node_kind_is_in_exactly_one_cost_category() {
         .filter(|(_, n)| *n > 1)
         .map(|(name, _)| *name)
         .collect();
-    assert!(twice.is_empty(), "node kinds in more than one category: {twice:?}");
+    assert!(
+        twice.is_empty(),
+        "node kinds in more than one category: {twice:?}"
+    );
 
     // And back: a name here that no kind carries is a category counting bytes nothing
     // can produce, which reads as coverage and is not.

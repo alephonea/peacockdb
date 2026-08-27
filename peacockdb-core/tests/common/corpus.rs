@@ -10,12 +10,15 @@ use datafusion::execution::context::SessionContext;
 use peacockdb_core::batch_partitioned::cpu_backend::backend::CpuBackend;
 use peacockdb_core::batch_partitioned::driver::{RunReport, batch_partitioned_driver};
 use peacockdb_core::batch_partitioned::plan::plan_batch_partitioned;
+use peacockdb_core::batch_partitioned::plan_text::render_run;
 use peacockdb_core::batch_partitioned::{GpuNode, validate};
 
-use super::bp_mode::{BpMode, mode_named};
+use super::bp_mode::{BP_MODES, BpMode, mode_named};
+use super::cost_model::CostModel;
 use super::exec_mode::{CpuOracle, cpu_oracle_mode};
 use super::{
-    assert_results_match, batches_to_sorted_str, data_dir_for, queries_dir_for, total_rows,
+    RESULT_GOLDEN_MAX_BYTES, assert_results_match, batches_to_sorted_str, corpus_golden,
+    data_dir_for, queries_dir_for, registry, total_rows,
 };
 
 /// A query planned and run at one mode, with everything a caller needs to check it.
@@ -158,15 +161,22 @@ fn without_its_limit(sql: &str, what: &str) -> (String, u64, Option<u64>) {
             &body[at..]
         )
     };
-    if !words.next().is_some_and(|word| word.eq_ignore_ascii_case("limit")) {
+    if !words
+        .next()
+        .is_some_and(|word| word.eq_ignore_ascii_case("limit"))
+    {
         bad();
     }
-    let fetch: u64 = words.next().and_then(|n| n.parse().ok()).unwrap_or_else(|| bad());
+    let fetch: u64 = words
+        .next()
+        .and_then(|n| n.parse().ok())
+        .unwrap_or_else(|| bad());
     let skip = match words.next() {
         None => 0,
-        Some(word) if word.eq_ignore_ascii_case("offset") => {
-            words.next().and_then(|n| n.parse().ok()).unwrap_or_else(|| bad())
-        }
+        Some(word) if word.eq_ignore_ascii_case("offset") => words
+            .next()
+            .and_then(|n| n.parse().ok())
+            .unwrap_or_else(|| bad()),
         Some(_) => bad(),
     };
     if words.next().is_some() {
@@ -199,10 +209,92 @@ fn query_text(dataset: &str, query: &str) -> String {
         .unwrap_or_else(|_| panic!("query file not found: {}", path.display()))
 }
 
-/// The whole of a cpu corpus case as it stands before the goldens arrive: plan, run,
-/// answer. `mode` is the macro's ident spelling, decoded here rather than at the call site.
+/// The whole of a cpu corpus case: plan, run, answer, and the three goldens. `mode` is the
+/// macro's ident spelling, decoded here rather than at the call site.
+///
+/// The oracle comparison comes first and runs whether or not this is a regenerating run —
+/// a wrong answer must never reach a golden, and freezing one is the only way this tier
+/// could record something no later run would question.
 pub async fn cpu_case(dataset: &str, sf: &str, query: &str, mode: &str, cpu_oracle: &str) {
     let mode = mode_named(mode);
+    let what = format!("{dataset}/{query} at {}", mode.name);
     let run = run_cpu(dataset, sf, query, mode).await;
     assert_answer(dataset, sf, query, mode, cpu_oracle, &run.batches).await;
+
+    let column = cpu_column(mode);
+    let cpu_text = render_run(run.tree.as_ref(), &run.report);
+    corpus_golden::assert_or_merge(
+        &corpus_golden::cpu_golden(dataset, sf, mode.name),
+        dataset,
+        sf,
+        &[&column],
+        query,
+        &cpu_text,
+    );
+    // Derived from the text just written rather than from the report it came from, so the
+    // cost is a function of the golden exactly as `test_cost_model` re-derives it.
+    let cost = CostModel::load().cost_text_from_cpu(&cpu_text, &what);
+    corpus_golden::assert_or_merge(
+        &corpus_golden::cost_golden(dataset, sf, mode.name),
+        dataset,
+        sf,
+        &[&column],
+        query,
+        &cost,
+    );
+    if authoritative_mode(dataset, sf, query).is_some_and(|author| author.name == mode.name) {
+        assert_result_section(dataset, sf, query, mode, &run.batches);
+    }
+}
+
+/// The `bp_cpu_` column this mode's cells live in.
+fn cpu_column(mode: &BpMode) -> String {
+    format!("bp_cpu_{}", mode.ident().trim_start_matches("bp_"))
+}
+
+/// Which mode authors `.result.txt`: the last mode the query DECLARES, in the fixed
+/// sequence of five. Its authority is a property of the declaration and not of what
+/// happened to run, which is what keeps the one golden with no mode in its key well defined
+/// under a filtered regeneration — a run without the authority leaves the section alone.
+pub fn authoritative_mode(dataset: &str, sf: &str, query: &str) -> Option<&'static BpMode> {
+    let rows = registry::load_csv();
+    let row = rows
+        .iter()
+        .find(|row| row.dataset == dataset && row.sf == sf && row.query == query)?;
+    BP_MODES.iter().rev().find(|mode| {
+        row.states
+            .get(&cpu_column(mode))
+            .is_some_and(|state| state == "enabled" || state == "skip")
+    })
+}
+
+/// The one entry this query has, and the mode that wrote it. A result at or above the cap
+/// keeps its section and says why rather than being deleted: absent and not-applicable read
+/// alike, and only one of them is a regression.
+fn assert_result_section(
+    dataset: &str,
+    sf: &str,
+    query: &str,
+    mode: &BpMode,
+    batches: &[RecordBatch],
+) {
+    let rendered = batches_to_sorted_str(batches);
+    let body = match rendered.len() >= RESULT_GOLDEN_MAX_BYTES {
+        true => format!(
+            "{}the result is {} bytes, at or above the {RESULT_GOLDEN_MAX_BYTES}-byte cap\n",
+            corpus_golden::SKIPPED,
+            rendered.len()
+        ),
+        false => format!("mode={}\n{rendered}\n", mode.name),
+    };
+    let columns: Vec<String> = BP_MODES.iter().map(cpu_column).collect();
+    let columns: Vec<&str> = columns.iter().map(String::as_str).collect();
+    corpus_golden::assert_or_merge(
+        &corpus_golden::result_golden(dataset, sf),
+        dataset,
+        sf,
+        &columns,
+        query,
+        &body,
+    );
 }
