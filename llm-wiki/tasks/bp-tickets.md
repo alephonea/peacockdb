@@ -29,22 +29,27 @@ queries at all five modes — tpch q3 q10 q12 q14 q15 q19, tpcds q3 q15 q37 q42 
 q96. Those rows carry `#181` on their gpu columns.
 
 <a id="t182"></a>
-### #182 — after logical pricing, a peak cannot depend on batch shape
+### #182 — two accounting properties are out of reach, and both are recoverable
 
-Pricing a batch from the plan's schema made the two engines agree and took two properties with
-it, both of which were asserted and are now disabled at their sites with their numbers.
+Pricing a batch from the plan's schema disabled two cases. Neither property stopped being true;
+each fails for a reason whose fix is already identified.
 
-`a_query_has_a_smallest_budget_that_fits_and_trips_a_byte_below_it`: 10058 fits and so does
-10057, so the budget is no longer a boundary. And
-`an_injected_shape_moves_what_the_query_holds` loses its premise rather than its number — a
-rebatcher cannot move a peak built from logical bytes, since those are a function of rows and
-var-length content and neither depends on how the rows were batched.
+The budget case is [#179](../tickets.md#t179), not a lost boundary: `boundary()` searches upward
+from the observed peak, so its byte-below arm fails only when `fits(peak)`, and "10057 also fits"
+says the peak is 10,057 and the trip is at or below it. Logical pricing raised the peak (8,222 to
+10,057, a bitmap arrow never allocated) without raising the modelled transient as much, so the
+boundary fell under the floor the search starts from. A downward search settles it.
 
-The second is the question worth answering: T17a's rebatcher evidence rested on a peak that moved,
-and after this it provably cannot. Either the peak should be priced on what is resident rather
-than on what is declared, or the accounting is right and the rebatcher was never going to move it
-and T17a measured an artefact of arrow's allocator. Deferred deliberately — T18's bar is results
-and node stats, not memory.
+`an_injected_shape_moves_what_the_query_holds` loses its query, not its premise. A rebatcher
+cannot move a *total* built from logical bytes, but a peak is what is resident at once, and
+`GpuCoalesceAllBatches` holds every batch of its lane and then emits one: 2x the lane against 1x
+the largest batch, both live at the emit. A rows fact, which logical bytes carry.
+`nested-loop-join` cannot show it — one batch per lane there, so the rebatcher merges one into one,
+and its old 318-byte move was arrow reallocating a single batch. `tpch/nested-limits` at
+`bp-tp4-rowgroup` can: two batches in one lane, peak at that loader, 3 ms a run.
+
+T17a's drain half is untouched — a drained lane changes rows per lane, so q16's 104.7 MB against
+77.9 MB survives unchanged.
 
 <a id="t183"></a>
 ### #183 — the device exports Utf8 where the sink declares Utf8View
