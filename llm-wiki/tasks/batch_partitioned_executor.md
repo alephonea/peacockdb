@@ -2769,6 +2769,26 @@ absent: a `golden_exact` where the cap or the subset oracle applies is asserted 
 test that fails on correct behaviour, and a `live_cpu` where neither applies is asserted red too,
 since it spends a device-side live run on a comparison a committed file makes faster and harder.
 
+**Every result comparison decides before it materializes, and today none of them do.** Three
+places take the same wrong order and the fix is one idea applied three times. Containment collects
+the unlimited answer and renders every row; the cap renders the whole result and then measures it;
+and `assert_results_match`'s exact arm is `assert_eq!(render(actual), render(expected))`, whose
+arguments Rust evaluates eagerly — so both sides are materialized in full to answer a yes-or-no
+question, half a gigabyte of `String` for `anti-join`, and the rendering exists for the failure
+message rather than for the comparison.
+
+The exact arm becomes a digest: render a row, hash it, drop the string, sort the hashes, hash the
+sequence. Memory goes from the answer to eight bytes a row, the verdict is unchanged, and nothing
+is rendered on the green path at all. On a mismatch it re-streams and prints a bounded excerpt
+around the first differing row — which is not a courtesy but the same lesson `section_differences`
+carries, that a dump too large to read is a dump nobody reads, and a 240 MB `assert_eq!` diff is
+that failure three orders of magnitude over. The tolerance arm keeps its map, because a digest
+cannot express "within 1e-12"; it stops formatting the columns it does not key on.
+
+This is legacy's comparator and the legacy tiers get it too, which is the point rather than a side
+effect — `anti-join` at `full_table-tp1-standard` renders 240 MB twice on every green run today.
+No verdict changes, so no green test moves.
+
 **A `live_cpu` comparison runs once per mode, beside the device run it checks.** It cannot reuse
 another mode's answer: where the SQL does not fix the row set, a cpu run at `bp-tp4-sized` is no
 more an authority on what the device returns at `bp-tp1-single` than the frozen section was, which
