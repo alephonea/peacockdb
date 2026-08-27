@@ -233,7 +233,7 @@ fn a_row_returned_twice_is_not_contained_in_an_answer_holding_it_once() {
     let twice = rows(&["a", "a"]);
     let once = rows(&["a", "b"]);
     let mut owed = owed_rows(&twice);
-    take_rows(&mut owed, &once);
+    take_rows(&mut owed, &once, &mut Default::default());
     assert_eq!(
         owed.values().sum::<usize>(),
         1,
@@ -241,10 +241,26 @@ fn a_row_returned_twice_is_not_contained_in_an_answer_holding_it_once() {
     );
 
     let mut owed = owed_rows(&rows(&["a"]));
-    take_rows(&mut owed, &once);
+    take_rows(&mut owed, &once, &mut Default::default());
     assert!(
         owed.is_empty(),
         "one copy is contained in an answer holding one"
+    );
+}
+
+/// Two answers of different widths, which is what the case above cannot show: the rows are
+/// rendered per side, so a padded rendering makes the same logical row two different
+/// strings and nothing is ever struck off. Both fixtures being one character wide made the
+/// padding cancel.
+#[test]
+fn containment_holds_when_the_two_sides_render_at_different_widths() {
+    let returned = rows(&["a"]);
+    let unlimited = rows(&["a", "bbbbbb"]);
+    let mut owed = owed_rows(&returned);
+    take_rows(&mut owed, &unlimited, &mut Default::default());
+    assert!(
+        owed.is_empty(),
+        "`a` was not struck off an answer that holds it — left owing {owed:?}"
     );
 }
 

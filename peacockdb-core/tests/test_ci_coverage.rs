@@ -62,6 +62,7 @@ const INTENTIONALLY_NOT_IN_CI: &[(&str, Exemption)] = &[
     // are CPU-emulated) and it owns the cost-registry check for the partitioned_cpu
     // column — leaving it out of CI would let a CSV row claim coverage no test
     // provides.
+    ("test_gpu_bp_corpus", Exemption::GpuJob),
     ("test_ci_coverage", Exemption::NotRun("this test")),
 ];
 

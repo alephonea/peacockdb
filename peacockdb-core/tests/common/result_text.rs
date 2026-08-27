@@ -41,6 +41,23 @@ fn render_row(columns: &[ArrayFormatter<'_>], row: usize, out: &mut String) {
     }
 }
 
+/// Every row as its cells, unpadded — one string per row and nothing else, so two answers
+/// of different widths render the same logical row the same way. The padded form cannot do
+/// this: its widths are a function of the whole answer, and it carries a header and borders
+/// that are not rows at all.
+pub fn rendered_rows(batches: &[RecordBatch]) -> Vec<String> {
+    let mut rows = Vec::new();
+    let mut rendered = String::new();
+    for batch in batches {
+        let columns = formatters(batch);
+        for row in 0..batch.num_rows() {
+            render_row(&columns, row, &mut rendered);
+            rows.push(rendered.trim_end().to_string());
+        }
+    }
+    rows
+}
+
 /// Every row's digest, paired with its position, sorted by digest — the same
 /// order-independence the golden's sorted rendering has, at eight bytes a row.
 fn row_digests(batches: &[RecordBatch]) -> Vec<(u64, usize)> {
@@ -75,18 +92,36 @@ fn schema_digest(batches: &[RecordBatch]) -> u64 {
     hasher.finish()
 }
 
-/// Whether the two answers are the same multiset of rows under the same schema.
-pub fn results_agree(expected: &[RecordBatch], actual: &[RecordBatch]) -> bool {
-    schema_digest(expected) == schema_digest(actual)
-        && digests_only(expected) == digests_only(actual)
+/// An answer as what a comparison needs of it: its schema, and its rows' digests sorted.
+/// Eight bytes a row, which is what makes it safe to hold — an answer held whole is the
+/// thing this module exists to stop materializing.
+#[derive(PartialEq, Eq, Clone)]
+pub struct ResultDigest {
+    schema: u64,
+    rows: Vec<u64>,
 }
 
-fn digests_only(batches: &[RecordBatch]) -> Vec<u64> {
-    row_digests(batches)
-        .into_iter()
-        .map(|(digest, _)| digest)
-        .collect()
+impl ResultDigest {
+    pub fn rows(&self) -> usize {
+        self.rows.len()
+    }
 }
+
+pub fn digest_of(batches: &[RecordBatch]) -> ResultDigest {
+    ResultDigest {
+        schema: schema_digest(batches),
+        rows: row_digests(batches)
+            .into_iter()
+            .map(|(digest, _)| digest)
+            .collect(),
+    }
+}
+
+/// Whether the two answers are the same multiset of rows under the same schema.
+pub fn results_agree(expected: &[RecordBatch], actual: &[RecordBatch]) -> bool {
+    digest_of(expected) == digest_of(actual)
+}
+
 
 /// What a failure prints: the first row the two disagree on, with a few either side, from a
 /// second pass over the rows the digests named. Bounded on purpose.

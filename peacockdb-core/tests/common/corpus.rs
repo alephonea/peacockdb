@@ -6,7 +6,7 @@
 //! is read off one line per query rather than two lists that can disagree.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Mutex, OnceLock};
 
 use datafusion::arrow::array::RecordBatch;
 use datafusion::execution::context::SessionContext;
@@ -16,6 +16,7 @@ use peacockdb_core::batch_partitioned::plan::plan_batch_partitioned;
 use peacockdb_core::batch_partitioned::plan_text::render_run;
 use peacockdb_core::batch_partitioned::{GpuNode, validate};
 
+use super::result_text::ResultDigest;
 use super::bp_mode::{BP_MODES, BpMode, mode_named};
 use super::cost_model::CostModel;
 use super::exec_mode::{CpuOracle, cpu_oracle_mode};
@@ -98,31 +99,55 @@ pub async fn assert_answer(
         CpuOracle::DataFusionSubset => {
             assert_subset_of_unlimited(dataset, sf, query, batches, &what).await
         }
+        CpuOracle::DataFusionExact => {
+            let expected = oracle_digest(dataset, sf, query, &what).await;
+            let actual = result_text::digest_of(batches);
+            if expected != actual {
+                // The rows are fetched only to say HOW they differ, which is the one path
+                // with any use for them.
+                let rows = oracle_rows(dataset, sf, query, &what).await;
+                panic!(
+                    "result for {what} differs from oracle ({} rows against {})\n{}",
+                    actual.rows(),
+                    expected.rows(),
+                    result_text::first_difference(&rows, batches)
+                );
+            }
+        }
+        // The tolerance arm indexes the rows and cannot work from a digest, so its oracle is
+        // run per mode. No query in the corpus declares it today.
         oracle => {
-            let expected = oracle_answer(dataset, sf, query, &what).await;
+            let expected = oracle_rows(dataset, sf, query, &what).await;
             assert_results_match(&expected, batches, oracle.rel_tol(), &what);
         }
     }
 }
 
-/// The oracle's answer, once per query rather than once per (query, mode). Five modes are
-/// held to one answer, so running it five times is four runs of the most expensive thing
-/// this tier does. Held for the process, which is the trade: the answers of a tier's worth
-/// of queries stay resident so that none of them is computed twice.
-async fn oracle_answer(dataset: &str, sf: &str, query: &str, what: &str) -> Arc<Vec<RecordBatch>> {
-    static ANSWERS: OnceLock<Mutex<HashMap<String, Arc<Vec<RecordBatch>>>>> = OnceLock::new();
-    let answers = ANSWERS.get_or_init(|| Mutex::new(HashMap::new()));
+/// The oracle's answer as its digest, once per query rather than once per (query, mode).
+/// Five modes are held to one answer, so running it five times is four runs of the most
+/// expensive thing this tier does.
+///
+/// The DIGEST is what is held, not the answer: eight bytes a row, so a hundred queries cost
+/// what one large one would have. Holding the rows would put `anti-join`'s 240 MB back in
+/// memory, which is what this comparator was rewritten to stop doing.
+async fn oracle_digest(dataset: &str, sf: &str, query: &str, what: &str) -> ResultDigest {
+    static DIGESTS: OnceLock<Mutex<HashMap<String, ResultDigest>>> = OnceLock::new();
+    let digests = DIGESTS.get_or_init(|| Mutex::new(HashMap::new()));
     let key = format!("{dataset}/{sf}/{query}");
-    if let Some(held) = answers.lock().expect("the oracle cache").get(&key) {
+    if let Some(held) = digests.lock().expect("the oracle cache").get(&key) {
         return held.clone();
     }
-    let ctx = session_for(dataset, sf, 1).await;
-    let answer = Arc::new(collect(&ctx, &query_text(dataset, query), what).await);
-    answers
+    let digest = result_text::digest_of(&oracle_rows(dataset, sf, query, what).await);
+    digests
         .lock()
         .expect("the oracle cache")
-        .insert(key, answer.clone());
-    answer
+        .insert(key, digest.clone());
+    digest
+}
+
+async fn oracle_rows(dataset: &str, sf: &str, query: &str, what: &str) -> Vec<RecordBatch> {
+    let ctx = session_for(dataset, sf, 1).await;
+    collect(&ctx, &query_text(dataset, query), what).await
 }
 
 /// What an unordered `LIMIT` does determine, asked of the same session: how many rows come
@@ -172,6 +197,7 @@ async fn assert_contained_in(
     use futures::StreamExt;
 
     let mut owed = owed_rows(batches);
+    let mut held_at_all: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut stream = ctx
         .sql(body)
         .await
@@ -184,14 +210,25 @@ async fn assert_contained_in(
             break;
         };
         let batch = batch.unwrap_or_else(|e| panic!("{what}: the oracle stream failed: {e}"));
-        take_rows(&mut owed, std::slice::from_ref(&batch));
+        take_rows(&mut owed, std::slice::from_ref(&batch), &mut held_at_all);
     }
+    // The two failures are different bugs and the second is the likelier: a row the
+    // unlimited answer does not hold at all is a wrong row, where one held too few times is
+    // a duplicated one.
+    let absent: Vec<&String> = owed
+        .keys()
+        .filter(|row| !held_at_all.contains(*row))
+        .collect();
     assert!(
         owed.is_empty(),
-        "{what}: {} row(s) came back more often than the unlimited answer holds them, the \
-         first being:\n{}",
+        "{what}: {} row(s) the unlimited answer does not account for. {} of them are not in \
+         it at all, the first being:\n{}",
         owed.values().sum::<usize>(),
-        owed.keys().next().expect("a row")
+        absent.len(),
+        absent
+            .first()
+            .copied()
+            .unwrap_or_else(|| owed.keys().next().expect("a row"))
     );
 }
 
@@ -204,10 +241,16 @@ pub fn owed_rows(batches: &[RecordBatch]) -> HashMap<String, usize> {
     owed
 }
 
-/// Strike off what this slice of the unlimited answer accounts for.
-pub fn take_rows(owed: &mut HashMap<String, usize>, batches: &[RecordBatch]) {
+/// Strike off what this slice of the unlimited answer accounts for, and record which owed
+/// rows it holds at all — the two failures a leftover can mean are told apart by that.
+pub fn take_rows(
+    owed: &mut HashMap<String, usize>,
+    batches: &[RecordBatch],
+    held_at_all: &mut std::collections::HashSet<String>,
+) {
     for row in rows_of(batches) {
         if let Some(count) = owed.get_mut(&row) {
+            held_at_all.insert(row.clone());
             *count -= 1;
             if *count == 0 {
                 owed.remove(&row);
@@ -228,13 +271,12 @@ async fn count_of(ctx: &SessionContext, body: &str, what: &str) -> u64 {
     column.value(0) as u64
 }
 
-/// One rendered line per row, which is what makes a multiset comparison cheap and its
-/// failure legible. The same rendering the result goldens use, minus its header.
+/// The rows a comparison sees: unpadded, one string per row. NOT the golden's rendering —
+/// padding is a function of the whole answer, so the ten rows a limit returned and the
+/// millions the oracle streams past them would render the same row differently and nothing
+/// would ever be struck off. Its header and borders are not rows either.
 fn rows_of(batches: &[RecordBatch]) -> Vec<String> {
-    batches_to_sorted_str(batches)
-        .lines()
-        .map(str::to_string)
-        .collect()
+    result_text::rendered_rows(batches)
 }
 
 /// The query without its trailing `LIMIT n [OFFSET m]`, and the interval it carried. The
@@ -366,8 +408,8 @@ pub fn authoritative_mode(dataset: &str, sf: &str, query: &str) -> Option<&'stat
 /// sum to put a number in a marker.
 fn over_cap(bytes: Option<usize>) -> String {
     let size = match bytes {
-        Some(bytes) => format!("is {bytes} bytes"),
-        None => "passes".to_string(),
+        Some(bytes) => format!("is {bytes} bytes, at or above"),
+        None => "is at or above".to_string(),
     };
     format!(
         "{}the result {size} the {RESULT_GOLDEN_MAX_BYTES}-byte cap\n",

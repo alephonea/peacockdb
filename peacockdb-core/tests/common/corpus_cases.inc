@@ -15,15 +15,22 @@
 // small enough that a failure is legible. The rest of the corpus is T19.
 
 // --- tpch ---------------------------------------------------------------------
-corpus_query!(tpch, 1, q6, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, none, data_fusion_exact, golden_exact);
+corpus_query!(tpch, 1, q6, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, data_fusion_exact, golden_exact);
 // q1 and q17 carry an `avg`, whose count state the planner declares UInt64 and
 // DataFusion's accumulator produces Int64 — #163, at all five modes, so neither runs
 // here at all. Disabled rather than fixed: a fix made while enabling a query is a fix
 // nothing else in this branch proves.
 corpus_query!(tpch, 1, q1, none, none, data_fusion_exact, golden_exact);
+// Every query below carrying a join is #181 on a device: `per_call_join_type` is called for
+// every join by the gpu backend and is total only over the streaming family, so an Inner
+// join reaches its `unreachable!`. Fifteen queries, all five modes, one defect. q6 is the
+// only query here with no join, which is why it is the only device column left.
 corpus_query!(tpch, 1, q14, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, none, data_fusion_exact, golden_exact);
 corpus_query!(tpch, 1, q19, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, none, data_fusion_exact, golden_exact);
 corpus_query!(tpch, 1, q12, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, none, data_fusion_exact, golden_exact);
+// q13 and tpcds/q41 are #152 on a device at every mode: the join's recipe copies its probe
+// batch and the frozen ABI has no copy, so neither call can run without erasing the other's
+// input. The refusal is by name, which is the planner saying so rather than a crash.
 corpus_query!(tpch, 1, q13, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, none, data_fusion_exact, golden_exact);
 corpus_query!(tpch, 1, q15, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, none, data_fusion_exact, golden_exact);
 corpus_query!(tpch, 1, q17, none, none, data_fusion_exact, golden_exact);

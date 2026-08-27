@@ -15,13 +15,13 @@ use peacockdb_core::batch_partitioned::driver::batch_partitioned_driver;
 use peacockdb_core::batch_partitioned::gpu_backend::backend::{GpuBackend, GpuContext};
 use peacockdb_core::batch_partitioned::plan_text::render_run;
 use peacockdb_core::batch_partitioned::recipe::{RecipePlan, attach_recipes};
-use peacockdb_core::gpu_executor::{
+use peacockdb_ffi::raw::{
     PeacockExecutor, peacock_executor_begin_plan, peacock_executor_create,
     peacock_executor_destroy, peacock_executor_end_plan, peacock_last_error,
 };
 
 use super::bp_mode::{BUDGET, BpMode, mode_named};
-use super::corpus::{authoritative_mode, plan_at, run_cpu};
+use super::corpus::{plan_at, run_cpu};
 use super::corpus_golden;
 use super::{GpuResultMode, assert_results_match, batches_to_sorted_str, gpu_result_mode};
 
@@ -111,6 +111,30 @@ pub async fn gpu_case(dataset: &str, sf: &str, query: &str, mode: &str, gpu_orac
     assert_result(dataset, sf, query, mode, gpu_oracle, &batches).await;
 }
 
+/// The two conditions that decide which authority is available, and the check that the
+/// declaration named the right one. Derivable is why a CHECK can exist, never why the value
+/// would be absent: a `golden_exact` where the section is a marker is a test that fails on
+/// correct behaviour, and a `live_cpu` where a committed section serves spends a device-side
+/// cpu run on a comparison a file makes faster and harder.
+fn assert_oracle_suits_the_golden(dataset: &str, sf: &str, query: &str, gpu_oracle: &str, what: &str) {
+    let section = corpus_golden::section_of(&corpus_golden::result_golden(dataset, sf), query);
+    let frozen = !section.starts_with(corpus_golden::SKIPPED);
+    match gpu_result_mode(gpu_oracle) {
+        GpuResultMode::LiveCpu => assert!(
+            !frozen,
+            "{what}: gpu_oracle is live_cpu and `.result.txt` holds this query's rows — a \
+             device-side cpu run for a comparison the committed section already makes"
+        ),
+        GpuResultMode::Skip => {}
+        _ => assert!(
+            frozen,
+            "{what}: gpu_oracle names a golden and `.result.txt` has none for this query — \
+             the section says `{}`, so this compare fails on correct behaviour",
+            section.trim_end()
+        ),
+    }
+}
+
 /// The device's answer against whichever authority the declaration names.
 async fn assert_result(
     dataset: &str,
@@ -121,6 +145,7 @@ async fn assert_result(
     batches: &[RecordBatch],
 ) {
     let what = format!("{dataset}/{query} at {} on a device", mode.name);
+    assert_oracle_suits_the_golden(dataset, sf, query, gpu_oracle, &what);
     let tolerance = match gpu_result_mode(gpu_oracle) {
         GpuResultMode::Skip => return,
         // A live cpu run at the SAME mode, because where the SQL does not fix the row set,

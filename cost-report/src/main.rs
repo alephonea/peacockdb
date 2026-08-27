@@ -297,13 +297,15 @@ struct Links {
     tickets: TicketIndex,
 }
 
-/// Which wiki file each ticket number's anchor lives in. `tickets.md` holds open work and
-/// `archive/archived-tickets.md` the rest, and a closed ticket keeps its registry cell —
-/// a `na` should say which decision it rests on — so the link has to follow the number
-/// rather than assume the file.
+/// Which wiki file each ticket number's anchor lives in. `tickets.md` holds open work,
+/// `tasks/bp-tickets.md` the rollout's, and `archive/archived-tickets.md` the rest — and a
+/// closed ticket keeps its registry cell, since a `na` should say which decision it rests
+/// on, so the link has to follow the number rather than assume the file. The id space is
+/// shared across all three, so a number is never two things.
 #[derive(Debug, Default, Clone)]
 struct TicketIndex {
     open: BTreeSet<String>,
+    rollout: BTreeSet<String>,
     archived: BTreeSet<String>,
 }
 
@@ -358,7 +360,7 @@ fn names_ticket(header: &str, number: &str) -> bool {
 }
 
 impl TicketIndex {
-    /// Both files, by their anchors: every ticket carries `<a id="tNN">` wherever it
+    /// All three files, by their anchors: every ticket carries `<a id="tNN">` wherever it
     /// lives, which is the same thing the links point at, and each above its own header.
     fn load(wiki: &Path) -> Self {
         let numbers = |path: PathBuf| -> BTreeSet<String> {
@@ -373,6 +375,7 @@ impl TicketIndex {
         };
         Self {
             open: numbers(wiki.join("tickets.md")),
+            rollout: numbers(wiki.join("tasks/bp-tickets.md")),
             archived: numbers(wiki.join("archive/archived-tickets.md")),
         }
     }
@@ -382,6 +385,8 @@ impl TicketIndex {
     fn path_for(&self, ticket: &str) -> Option<&'static str> {
         if self.open.contains(ticket) {
             Some("llm-wiki/tickets.md")
+        } else if self.rollout.contains(ticket) {
+            Some("llm-wiki/tasks/bp-tickets.md")
         } else if self.archived.contains(ticket) {
             Some("llm-wiki/archive/archived-tickets.md")
         } else {
@@ -492,7 +497,8 @@ fn main() {
     if !unresolved.is_empty() {
         eprintln!(
             "cost-report: {} ticket(s) named in the registry are in neither \
-             llm-wiki/tickets.md nor llm-wiki/archive/archived-tickets.md: {}",
+             llm-wiki/tickets.md, llm-wiki/tasks/bp-tickets.md nor \
+             llm-wiki/archive/archived-tickets.md: {}",
             unresolved.len(),
             unresolved.into_iter().cloned().collect::<Vec<_>>().join(", ")
         );
@@ -799,7 +805,7 @@ fn ticket_link(t: &str, links: &Links) -> String {
     let path = links.tickets.path_for(t).unwrap_or_else(|| {
         // Unreachable after the startup gate; if it ever is reached, a dead link is the
         // one outcome worse than no report.
-        eprintln!("cost-report: ticket #{t} is in neither tickets.md nor the archive");
+        eprintln!("cost-report: ticket #{t} is in none of the three ticket files");
         std::process::exit(1);
     });
     format!(
@@ -1496,14 +1502,35 @@ mod tests {
     }
 
     fn links_with_tickets(open: &[&str], archived: &[&str]) -> Links {
+        links_with_every_file(open, &[], archived)
+    }
+
+    fn links_with_every_file(open: &[&str], rollout: &[&str], archived: &[&str]) -> Links {
+        let numbers = |list: &[&str]| list.iter().map(|t| t.to_string()).collect();
         Links {
             repo: "asymptote-tech/peacockdb".into(),
             sha: None,
             tickets: TicketIndex {
-                open: open.iter().map(|t| t.to_string()).collect(),
-                archived: archived.iter().map(|t| t.to_string()).collect(),
+                open: numbers(open),
+                rollout: numbers(rollout),
+                archived: numbers(archived),
             },
         }
+    }
+
+    /// The rollout file is the third the index reads, and a number in it links there. It
+    /// exists because a sweep files and closes tickets in bulk, which is not what a triage
+    /// pass reads for — and cost-report exits 1 on a ticket in no file, so the first one
+    /// filed would fail this job until the index read it.
+    #[test]
+    fn a_rollout_ticket_links_into_the_rollout_file() {
+        let links = links_with_every_file(&["170"], &["180"], &["103"]);
+        let rendered = tickets_html(&["180".to_string()], &links);
+        assert!(
+            rendered.contains("llm-wiki/tasks/bp-tickets.md#t180"),
+            "{rendered}"
+        );
+        assert!(rendered.contains(">#180<"), "{rendered}");
     }
 
     /// A closed ticket keeps its registry cell and moves file, so the link has to follow
@@ -1530,16 +1557,17 @@ mod tests {
     /// The index is read off the anchors, which is what the links point at — so a ticket
     /// that has one resolves and a number that has none anywhere does not.
     ///
-    /// It reads the real wiki, so the numbers below are examples that must stay one open and
-    /// one archived: archiving the ticket named here turns this red, and the fix is to swap
-    /// in a currently-open number rather than to look for a bug in `path_for`. That is the
-    /// price of reading the files rather than a fixture, and it is the reason this caught
-    /// #103 moving.
+    /// It reads the real wiki, so the numbers below are examples that must stay one per
+    /// file: archiving the ticket named here turns this red, and the fix is to swap in a
+    /// currently-open number rather than to look for a bug in `path_for`. That is the price
+    /// of reading the files rather than a fixture, and it is the reason this caught #103
+    /// moving.
     #[test]
-    fn the_index_reads_the_anchors_of_both_wiki_files() {
+    fn the_index_reads_the_anchors_of_every_wiki_file() {
         let wiki = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../llm-wiki");
         let index = TicketIndex::load(&wiki);
         assert_eq!(index.path_for("170"), Some("llm-wiki/tickets.md"));
+        assert_eq!(index.path_for("180"), Some("llm-wiki/tasks/bp-tickets.md"));
         assert_eq!(
             index.path_for("103"),
             Some("llm-wiki/archive/archived-tickets.md")
