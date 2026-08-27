@@ -71,6 +71,7 @@ arrive from the human one at a time.
     something sooner.
   - Every commit is pushed, and the branch's PR is opened as soon as the first commit is
     pushed — to start CI early in development
+  - Code Review proceeds after every commit by engaging the reviewer agent.
 - **You perform *all* git operations** (branch, commit, push, PR, merge). The developer
   and reviewer never mutate git state. Stage the paths you mean and read `git status` before
   committing: `git add -A <dir>` sweeps in whatever untracked files happen to sit there, and
