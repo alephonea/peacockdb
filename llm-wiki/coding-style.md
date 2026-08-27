@@ -155,6 +155,15 @@ still holds, which is why review passes it: `When` above `RunError` took `RunErr
 block, whose opening sentences described `RunError` and stated a contract the same task
 had disproved. After inserting a declaration, read each doc block's first sentence.
 
+It arrives two ways and only one is mechanical. Splitting a declaration in two leaves the lower
+one's block behind, separated from it by a blank line — decidable over a tree, and
+`no_declaration_carries_a_block_left_behind_by_a_split` is what decides it. Inserting a
+declaration above an existing one takes its whole block instead, contiguously, with nothing
+separating anything: that shape is invisible to the tree and visible only in a diff, as an added
+item whose preceding doc line was already there. Three instances shipped on one branch and the
+guard covers one of them, so the reading habit above is the cover for the other two rather than a
+belt beside a brace.
+
 The same mechanism outside code: `tickets.md` gives each ticket an `<a id="tNN">` above its
 header, and #177 inserted above #170 took #170's anchor, so every link to it — the contents
 table, the cost report — resolved to #177. Existence checks in both directions pass that, since
