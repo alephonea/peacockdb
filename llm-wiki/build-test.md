@@ -481,7 +481,10 @@ Rules that keep this healthy:
   progress may stall (flaky links, OOM kills), and a silent stall looks identical to a
   long run.
 - **Large CPU + GPU batches run in parallel** — kick off the shad-gpu run and the
-  verda/local CPU run concurrently; neither waits for the other.
+  verda/local CPU run concurrently; neither waits for the other. The one pair that cannot
+  overlap is a shad-gpu batch and CI's own `gpu-tests` job: they share the device, and the
+  loser sizes its RMM pool to whatever is free and dies with "Maximum pool size exceeded"
+  in the legacy sf40 tests — a red CI that reads as a code failure and is not one.
 
 ## Benchmarks
 
