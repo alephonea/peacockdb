@@ -64,7 +64,7 @@ corpus_query!(tpch, 1, hash_join, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_singl
 corpus_query!(tpch, 1, left_join, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, none, data_fusion_exact, golden_exact);
 corpus_query!(tpch, 1, semi_join, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, none, data_fusion_exact, live_cpu);
 corpus_query!(tpch, 1, anti_join, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, none, data_fusion_exact, live_cpu);
-corpus_query!(tpch, 1, nested_loop_join, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, none, data_fusion_exact, golden_exact);
+corpus_query!(tpch, 1, nested_loop_join, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, data_fusion_exact, golden_exact);
 
 // T19 batch 4, the small end of the tpch list emptied, and two firsts.
 // shuffle-additive-avg is out at every mode on BOTH engines — #163's UInt64 count state against
@@ -81,7 +81,7 @@ corpus_query!(tpch, 1, nested_loop_join, bp_tp1_single | bp_tp1_rowgroup | bp_tp
 // rather than "crossed and was refused" — #168's interval `ScalarValue`, and the plan golden
 // carries the reason at every mode.
 corpus_query!(tpch, 1, shuffle_additive_avg, none, none, data_fusion_exact, golden_exact);
-corpus_query!(tpch, 1, shuffle_stddev, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, none, data_fusion_approximate, golden_approx_std);
+corpus_query!(tpch, 1, shuffle_stddev, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, data_fusion_approximate, golden_approx_std);
 corpus_query!(tpch, 1, mixed_join, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, none, data_fusion_exact, golden_exact);
 corpus_query!(tpch, 1, nested_loop_left_join, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, none, data_fusion_exact, golden_exact);
 corpus_query!(tpch, 1, nested_limits, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, none, data_fusion_exact, golden_exact);

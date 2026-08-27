@@ -15,6 +15,7 @@ pub mod driver;
 pub mod error;
 pub mod estimator;
 pub mod executor;
+pub mod exports;
 pub mod expr;
 pub mod expr_physical;
 pub mod expr_translate;

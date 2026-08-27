@@ -29,6 +29,8 @@ use peacockdb_core::batch_partitioned::aggregates::{AggCall, PlanAgg};
 
 use peacockdb_core::batch_partitioned::executor::RowRange;
 
+use peacockdb_core::batch_partitioned::exports::Exports;
+
 use peacockdb_core::batch_partitioned::expr::{BinaryOp, Expr, NamedExpr};
 
 use peacockdb_core::batch_partitioned::gpu_backend::{GpuExec, GpuExport};
@@ -220,7 +222,10 @@ impl Session {
     }
 
     fn export(&self, schema: &ArrowSchema) -> GpuExport {
-        GpuExport::new(self.executor, schema)
+        // Derived the way the plan derives it, rather than passed in empty: a case that
+        // handed the export its own answer would prove nothing about what the sink says.
+        let exports = Exports::of(schema).expect("the cases' columns all map");
+        GpuExport::new(self.executor, schema, &exports)
     }
 }
 

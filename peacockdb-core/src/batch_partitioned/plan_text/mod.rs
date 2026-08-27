@@ -24,6 +24,7 @@ use std::fmt::Write as _;
 use datafusion::arrow::datatypes::DataType;
 
 use super::aggregates::{AggCall, PlanAgg};
+use super::exports::Exports;
 use super::expr::{Expr, NamedExpr};
 use super::layout::{BatchLayout, ColumnOrder, KeyDistribution, PartitionLayout, SortOrder};
 use super::node::{GpuNode, RowInterval};
@@ -47,6 +48,13 @@ fn render_node(node: &dyn GpuNode, depth: usize, text: &mut String) {
 
 fn node_line(node: &dyn GpuNode) -> String {
     let mut parts = node_line_parts(node);
+    // Both of these are the plan golden's alone, and for the same reason: they are what
+    // the plan says will happen. An execution golden records what did.
+    if let NodeRef::Unload(_) = as_node_ref(node) {
+        if let Some(input) = node.children().first().and_then(|child| schema_of(*child)) {
+            parts.push(exports_text(input));
+        }
+    }
     if let Some(schema) = node.kind().schema() {
         parts.push(schema_text(schema));
     }
@@ -350,6 +358,33 @@ fn type_text(data_type: &DataType) -> String {
     match data_type {
         DataType::Decimal128(precision, scale) => format!("Decimal128({precision},{scale})"),
         other => format!("{other:?}"),
+    }
+}
+
+/// What the device hands back that is not what the sink declared, per column, from
+/// [`Exports`]. `none` rather than an omitted attribute: absence would read the same as a
+/// list nothing computed.
+///
+/// A refusal renders as one word because the recipes section carries the sentence — the
+/// same schema refuses there, and `not runnable:` names the column and the reason.
+fn exports_text(input: &Schema) -> String {
+    match Exports::of(&input.fields) {
+        Ok(exports) if exports.is_empty() => "exports=none".to_string(),
+        Ok(exports) => {
+            let columns: Vec<String> = exports
+                .columns()
+                .iter()
+                .map(|column| {
+                    format!(
+                        "{}:{}",
+                        name_at(Some(input), column.ordinal),
+                        type_text(&column.exported)
+                    )
+                })
+                .collect();
+            format!("exports=[{}]", columns.join(", "))
+        }
+        Err(_) => "exports=refused".to_string(),
     }
 }
 

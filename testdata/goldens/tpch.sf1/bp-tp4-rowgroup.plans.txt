@@ -1,5 +1,5 @@
 == aggregate-groupby
-GpuUnload
+GpuUnload: exports=[l_returnflag:Utf8, sum(lineitem.l_quantity):Decimal128(38,2)]
   GpuAggregateBatches: group_by=[l_returnflag@0], aggs=[sum(sum(lineitem.l_quantity)@1) as sum(lineitem.l_quantity)], final=[sum(lineitem.l_quantity)@1], lanes=4, batches=single, hashed_on=[l_returnflag@0], schema=[l_returnflag:Utf8View, sum(lineitem.l_quantity):Decimal128(25,2)]
     GpuEmitPartitions: hash=[l_returnflag@0], lanes=4, batches=multiple, hashed_on=[l_returnflag@0], schema=[l_returnflag:Utf8View, sum(lineitem.l_quantity):Decimal128(25,2)]
       GpuCoalesceAllBatches: lanes=1, batches=single, schema=[l_returnflag:Utf8View, sum(lineitem.l_quantity):Decimal128(25,2)]
@@ -27,7 +27,7 @@ GpuUnload: estimated_max_resident_size=39007897
             GpuAggregate: estimated_max_resident_size=497756
               GpuLoadParquet: estimated_max_resident_size=497756, source_bytes=5310789, target_batch_bytes=5310789, amplification=4.0
 == anti-join
-GpuUnload
+GpuUnload: exports=[o_orderstatus:Utf8, o_totalprice:Decimal128(38,2), o_orderpriority:Utf8, o_clerk:Utf8, o_comment:Utf8]
   GpuJoin: join_type=RightAnti, on=[(c_custkey@0, o_custkey@1)], lanes=4, batches=multiple, hashed_on=[o_custkey@1], schema=[o_orderkey:Int64, o_custkey:Int64, o_orderstatus:Utf8View, o_totalprice:Decimal128(15,2), o_orderdate:Date32, o_orderpriority:Utf8View, o_clerk:Utf8View, o_shippriority:Int32, o_comment:Utf8View]
     GpuCoalesceAllBatches: lanes=4, batches=single, hashed_on=[c_custkey@0], schema=[c_custkey:Int64]
       GpuEmitPartitions: hash=[c_custkey@0], lanes=4, batches=multiple, hashed_on=[c_custkey@0], schema=[c_custkey:Int64]
@@ -58,7 +58,7 @@ GpuUnload: estimated_max_resident_size=337500
       GpuMergePartitions: estimated_max_resident_size=9635371
         GpuLoadParquet: estimated_max_resident_size=38541484, source_bytes=117508953, target_batch_bytes=117508953, amplification=4.0
 == cross-join
-GpuUnload
+GpuUnload: exports=[r_name:Utf8, r_comment:Utf8, n_name:Utf8, n_comment:Utf8]
   GpuCrossJoin: lanes=1, batches=multiple, schema=[r_regionkey:Int32, r_name:Utf8View, r_comment:Utf8View, n_nationkey:Int32, n_name:Utf8View, n_regionkey:Int32, n_comment:Utf8View]
     GpuCoalesceAllBatches: lanes=1, batches=single, schema=[r_regionkey:Int32, r_name:Utf8View, r_comment:Utf8View]
       GpuLoadParquet: table=region, projections=[r_regionkey@0, r_name@1, r_comment@2], partition_groups=[[[0]]], lanes=1, batches=multiple, schema=[r_regionkey:Int32, r_name:Utf8View, r_comment:Utf8View]
@@ -77,7 +77,7 @@ GpuUnload: estimated_max_resident_size=115
       GpuLoadParquet: estimated_max_resident_size=495, source_bytes=495, target_batch_bytes=495, amplification=1.0
     GpuLoadParquet: estimated_max_resident_size=2564, source_bytes=2564, target_batch_bytes=2564, amplification=1.0
 == filter-project
-GpuUnload
+GpuUnload: exports=[l_quantity:Decimal128(38,2)]
   GpuFilter: predicate=l_quantity@1 > 30.00, lanes=4, batches=multiple, schema=[l_orderkey:Int64, l_quantity:Decimal128(15,2)]
     GpuLoadParquet: table=lineitem, projections=[l_orderkey@0, l_quantity@4], partition_groups=[[[0],[1],[2],[3],[4],[5],[6],[7],[8],[9],[10],[11]],[[12],[13],[14],[15],[16],[17],[18],[19],[20],[21],[22],[23]],[[24],[25],[26],[27],[28],[29],[30],[31],[32],[33],[34],[35]],[[36],[37],[38],[39],[40],[41],[42],[43],[44],[45],[46],[47],[48]]], lanes=4, batches=multiple, schema=[l_orderkey:Int64, l_quantity:Decimal128(15,2)]
 --- recipes ---
@@ -90,7 +90,7 @@ GpuUnload: estimated_max_resident_size=1076160
   GpuFilter: estimated_max_resident_size=4304640
     GpuLoadParquet: estimated_max_resident_size=4304640, source_bytes=52557643, target_batch_bytes=52557643, amplification=4.0
 == hash-join
-GpuUnload
+GpuUnload: exports=[sum(l.l_quantity):Decimal128(38,2), sum(o.o_totalprice):Decimal128(38,2)]
   GpuAggregateBatches: group_by=[], aggs=[sum(count(*)@0) as count(*), sum(sum(l.l_quantity)@1) as sum(l.l_quantity), sum(sum(o.o_totalprice)@2) as sum(o.o_totalprice)], final=[count(*)@0, sum(l.l_quantity)@1, sum(o.o_totalprice)@2], lanes=1, batches=single, schema=[count(*):Int64, sum(l.l_quantity):Decimal128(25,2), sum(o.o_totalprice):Decimal128(25,2)]
     GpuMergePartitions: lanes=1, batches=multiple, schema=[count(*):Int64, sum(l.l_quantity):Decimal128(25,2), sum(o.o_totalprice):Decimal128(25,2)]
       GpuAggregateBatches: group_by=[], aggs=[sum(count(*)@0) as count(*), sum(sum(l.l_quantity)@1) as sum(l.l_quantity), sum(sum(o.o_totalprice)@2) as sum(o.o_totalprice)], lanes=4, batches=single, schema=[count(*):Int64, sum(l.l_quantity):Decimal128(25,2), sum(o.o_totalprice):Decimal128(25,2)]
@@ -133,7 +133,7 @@ GpuUnload: estimated_max_resident_size=258052245
               GpuMergePartitions: estimated_max_resident_size=1076160
                 GpuLoadParquet: estimated_max_resident_size=4304640, source_bytes=52557643, target_batch_bytes=52557643, amplification=4.0
 == join-int
-GpuUnload
+GpuUnload: exports=none
   GpuProject: exprs=[c_nationkey@0, count(*)@1 as cnt], lanes=4, batches=single, hashed_on=[c_nationkey@0], schema=[c_nationkey:Int32, cnt:Int64]
     GpuAggregateBatches: group_by=[c_nationkey@0], aggs=[sum(count(*)@1) as count(*)], final=[count(*)@1], lanes=4, batches=single, hashed_on=[c_nationkey@0], schema=[c_nationkey:Int32, count(*):Int64]
       GpuEmitPartitions: hash=[c_nationkey@0], lanes=4, batches=multiple, hashed_on=[c_nationkey@0], schema=[c_nationkey:Int32, count(*):Int64]
@@ -182,7 +182,7 @@ GpuUnload: estimated_max_resident_size=5250000
                     GpuMergePartitions: estimated_max_resident_size=983071
                       GpuLoadParquet: estimated_max_resident_size=3932284, source_bytes=12000403, target_batch_bytes=12000403, amplification=4.0
 == left-join
-GpuUnload
+GpuUnload: exports=[sum(l.l_quantity):Decimal128(38,2), sum(o.o_totalprice):Decimal128(38,2)]
   GpuAggregateBatches: group_by=[], aggs=[sum(count(*)@0) as count(*), sum(sum(l.l_quantity)@1) as sum(l.l_quantity), sum(sum(o.o_totalprice)@2) as sum(o.o_totalprice)], final=[count(*)@0, sum(l.l_quantity)@1, sum(o.o_totalprice)@2], lanes=1, batches=single, schema=[count(*):Int64, sum(l.l_quantity):Decimal128(25,2), sum(o.o_totalprice):Decimal128(25,2)]
     GpuMergePartitions: lanes=1, batches=multiple, schema=[count(*):Int64, sum(l.l_quantity):Decimal128(25,2), sum(o.o_totalprice):Decimal128(25,2)]
       GpuAggregateBatches: group_by=[], aggs=[sum(count(*)@0) as count(*), sum(sum(l.l_quantity)@1) as sum(l.l_quantity), sum(sum(o.o_totalprice)@2) as sum(o.o_totalprice)], lanes=4, batches=single, schema=[count(*):Int64, sum(l.l_quantity):Decimal128(25,2), sum(o.o_totalprice):Decimal128(25,2)]
@@ -225,7 +225,7 @@ GpuUnload: estimated_max_resident_size=258052245
               GpuMergePartitions: estimated_max_resident_size=1076160
                 GpuLoadParquet: estimated_max_resident_size=4304640, source_bytes=52557643, target_batch_bytes=52557643, amplification=4.0
 == mixed-join
-GpuUnload
+GpuUnload: exports=[sum(l.l_quantity):Decimal128(38,2), sum(o.o_totalprice):Decimal128(38,2)]
   GpuAggregateBatches: group_by=[], aggs=[sum(count(*)@0) as count(*), sum(sum(l.l_quantity)@1) as sum(l.l_quantity), sum(sum(o.o_totalprice)@2) as sum(o.o_totalprice)], final=[count(*)@0, sum(l.l_quantity)@1, sum(o.o_totalprice)@2], lanes=1, batches=single, schema=[count(*):Int64, sum(l.l_quantity):Decimal128(25,2), sum(o.o_totalprice):Decimal128(25,2)]
     GpuMergePartitions: lanes=1, batches=multiple, schema=[count(*):Int64, sum(l.l_quantity):Decimal128(25,2), sum(o.o_totalprice):Decimal128(25,2)]
       GpuAggregateBatches: group_by=[], aggs=[sum(count(*)@0) as count(*), sum(sum(l.l_quantity)@1) as sum(l.l_quantity), sum(sum(o.o_totalprice)@2) as sum(o.o_totalprice)], lanes=4, batches=single, schema=[count(*):Int64, sum(l.l_quantity):Decimal128(25,2), sum(o.o_totalprice):Decimal128(25,2)]
@@ -256,7 +256,7 @@ GpuUnload: estimated_max_resident_size=258052245
               GpuMergePartitions: estimated_max_resident_size=1076964
                 GpuLoadParquet: estimated_max_resident_size=4307856, source_bytes=52577862, target_batch_bytes=52577862, amplification=4.0
 == nested-limits
-GpuUnload: skip=3, fetch=20
+GpuUnload: skip=3, fetch=20, exports=none
   GpuCrossJoin: lanes=1, batches=multiple, schema=[k:Int64]
     GpuCoalesceAllBatches: lanes=1, batches=single, schema=[]
       GpuLoadParquet: table=region, projections=[], partition_groups=[[[0]]], limit=23, lanes=1, batches=multiple, schema=[]
@@ -281,7 +281,7 @@ GpuUnload: estimated_max_resident_size=5
       GpuLimit: estimated_max_resident_size=137
         GpuLoadParquet: estimated_max_resident_size=983071, source_bytes=1600062, target_batch_bytes=1600062, amplification=1.0
 == nested-loop-join
-GpuUnload
+GpuUnload: exports=[r_name:Utf8, r_comment:Utf8, n_name:Utf8, n_comment:Utf8]
   GpuNestedLoopJoin: join_type=Inner, filter=n_regionkey@probe:2 > r_regionkey@build:0, lanes=1, batches=multiple, schema=[r_regionkey:Int32, r_name:Utf8View, r_comment:Utf8View, n_nationkey:Int32, n_name:Utf8View, n_regionkey:Int32, n_comment:Utf8View]
     GpuCoalesceAllBatches: lanes=1, batches=single, schema=[r_regionkey:Int32, r_name:Utf8View, r_comment:Utf8View]
       GpuLoadParquet: table=region, projections=[r_regionkey@0, r_name@1, r_comment@2], partition_groups=[[[0]]], lanes=1, batches=multiple, schema=[r_regionkey:Int32, r_name:Utf8View, r_comment:Utf8View]
@@ -300,7 +300,7 @@ GpuUnload: estimated_max_resident_size=115
       GpuLoadParquet: estimated_max_resident_size=495, source_bytes=495, target_batch_bytes=495, amplification=1.0
     GpuLoadParquet: estimated_max_resident_size=2564, source_bytes=2564, target_batch_bytes=2564, amplification=1.0
 == nested-loop-left-join
-GpuUnload
+GpuUnload: exports=[r_name:Utf8, r_comment:Utf8, n_name:Utf8, n_comment:Utf8]
   GpuNestedLoopJoin: join_type=Left, filter=r_regionkey@build:0 > n_regionkey@probe:2, lanes=1, batches=multiple, schema=[r_regionkey:Int32, r_name:Utf8View, r_comment:Utf8View, n_nationkey:Int32, n_name:Utf8View, n_regionkey:Int32, n_comment:Utf8View]
     GpuCoalesceAllBatches: lanes=1, batches=single, schema=[r_regionkey:Int32, r_name:Utf8View, r_comment:Utf8View]
       GpuLoadParquet: table=region, projections=[r_regionkey@0, r_name@1, r_comment@2], partition_groups=[[[0]]], lanes=1, batches=multiple, schema=[r_regionkey:Int32, r_name:Utf8View, r_comment:Utf8View]
@@ -322,7 +322,7 @@ GpuUnload: estimated_max_resident_size=115
     GpuCoalesceAllBatches: estimated_max_resident_size=700
       GpuLoadParquet: estimated_max_resident_size=2564, source_bytes=2564, target_batch_bytes=2564, amplification=1.0
 == q1
-GpuUnload
+GpuUnload: exports=[l_returnflag:Utf8, l_linestatus:Utf8, sum_qty:Decimal128(38,2), sum_base_price:Decimal128(38,2), avg_qty:Decimal128(38,6), avg_price:Decimal128(38,6), avg_disc:Decimal128(38,6)]
   GpuMergeSortedPartitions: by=[l_returnflag@0 asc nulls_last, l_linestatus@1 asc nulls_last], lanes=1, batches=single, sorted_on=[l_returnflag@0 asc nulls_last, l_linestatus@1 asc nulls_last], schema=[l_returnflag:Utf8View, l_linestatus:Utf8View, sum_qty:Decimal128(25,2), sum_base_price:Decimal128(25,2), sum_disc_price:Decimal128(38,4), sum_charge:Decimal128(38,6), avg_qty:Decimal128(19,6), avg_price:Decimal128(19,6), avg_disc:Decimal128(19,6), count_order:Int64]
     GpuSort: by=[l_returnflag@0 asc nulls_last, l_linestatus@1 asc nulls_last], lanes=4, batches=single, hashed_on=[l_returnflag@0, l_linestatus@1], sorted_on=[l_returnflag@0 asc nulls_last, l_linestatus@1 asc nulls_last], schema=[l_returnflag:Utf8View, l_linestatus:Utf8View, sum_qty:Decimal128(25,2), sum_base_price:Decimal128(25,2), sum_disc_price:Decimal128(38,4), sum_charge:Decimal128(38,6), avg_qty:Decimal128(19,6), avg_price:Decimal128(19,6), avg_disc:Decimal128(19,6), count_order:Int64]
       GpuProject: exprs=[l_returnflag@0, l_linestatus@1, sum(lineitem.l_quantity)@2 as sum_qty, sum(lineitem.l_extendedprice)@3 as sum_base_price, `sum(lineitem.l_extendedprice * Int64(1) - lineitem.l_discount)`@4 as sum_disc_price, `sum(lineitem.l_extendedprice * Int64(1) - lineitem.l_discount * Int64(1) + lineitem.l_tax)`@5 as sum_charge, avg(lineitem.l_quantity)@6 as avg_qty, avg(lineitem.l_extendedprice)@7 as avg_price, avg(lineitem.l_discount)@8 as avg_disc, count(*)@9 as count_order], lanes=4, batches=single, hashed_on=[l_returnflag@0, l_linestatus@1], schema=[l_returnflag:Utf8View, l_linestatus:Utf8View, sum_qty:Decimal128(25,2), sum_base_price:Decimal128(25,2), sum_disc_price:Decimal128(38,4), sum_charge:Decimal128(38,6), avg_qty:Decimal128(19,6), avg_price:Decimal128(19,6), avg_disc:Decimal128(19,6), count_order:Int64]
@@ -365,7 +365,7 @@ GpuUnload: estimated_max_resident_size=876177390
                       GpuFilter: estimated_max_resident_size=4658908
                         GpuLoadParquet: estimated_max_resident_size=4929776, source_bytes=59405472, target_batch_bytes=59405472, amplification=7.6
 == q10
-GpuUnload
+GpuUnload: exports=[c_name:Utf8, c_acctbal:Decimal128(38,2), n_name:Utf8, c_address:Utf8, c_phone:Utf8, c_comment:Utf8]
   GpuMergeSortedPartitions: by=[revenue@2 desc nulls_first], fetch=20, lanes=1, batches=single, sorted_on=[revenue@2 desc nulls_first], schema=[c_custkey:Int64, c_name:Utf8View, revenue:Decimal128(38,4), c_acctbal:Decimal128(15,2), n_name:Utf8View, c_address:Utf8View, c_phone:Utf8View, c_comment:Utf8View]
     GpuSort: by=[revenue@2 desc nulls_first], fetch=20, lanes=4, batches=single, hashed_on=[c_custkey@0, c_name@1, c_acctbal@3, c_phone@6, n_name@4, c_address@5, c_comment@7], sorted_on=[revenue@2 desc nulls_first], schema=[c_custkey:Int64, c_name:Utf8View, revenue:Decimal128(38,4), c_acctbal:Decimal128(15,2), n_name:Utf8View, c_address:Utf8View, c_phone:Utf8View, c_comment:Utf8View]
       GpuProject: exprs=[c_custkey@0, c_name@1, `sum(lineitem.l_extendedprice * Int64(1) - lineitem.l_discount)`@7 as revenue, c_acctbal@2, n_name@4, c_address@5, c_phone@3, c_comment@6], lanes=4, batches=single, hashed_on=[c_custkey@0, c_name@1, c_acctbal@3, c_phone@6, n_name@4, c_address@5, c_comment@7], schema=[c_custkey:Int64, c_name:Utf8View, revenue:Decimal128(38,4), c_acctbal:Decimal128(15,2), n_name:Utf8View, c_address:Utf8View, c_phone:Utf8View, c_comment:Utf8View]
@@ -468,7 +468,7 @@ GpuUnload: estimated_max_resident_size=270336000
                                   GpuFilter: estimated_max_resident_size=6812356
                                     GpuLoadParquet: estimated_max_resident_size=8238200, source_bytes=51468099, target_batch_bytes=33554432, amplification=4.0
 == q11
-GpuUnload
+GpuUnload: exports=none
   GpuMergeSortedPartitions: by=[value@1 desc nulls_first], lanes=1, batches=single, sorted_on=[value@1 desc nulls_first], schema=[ps_partkey:Int64, value:Decimal128(38,2)]
     GpuSort: by=[value@1 desc nulls_first], lanes=1, batches=multiple, sorted_on=[value@1 desc nulls_first], schema=[ps_partkey:Int64, value:Decimal128(38,2)]
       GpuProject: exprs=[ps_partkey@0, `sum(partsupp.ps_supplycost * partsupp.ps_availqty)`@1 as value], lanes=1, batches=multiple, schema=[ps_partkey:Int64, value:Decimal128(38,2)]
@@ -613,7 +613,7 @@ GpuUnload: estimated_max_resident_size=20800000
                                     GpuMergePartitions: estimated_max_resident_size=2557276
                                       GpuLoadParquet: estimated_max_resident_size=10229104, source_bytes=16727222, target_batch_bytes=16727222, amplification=4.0
 == q12
-GpuUnload
+GpuUnload: exports=[l_shipmode:Utf8]
   GpuMergeSortedPartitions: by=[l_shipmode@0 asc nulls_last], lanes=1, batches=single, sorted_on=[l_shipmode@0 asc nulls_last], schema=[l_shipmode:Utf8View, high_line_count:Int64, low_line_count:Int64]
     GpuSort: by=[l_shipmode@0 asc nulls_last], lanes=4, batches=single, hashed_on=[l_shipmode@0], sorted_on=[l_shipmode@0 asc nulls_last], schema=[l_shipmode:Utf8View, high_line_count:Int64, low_line_count:Int64]
       GpuProject: exprs=[l_shipmode@0, `sum(CASE WHEN orders.o_orderpriority = Utf8("1-URGENT") OR orders.o_orderpriority = Utf8("2-HIGH") THEN Int64(1) ELSE Int64(0) END)`@1 as high_line_count, `sum(CASE WHEN orders.o_orderpriority != Utf8("1-URGENT") AND orders.o_orderpriority != Utf8("2-HIGH") THEN Int64(1) ELSE Int64(0) END)`@2 as low_line_count], lanes=4, batches=single, hashed_on=[l_shipmode@0], schema=[l_shipmode:Utf8View, high_line_count:Int64, low_line_count:Int64]
@@ -677,7 +677,7 @@ GpuUnload: estimated_max_resident_size=40500000
                           GpuMergePartitions: estimated_max_resident_size=1029756
                             GpuLoadParquet: estimated_max_resident_size=4119024, source_bytes=12570337, target_batch_bytes=12570337, amplification=4.0
 == q13
-GpuUnload
+GpuUnload: exports=none
   GpuMergeSortedPartitions: by=[custdist@1 desc nulls_first, c_count@0 desc nulls_first], lanes=1, batches=single, sorted_on=[custdist@1 desc nulls_first, c_count@0 desc nulls_first], schema=[c_count:Int64, custdist:Int64]
     GpuSort: by=[custdist@1 desc nulls_first, c_count@0 desc nulls_first], lanes=4, batches=single, hashed_on=[c_count@0], sorted_on=[custdist@1 desc nulls_first, c_count@0 desc nulls_first], schema=[c_count:Int64, custdist:Int64]
       GpuProject: exprs=[c_count@0, count(*)@1 as custdist], lanes=4, batches=single, hashed_on=[c_count@0], schema=[c_count:Int64, custdist:Int64]
@@ -741,7 +741,7 @@ GpuUnload: estimated_max_resident_size=27000000
                               GpuFilter: estimated_max_resident_size=22477472
                                 GpuLoadParquet: estimated_max_resident_size=33716208, source_bytes=102772042, target_batch_bytes=102772042, amplification=4.0
 == q14
-GpuUnload
+GpuUnload: exports=none
   GpuProject: exprs=[(100 * CAST(`sum(CASE WHEN part.p_type LIKE Utf8("PROMO%") THEN lineitem.l_extendedprice * Int64(1) - lineitem.l_discount ELSE Int64(0) END)`@0 AS Float64)) / CAST(`sum(lineitem.l_extendedprice * Int64(1) - lineitem.l_discount)`@1 AS Float64) as promo_revenue], lanes=1, batches=single, schema=[promo_revenue:Float64]
     GpuAggregateBatches: group_by=[], aggs=[sum(`sum(CASE WHEN part.p_type LIKE Utf8("PROMO%") THEN lineitem.l_extendedprice * Int64(1) - lineitem.l_discount ELSE Int64(0) END)`@0) as `sum(CASE WHEN part.p_type LIKE Utf8("PROMO%") THEN lineitem.l_extendedprice * Int64(1) - lineitem.l_discount ELSE Int64(0) END)`, sum(`sum(lineitem.l_extendedprice * Int64(1) - lineitem.l_discount)`@1) as `sum(lineitem.l_extendedprice * Int64(1) - lineitem.l_discount)`], final=[`sum(CASE WHEN part.p_type LIKE Utf8("PROMO%") THEN lineitem.l_extendedprice * Int64(1) - lineitem.l_discount ELSE Int64(0) END)`@0, `sum(lineitem.l_extendedprice * Int64(1) - lineitem.l_discount)`@1], lanes=1, batches=single, schema=[`sum(CASE WHEN part.p_type LIKE Utf8("PROMO%") THEN lineitem.l_extendedprice * Int64(1) - lineitem.l_discount ELSE Int64(0) END)`:Decimal128(38,4), `sum(lineitem.l_extendedprice * Int64(1) - lineitem.l_discount)`:Decimal128(38,4)]
       GpuMergePartitions: lanes=1, batches=multiple, schema=[`sum(CASE WHEN part.p_type LIKE Utf8("PROMO%") THEN lineitem.l_extendedprice * Int64(1) - lineitem.l_discount ELSE Int64(0) END)`:Decimal128(38,4), `sum(lineitem.l_extendedprice * Int64(1) - lineitem.l_discount)`:Decimal128(38,4)]
@@ -787,7 +787,7 @@ GpuUnload: estimated_max_resident_size=2211840
                   GpuFilter: estimated_max_resident_size=1817281
                     GpuLoadParquet: estimated_max_resident_size=2028593, source_bytes=4057186, target_batch_bytes=4057186, amplification=3.6
 == q15
-GpuUnload
+GpuUnload: exports=[s_name:Utf8, s_address:Utf8, s_phone:Utf8]
   GpuMergeSortedPartitions: by=[s_suppkey@0 asc nulls_last], lanes=1, batches=single, sorted_on=[s_suppkey@0 asc nulls_last], schema=[s_suppkey:Int64, s_name:Utf8View, s_address:Utf8View, s_phone:Utf8View, total_revenue:Decimal128(38,4)]
     GpuSort: by=[s_suppkey@0 asc nulls_last], lanes=4, batches=multiple, hashed_on=[total_revenue@4], sorted_on=[s_suppkey@0 asc nulls_last], schema=[s_suppkey:Int64, s_name:Utf8View, s_address:Utf8View, s_phone:Utf8View, total_revenue:Decimal128(38,4)]
       GpuJoin: join_type=Inner, on=[(total_revenue@4, max(revenue0.total_revenue)@0)], projection=[s_suppkey@0, s_name@1, s_address@2, s_phone@3, total_revenue@4], lanes=4, batches=multiple, hashed_on=[total_revenue@4], schema=[s_suppkey:Int64, s_name:Utf8View, s_address:Utf8View, s_phone:Utf8View, total_revenue:Decimal128(38,4)]
@@ -860,7 +860,7 @@ GpuUnload: estimated_max_resident_size=19537920
                   GpuFilter: estimated_max_resident_size=1201400
                     GpuLoadParquet: estimated_max_resident_size=1341098, source_bytes=4023282, target_batch_bytes=4023282, amplification=1.0
 == q16
-GpuUnload
+GpuUnload: exports=[p_brand:Utf8, p_type:Utf8]
   GpuMergeSortedPartitions: by=[supplier_cnt@3 desc nulls_first, p_brand@0 asc nulls_last, p_type@1 asc nulls_last, p_size@2 asc nulls_last], lanes=1, batches=single, sorted_on=[supplier_cnt@3 desc nulls_first, p_brand@0 asc nulls_last, p_type@1 asc nulls_last, p_size@2 asc nulls_last], schema=[p_brand:Utf8View, p_type:Utf8View, p_size:Int32, supplier_cnt:Int64]
     GpuSort: by=[supplier_cnt@3 desc nulls_first, p_brand@0 asc nulls_last, p_type@1 asc nulls_last, p_size@2 asc nulls_last], lanes=4, batches=single, hashed_on=[p_brand@0, p_type@1, p_size@2], sorted_on=[supplier_cnt@3 desc nulls_first, p_brand@0 asc nulls_last, p_type@1 asc nulls_last, p_size@2 asc nulls_last], schema=[p_brand:Utf8View, p_type:Utf8View, p_size:Int32, supplier_cnt:Int64]
       GpuProject: exprs=[p_brand@0, p_type@1, p_size@2, count(alias1)@3 as supplier_cnt], lanes=4, batches=single, hashed_on=[p_brand@0, p_type@1, p_size@2], schema=[p_brand:Utf8View, p_type:Utf8View, p_size:Int32, supplier_cnt:Int64]
@@ -957,7 +957,7 @@ GpuUnload: estimated_max_resident_size=25600000
                                           GpuMergePartitions: estimated_max_resident_size=1278642
                                             GpuLoadParquet: estimated_max_resident_size=5114568, source_bytes=8363699, target_batch_bytes=8363699, amplification=4.0
 == q17
-GpuUnload
+GpuUnload: exports=none
   GpuProject: exprs=[CAST(sum(lineitem.l_extendedprice)@0 AS Float64) / 7 as avg_yearly], lanes=1, batches=single, schema=[avg_yearly:Float64]
     GpuAggregateBatches: group_by=[], aggs=[sum(sum(lineitem.l_extendedprice)@0) as sum(lineitem.l_extendedprice)], final=[sum(lineitem.l_extendedprice)@0], lanes=1, batches=single, schema=[sum(lineitem.l_extendedprice):Decimal128(25,2)]
       GpuMergePartitions: lanes=1, batches=multiple, schema=[sum(lineitem.l_extendedprice):Decimal128(25,2)]
@@ -1036,7 +1036,7 @@ GpuUnload: estimated_max_resident_size=54010935
                           GpuAggregate: estimated_max_resident_size=5794704
                             GpuLoadParquet: estimated_max_resident_size=4304640, source_bytes=52557643, target_batch_bytes=33554432, amplification=5.4
 == q18
-GpuUnload
+GpuUnload: exports=[c_name:Utf8, o_totalprice:Decimal128(38,2), sum(lineitem.l_quantity):Decimal128(38,2)]
   GpuMergeSortedPartitions: by=[o_totalprice@4 desc nulls_first, o_orderdate@3 asc nulls_last], fetch=100, lanes=1, batches=single, sorted_on=[o_totalprice@4 desc nulls_first, o_orderdate@3 asc nulls_last], schema=[c_name:Utf8View, c_custkey:Int64, o_orderkey:Int64, o_orderdate:Date32, o_totalprice:Decimal128(15,2), sum(lineitem.l_quantity):Decimal128(25,2)]
     GpuSort: by=[o_totalprice@4 desc nulls_first, o_orderdate@3 asc nulls_last], fetch=100, lanes=4, batches=single, hashed_on=[c_name@0, c_custkey@1, o_orderkey@2, o_orderdate@3, o_totalprice@4], sorted_on=[o_totalprice@4 desc nulls_first, o_orderdate@3 asc nulls_last], schema=[c_name:Utf8View, c_custkey:Int64, o_orderkey:Int64, o_orderdate:Date32, o_totalprice:Decimal128(15,2), sum(lineitem.l_quantity):Decimal128(25,2)]
       GpuAggregateBatches: group_by=[c_name@0, c_custkey@1, o_orderkey@2, o_orderdate@3, o_totalprice@4], aggs=[sum(sum(lineitem.l_quantity)@5) as sum(lineitem.l_quantity)], final=[sum(lineitem.l_quantity)@5], lanes=4, batches=single, hashed_on=[c_name@0, c_custkey@1, o_orderkey@2, o_orderdate@3, o_totalprice@4], schema=[c_name:Utf8View, c_custkey:Int64, o_orderkey:Int64, o_orderdate:Date32, o_totalprice:Decimal128(15,2), sum(lineitem.l_quantity):Decimal128(25,2)]
@@ -1136,7 +1136,7 @@ GpuUnload: estimated_max_resident_size=396080190
                         GpuMergePartitions: estimated_max_resident_size=1076160
                           GpuLoadParquet: estimated_max_resident_size=4304640, source_bytes=52557643, target_batch_bytes=52557643, amplification=4.0
 == q19
-GpuUnload
+GpuUnload: exports=none
   GpuProject: exprs=[`sum(lineitem.l_extendedprice * Int64(1) - lineitem.l_discount)`@0 as revenue], lanes=1, batches=single, schema=[revenue:Decimal128(38,4)]
     GpuAggregateBatches: group_by=[], aggs=[sum(`sum(lineitem.l_extendedprice * Int64(1) - lineitem.l_discount)`@0) as `sum(lineitem.l_extendedprice * Int64(1) - lineitem.l_discount)`], final=[`sum(lineitem.l_extendedprice * Int64(1) - lineitem.l_discount)`@0], lanes=1, batches=single, schema=[`sum(lineitem.l_extendedprice * Int64(1) - lineitem.l_discount)`:Decimal128(38,4)]
       GpuMergePartitions: lanes=1, batches=multiple, schema=[`sum(lineitem.l_extendedprice * Int64(1) - lineitem.l_discount)`:Decimal128(38,4)]
@@ -1185,7 +1185,7 @@ GpuUnload: estimated_max_resident_size=102020654
                   GpuFilter: estimated_max_resident_size=6814296
                     GpuLoadParquet: estimated_max_resident_size=8858588, source_bytes=108158885, target_batch_bytes=108158885, amplification=4.0
 == q2
-GpuUnload
+GpuUnload: exports=[s_acctbal:Decimal128(38,2), s_name:Utf8, n_name:Utf8, p_mfgr:Utf8, s_address:Utf8, s_phone:Utf8, s_comment:Utf8]
   GpuMergeSortedPartitions: by=[s_acctbal@0 desc nulls_first, n_name@2 asc nulls_last, s_name@1 asc nulls_last, p_partkey@3 asc nulls_last], fetch=100, lanes=1, batches=single, sorted_on=[s_acctbal@0 desc nulls_first, n_name@2 asc nulls_last, s_name@1 asc nulls_last, p_partkey@3 asc nulls_last], schema=[s_acctbal:Decimal128(15,2), s_name:Utf8View, n_name:Utf8View, p_partkey:Int64, p_mfgr:Utf8View, s_address:Utf8View, s_phone:Utf8View, s_comment:Utf8View]
     GpuSort: by=[s_acctbal@0 desc nulls_first, n_name@2 asc nulls_last, s_name@1 asc nulls_last, p_partkey@3 asc nulls_last], fetch=100, lanes=4, batches=multiple, sorted_on=[s_acctbal@0 desc nulls_first, n_name@2 asc nulls_last, s_name@1 asc nulls_last, p_partkey@3 asc nulls_last], schema=[s_acctbal:Decimal128(15,2), s_name:Utf8View, n_name:Utf8View, p_partkey:Int64, p_mfgr:Utf8View, s_address:Utf8View, s_phone:Utf8View, s_comment:Utf8View]
       GpuProject: exprs=[s_acctbal@5, s_name@2, n_name@7, p_partkey@0, p_mfgr@1, s_address@3, s_phone@4, s_comment@6], lanes=4, batches=multiple, schema=[s_acctbal:Decimal128(15,2), s_name:Utf8View, n_name:Utf8View, p_partkey:Int64, p_mfgr:Utf8View, s_address:Utf8View, s_phone:Utf8View, s_comment:Utf8View]
@@ -1396,7 +1396,7 @@ GpuUnload: estimated_max_resident_size=64000000
                                                   GpuMergePartitions: estimated_max_resident_size=2261713
                                                     GpuLoadParquet: estimated_max_resident_size=9046852, source_bytes=14763916, target_batch_bytes=14763916, amplification=4.0
 == q20
-GpuUnload
+GpuUnload: exports=[s_name:Utf8, s_address:Utf8]
   GpuMergeSortedPartitions: by=[s_name@0 asc nulls_last], lanes=1, batches=single, sorted_on=[s_name@0 asc nulls_last], schema=[s_name:Utf8View, s_address:Utf8View]
     GpuSort: by=[s_name@0 asc nulls_last], lanes=4, batches=multiple, sorted_on=[s_name@0 asc nulls_last], schema=[s_name:Utf8View, s_address:Utf8View]
       GpuJoin: join_type=LeftSemi, on=[(s_suppkey@0, ps_suppkey@0)], projection=[s_name@1, s_address@2], lanes=4, batches=multiple, schema=[s_name:Utf8View, s_address:Utf8View]
@@ -1514,7 +1514,7 @@ GpuUnload: estimated_max_resident_size=17694720
                             GpuFilter: estimated_max_resident_size=4802456
                               GpuLoadParquet: estimated_max_resident_size=5488524, source_bytes=10977005, target_batch_bytes=10977005, amplification=4.0
 == q21
-GpuUnload
+GpuUnload: exports=[s_name:Utf8]
   GpuMergeSortedPartitions: by=[numwait@1 desc nulls_first, s_name@0 asc nulls_last], fetch=100, lanes=1, batches=single, sorted_on=[numwait@1 desc nulls_first, s_name@0 asc nulls_last], schema=[s_name:Utf8View, numwait:Int64]
     GpuSort: by=[numwait@1 desc nulls_first, s_name@0 asc nulls_last], fetch=100, lanes=4, batches=single, hashed_on=[s_name@0], sorted_on=[numwait@1 desc nulls_first, s_name@0 asc nulls_last], schema=[s_name:Utf8View, numwait:Int64]
       GpuProject: exprs=[s_name@0, count(*)@1 as numwait], lanes=4, batches=single, hashed_on=[s_name@0], schema=[s_name:Utf8View, numwait:Int64]
@@ -1662,7 +1662,7 @@ GpuUnload: estimated_max_resident_size=108021870
                             GpuFilter: estimated_max_resident_size=3925720
                               GpuLoadParquet: estimated_max_resident_size=6106680, source_bytes=73851937, target_batch_bytes=16777216, amplification=4.0
 == q22
-GpuUnload
+GpuUnload: exports=[cntrycode:Utf8, totacctbal:Decimal128(38,2)]
   GpuMergeSortedPartitions: by=[cntrycode@0 asc nulls_last], lanes=1, batches=single, sorted_on=[cntrycode@0 asc nulls_last], schema=[cntrycode:Utf8View, numcust:Int64, totacctbal:Decimal128(25,2)]
     GpuSort: by=[cntrycode@0 asc nulls_last], lanes=1, batches=single, sorted_on=[cntrycode@0 asc nulls_last], schema=[cntrycode:Utf8View, numcust:Int64, totacctbal:Decimal128(25,2)]
       GpuProject: exprs=[cntrycode@0, count(*)@1 as numcust, sum(custsale.c_acctbal)@2 as totacctbal], lanes=1, batches=single, schema=[cntrycode:Utf8View, numcust:Int64, totacctbal:Decimal128(25,2)]
@@ -1732,7 +1732,7 @@ GpuUnload: estimated_max_resident_size=52500000
                       GpuMergePartitions: estimated_max_resident_size=983071
                         GpuLoadParquet: estimated_max_resident_size=3932284, source_bytes=12000403, target_batch_bytes=12000403, amplification=4.0
 == q3
-GpuUnload
+GpuUnload: exports=none
   GpuMergeSortedPartitions: by=[revenue@1 desc nulls_first, o_orderdate@2 asc nulls_last], fetch=10, lanes=1, batches=single, sorted_on=[revenue@1 desc nulls_first, o_orderdate@2 asc nulls_last], schema=[l_orderkey:Int64, revenue:Decimal128(38,4), o_orderdate:Date32, o_shippriority:Int32]
     GpuSort: by=[revenue@1 desc nulls_first, o_orderdate@2 asc nulls_last], fetch=10, lanes=4, batches=single, hashed_on=[l_orderkey@0, o_orderdate@2, o_shippriority@3], sorted_on=[revenue@1 desc nulls_first, o_orderdate@2 asc nulls_last], schema=[l_orderkey:Int64, revenue:Decimal128(38,4), o_orderdate:Date32, o_shippriority:Int32]
       GpuProject: exprs=[l_orderkey@0, `sum(lineitem.l_extendedprice * Int64(1) - lineitem.l_discount)`@3 as revenue, o_orderdate@1, o_shippriority@2], lanes=4, batches=single, hashed_on=[l_orderkey@0, o_orderdate@2, o_shippriority@3], schema=[l_orderkey:Int64, revenue:Decimal128(38,4), o_orderdate:Date32, o_shippriority:Int32]
@@ -1817,7 +1817,7 @@ GpuUnload: estimated_max_resident_size=118722780
                           GpuFilter: estimated_max_resident_size=7269172
                             GpuLoadParquet: estimated_max_resident_size=8114428, source_bytes=54443958, target_batch_bytes=54443958, amplification=4.0
 == q4
-GpuUnload
+GpuUnload: exports=[o_orderpriority:Utf8]
   GpuMergeSortedPartitions: by=[o_orderpriority@0 asc nulls_last], lanes=1, batches=single, sorted_on=[o_orderpriority@0 asc nulls_last], schema=[o_orderpriority:Utf8View, order_count:Int64]
     GpuSort: by=[o_orderpriority@0 asc nulls_last], lanes=4, batches=single, hashed_on=[o_orderpriority@0], sorted_on=[o_orderpriority@0 asc nulls_last], schema=[o_orderpriority:Utf8View, order_count:Int64]
       GpuProject: exprs=[o_orderpriority@0, count(*)@1 as order_count], lanes=4, batches=single, hashed_on=[o_orderpriority@0], schema=[o_orderpriority:Utf8View, order_count:Int64]
@@ -1878,7 +1878,7 @@ GpuUnload: estimated_max_resident_size=108021870
                           GpuFilter: estimated_max_resident_size=2332608
                             GpuLoadParquet: estimated_max_resident_size=4924396, source_bytes=59403563, target_batch_bytes=59403563, amplification=4.0
 == q5
-GpuUnload
+GpuUnload: exports=[n_name:Utf8]
   GpuMergeSortedPartitions: by=[revenue@1 desc nulls_first], lanes=1, batches=single, sorted_on=[revenue@1 desc nulls_first], schema=[n_name:Utf8View, revenue:Decimal128(38,4)]
     GpuSort: by=[revenue@1 desc nulls_first], lanes=4, batches=single, hashed_on=[n_name@0], sorted_on=[revenue@1 desc nulls_first], schema=[n_name:Utf8View, revenue:Decimal128(38,4)]
       GpuProject: exprs=[n_name@0, `sum(lineitem.l_extendedprice * Int64(1) - lineitem.l_discount)`@1 as revenue], lanes=4, batches=single, hashed_on=[n_name@0], schema=[n_name:Utf8View, revenue:Decimal128(38,4)]
@@ -2020,7 +2020,7 @@ GpuUnload: estimated_max_resident_size=156031590
                                               GpuMergePartitions: estimated_max_resident_size=2323771
                                                 GpuLoadParquet: estimated_max_resident_size=9295084, source_bytes=113501601, target_batch_bytes=33554432, amplification=4.0
 == q6
-GpuUnload
+GpuUnload: exports=none
   GpuProject: exprs=[`sum(lineitem.l_extendedprice * lineitem.l_discount)`@0 as revenue], lanes=1, batches=single, schema=[revenue:Decimal128(38,4)]
     GpuAggregateBatches: group_by=[], aggs=[sum(`sum(lineitem.l_extendedprice * lineitem.l_discount)`@0) as `sum(lineitem.l_extendedprice * lineitem.l_discount)`], final=[`sum(lineitem.l_extendedprice * lineitem.l_discount)`@0], lanes=1, batches=single, schema=[`sum(lineitem.l_extendedprice * lineitem.l_discount)`:Decimal128(38,4)]
       GpuMergePartitions: lanes=1, batches=multiple, schema=[`sum(lineitem.l_extendedprice * lineitem.l_discount)`:Decimal128(38,4)]
@@ -2048,7 +2048,7 @@ GpuUnload: estimated_max_resident_size=16711680
             GpuFilter: estimated_max_resident_size=2765208
               GpuLoadParquet: estimated_max_resident_size=4554464, source_bytes=9108881, target_batch_bytes=9108881, amplification=4.0
 == q7
-GpuUnload
+GpuUnload: exports=[supp_nation:Utf8, cust_nation:Utf8]
   GpuMergeSortedPartitions: by=[supp_nation@0 asc nulls_last, cust_nation@1 asc nulls_last, l_year@2 asc nulls_last], lanes=1, batches=single, sorted_on=[supp_nation@0 asc nulls_last, cust_nation@1 asc nulls_last, l_year@2 asc nulls_last], schema=[supp_nation:Utf8View, cust_nation:Utf8View, l_year:Int32, revenue:Decimal128(38,4)]
     GpuSort: by=[supp_nation@0 asc nulls_last, cust_nation@1 asc nulls_last, l_year@2 asc nulls_last], lanes=4, batches=single, hashed_on=[supp_nation@0, cust_nation@1, l_year@2], sorted_on=[supp_nation@0 asc nulls_last, cust_nation@1 asc nulls_last, l_year@2 asc nulls_last], schema=[supp_nation:Utf8View, cust_nation:Utf8View, l_year:Int32, revenue:Decimal128(38,4)]
       GpuProject: exprs=[supp_nation@0, cust_nation@1, l_year@2, sum(shipping.volume)@3 as revenue], lanes=4, batches=single, hashed_on=[supp_nation@0, cust_nation@1, l_year@2], schema=[supp_nation:Utf8View, cust_nation:Utf8View, l_year:Int32, revenue:Decimal128(38,4)]
@@ -2196,7 +2196,7 @@ GpuUnload: estimated_max_resident_size=78643200
                                                 GpuMergePartitions: estimated_max_resident_size=1966142
                                                   GpuLoadParquet: estimated_max_resident_size=7864568, source_bytes=24000806, target_batch_bytes=24000806, amplification=4.0
 == q8
-GpuUnload
+GpuUnload: exports=none
   GpuMergeSortedPartitions: by=[o_year@0 asc nulls_last], lanes=1, batches=single, sorted_on=[o_year@0 asc nulls_last], schema=[o_year:Int32, mkt_share:Decimal128(38,8)]
     GpuSort: by=[o_year@0 asc nulls_last], lanes=4, batches=single, hashed_on=[o_year@0], sorted_on=[o_year@0 asc nulls_last], schema=[o_year:Int32, mkt_share:Decimal128(38,8)]
       GpuProject: exprs=[o_year@0, `sum(CASE WHEN all_nations.nation = Utf8("BRAZIL") THEN all_nations.volume ELSE Int64(0) END)`@1 / sum(all_nations.volume)@2 as mkt_share], lanes=4, batches=single, hashed_on=[o_year@0], schema=[o_year:Int32, mkt_share:Decimal128(38,8)]
@@ -2389,7 +2389,7 @@ GpuUnload: estimated_max_resident_size=132026730
                                                                         GpuMergePartitions: estimated_max_resident_size=3306842
                                                                           GpuLoadParquet: estimated_max_resident_size=13227368, source_bytes=161512840, target_batch_bytes=33554432, amplification=4.0
 == q9
-GpuUnload
+GpuUnload: exports=[nation:Utf8]
   GpuMergeSortedPartitions: by=[nation@0 asc nulls_last, o_year@1 desc nulls_first], lanes=1, batches=single, sorted_on=[nation@0 asc nulls_last, o_year@1 desc nulls_first], schema=[nation:Utf8View, o_year:Int32, sum_profit:Decimal128(38,4)]
     GpuSort: by=[nation@0 asc nulls_last, o_year@1 desc nulls_first], lanes=4, batches=single, hashed_on=[nation@0, o_year@1], sorted_on=[nation@0 asc nulls_last, o_year@1 desc nulls_first], schema=[nation:Utf8View, o_year:Int32, sum_profit:Decimal128(38,4)]
       GpuProject: exprs=[nation@0, o_year@1, sum(profit.amount)@2 as sum_profit], lanes=4, batches=single, hashed_on=[nation@0, o_year@1], schema=[nation:Utf8View, o_year:Int32, sum_profit:Decimal128(38,4)]
@@ -2540,7 +2540,7 @@ GpuUnload: estimated_max_resident_size=186037665
                                                         GpuMergePartitions: estimated_max_resident_size=3399929
                                                           GpuLoadParquet: estimated_max_resident_size=13599716, source_bytes=166059244, target_batch_bytes=33554432, amplification=4.0
 == rollup-over-join
-GpuUnload
+GpuUnload: exports=[c_mktsegment:Utf8]
   GpuProject: exprs=[c_nationkey@0, c_mktsegment@1, count(*)@3], lanes=4, batches=single, schema=[c_nationkey:Int32, c_mktsegment:Utf8View, count(*):Int64]
     GpuAggregateBatches: group_by=[c_nationkey@0, c_mktsegment@1, __grouping_id@2], aggs=[sum(count(*)@3) as count(*)], final=[count(*)@3], lanes=4, batches=single, hashed_on=[c_nationkey@0, c_mktsegment@1, __grouping_id@2], schema=[c_nationkey:Int32, c_mktsegment:Utf8View, __grouping_id:UInt8, count(*):Int64]
       GpuEmitPartitions: hash=[c_nationkey@0, c_mktsegment@1, __grouping_id@2], lanes=4, batches=multiple, hashed_on=[c_nationkey@0, c_mktsegment@1, __grouping_id@2], schema=[c_nationkey:Int32, c_mktsegment:Utf8View, __grouping_id:UInt8, count(*):Int64]
@@ -2586,7 +2586,7 @@ GpuUnload: estimated_max_resident_size=862500
                   GpuEmitPartitions: estimated_max_resident_size=496476
                     GpuLoadParquet: estimated_max_resident_size=124119, source_bytes=151726, target_batch_bytes=151726, amplification=4.0
 == scan-limit
-GpuUnload: skip=0, fetch=10
+GpuUnload: skip=0, fetch=10, exports=[l_quantity:Decimal128(38,2), l_extendedprice:Decimal128(38,2), l_discount:Decimal128(38,2), l_tax:Decimal128(38,2), l_returnflag:Utf8, l_linestatus:Utf8, l_shipinstruct:Utf8, l_shipmode:Utf8, l_comment:Utf8]
   GpuLoadParquet: table=lineitem, projections=[l_orderkey@0, l_partkey@1, l_suppkey@2, l_linenumber@3, l_quantity@4, l_extendedprice@5, l_discount@6, l_tax@7, l_returnflag@8, l_linestatus@9, l_shipdate@10, l_commitdate@11, l_receiptdate@12, l_shipinstruct@13, l_shipmode@14, l_comment@15], partition_groups=[[[0],[1],[2],[3],[4],[5],[6],[7],[8],[9],[10],[11],[12],[13],[14],[15],[16],[17],[18],[19],[20],[21],[22],[23],[24],[25],[26],[27],[28],[29],[30],[31],[32],[33],[34],[35],[36],[37],[38],[39],[40],[41],[42],[43],[44],[45],[46],[47],[48]]], limit=10, lanes=1, batches=multiple, schema=[l_orderkey:Int64, l_partkey:Int64, l_suppkey:Int64, l_linenumber:Int64, l_quantity:Decimal128(15,2), l_extendedprice:Decimal128(15,2), l_discount:Decimal128(15,2), l_tax:Decimal128(15,2), l_returnflag:Utf8View, l_linestatus:Utf8View, l_shipdate:Date32, l_commitdate:Date32, l_receiptdate:Date32, l_shipinstruct:Utf8View, l_shipmode:Utf8View, l_comment:Utf8View]
 --- recipes ---
 GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
@@ -2596,7 +2596,7 @@ budget=2147483648, accumulators=0, certain=0
 GpuUnload: estimated_max_resident_size=7625472
   GpuLoadParquet: estimated_max_resident_size=7625472, source_bytes=371110838, target_batch_bytes=371110838, amplification=1.0
 == semi-join
-GpuUnload
+GpuUnload: exports=[o_orderstatus:Utf8, o_totalprice:Decimal128(38,2), o_orderpriority:Utf8, o_clerk:Utf8, o_comment:Utf8]
   GpuJoin: join_type=RightSemi, on=[(c_custkey@0, o_custkey@1)], lanes=4, batches=multiple, hashed_on=[o_custkey@1], schema=[o_orderkey:Int64, o_custkey:Int64, o_orderstatus:Utf8View, o_totalprice:Decimal128(15,2), o_orderdate:Date32, o_orderpriority:Utf8View, o_clerk:Utf8View, o_shippriority:Int32, o_comment:Utf8View]
     GpuCoalesceAllBatches: lanes=4, batches=single, hashed_on=[c_custkey@0], schema=[c_custkey:Int64]
       GpuEmitPartitions: hash=[c_custkey@0], lanes=4, batches=multiple, hashed_on=[c_custkey@0], schema=[c_custkey:Int64]
@@ -2627,7 +2627,7 @@ GpuUnload: estimated_max_resident_size=337500
       GpuMergePartitions: estimated_max_resident_size=9635371
         GpuLoadParquet: estimated_max_resident_size=38541484, source_bytes=117508953, target_batch_bytes=117508953, amplification=4.0
 == shuffle-additive
-GpuUnload
+GpuUnload: exports=[l_returnflag:Utf8, l_linestatus:Utf8, sum_qty:Decimal128(38,2), sum_base_price:Decimal128(38,2)]
   GpuProject: exprs=[l_returnflag@0, l_linestatus@1, count(*)@2 as cnt, sum(lineitem.l_quantity)@3 as sum_qty, sum(lineitem.l_extendedprice)@4 as sum_base_price], lanes=4, batches=single, hashed_on=[l_returnflag@0, l_linestatus@1], schema=[l_returnflag:Utf8View, l_linestatus:Utf8View, cnt:Int64, sum_qty:Decimal128(25,2), sum_base_price:Decimal128(25,2)]
     GpuAggregateBatches: group_by=[l_returnflag@0, l_linestatus@1], aggs=[sum(count(*)@2) as count(*), sum(sum(lineitem.l_quantity)@3) as sum(lineitem.l_quantity), sum(sum(lineitem.l_extendedprice)@4) as sum(lineitem.l_extendedprice)], final=[count(*)@2, sum(lineitem.l_quantity)@3, sum(lineitem.l_extendedprice)@4], lanes=4, batches=single, hashed_on=[l_returnflag@0, l_linestatus@1], schema=[l_returnflag:Utf8View, l_linestatus:Utf8View, count(*):Int64, sum(lineitem.l_quantity):Decimal128(25,2), sum(lineitem.l_extendedprice):Decimal128(25,2)]
       GpuEmitPartitions: hash=[l_returnflag@0, l_linestatus@1], lanes=4, batches=multiple, hashed_on=[l_returnflag@0, l_linestatus@1], schema=[l_returnflag:Utf8View, l_linestatus:Utf8View, count(*):Int64, sum(lineitem.l_quantity):Decimal128(25,2), sum(lineitem.l_extendedprice):Decimal128(25,2)]
@@ -2658,7 +2658,7 @@ GpuUnload: estimated_max_resident_size=91518528
               GpuAggregate: estimated_max_resident_size=5197012
                 GpuLoadParquet: estimated_max_resident_size=4430240, source_bytes=53324487, target_batch_bytes=53324487, amplification=4.7
 == shuffle-additive-avg
-GpuUnload
+GpuUnload: exports=[l_returnflag:Utf8, l_linestatus:Utf8, avg_qty:Decimal128(38,6), sum_qty:Decimal128(38,2)]
   GpuProject: exprs=[l_returnflag@0, l_linestatus@1, count(*)@2 as cnt, avg(lineitem.l_quantity)@3 as avg_qty, sum(lineitem.l_quantity)@4 as sum_qty], lanes=4, batches=single, hashed_on=[l_returnflag@0, l_linestatus@1], schema=[l_returnflag:Utf8View, l_linestatus:Utf8View, cnt:Int64, avg_qty:Decimal128(19,6), sum_qty:Decimal128(25,2)]
     GpuAggregateBatches: group_by=[l_returnflag@0, l_linestatus@1], aggs=[sum(count(*)@2) as count(*), sum(avg(lineitem.l_quantity)$sum@3) as avg(lineitem.l_quantity)$sum, sum(avg(lineitem.l_quantity)$count@4) as avg(lineitem.l_quantity)$count, sum(sum(lineitem.l_quantity)@5) as sum(lineitem.l_quantity)], final=[count(*)@2, CAST(avg(lineitem.l_quantity)$sum@3 AS Decimal128(19,6)) / CAST(avg(lineitem.l_quantity)$count@4 AS Decimal128(19,0)) as avg(lineitem.l_quantity), sum(lineitem.l_quantity)@5], lanes=4, batches=single, hashed_on=[l_returnflag@0, l_linestatus@1], schema=[l_returnflag:Utf8View, l_linestatus:Utf8View, count(*):Int64, avg(lineitem.l_quantity):Decimal128(19,6), sum(lineitem.l_quantity):Decimal128(25,2)]
       GpuEmitPartitions: hash=[l_returnflag@0, l_linestatus@1], lanes=4, batches=multiple, hashed_on=[l_returnflag@0, l_linestatus@1], schema=[l_returnflag:Utf8View, l_linestatus:Utf8View, count(*):Int64, avg(lineitem.l_quantity)$sum:Decimal128(15,2), avg(lineitem.l_quantity)$count:UInt64, sum(lineitem.l_quantity):Decimal128(25,2)]
@@ -2689,7 +2689,7 @@ GpuUnload: estimated_max_resident_size=91518528
               GpuAggregate: estimated_max_resident_size=995912
                 GpuLoadParquet: estimated_max_resident_size=497956, source_bytes=5313248, target_batch_bytes=5313248, amplification=8.0
 == shuffle-stddev
-GpuUnload
+GpuUnload: exports=[l_returnflag:Utf8, l_linestatus:Utf8]
   GpuProject: exprs=[l_returnflag@0, l_linestatus@1, stddev(lineitem.l_quantity)@2 as std_samp_qty, stddev_pop(lineitem.l_quantity)@3 as std_pop_qty, var(lineitem.l_quantity)@4 as var_samp_qty, var_pop(lineitem.l_quantity)@5 as var_pop_qty], lanes=4, batches=single, hashed_on=[l_returnflag@0, l_linestatus@1], schema=[l_returnflag:Utf8View, l_linestatus:Utf8View, std_samp_qty:Float64, std_pop_qty:Float64, var_samp_qty:Float64, var_pop_qty:Float64]
     GpuAggregateBatches: group_by=[l_returnflag@0, l_linestatus@1], aggs=[merge_m2(stddev(lineitem.l_quantity)$count@2, stddev(lineitem.l_quantity)$mean@3, stddev(lineitem.l_quantity)$m2@4) as [stddev(lineitem.l_quantity)$count, stddev(lineitem.l_quantity)$mean, stddev(lineitem.l_quantity)$m2], merge_m2(stddev_pop(lineitem.l_quantity)$count@5, stddev_pop(lineitem.l_quantity)$mean@6, stddev_pop(lineitem.l_quantity)$m2@7) as [stddev_pop(lineitem.l_quantity)$count, stddev_pop(lineitem.l_quantity)$mean, stddev_pop(lineitem.l_quantity)$m2], merge_m2(var(lineitem.l_quantity)$count@8, var(lineitem.l_quantity)$mean@9, var(lineitem.l_quantity)$m2@10) as [var(lineitem.l_quantity)$count, var(lineitem.l_quantity)$mean, var(lineitem.l_quantity)$m2], merge_m2(var_pop(lineitem.l_quantity)$count@11, var_pop(lineitem.l_quantity)$mean@12, var_pop(lineitem.l_quantity)$m2@13) as [var_pop(lineitem.l_quantity)$count, var_pop(lineitem.l_quantity)$mean, var_pop(lineitem.l_quantity)$m2]], final=[CASE WHEN (CAST(stddev(lineitem.l_quantity)$count@2 AS Float64) - 1) <= 0 THEN NULL ELSE sqrt(stddev(lineitem.l_quantity)$m2@4 / (CAST(stddev(lineitem.l_quantity)$count@2 AS Float64) - 1)) END as stddev(lineitem.l_quantity), CASE WHEN (CAST(stddev_pop(lineitem.l_quantity)$count@5 AS Float64) - 0) <= 0 THEN NULL ELSE sqrt(stddev_pop(lineitem.l_quantity)$m2@7 / (CAST(stddev_pop(lineitem.l_quantity)$count@5 AS Float64) - 0)) END as stddev_pop(lineitem.l_quantity), CASE WHEN (CAST(var(lineitem.l_quantity)$count@8 AS Float64) - 1) <= 0 THEN NULL ELSE var(lineitem.l_quantity)$m2@10 / (CAST(var(lineitem.l_quantity)$count@8 AS Float64) - 1) END as var(lineitem.l_quantity), CASE WHEN (CAST(var_pop(lineitem.l_quantity)$count@11 AS Float64) - 0) <= 0 THEN NULL ELSE var_pop(lineitem.l_quantity)$m2@13 / (CAST(var_pop(lineitem.l_quantity)$count@11 AS Float64) - 0) END as var_pop(lineitem.l_quantity)], lanes=4, batches=single, hashed_on=[l_returnflag@0, l_linestatus@1], schema=[l_returnflag:Utf8View, l_linestatus:Utf8View, stddev(lineitem.l_quantity):Float64, stddev_pop(lineitem.l_quantity):Float64, var(lineitem.l_quantity):Float64, var_pop(lineitem.l_quantity):Float64]
       GpuEmitPartitions: hash=[l_returnflag@0, l_linestatus@1], lanes=4, batches=multiple, hashed_on=[l_returnflag@0, l_linestatus@1], schema=[l_returnflag:Utf8View, l_linestatus:Utf8View, stddev(lineitem.l_quantity)$count:UInt64, stddev(lineitem.l_quantity)$mean:Float64, stddev(lineitem.l_quantity)$m2:Float64, stddev_pop(lineitem.l_quantity)$count:UInt64, stddev_pop(lineitem.l_quantity)$mean:Float64, stddev_pop(lineitem.l_quantity)$m2:Float64, var(lineitem.l_quantity)$count:UInt64, var(lineitem.l_quantity)$mean:Float64, var(lineitem.l_quantity)$m2:Float64, var_pop(lineitem.l_quantity)$count:UInt64, var_pop(lineitem.l_quantity)$mean:Float64, var_pop(lineitem.l_quantity)$m2:Float64]

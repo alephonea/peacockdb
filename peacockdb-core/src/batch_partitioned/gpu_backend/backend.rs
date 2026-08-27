@@ -154,7 +154,9 @@ impl Backend for GpuBackend {
                 // finish, so there is no answer for one over no keys to be wrong about.
                 NodeExecutors::Join(GpuJoin::new(executor, recipe, None, None, &out(node))?)
             }
-            NodeRef::Unload(_) => NodeExecutors::Unload(GpuExport::new(executor, &input(0))),
+            NodeRef::Unload(_) => {
+                NodeExecutors::Unload(GpuExport::new(executor, &input(0), &recipe.exports))
+            }
             NodeRef::MergePartitions(_) | NodeRef::Union(_) | NodeRef::Interleave(_) => {
                 unreachable!("routing nodes are answered above")
             }

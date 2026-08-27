@@ -6,12 +6,13 @@
 use super::writer::Writer;
 use super::*;
 use crate::batch_partitioned::aggregates::{AggCall, PlanAgg};
+use crate::batch_partitioned::exports::{ColumnExport, Divergence, Export, export_type_for};
 use crate::batch_partitioned::expr::{BinaryOp, Expr, NamedExpr};
 use crate::batch_partitioned::layout::{BatchLayout, ColumnOrder, NodeKind, PartitionLayout};
 use crate::batch_partitioned::nodes::GpuFilter;
 use crate::batch_partitioned::nodes::aggregate::AggregateBody;
 use crate::batch_partitioned::nodes::join::{JoinFilterColumn, JoinSide, NestedLoopJoinType};
-use crate::batch_partitioned::nodes::{GpuAggregate, GpuJoin, GpuNestedLoopJoin};
+use crate::batch_partitioned::nodes::{GpuAggregate, GpuJoin, GpuNestedLoopJoin, GpuUnload};
 use crate::generated::gpu_plan_generated::peacock::plan as fb;
 use datafusion::arrow::datatypes::{DataType, Field, Schema as ArrowSchema};
 use datafusion::common::JoinType;
@@ -61,6 +62,30 @@ impl GpuNode for Given {
     fn as_any(&self) -> &dyn Any {
         self
     }
+}
+
+/// `columns_of` with a type per column. What a sink's exports are about is types, which
+/// the `Int64` every other case takes cannot say anything about.
+fn columns_typed(columns: &[(&str, DataType)]) -> Schema {
+    Schema::new(Arc::new(ArrowSchema::new(
+        columns
+            .iter()
+            .map(|(name, data_type)| Field::new(*name, data_type.clone(), true))
+            .collect::<Vec<Field>>(),
+    )))
+}
+
+/// A sink over columns of the given types, and the schema it consumes — which is the one
+/// argument the recipe function reads.
+fn unload_over(columns: &[(&str, DataType)]) -> (GpuUnload, Schema) {
+    let schema = columns_typed(columns);
+    let input: Box<dyn GpuNode> = Box::new(Given {
+        kind: NodeKind::Intermediate {
+            layout: PartitionLayout::new(1),
+            schema: schema.clone(),
+        },
+    });
+    (GpuUnload::new(input, None), schema)
 }
 
 fn columns_of(columns: &[&str]) -> Schema {
@@ -883,5 +908,76 @@ fn the_recipe_and_the_executor_take_the_same_path_through_every_cell() {
     assert_eq!(
         cells, 18,
         "nine types by two residuals, and every cell answered"
+    );
+}
+
+/// The sink's prediction: the columns the device will hand back as something other than
+/// what was declared, and only those. An `Int64` is identity at every step of the round
+/// trip, so naming it would bury the two that are not.
+#[test]
+fn an_unload_names_the_columns_the_device_will_not_hand_back_as_declared() {
+    let (node, schema) = unload_over(&[
+        ("name", DataType::Utf8View),
+        ("price", DataType::Decimal128(15, 2)),
+        ("n", DataType::Int64),
+    ]);
+    let recipe = unload(&node, &[&schema], &mut Writer::new())
+        .expect("every column of this sink maps")
+        .expect("a sink drives the ABI");
+    assert_eq!(
+        recipe.exports.columns(),
+        &[
+            ColumnExport {
+                ordinal: 0,
+                exported: DataType::Utf8,
+                why: Divergence::StringType,
+            },
+            ColumnExport {
+                ordinal: 1,
+                exported: DataType::Decimal128(38, 2),
+                why: Divergence::DecimalPrecision,
+            },
+        ],
+        "the string and the decimal diverge and the Int64 does not"
+    );
+}
+
+/// The class the wire carries a type for and cuDF maps to nothing: `fb_to_type_id`
+/// answers `EMPTY` and the column reaches the device typeless. No corpus query declares
+/// one, which is what makes this the arm most likely to rot into a silent pass.
+#[test]
+fn a_column_cudf_has_no_type_for_is_refused_at_the_sink() {
+    for unmapped in [DataType::Binary, DataType::Null, DataType::Float16] {
+        let (node, schema) = unload_over(&[("x", unmapped.clone())]);
+        let refused = unload(&node, &[&schema], &mut Writer::new())
+            .expect_err("a typeless column at the sink is not a plan");
+        let message = format!("{refused}");
+        assert!(
+            message.contains(&format!("{unmapped:?}")) && message.contains("typeless"),
+            "the refusal has to name the type it cannot map: {message}"
+        );
+    }
+}
+
+/// A decimal is predicted here and left to fail: `wire-schema.md` removes the divergence
+/// by putting the precision on the wire, where a cast would remove the check that found
+/// it instead. The prediction is written down before its fix exists.
+#[test]
+fn a_decimal_is_predicted_at_the_maximum_precision_and_is_not_cast() {
+    assert_eq!(
+        export_type_for(&DataType::Decimal128(15, 2)).expect("a decimal maps"),
+        Export::Diverges {
+            exported: DataType::Decimal128(38, 2),
+            why: Divergence::DecimalPrecision,
+        },
+        "cuDF carries the scale and the export supplies no precision"
+    );
+    let (node, schema) = unload_over(&[("price", DataType::Decimal128(15, 2))]);
+    let recipe = unload(&node, &[&schema], &mut Writer::new())
+        .expect("a decimal maps")
+        .expect("a sink drives the ABI");
+    assert!(
+        recipe.exports.cast_ordinals().is_empty(),
+        "the decimal is predicted and not cast"
     );
 }

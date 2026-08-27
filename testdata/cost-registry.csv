@@ -129,11 +129,11 @@ tpch,1,join_int,na,na,na,enabled,na,enabled,enabled,enabled,enabled,enabled,enab
 tpch,1,left_join,enabled,na,enabled,enabled,na,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,disabled,disabled,disabled,disabled,disabled,ok,outer_join,97 152
 tpch,1,mixed_join,enabled,na,enabled,na,na,na,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,disabled,disabled,disabled,disabled,disabled,ok,,116 168
 tpch,1,nested_limits,na,na,na,na,na,na,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,disabled,disabled,disabled,disabled,disabled,ok,limit_offset cross_join,188
-tpch,1,nested_loop_join,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,disabled,disabled,disabled,disabled,disabled,ok,nested_loop_join,183
+tpch,1,nested_loop_join,enabled,enabled,enabled,na,enabled,na,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,ok,nested_loop_join,183
 tpch,1,nested_loop_left_join,enabled,enabled,enabled,na,na,na,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,disabled,disabled,disabled,disabled,disabled,ok,nested_loop_join outer_join,116 183
 tpch,1,rollup_over_join,na,na,na,na,na,na,enabled,enabled,enabled,enabled,enabled,enabled,enabled,disabled,disabled,disabled,disabled,disabled,disabled,disabled,disabled,ok,rollup,152 183 189
 tpch,1,scan_limit,enabled,enabled,na,na,enabled,na,enabled,enabled,enabled,enabled,enabled,disabled,disabled,enabled,enabled,enabled,disabled,disabled,disabled,disabled,disabled,ok,top_n,186 188
 tpch,1,semi_join,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,disabled,disabled,disabled,disabled,disabled,ok,semi_join,183
 tpch,1,shuffle_additive,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,disabled,disabled,disabled,disabled,disabled,ok,,183
 tpch,1,shuffle_additive_avg,na,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,disabled,disabled,disabled,disabled,disabled,disabled,disabled,disabled,disabled,disabled,ok,avg,163
-tpch,1,shuffle_stddev,na,enabled,enabled,na,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,disabled,disabled,disabled,disabled,disabled,ok,stddev_var,183
+tpch,1,shuffle_stddev,na,enabled,enabled,na,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,enabled,ok,stddev_var,183

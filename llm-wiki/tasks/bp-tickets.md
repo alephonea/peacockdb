@@ -159,6 +159,24 @@ Neither engine runs it and they fail differently, so a fix for either has to dec
 means — push the limit into the reader, or keep the interval on the unload at every mode as the
 three tp4 ones already do.
 
+<a id="t195"></a>
+### #195 — the two engines cut a node into different batches, and the byte total follows
+
+Six device cells, all reached for the first time now that [#183](#t183)'s cast lets a string sink
+complete: the per-node `output_bytes` disagree, and so do the per-batch lists beside them.
+
+The delta is exactly the per-batch structural overhead of the boundaries the cpu has and the device
+does not — `(rows+7)/8` per column plus `(rows+1)*4` per var-length column, charged once per batch.
+`tpch/cross-join` at bp-tp1-single: five cpu batches of 25 totalling 22990 against the device's
+22898, and 92 is what five charges over 25 rows cost above one charge over 125.
+`nested-loop-left-join`: two batches, 9477 against 9454, 23 to the byte. Recomputed from the parquet
+the whole-node figure is the device's, so neither side's arithmetic is wrong — they are summing
+different numbers of batches.
+
+Which side moves is the open half: the golden asserts the per-batch lists, so a device that
+legitimately batches differently needs the golden to say so, and one that should batch as the cpu
+does needs the driver to. Cells: `tpch` cross-join, nested-loop-left-join, q15, q4, q20, q21.
+
 <a id="t192"></a>
 ### #192 — tpcds/q64 needs 13 GB of host memory and no budget stops it
 
