@@ -3202,7 +3202,12 @@ each naming the partial-regeneration variable beside `UPDATE_CANONICAL`. That ta
 so the row is split rather than edited: legacy keeps its sentence and the new mode states its own.
 
 **And enough queries to prove the infra**: about ten tpch and about ten tpcds at sf1, enabled on
-the macro as it is built. They are chosen by plan size off the committed goldens rather than by
+the macro as it is built — **on both engines**, at every one of the five modes each is correct at,
+under the same rule and with the same tickets. The device half is not deferred to the rollout. An
+infra whose gpu path has never run is an infra T19 would debug at the same time as its first
+query, which is the thing staging this task exists to prevent, and the `gpu_oracle` argument,
+`live_cpu`, the read-only assert against the cpu's section and the staging array are all surface
+that means nothing until a device has walked it. They are chosen by plan size off the committed goldens rather than by
 taste, because the constraint is not what can plan — all 22 tpch benchmark queries already plan
 and attach recipes at all five modes, as do 81 of the 99 tpcds — but what is small enough that a
 failure is legible. The tpch ten are the smallest carrying no ticket: q6, q1, q14, q19, q12, q13,
