@@ -2739,7 +2739,12 @@ that is not the authority, with the body's own line moving to say so and nobody 
 section still records which mode produced it: the key carries no mode because there is one entry,
 and the body names one because where the modes disagree, that disagreement is what the file exists
 to make visible. A result at or above `RESULT_GOLDEN_MAX_BYTES` (256 KB) keeps its section and
-carries a marker saying so, rather than being deleted — the legacy path deletes it, which reads as
+carries a marker saying so, rather than being deleted — and the cap is reached while rendering
+rather than after it. Legacy renders the whole answer to one string and then measures it, so
+`anti-join`'s 1.2 million rows are materialized in full to discover they are 240 MB and unwanted.
+Here the rows are rendered one at a time against a running total and the whole set is dropped the
+moment it passes the cap, so the peak is the cap and one row rather than the answer. Which also
+settles the sort: a set that is never going to be written is never sorted — the legacy path deletes it, which reads as
 "no golden" and as "golden not applicable" identically, and `build-test.md` states the old rule
 and is corrected in the same commit.
 
