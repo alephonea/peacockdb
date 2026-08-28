@@ -10,8 +10,23 @@
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
 
+#include <memory>
+#include <vector>
+
+// Forward-declared rather than included: this header is read by a target that does not
+// link Arrow, and a shared_ptr parameter needs no definition.
+namespace arrow {
+class Schema;
+}
+
 namespace peacock {
 namespace fb = peacock::plan;
+
+// The exported schema with each decimal's precision set to what the plan declared, or the
+// schema unchanged where it cannot be: a width that disagrees, a non-decimal field, a 0, or
+// a precision already equal. Defined in src/gpu_executor.cpp.
+std::shared_ptr<arrow::Schema> with_declared_precision(
+    const std::shared_ptr<arrow::Schema>& schema, const std::vector<int32_t>& precisions);
 
 // Output cuDF type for a binary op: BOOL8 for predicates; for decimal
 // arithmetic the DataFusion-matching fixed_point result scale (ADD/SUB take

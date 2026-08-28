@@ -2,6 +2,7 @@
 #include "plan_executor.h"
 #include "plan_executor_internal.h"
 
+#include <arrow/type.h>
 #include <flatbuffers/flatbuffers.h>
 #include <gtest/gtest.h>
 
@@ -173,4 +174,46 @@ TEST(ClampRowRange, TheSentinelDoesNotOverflow) {
 int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);
   return RUN_ALL_TESTS();
+}
+
+// with_declared_precision: the four arms that DECLINE to rewrite. A device run exercises
+// only the fifth — 34 corpus cells go through the rewrite and none through these — so
+// without this the guards are trusted rather than tested.
+namespace {
+std::shared_ptr<arrow::Schema> two_decimals() {
+  return arrow::schema({arrow::field("a", arrow::decimal128(38, 2)),
+                        arrow::field("b", arrow::decimal128(38, 4))});
+}
+}  // namespace
+
+// The width disagreement, and it is the one worth pinning rather than the others: the
+// export then defaults to 38 and the failure a reader sees is #187's message, from a ticket
+// that is closed. peacock/#164 records that; this makes the shrug visible as itself.
+TEST(DeclaredPrecision, AWidthDisagreementLeavesEveryFieldAlone) {
+  auto schema = two_decimals();
+  EXPECT_TRUE(peacock::with_declared_precision(schema, {15})->Equals(*schema));
+  EXPECT_TRUE(peacock::with_declared_precision(schema, {})->Equals(*schema));
+  EXPECT_TRUE(peacock::with_declared_precision(schema, {15, 2, 9})->Equals(*schema));
+}
+
+TEST(DeclaredPrecision, ANonDecimalFieldIsNotRewritten) {
+  auto schema = arrow::schema({arrow::field("n", arrow::int64()),
+                               arrow::field("a", arrow::decimal128(38, 2))});
+  auto out = peacock::with_declared_precision(schema, {15, 15});
+  EXPECT_TRUE(out->field(0)->type()->Equals(*arrow::int64()));
+  EXPECT_TRUE(out->field(1)->type()->Equals(*arrow::decimal128(15, 2)));
+}
+
+// Zero is what a non-decimal column carries in the plan's own list, so it has to mean
+// "nothing declared" here too rather than a precision of none.
+TEST(DeclaredPrecision, APrecisionOfZeroOrOneAlreadyEqualIsLeftAlone) {
+  auto schema = two_decimals();
+  auto out = peacock::with_declared_precision(schema, {0, 38});
+  EXPECT_TRUE(out->Equals(*schema));
+}
+
+TEST(DeclaredPrecision, TheScaleSurvivesTheRewrite) {
+  auto out = peacock::with_declared_precision(two_decimals(), {15, 25});
+  EXPECT_TRUE(out->field(0)->type()->Equals(*arrow::decimal128(15, 2)));
+  EXPECT_TRUE(out->field(1)->type()->Equals(*arrow::decimal128(25, 4)));
 }
