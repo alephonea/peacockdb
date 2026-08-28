@@ -481,10 +481,17 @@ Rules that keep this healthy:
   progress may stall (flaky links, OOM kills), and a silent stall looks identical to a
   long run.
 - **Large CPU + GPU batches run in parallel** — kick off the shad-gpu run and the
-  verda/local CPU run concurrently; neither waits for the other. The one pair that cannot
-  overlap is a shad-gpu batch and CI's own `gpu-tests` job: they share the device, and the
-  loser sizes its RMM pool to whatever is free and dies with "Maximum pool size exceeded"
-  in the legacy sf40 tests — a red CI that reads as a code failure and is not one.
+  verda/local CPU run concurrently; neither waits for the other.
+- **A shad-gpu batch and CI's `gpu-tests` job collide sometimes, and the answer is to rerun**,
+  not to take turns. Both run the C++ `peacock_*_tests`, whose `main()` installs an RMM pool
+  reserving `kDiscreteInitialPercent = 85` of free memory (`rmm_pool.hpp:72`). Whichever starts
+  second gets a pool sized to the leftovers and the sf40 cases die with "Maximum pool size
+  exceeded" — 20.3 GiB free of a 139.7 GiB card in run 33126362612, with neither side using
+  more than a fraction of it. The failure is a reservation, not memory pressure, and it is
+  never a code failure: it lands on whoever was second and passes alone. The Rust GPU binaries
+  do not reserve — `install_rmm_pool`'s only Rust callers are in `tests/common/benchmark.rs` —
+  so a corpus batch alone never causes this. [#178](tickets.md#t178) is the fix, a concurrency
+  group keyed on the host; until then the cost is a rerun.
 
 ## Benchmarks
 
