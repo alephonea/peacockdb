@@ -6,7 +6,7 @@ anchor that the cost widget links to. Device labels are `tp<N>-<tier>` (micro=10
 mini=2GiB, standard=12GiB).
 
 A ticket carries a **Priority** line only when it is not medium; medium is the default.
-New tickets take the next free number (currently 199), which is also the counter for
+New tickets take the next free number (currently 200), which is also the counter for
 `tasks/bp-tickets.md` — the rollout's own list, separate file, one ID space. Finished and lapsed tickets move to
 `llm-wiki/archive/archived-tickets.md` (Done / Stale) — numbers are never reused, so an old
 reference still resolves there.
@@ -748,6 +748,22 @@ tripped, so something can branch on it, but there is nowhere to record into — 
 trip log, and `Underestimate` is the precedent for what one would look like. Related: #91.
 
 ## Infrastructure / process
+
+<a id="t199"></a>
+### #199 — `finish_output` hand-rolls a DataFusion rule that DataFusion exposes
+
+`join.rs:290` builds the finish call's output as the build side plus a `mark` boolean for LeftMark.
+That is `build_join_schema`'s LeftMark arm (`joins/utils.rs:626`) rewritten — field name, type and
+non-nullability included — with nothing comparing the two.
+
+Not the same value as the join seq's, which is why `wire-schema.md` left it: the finish runs at
+`finish_join_type(node.join_type)` rather than the node's, so Left's finish is a LeftAnti whose
+schema is the build side while the node's `join_schema()` is left ++ right. `GpuJoin::intermediate()`
+answers the probe seq and cannot answer this one.
+
+The fix is the same shape as [#198](#t198): ask DataFusion for the finish's join type rather than
+restating its rule, so a change on their side reaches us as a compile or a test rather than as a
+divergence nobody is looking for.
 
 <a id="t198"></a>
 ### #198 — the probe key project's schema is derived twice, once per backend
