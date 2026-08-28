@@ -13,9 +13,11 @@ use datafusion::common::JoinType;
 use flatbuffers::{FlatBufferBuilder, WIPOffset};
 
 use crate::generated::gpu_plan_generated::peacock::plan as fb;
+use crate::plan_serializer::serialize_schema;
 
 use super::super::error::PlanError;
 use super::super::expr::Expr;
+use super::super::node::GpuNode;
 use super::super::nodes::join::{
     JoinFilterColumn, JoinSide, NestedLoopJoinType, finish_join_type, per_call_join_type,
 };
@@ -44,8 +46,10 @@ pub(super) fn hash_join(
         // the build over, a streamed one copies it (#152) — and the plan does not.
         let handed_over = !capability.probe_streams;
         let join_type = node.join_type;
+        // This call IS the answer, so what it emits is what the node declares.
+        let output = node.kind().schema().expect("a join declares its columns");
         let seq = writer.node(2, |b, kids| {
-            probe_join(b, node, join_type, build, probe, kids)
+            probe_join(b, node, join_type, output, build, probe, kids)
         })?;
         return Ok(Some(Recipe::of(vec![Call::seq(
             seq,
@@ -68,7 +72,10 @@ pub(super) fn hash_join(
     // other finishing type still emits this batch's matches, and the join below consumes
     // the batch — hence the copy the keys come off.
     let per_call = per_call_join_type(node.join_type);
-    let keys = writer.node(1, |b, kids| key_project(b, node, probe, kids))?;
+    // What the key project emits and what the concat over its batches emits: one value,
+    // and the same one the gpu backend prices those calls by.
+    let accumulated = Schema::new(Arc::new(key_schema(&probe.fields, &node.keys)));
+    let keys = writer.node(1, |b, kids| key_project(b, node, &accumulated, probe, kids))?;
     calls.push(Call::seq(
         keys,
         FbKind::Project(ProjectRole::ProbeKeys),
@@ -80,8 +87,10 @@ pub(super) fn hash_join(
         CallPattern::PerProbeBatch,
     ));
     if let Some(join_type) = per_call {
+        // Not the node's: the pad project above turns what this emits into that.
+        let output = node.intermediate();
         let seq = writer.node(2, |b, kids| {
-            probe_join(b, node, join_type, build, probe, kids)
+            probe_join(b, node, join_type, output, build, probe, kids)
         })?;
         calls.push(Call::seq(
             seq,
@@ -91,7 +100,9 @@ pub(super) fn hash_join(
         ));
     }
 
-    let concat = writer.node(1, |b, kids| Ok(node_writer::coalesce_partitions(b, kids)))?;
+    let concat = writer.node(1, |b, kids| {
+        Ok(node_writer::coalesce_partitions(b, &accumulated, kids))
+    })?;
     calls.push(Call::seq(
         concat,
         FbKind::CoalescePartitions,
@@ -112,7 +123,7 @@ pub(super) fn hash_join(
     ));
     if per_call.is_some() {
         let nulls = padded_columns(node, build, probe);
-        let seq = writer.node(1, |b, kids| pad_project(b, node, build, probe, kids))?;
+        let seq = writer.node(1, |b, kids| pad_project(b, node, build, kids))?;
         calls.push(Call::seq(
             seq,
             FbKind::Project(ProjectRole::NullPad { nulls }),
@@ -142,10 +153,12 @@ fn probe_join<'a>(
     b: &mut FlatBufferBuilder<'a>,
     node: &GpuJoin,
     join_type: JoinType,
+    output: &Schema,
     build: &Schema,
     probe: &Schema,
     kids: &[WIPOffset<fb::PlanNode<'a>>],
-) -> Result<Payload, PlanError> {
+) -> Result<Payload<'a>, PlanError> {
+    let schema = serialize_schema(b, &output.fields);
     let mut keys = Vec::with_capacity(node.keys.len());
     for (build_ordinal, probe_ordinal) in &node.keys {
         let left = column(b, *build_ordinal, build)?;
@@ -188,6 +201,7 @@ fn probe_join<'a>(
     Ok(Payload {
         kind: fb::PlanNodeKind::CudfHashJoin,
         value: join.as_union_value(),
+        schema: Some(schema),
     })
 }
 
@@ -202,7 +216,10 @@ fn finish_join<'a>(
     build: &Schema,
     probe: &Schema,
     kids: &[WIPOffset<fb::PlanNode<'a>>],
-) -> Result<Payload, PlanError> {
+) -> Result<Payload<'a>, PlanError> {
+    // The finish runs at `finish_join_type`, not the node's, so what it emits is
+    // `finish_output` rather than the node's `intermediate()` ([#199](../../../../llm-wiki/tickets.md#t199)).
+    let schema = serialize_schema(b, &finish_output(node, build).fields);
     let mut keys = Vec::with_capacity(node.keys.len());
     for (position, (build_ordinal, probe_ordinal)) in node.keys.iter().enumerate() {
         let left = column(b, *build_ordinal, build)?;
@@ -233,6 +250,7 @@ fn finish_join<'a>(
     Ok(Payload {
         kind: fb::PlanNodeKind::CudfHashJoin,
         value: join.as_union_value(),
+        schema: Some(schema),
     })
 }
 
@@ -241,16 +259,23 @@ fn finish_join<'a>(
 fn key_project<'a>(
     b: &mut FlatBufferBuilder<'a>,
     node: &GpuJoin,
+    output: &Schema,
     probe: &Schema,
     kids: &[WIPOffset<fb::PlanNode<'a>>],
-) -> Result<Payload, PlanError> {
+) -> Result<Payload<'a>, PlanError> {
     let mut exprs = Vec::with_capacity(node.keys.len());
     let mut names = Vec::with_capacity(node.keys.len());
     for (_, probe_ordinal) in &node.keys {
         exprs.push(column(b, *probe_ordinal, probe)?);
         names.push(b.create_string(node_writer::field_at(probe, *probe_ordinal).name()));
     }
-    Ok(node_writer::project_payload(b, exprs, names, kids[0]))
+    Ok(node_writer::project_payload(
+        b,
+        exprs,
+        names,
+        &output.fields,
+        kids[0],
+    ))
 }
 
 /// The node's declared row, out of an anti join that emitted build columns only: each
@@ -262,27 +287,37 @@ fn pad_project<'a>(
     b: &mut FlatBufferBuilder<'a>,
     node: &GpuJoin,
     build: &Schema,
-    probe: &Schema,
     kids: &[WIPOffset<fb::PlanNode<'a>>],
-) -> Result<Payload, PlanError> {
+) -> Result<Payload<'a>, PlanError> {
+    // The join's own output, read rather than rebuilt from its two sides — the same value
+    // the join seq declares. `build_width` stays because it is a different fact: which side
+    // an ordinal came from decides column-versus-NULL, and no schema says that. Collapsing
+    // the field lookup is the whole of what reading `intermediate()` buys, and it is done.
+    let joined = node.intermediate();
     let build_width = build.fields.fields().len() as u32;
     let kept: Vec<u32> = match &node.projection {
         Some(columns) => columns.clone(),
-        None => (0..build_width + probe.fields.fields().len() as u32).collect(),
+        None => (0..joined.fields.fields().len() as u32).collect(),
     };
     let mut exprs = Vec::with_capacity(kept.len());
     let mut names = Vec::with_capacity(kept.len());
     for ordinal in kept {
+        let field = node_writer::field_at(joined, ordinal);
         if ordinal < build_width {
             exprs.push(column(b, ordinal, build)?);
-            names.push(b.create_string(node_writer::field_at(build, ordinal).name()));
-            continue;
+        } else {
+            exprs.push(node_writer::null_literal(b, field)?);
         }
-        let field = node_writer::field_at(probe, ordinal - build_width);
-        exprs.push(node_writer::null_literal(b, field)?);
         names.push(b.create_string(field.name()));
     }
-    Ok(node_writer::project_payload(b, exprs, names, kids[0]))
+    let output = node.kind().schema().expect("a join declares its columns");
+    Ok(node_writer::project_payload(
+        b,
+        exprs,
+        names,
+        &output.fields,
+        kids[0],
+    ))
 }
 
 /// What the build-side semi family's finish emits, which is what a project above it
@@ -307,7 +342,7 @@ fn narrow_project<'a>(
     node: &GpuJoin,
     emitted: &Schema,
     kids: &[WIPOffset<fb::PlanNode<'a>>],
-) -> Result<Payload, PlanError> {
+) -> Result<Payload<'a>, PlanError> {
     let kept = node
         .projection
         .as_ref()
@@ -318,13 +353,22 @@ fn narrow_project<'a>(
         exprs.push(column(b, *ordinal, emitted)?);
         names.push(b.create_string(node_writer::field_at(emitted, *ordinal).name()));
     }
-    Ok(node_writer::project_payload(b, exprs, names, kids[0]))
+    let output = node.kind().schema().expect("a join declares its columns");
+    Ok(node_writer::project_payload(
+        b,
+        exprs,
+        names,
+        &output.fields,
+        kids[0],
+    ))
 }
 
 pub(super) fn cross_join_payload<'a>(
     b: &mut FlatBufferBuilder<'a>,
+    output: &Schema,
     kids: &[WIPOffset<fb::PlanNode<'a>>],
-) -> Payload {
+) -> Payload<'a> {
+    let schema = serialize_schema(b, &output.fields);
     let cross = fb::CudfCrossJoin::create(
         b,
         &fb::CudfCrossJoinArgs {
@@ -335,6 +379,7 @@ pub(super) fn cross_join_payload<'a>(
     Payload {
         kind: fb::PlanNodeKind::CudfCrossJoin,
         value: cross.as_union_value(),
+        schema: Some(schema),
     }
 }
 
@@ -342,7 +387,7 @@ pub(super) fn cross_join_payload<'a>(
 /// keys and a predicate join has none. So Left's one call may consume the build outright.
 pub(super) fn nested_loop_join(
     node: &GpuNestedLoopJoin,
-    _inputs: &[&Schema],
+    output: &Schema,
     writer: &mut Writer,
 ) -> Result<Option<Recipe>, PlanError> {
     let build = match node.join_type {
@@ -350,6 +395,7 @@ pub(super) fn nested_loop_join(
         NestedLoopJoinType::Left => Input::BuildSide,
     };
     let seq = writer.node(2, |b, kids| {
+        let schema = serialize_schema(b, &output.fields);
         let filter = write_expr(b, &node.filter)?;
         let columns: Vec<fb::JoinFilterColumn> =
             node.filter_columns.iter().map(filter_column).collect();
@@ -375,6 +421,7 @@ pub(super) fn nested_loop_join(
         Ok(Payload {
             kind: fb::PlanNodeKind::CudfNestedLoopJoin,
             value: join.as_union_value(),
+            schema: Some(schema),
         })
     })?;
     Ok(Some(Recipe::of(vec![Call::seq(
@@ -426,4 +473,16 @@ fn padded_columns(node: &GpuJoin, build: &Schema, probe: &Schema) -> usize {
         Some(kept) => kept.iter().filter(|column| **column >= build_width).count(),
         None => probe.fields.fields().len(),
     }
+}
+
+/// The probe's key columns in the order the join hashes them, keeping the probe's own names
+/// — what `key_project` writes, what the gpu backend prices that call by, and what the
+/// wire declares for it. One derivation because it is one schema; the cpu backend still has
+/// its own through DataFusion ([#198](../../../../llm-wiki/tickets.md#t198)).
+pub(crate) fn key_schema(probe: &ArrowSchema, keys: &[(u32, u32)]) -> ArrowSchema {
+    ArrowSchema::new(
+        keys.iter()
+            .map(|(_, probe_ordinal)| probe.field(*probe_ordinal as usize).clone())
+            .collect::<Vec<_>>(),
+    )
 }

@@ -135,8 +135,10 @@ fn join(join_type: JoinType, filter: bool, projection: Option<Vec<u32>>) -> GpuJ
         false,
         projection,
         columns_of(&["k", "label", "fk", "v"]),
+        dim_fact_joined(join_type),
     )
 }
+
 
 fn recipe_for(node: &GpuJoin) -> Recipe {
     let build = columns_of(&["k", "label"]);
@@ -364,7 +366,7 @@ fn a_nested_loop_join_copies_its_build_side_only_where_the_probe_streams() {
     let inputs_of = |join_type| {
         let node = nested_loop(join_type);
         let schema = columns_of(&["k"]);
-        join::nested_loop_join(&node, &[&schema, &schema], &mut Writer::new())
+        join::nested_loop_join(&node, &schema, &mut Writer::new())
             .expect("the join's payload is writable")
             .expect("a nested-loop join drives the ABI")
             .calls[0]
@@ -667,8 +669,18 @@ fn projecting_left_join() -> GpuJoin {
         false,
         Some(vec![1, 3]),
         columns_of(&["label", "v"]),
+        dim_fact_joined(JoinType::Left),
     )
 }
+/// The join call's shape for this file's one pair of sides, from DataFusion's rule.
+fn dim_fact_joined(join_type: JoinType) -> Schema {
+    crate::batch_partitioned::nodes::join::joined_schema(
+        &columns_of(&["k", "label"]).fields,
+        &columns_of(&["fk", "v"]).fields,
+        join_type,
+    )
+}
+
 
 /// The buffer a join's recipe addresses, so a case can read the payload rather than the
 /// call list.
@@ -720,6 +732,7 @@ fn projecting_semi_join(join_type: JoinType, kept: Vec<u32>, output: &[&str]) ->
         false,
         Some(kept),
         columns_of(output),
+        dim_fact_joined(join_type),
     )
 }
 
@@ -786,6 +799,7 @@ fn a_semi_join_that_narrows_nothing_publishes_no_project_after_its_finish() {
         false,
         None,
         columns_of(&["k", "label"]),
+        dim_fact_joined(JoinType::LeftSemi),
     );
     let (recipe, _) = written(&node);
     assert_eq!(

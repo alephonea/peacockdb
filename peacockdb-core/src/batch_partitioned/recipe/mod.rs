@@ -11,7 +11,7 @@
 
 mod aggregate_writer;
 mod expr_writer;
-mod join;
+pub(crate) mod join;
 mod node_writer;
 mod read;
 mod types;
@@ -140,8 +140,8 @@ fn emit(
 ) -> Result<Option<Recipe>, PlanError> {
     match as_node_ref(node) {
         NodeRef::LoadParquet(load) => scan(load, node, writer),
-        NodeRef::Filter(filter_node) => filter(filter_node, inputs, writer),
-        NodeRef::Project(project_node) => project(project_node, inputs, writer),
+        NodeRef::Filter(filter_node) => filter(filter_node, output_of(node), writer),
+        NodeRef::Project(project_node) => project(project_node, output_of(node), writer),
         NodeRef::Sort(sort_node) => sort(sort_node, inputs, writer),
         NodeRef::Aggregate(aggregate_node) => aggregate(aggregate_node, inputs, writer),
         NodeRef::AccumulateBatchesAndSort(accumulator) => {
@@ -152,13 +152,21 @@ fn emit(
         NodeRef::MergeSortedPartitions(merge) => merge_sorted_partitions(merge, inputs, writer),
         NodeRef::EmitPartitions(emitter) => emit_partitions(emitter, node, inputs, writer),
         NodeRef::Join(join_node) => join::hash_join(join_node, inputs, writer),
-        NodeRef::CrossJoin(cross) => cross_join(cross, inputs, writer),
-        NodeRef::NestedLoopJoin(nested) => join::nested_loop_join(nested, inputs, writer),
+        NodeRef::CrossJoin(cross) => cross_join(cross, output_of(node), writer),
+        NodeRef::NestedLoopJoin(nested) => join::nested_loop_join(nested, output_of(node), writer),
         NodeRef::Limit(limit_node) => limit(limit_node, inputs, writer),
         NodeRef::Unload(unload_node) => unload(unload_node, inputs, writer),
         // The three that route rather than compute: not one call between them.
         NodeRef::MergePartitions(_) | NodeRef::Union(_) | NodeRef::Interleave(_) => Ok(None),
     }
+}
+
+/// What a node declares it produces. Every arm below that writes a payload needs it, and a
+/// sink writes none — which is why this expects rather than returning an option.
+fn output_of(node: &dyn GpuNode) -> &Schema {
+    node.kind()
+        .schema()
+        .expect("a node that writes a payload declares its columns")
 }
 
 /// The additive entry point, and the reason it exists: the node's own row-group list is
@@ -180,10 +188,10 @@ fn scan(
 
 fn filter(
     node: &GpuFilter,
-    _inputs: &[&Schema],
+    output: &Schema,
     writer: &mut Writer,
 ) -> Result<Option<Recipe>, PlanError> {
-    let seq = writer.node(1, |b, kids| node_writer::filter(b, node, kids))?;
+    let seq = writer.node(1, |b, kids| node_writer::filter(b, node, output, kids))?;
     Ok(Some(Recipe::of(vec![Call::seq(
         seq,
         FbKind::Filter,
@@ -194,10 +202,10 @@ fn filter(
 
 fn project(
     node: &GpuProject,
-    _inputs: &[&Schema],
+    output: &Schema,
     writer: &mut Writer,
 ) -> Result<Option<Recipe>, PlanError> {
-    let seq = writer.node(1, |b, kids| node_writer::project(b, node, kids))?;
+    let seq = writer.node(1, |b, kids| node_writer::project(b, node, output, kids))?;
     Ok(Some(Recipe::of(vec![Call::seq(
         seq,
         FbKind::PlainProject,
@@ -293,10 +301,11 @@ fn accumulate_and_sort(
 
 fn coalesce_all_batches(
     _node: &GpuCoalesceAllBatches,
-    _inputs: &[&Schema],
+    inputs: &[&Schema],
     writer: &mut Writer,
 ) -> Result<Option<Recipe>, PlanError> {
-    let seq = writer.node(1, |b, kids| Ok(node_writer::coalesce_partitions(b, kids)))?;
+    let seq =
+        writer.node(1, |b, kids| Ok(node_writer::coalesce_partitions(b, inputs[0], kids)))?;
     Ok(Some(Recipe::of(vec![Call::seq(
         seq,
         FbKind::CoalescePartitions,
@@ -316,7 +325,7 @@ fn aggregate_batches(
     let input = inputs[0];
     let body = &merge.body;
     let state = merge.intermediate();
-    let concat = writer.node(1, |b, kids| Ok(node_writer::coalesce_partitions(b, kids)))?;
+    let concat = writer.node(1, |b, kids| Ok(node_writer::coalesce_partitions(b, input, kids)))?;
     let merged = writer.node(1, |b, kids| {
         aggregate_writer::aggregate(b, body, Phase::Merge, input, state, kids)
     })?;
@@ -389,10 +398,10 @@ fn emit_partitions(
 
 fn cross_join(
     _node: &GpuCrossJoin,
-    _inputs: &[&Schema],
+    output: &Schema,
     writer: &mut Writer,
 ) -> Result<Option<Recipe>, PlanError> {
-    let seq = writer.node(2, |b, kids| Ok(join::cross_join_payload(b, kids)))?;
+    let seq = writer.node(2, |b, kids| Ok(join::cross_join_payload(b, output, kids)))?;
     Ok(Some(Recipe::of(vec![Call::seq(
         seq,
         FbKind::CrossJoin,

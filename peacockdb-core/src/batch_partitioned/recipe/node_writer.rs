@@ -4,7 +4,7 @@
 //! child offsets the walk chose for its structural slots — so a payload is written from
 //! the node alone, as the mapping table is a per-node claim.
 
-use datafusion::arrow::datatypes::Field;
+use datafusion::arrow::datatypes::{Field, SchemaRef};
 use flatbuffers::{FlatBufferBuilder, WIPOffset};
 
 use crate::generated::gpu_plan_generated::peacock::plan as fb;
@@ -81,7 +81,7 @@ pub(super) fn scan<'a>(
     b: &mut FlatBufferBuilder<'a>,
     node: &GpuLoadParquet,
     output: &Schema,
-) -> Result<Payload, PlanError> {
+) -> Result<Payload<'a>, PlanError> {
     let path = b.create_string(&node.file);
     let paths = b.create_vector(&[path]);
     let schema = serialize_schema(b, &output.fields);
@@ -97,14 +97,19 @@ pub(super) fn scan<'a>(
     Ok(Payload {
         kind: fb::PlanNodeKind::CudfScan,
         value: scan.as_union_value(),
+        // The same offset the scan carries as its file_schema: a scan reads what it
+        // declares, so writing it twice would put two copies of one fact in the buffer.
+        schema: Some(schema),
     })
 }
 
 pub(super) fn filter<'a>(
     b: &mut FlatBufferBuilder<'a>,
     node: &GpuFilter,
+    output: &Schema,
     kids: Kids<'a, '_>,
-) -> Result<Payload, PlanError> {
+) -> Result<Payload<'a>, PlanError> {
+    let schema = serialize_schema(b, &output.fields);
     let predicate = write_expr(b, &node.predicate)?;
     let projection = node
         .projection
@@ -121,14 +126,16 @@ pub(super) fn filter<'a>(
     Ok(Payload {
         kind: fb::PlanNodeKind::CudfFilter,
         value: filter.as_union_value(),
+        schema: Some(schema),
     })
 }
 
 pub(super) fn project<'a>(
     b: &mut FlatBufferBuilder<'a>,
     node: &GpuProject,
+    output: &Schema,
     kids: Kids<'a, '_>,
-) -> Result<Payload, PlanError> {
+) -> Result<Payload<'a>, PlanError> {
     let mut exprs = Vec::with_capacity(node.exprs.len());
     for named in &node.exprs {
         exprs.push(write_expr(b, &named.expr)?);
@@ -138,7 +145,7 @@ pub(super) fn project<'a>(
         .iter()
         .map(|named| b.create_string(&named.name))
         .collect();
-    Ok(project_payload(b, exprs, names, kids[0]))
+    Ok(project_payload(b, exprs, names, &output.fields, kids[0]))
 }
 
 /// A project built from expressions the caller already wrote — the join's key and pad
@@ -147,8 +154,10 @@ pub(super) fn project_payload<'a>(
     b: &mut FlatBufferBuilder<'a>,
     exprs: Vec<WIPOffset<fb::Expr<'a>>>,
     names: Vec<WIPOffset<&'a str>>,
+    output: &SchemaRef,
     input: WIPOffset<fb::PlanNode<'a>>,
-) -> Payload {
+) -> Payload<'a> {
+    let schema = serialize_schema(b, output);
     let exprs = b.create_vector(&exprs);
     let aliases = b.create_vector(&names);
     let project = fb::CudfProject::create(
@@ -162,6 +171,7 @@ pub(super) fn project_payload<'a>(
     Payload {
         kind: fb::PlanNodeKind::CudfProject,
         value: project.as_union_value(),
+        schema: Some(schema),
     }
 }
 
@@ -172,7 +182,10 @@ pub(super) fn sort<'a>(
     node: &GpuSort,
     input: &Schema,
     kids: Kids<'a, '_>,
-) -> Result<Payload, PlanError> {
+) -> Result<Payload<'a>, PlanError> {
+    // Order and layout, not columns: a sort emits the rows it was given, so its output is
+    // its input. The same holds for the merge and the repartition below.
+    let schema = serialize_schema(b, &input.fields);
     let exprs = sort_keys(b, &node.keys, input);
     let sort = fb::CudfSort::create(
         b,
@@ -186,6 +199,7 @@ pub(super) fn sort<'a>(
     Ok(Payload {
         kind: fb::PlanNodeKind::CudfSort,
         value: sort.as_union_value(),
+        schema: Some(schema),
     })
 }
 
@@ -197,7 +211,8 @@ pub(super) fn accumulating_sort<'a>(
     node: &GpuAccumulateBatchesAndSort,
     input: &Schema,
     kids: Kids<'a, '_>,
-) -> Result<Payload, PlanError> {
+) -> Result<Payload<'a>, PlanError> {
+    let schema = serialize_schema(b, &input.fields);
     let exprs = sort_keys(b, &node.keys, input);
     let sort = fb::CudfSort::create(
         b,
@@ -211,6 +226,7 @@ pub(super) fn accumulating_sort<'a>(
     Ok(Payload {
         kind: fb::PlanNodeKind::CudfSort,
         value: sort.as_union_value(),
+        schema: Some(schema),
     })
 }
 
@@ -220,7 +236,8 @@ pub(super) fn merge_sorted<'a>(
     fetch: Option<usize>,
     input: &Schema,
     kids: Kids<'a, '_>,
-) -> Result<Payload, PlanError> {
+) -> Result<Payload<'a>, PlanError> {
+    let schema = serialize_schema(b, &input.fields);
     let exprs = sort_keys(b, keys, input);
     let merge = fb::CudfSortPreservingMerge::create(
         b,
@@ -233,6 +250,7 @@ pub(super) fn merge_sorted<'a>(
     Ok(Payload {
         kind: fb::PlanNodeKind::CudfSortPreservingMerge,
         value: merge.as_union_value(),
+        schema: Some(schema),
     })
 }
 
@@ -243,7 +261,7 @@ pub(super) fn merge_partitions<'a>(
     node: &GpuMergeSortedPartitions,
     input: &Schema,
     kids: Kids<'a, '_>,
-) -> Result<Payload, PlanError> {
+) -> Result<Payload<'a>, PlanError> {
     merge_sorted(b, &node.keys, node.fetch, input, kids)
 }
 
@@ -251,8 +269,10 @@ pub(super) fn merge_partitions<'a>(
 /// node carries nothing but its input.
 pub(super) fn coalesce_partitions<'a>(
     b: &mut FlatBufferBuilder<'a>,
+    input: &Schema,
     kids: Kids<'a, '_>,
-) -> Payload {
+) -> Payload<'a> {
+    let schema = serialize_schema(b, &input.fields);
     let coalesce = fb::CudfCoalescePartitions::create(
         b,
         &fb::CudfCoalescePartitionsArgs {
@@ -262,6 +282,7 @@ pub(super) fn coalesce_partitions<'a>(
     Payload {
         kind: fb::PlanNodeKind::CudfCoalescePartitions,
         value: coalesce.as_union_value(),
+        schema: Some(schema),
     }
 }
 
@@ -273,7 +294,8 @@ pub(super) fn repartition<'a>(
     input: &Schema,
     lanes: u32,
     kids: Kids<'a, '_>,
-) -> Result<Payload, PlanError> {
+) -> Result<Payload<'a>, PlanError> {
+    let schema = serialize_schema(b, &input.fields);
     let keys: Vec<WIPOffset<fb::Expr>> = node
         .hash_keys
         .iter()
@@ -292,6 +314,7 @@ pub(super) fn repartition<'a>(
     Ok(Payload {
         kind: fb::PlanNodeKind::CudfRepartition,
         value: repartition.as_union_value(),
+        schema: Some(schema),
     })
 }
 

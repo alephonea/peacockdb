@@ -18,6 +18,14 @@ pub(super) fn payload_text(node: &fb::PlanNode<'_>, indent: &str) -> String {
     let mut field = |name: &str, value: String| {
         let _ = writeln!(text, "{indent}{name}: {value}");
     };
+    // Every node's, before its payload: it is on the wire for every one of them, and a
+    // field this file did not print was a field this golden could not see change — which
+    // is the same argument that put precision and scale in `schema_text`. Absent on the
+    // structural union alone, and that absence is the thing to notice there.
+    match node.output_schema() {
+        Some(schema) => field("declares", schema_text(&schema)),
+        None => field("declares", "unset".to_string()),
+    }
     match node.node_type() {
         fb::PlanNodeKind::CudfScan => {
             let scan = node.node_as_cudf_scan().expect("a scan");
@@ -62,8 +70,7 @@ pub(super) fn payload_text(node: &fb::PlanNode<'_>, indent: &str) -> String {
                     let args = func
                         .args()
                         .map(|args| {
-                            let written: Vec<String> =
-                                args.iter().map(|a| expr_text(&a)).collect();
+                            let written: Vec<String> = args.iter().map(|a| expr_text(&a)).collect();
                             written.join(", ")
                         })
                         .unwrap_or_default();
@@ -181,7 +188,10 @@ pub(super) fn payload_text(node: &fb::PlanNode<'_>, indent: &str) -> String {
             if let Some(keys) = repartition.hash_exprs() {
                 field(
                     "hash",
-                    keys.iter().map(|e| expr_text(&e)).collect::<Vec<_>>().join(", "),
+                    keys.iter()
+                        .map(|e| expr_text(&e))
+                        .collect::<Vec<_>>()
+                        .join(", "),
                 );
             }
         }
@@ -195,7 +205,10 @@ pub(super) fn payload_text(node: &fb::PlanNode<'_>, indent: &str) -> String {
 fn ordinals(columns: impl Iterator<Item = u32>) -> String {
     format!(
         "[{}]",
-        columns.map(|c| c.to_string()).collect::<Vec<_>>().join(", ")
+        columns
+            .map(|c| c.to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
     )
 }
 
@@ -220,13 +233,27 @@ fn sort_keys(
         .join(", ")
 }
 
+/// A field's type as the buffer holds it, precision and scale included. They are on the
+/// wire and were rendered nowhere, so this golden — whose job is to pin the wire — could not
+/// see a change to either, including one that stopped them being written at all.
+fn field_type_text(field: &fb::Field<'_>) -> String {
+    match field.data_type() {
+        fb::DataType::Decimal128 => format!(
+            "Decimal128({}, {})",
+            field.decimal_precision(),
+            field.decimal_scale()
+        ),
+        other => format!("{other:?}"),
+    }
+}
+
 fn schema_text(schema: &fb::Schema<'_>) -> String {
     let fields = schema
         .fields()
         .map(|fields| {
             fields
                 .iter()
-                .map(|f| format!("{}:{:?}", f.name().unwrap_or("?"), f.data_type()))
+                .map(|f| format!("{}:{}", f.name().unwrap_or("?"), field_type_text(&f)))
                 .collect::<Vec<_>>()
                 .join(", ")
         })
@@ -331,7 +358,12 @@ fn expr_text(expr: &fb::Expr<'_>) -> String {
                 .expect("a scalar function");
             let args = function
                 .args()
-                .map(|args| args.iter().map(|a| expr_text(&a)).collect::<Vec<_>>().join(", "))
+                .map(|args| {
+                    args.iter()
+                        .map(|a| expr_text(&a))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
                 .unwrap_or_default();
             format!("{}({args})", function.name().unwrap_or("?"))
         }

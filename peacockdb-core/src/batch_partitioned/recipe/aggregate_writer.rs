@@ -30,7 +30,11 @@ pub(super) fn aggregate<'a>(
     input: &Schema,
     state: &Schema,
     kids: &[WIPOffset<fb::PlanNode<'a>>],
-) -> Result<Payload, PlanError> {
+) -> Result<Payload<'a>, PlanError> {
+    // Partial builds state and Merge merges state into state, so what either emits is the
+    // state schema the planner computed — never the node's declared output, which is what
+    // the finalize project below turns this into.
+    let schema = serialize_schema(b, &state.fields);
     let mut group_exprs = Vec::with_capacity(body.group_by.len());
     for key in &body.group_by {
         group_exprs.push(write_expr(b, key)?);
@@ -94,6 +98,7 @@ pub(super) fn aggregate<'a>(
     Ok(Payload {
         kind: fb::PlanNodeKind::CudfAggregate,
         value: aggregate.as_union_value(),
+        schema: Some(schema),
     })
 }
 
@@ -112,7 +117,7 @@ pub(super) fn finalize_project<'a>(
     state: &Schema,
     output: &Schema,
     kids: &[WIPOffset<fb::PlanNode<'a>>],
-) -> Result<Payload, PlanError> {
+) -> Result<Payload<'a>, PlanError> {
     let columns = nodes::aggregate::finalize_columns(body, state, output)?;
     let mut exprs = Vec::with_capacity(columns.len());
     for column in &columns {
@@ -125,7 +130,13 @@ pub(super) fn finalize_project<'a>(
         .iter()
         .map(|column| b.create_string(&column.name))
         .collect();
-    Ok(node_writer::project_payload(b, exprs, names, kids[0]))
+    Ok(node_writer::project_payload(
+        b,
+        exprs,
+        names,
+        &output.fields,
+        kids[0],
+    ))
 }
 
 /// The aggregators as the wire declares them, in the order their state columns appear —

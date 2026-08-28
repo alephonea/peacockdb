@@ -587,6 +587,20 @@ pub fn per_call_join_type(join_type: JoinType) -> Option<JoinType> {
     }
 }
 
+/// What a join call over these two sides emits, before any projection — DataFusion's own
+/// `build_join_schema`, which is where `HashJoinExec::join_schema()` comes from too. The
+/// planner reads the exec's; a caller holding two schemas and a join type rather than an
+/// exec reads this, and neither restates the rule.
+pub fn joined_schema(
+    build: &datafusion::arrow::datatypes::Schema,
+    probe: &datafusion::arrow::datatypes::Schema,
+    join_type: JoinType,
+) -> Schema {
+    let (fields, _) =
+        datafusion::physical_plan::joins::utils::build_join_schema(build, probe, &join_type);
+    Schema::new(std::sync::Arc::new(fields))
+}
+
 /// The join the finish pass runs against the accumulated keys. Left and Full ask which
 /// build rows nothing ever matched; the semi family asks its own question, and asks it
 /// with the node's own NULL semantics, so the pass substitutes for a legacy single call
@@ -625,6 +639,14 @@ pub struct GpuJoin {
     /// nothing, `true` is what a set operation lowered to a join needs.
     pub null_equals_null: bool,
     pub projection: Option<Vec<u32>>,
+    /// What the join CALL emits, before `projection` narrows it — DataFusion's own
+    /// `join_schema()`, so the rule deciding which sides a join type carries is its rather
+    /// than a second copy of it. The seq that runs the join declares this on the wire, and
+    /// the pad project reads it rather than reconstructing build ++ probe.
+    ///
+    /// That call only. A finish pass runs at [`finish_join_type`] rather than this node's
+    /// type and emits the build side; `finish_output` is that one and this is not it.
+    intermediate: Schema,
     build: Box<dyn GpuNode>,
     probe: Box<dyn GpuNode>,
 }
@@ -641,6 +663,7 @@ impl GpuJoin {
         null_equals_null: bool,
         projection: Option<Vec<u32>>,
         schema: Schema,
+        intermediate: Schema,
     ) -> Self {
         let build_layout = input_layout(build.as_ref());
         let mut layout = input_layout(probe.as_ref());
@@ -666,9 +689,15 @@ impl GpuJoin {
             filter_columns,
             null_equals_null,
             projection,
+            intermediate,
             build,
             probe,
         }
+    }
+
+    /// What the join call emits, before the projection. See the field.
+    pub fn intermediate(&self) -> &Schema {
+        &self.intermediate
     }
 
     pub fn capability(&self) -> Result<JoinCapability, PlanError> {

@@ -5,6 +5,7 @@
 //! the first and matched in the second is the whole reason the finishing types keep the
 //! probe keys and answer at done rather than per call.
 
+use crate::batch_partitioned::nodes::join::joined_schema;
 use super::*;
 use crate::batch_partitioned::cpu_backend::join::CpuJoin;
 use crate::batch_partitioned::layout::PartitionLayout;
@@ -82,6 +83,11 @@ fn hash_join(join_type: JoinType, output: &[(&str, DataType)]) -> GpuJoin {
         false,
         None,
         schema_of(output),
+        joined_schema(
+            &schema_of(&dim_columns()).fields,
+            &schema_of(&fact_columns()).fields,
+            join_type,
+        ),
     )
 }
 
@@ -251,6 +257,11 @@ fn projecting_join(
         false,
         Some(projection),
         schema_of(output),
+        joined_schema(
+            &schema_of(&dim_columns()).fields,
+            &schema_of(&fact_columns()).fields,
+            join_type,
+        ),
     )
 }
 
@@ -432,6 +443,11 @@ fn a_null_key_matches_a_null_key_in_the_finish_pass_when_the_node_says_so() {
             null_equals_null,
             None,
             schema_of(&dim_columns()),
+            joined_schema(
+                &schema_of(&dim_columns()).fields,
+                &schema_of(&fact_columns()).fields,
+                JoinType::LeftAnti,
+            ),
         )
     };
     let keyed_null = |node: &GpuJoin| {
@@ -524,6 +540,11 @@ fn filtered(join_type: JoinType, output: &[(&str, DataType)]) -> GpuJoin {
         false,
         None,
         schema_of(output),
+        joined_schema(
+            &schema_of(&dim_columns()).fields,
+            &schema_of(&fact_columns()).fields,
+            join_type,
+        ),
     )
 }
 

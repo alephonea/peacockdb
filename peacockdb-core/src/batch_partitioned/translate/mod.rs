@@ -352,6 +352,10 @@ impl Translator {
                 .as_ref()
                 .map(|columns| columns.iter().map(|c| *c as u32).collect()),
             Schema::new(join.schema()),
+            // What the call emits before the projection, from DataFusion rather than
+            // rebuilt: `build_join_schema` is what decides which sides a join type carries,
+            // and the mark column a LeftMark appends.
+            Schema::new(Arc::clone(join.join_schema())),
         )))
     }
 

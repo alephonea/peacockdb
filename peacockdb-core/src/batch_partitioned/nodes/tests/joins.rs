@@ -107,6 +107,7 @@ fn joining(
         false,
         None,
         columns(&["k", "fk"]),
+        join::joined_schema(&columns(&["k"]).fields, &columns(&["fk"]).fields, join_type),
     )
 }
 
@@ -316,6 +317,7 @@ fn joined_distribution(
         false,
         None,
         columns(output),
+        join::joined_schema(&columns(build.1).fields, &columns(probe.1).fields, join_type),
     );
     input_layout(&join).key_distribution
 }
@@ -451,6 +453,11 @@ fn a_projection_moves_the_claim_to_where_the_key_actually_lands() {
         false,
         Some(vec![1, 2]),
         columns(&["k", "fk"]),
+        join::joined_schema(
+            &columns(&["other", "k"]).fields,
+            &columns(&["fk"]).fields,
+            datafusion::common::JoinType::Inner,
+        ),
     );
     assert_eq!(
         input_layout(&join).key_distribution,
@@ -506,6 +513,11 @@ fn a_semi_joins_projection_is_bounded_by_the_side_it_emits() {
         false,
         Some(vec![2]),
         columns(&["other"]),
+        join::joined_schema(
+            &columns(&["k", "other"]).fields,
+            &columns(&["fk", "spare"]).fields,
+            datafusion::common::JoinType::LeftSemi,
+        ),
     );
     invalid(
         join.validate_schemas_and_partitions(),

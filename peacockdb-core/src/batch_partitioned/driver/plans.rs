@@ -109,6 +109,11 @@ pub(super) fn join(build: Box<dyn GpuNode>, probe: Box<dyn GpuNode>) -> Box<dyn 
         false,
         None,
         schema(),
+        crate::batch_partitioned::nodes::join::joined_schema(
+            &schema().fields,
+            &schema().fields,
+            JoinType::Inner,
+        ),
     ))
 }
 
