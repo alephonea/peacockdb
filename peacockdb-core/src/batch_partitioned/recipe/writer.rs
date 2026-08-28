@@ -15,6 +15,17 @@ use crate::generated::gpu_plan_generated::peacock::plan as fb;
 use super::super::error::PlanError;
 use super::types::Seq;
 
+/// A schema declaring no columns, for the one node that outputs none.
+pub(super) fn empty_schema<'a>(b: &mut FlatBufferBuilder<'a>) -> WIPOffset<fb::Schema<'a>> {
+    let fields = b.create_vector::<WIPOffset<fb::Field>>(&[]);
+    fb::Schema::create(
+        b,
+        &fb::SchemaArgs {
+            fields: Some(fields),
+        },
+    )
+}
+
 /// The seq a failing payload would have taken, appended to the reason rather than wrapped
 /// around it: a second `PlanError` around the first prints its prefix twice.
 fn at_seq(why: PlanError, seq: Seq) -> PlanError {
@@ -24,10 +35,20 @@ fn at_seq(why: PlanError, seq: Seq) -> PlanError {
     }
 }
 
-/// A recipe-plan node under construction: which kind it is and its union payload.
-pub(super) struct Payload {
+/// A recipe-plan node under construction: which kind it is, its union payload, and what
+/// that payload outputs.
+///
+/// The schema is the payload's own, not the plan node's: a node with several calls emits
+/// several of these, and a key project or an aggregate's state output is not the shape the
+/// plan node declares. Built by the same closure that builds the payload, since that is the
+/// only code that knows which of the two it is writing.
+pub(super) struct Payload<'a> {
     pub kind: fb::PlanNodeKind,
     pub value: WIPOffset<UnionWIPOffset>,
+    /// `None` on the one node whose output is undefined — the structural union
+    /// [`Writer::reduce`] builds. Everywhere else a declaration, because "not set" and "set
+    /// to zero" are different instructions and only that node deserves the first.
+    pub schema: Option<WIPOffset<fb::Schema<'a>>>,
 }
 
 pub(super) struct Writer<'a> {
@@ -57,7 +78,7 @@ impl<'a> Writer<'a> {
         F: FnOnce(
             &mut FlatBufferBuilder<'a>,
             &[WIPOffset<fb::PlanNode<'a>>],
-        ) -> Result<Payload, PlanError>,
+        ) -> Result<Payload<'a>, PlanError>,
     {
         let taken = self.take(arity);
         let seq = self.next_seq;
@@ -84,22 +105,28 @@ impl<'a> Writer<'a> {
     /// schema has — every other table carries `input`, `left`/`right` or `inputs`.
     fn stub(&mut self) -> WIPOffset<fb::PlanNode<'a>> {
         let scan = fb::CudfScan::create(&mut self.builder, &fb::CudfScanArgs::default());
+        // Empty rather than absent, and it is a true declaration: `execute_scan` throws on
+        // a scan with no file paths, so a stub cannot produce a column even if something
+        // reached one. An absent schema would be the one thing this format declines to
+        // own — "not set" and "set to zero" are different instructions to the executor.
+        let schema = empty_schema(&mut self.builder);
         let (_, offset) = self.push(Payload {
             kind: fb::PlanNodeKind::CudfScan,
             value: scan.as_union_value(),
+            schema: Some(schema),
         });
         // Taken by the node being built, so it does not stay in the pool.
         self.pool.pop();
         offset
     }
 
-    fn push(&mut self, payload: Payload) -> (Seq, WIPOffset<fb::PlanNode<'a>>) {
+    fn push(&mut self, payload: Payload<'a>) -> (Seq, WIPOffset<fb::PlanNode<'a>>) {
         let node = fb::PlanNode::create(
             &mut self.builder,
             &fb::PlanNodeArgs {
                 node_type: payload.kind,
                 node: Some(payload.value),
-                output_schema: None,
+                output_schema: payload.schema,
             },
         );
         self.pool.push(node);
@@ -134,6 +161,10 @@ impl<'a> Writer<'a> {
         self.push(Payload {
             kind: fb::PlanNodeKind::CudfUnion,
             value: union.as_union_value(),
+            // Unset, not empty: this node concatenates orphan subtrees, so what it would
+            // output is undefined rather than nothing, and empty would be a claim
+            // ([#197](../../../../llm-wiki/tasks/bp-tickets.md#t197)). Nothing addresses it.
+            schema: None,
         });
         Ok(())
     }

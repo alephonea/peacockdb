@@ -9,6 +9,8 @@
 #include <cudf/unary.hpp>
 
 #include <arrow/buffer.h>
+#include <arrow/type.h>
+#include "plan_executor_internal.h"
 #include <arrow/c/bridge.h>
 #include <arrow/io/memory.h>
 #include <arrow/ipc/writer.h>
@@ -45,12 +47,47 @@ static_assert(offsetof(PeacockNodeStats, varlen_content_bytes) ==
               offsetof(peacock::NodeStats, varlen_content_bytes));
 static_assert(offsetof(PeacockNodeStats, time_us) == offsetof(peacock::NodeStats, time_us));
 
+// The exported schema with each decimal's precision set to what the plan declared.
+//
+// Arrow-side rather than through `column_metadata`, which carries no precision on cuDF
+// 25.02 — the version the GPU job runs. It is metadata and not a cast: a decimal128 is 16
+// bytes whatever precision it declares, which is exactly why cuDF can default it to 38.
+// An empty list, a width that disagrees, or a 0 leaves the field as cuDF built it.
+// Declared in plan_executor_internal.h so the host-only cpu suite can reach its guards:
+// only the rewrite below is exercised by a device run, and the four that decline to rewrite
+// are the ones a reader would have to trust.
+namespace peacock {
+std::shared_ptr<arrow::Schema> with_declared_precision(
+    const std::shared_ptr<arrow::Schema>& schema, const std::vector<int32_t>& precisions) {
+  if (precisions.size() != static_cast<size_t>(schema->num_fields())) return schema;
+  arrow::FieldVector fields;
+  fields.reserve(schema->num_fields());
+  for (int i = 0; i < schema->num_fields(); ++i) {
+    const auto& field = schema->field(i);
+    const auto* declared = dynamic_cast<const arrow::Decimal128Type*>(field->type().get());
+    if (declared == nullptr || precisions[i] <= 0 || precisions[i] == declared->precision()) {
+      fields.push_back(field);
+      continue;
+    }
+    fields.push_back(field->WithType(arrow::decimal128(precisions[i], declared->scale())));
+  }
+  return arrow::schema(std::move(fields), schema->metadata());
+}
+}  // namespace peacock
+
 // Export a cuDF table to an Arrow IPC stream buffer (malloc'd; free with
 // peacock_result_free). Shared by peacock_execute (fast path) and
 // peacock_result_from_handle (node-by-node root). Widens DECIMAL32/64→128 since
 // the Rust arrow-ipc reader rejects narrow decimals.
 static void export_table_to_ipc(const cudf::table_view& tview,
                                 const std::vector<std::string>& column_names,
+                                // Empty from `peacock_execute`, and deliberately: a legacy
+                                // plan node carries no `output_schema`, so there is nothing
+                                // to declare and that path keeps cuDF's 38 — which the CPU
+                                // side's `widened_decimal` absorbs. The node-by-node caller
+                                // fills it, so one function has two behaviours by which
+                                // caller filled this.
+                                const std::vector<int32_t>& column_precisions,
                                 uint8_t** out_bytes, uint64_t* out_len) {
   std::vector<cudf::column_metadata> col_meta;
   col_meta.reserve(column_names.size());
@@ -74,6 +111,7 @@ static void export_table_to_ipc(const cudf::table_view& tview,
 
   auto c_schema = cudf::to_arrow_schema(export_view, col_meta);
   auto schema = arrow::ImportSchema(c_schema.get()).ValueOrDie();
+  schema = peacock::with_declared_precision(schema, column_precisions);
   auto c_array = cudf::to_arrow_host(export_view);
   auto batch = arrow::ImportRecordBatch(&c_array->array, schema).ValueOrDie();
 
@@ -187,7 +225,8 @@ int peacock_execute(peacock_executor_t* executor,
 
   try {
     auto result = peacock::execute_plan(plan_bytes, plan_len);
-    export_table_to_ipc(result.table->view(), result.column_names, out_result_bytes,
+    export_table_to_ipc(result.table->view(), result.column_names, result.column_precisions,
+                        out_result_bytes,
                         out_result_len);
     return 0;
   } catch (const std::exception& e) {
@@ -334,7 +373,8 @@ int peacock_result_from_handle(peacock_executor_t* executor, uint64_t handle, ui
       return 0;
     }
     if (begin != 0 || end != view.num_rows()) view = cudf::slice(view, {begin, end}).front();
-    export_table_to_ipc(view, result.column_names, out_ipc, out_ipc_len);
+    export_table_to_ipc(view, result.column_names, result.column_precisions, out_ipc,
+                        out_ipc_len);
     return 0;
   } catch (const std::exception& e) {
     executor->last_error = e.what();

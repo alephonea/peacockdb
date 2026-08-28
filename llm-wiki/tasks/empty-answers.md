@@ -117,9 +117,15 @@ reason it was removed outlives the reason.
 
 Device work, in batches of about five on `shad-gpu` with `build-test-shadgpu.sh`, as T19 does: the
 two known sightings first, then any cell whose ticket names #173 or #175. Expect the freed cells to
-land on whatever refuses next rather than going green — the causes are ordered, and #152 and #183 sit
-in front of most of the corpus. **Close #173 and #175 when their cells are gone from the registry**,
-not when the code lands.
+land on whatever refuses next rather than going green — the causes are ordered, and since `casts.md`
+and `wire-schema.md` closed #183 and #187, what sits in front of most of the corpus is
+[#185](bp-tickets.md#t185) and [#195](bp-tickets.md#t195), which hold 60 of the 63 device cells still
+disabled. **Close #173 and #175 when their cells are gone from the registry**, not when the code
+lands.
+
+The registry is a smaller worklist than this spec assumed: no row cites #173 and two cite #175. #173
+is reached from the accumulator and the collapse rather than from a disabled cell, so its proof is
+the gtest and the recipe-walk case rather than a rollout.
 
 ## 5. Out of scope
 

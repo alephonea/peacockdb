@@ -990,7 +990,7 @@ fn written_fields(bytes: &[u8]) -> std::collections::BTreeMap<String, BTreeSet<u
 /// The differences between the two writers, each with the reason it is one. Everything not
 /// listed has to match: a field the legacy writer sets and this one does not is how the
 /// grouping-set omission shipped, and the payload golden pinned it faithfully.
-const WRITER_DIFFERENCES: [(&str, &str, &str); 5] = [
+const WRITER_DIFFERENCES: [(&str, &str, &str); 4] = [
     (
         "CudfScan",
         "projection",
@@ -1015,14 +1015,6 @@ const WRITER_DIFFERENCES: [(&str, &str, &str); 5] = [
         "the only unions here are structural, gathering a node's unconsumed branches so \
          nothing is left unreachable; no recipe publishes a seq for one, so execute_union \
          never runs on it and never reads this",
-    ),
-    (
-        "PlanNode",
-        "output_schema",
-        "nothing on the C++ side reads it — the executors take their types from each \
-         node's own payload. The one arm that would have is the collapse of no input \
-         handles, which needed a schema to answer with and is a refusal instead (#173), \
-         so this stays absent rather than becoming a field written for one caller",
     ),
 ];
 

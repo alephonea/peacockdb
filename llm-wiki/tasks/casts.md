@@ -8,7 +8,7 @@ predicted before it. This task writes the prediction down where it can be checke
 `Utf8View` — by predicting the export type at plan time and casting the one divergence that is
 inherent.
 
-Its sibling [`wire-schema.md`](wire-schema.md) closes [#187](bp-tickets.md#t187) with the same
+Its sibling [`wire-schema.md`](wire-schema.md) closes [#187](../archive/archived-tickets.md#t187) with the same
 derivation and the C++ half this task deliberately leaves out. Do this one first: it is Rust-only,
 and the prediction it writes down is what the other one then makes true for decimals.
 
@@ -48,7 +48,7 @@ Rust function. It is total over the declared type for every case below.
 | `Utf8View` | `Utf8View` | `STRING` | `Utf8` | **#183** |
 | `LargeUtf8` | `LargeUtf8` | `STRING` | `Utf8` | same shape, no corpus query reaches it |
 | `Date64` | `Date64` | `TIMESTAMP_MILLISECONDS` | `Timestamp(ms, None)` | no corpus query declares it |
-| `Decimal128(p,s)` | `Decimal128` | `DECIMAL128` | `Decimal128(38,s)` | **#187** — predicted here, **not cast here**; [`wire-schema.md`](wire-schema.md) removes the divergence instead |
+| `Decimal128(p,s)` | `Decimal128` | `DECIMAL128` | `Decimal128(p,s)` | identity since [`wire-schema.md`](wire-schema.md) put the precision on the wire; it was `(38,s)` and #187 while the export was never told |
 | `Null`, `Float16`, `Binary`, `LargeBinary`, `BinaryView` | mapped | **`EMPTY`** | — | **refuse** |
 
 The last row is not a cast. `convert_data_type` serializes all five and `fb_to_type_id` has no case

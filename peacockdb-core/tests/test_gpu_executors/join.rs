@@ -5,6 +5,7 @@
 //! with no device behind it, and two of its defects were found by reading rather than by
 //! running — so a run is what settles it.
 
+use peacockdb_core::batch_partitioned::nodes::join::joined_schema;
 use super::*;
 
 use datafusion::common::JoinType;
@@ -47,6 +48,7 @@ fn left_join_tree(join_type: JoinType, output: &ArrowSchema) -> Box<dyn GpuNode>
         false,
         None,
         Schema::new(Arc::new(output.clone())),
+        joined_schema(&columns(), &columns(), join_type),
     ))
 }
 
@@ -149,6 +151,7 @@ fn every_member_of_the_semi_family_streams_and_answers_at_done() {
             false,
             None,
             Schema::new(Arc::new(out.clone())),
+            joined_schema(&columns(), &columns(), join_type),
         ));
         let session = Session::open(tree.as_ref());
         let key_column = match keys.1 {
@@ -205,6 +208,7 @@ fn a_projecting_semi_joins_finish_emits_the_column_the_node_declares() {
         false,
         Some(vec![1]),
         Schema::new(Arc::new(out.clone())),
+        joined_schema(&columns(), &columns(), JoinType::LeftSemi),
     ));
     let session = Session::open(tree.as_ref());
     let keys = schema_of(&[("k", DataType::Utf8)]);
@@ -262,6 +266,7 @@ fn a_second_probe_batch_of_a_copying_join_is_refused_by_name() {
         false,
         None,
         Schema::new(Arc::new(out.clone())),
+        joined_schema(&columns(), &columns(), JoinType::Inner),
     ));
     let session = Session::open(tree.as_ref());
     let join = GpuJoinExec::new(
@@ -348,6 +353,7 @@ fn a_finish_over_no_probe_keys_hands_the_build_side_up() {
         false,
         None,
         Schema::new(Arc::new(out.clone())),
+        joined_schema(&columns(), &columns(), JoinType::LeftAnti),
     ));
     let session = Session::open(tree.as_ref());
     let keys = schema_of(&[("k", DataType::Utf8)]);

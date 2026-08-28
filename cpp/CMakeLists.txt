@@ -177,7 +177,10 @@ add_executable(peacock_cpu_tests tests/cpu/test_executor.cpp)
 target_include_directories(peacock_cpu_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 # cudf::cudf + flatbuffers for the host-only unit tests of plan_executor_internal.h
 # (decimal-scale / AST-routing helpers); no GPU is touched at runtime.
-target_link_libraries(peacock_cpu_tests PRIVATE peacock_gpu cudf::cudf flatbuffers GTest::gtest)
+# Arrow because `with_declared_precision` is an Arrow-schema rewrite: peacock_gpu links it
+# PRIVATE, so the test needs its own to construct the schemas it hands that function.
+target_link_libraries(peacock_cpu_tests PRIVATE peacock_gpu cudf::cudf flatbuffers GTest::gtest
+                      Arrow::arrow_shared)
 set_target_properties(peacock_cpu_tests PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 add_test(NAME peacock_cpu_tests COMMAND peacock_cpu_tests)
 set_tests_properties(peacock_cpu_tests PROPERTIES LABELS "cpu")

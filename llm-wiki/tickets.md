@@ -6,7 +6,7 @@ anchor that the cost widget links to. Device labels are `tp<N>-<tier>` (micro=10
 mini=2GiB, standard=12GiB).
 
 A ticket carries a **Priority** line only when it is not medium; medium is the default.
-New tickets take the next free number (currently 195), which is also the counter for
+New tickets take the next free number (currently 200), which is also the counter for
 `tasks/bp-tickets.md` — the rollout's own list, separate file, one ID space. Finished and lapsed tickets move to
 `llm-wiki/archive/archived-tickets.md` (Done / Stale) — numbers are never reused, so an old
 reference still resolves there.
@@ -242,8 +242,10 @@ Each refuses by name rather than inventing rows, and the CPU backend emits nothi
 places so the two stay one engine. The exception is a global aggregate, which owes its identity
 row whatever arrived.
 
-Unfreezing buys a make-empty-of-schema call and the refusals go. Until then the refusal is the
-contract, and the shapes that reach it are the ones a lane can be empty in.
+The schema to answer with is on the wire since `wire-schema.md` — every fb node carries its
+`output_schema` — so what is left is the code that builds an empty table from it, and no ABI
+symbol. Until that lands the refusal is the contract, and the shapes that reach it are the ones
+a lane can be empty in.
 
 <a id="t97"></a>
 ### #97 — Semi/anti/outer joins at real-8-way
@@ -749,6 +751,56 @@ trip log, and `Underestimate` is the precedent for what one would look like. Rel
 
 ## Infrastructure / process
 
+<a id="t199"></a>
+### #199 — `finish_output` hand-rolls a DataFusion rule that DataFusion exposes
+
+`join.rs:290` builds the finish call's output as the build side plus a `mark` boolean for LeftMark.
+That is `build_join_schema`'s LeftMark arm (`joins/utils.rs:626`) rewritten — field name, type and
+non-nullability included — with nothing comparing the two.
+
+Not the same value as the join seq's, which is why `wire-schema.md` left it: the finish runs at
+`finish_join_type(node.join_type)` rather than the node's, so Left's finish is a LeftAnti whose
+schema is the build side while the node's `join_schema()` is left ++ right. `GpuJoin::intermediate()`
+answers the probe seq and cannot answer this one.
+
+The fix is the same shape as [#198](#t198): ask DataFusion for the finish's join type rather than
+restating its rule, so a change on their side reaches us as a compile or a test rather than as a
+divergence nobody is looking for.
+
+<a id="t198"></a>
+### #198 — the probe key project's schema is derived twice, once per backend
+
+`cpu_backend/join.rs:323` builds a DataFusion `ProjectionExec` and takes `project.schema()`;
+`gpu_backend`'s `key_schema` clones the probe's field per key by hand. Same rule, two
+implementations, nothing comparing them — the shape of [#130](archive/archived-tickets.md#t130).
+
+They agree on names and types and can differ on nullability: DataFusion recomputes it from the
+expression, the hand-written one inherits the field. Every key today is a bare column reference,
+where the two agree, so nothing is wrong now — the divergence arrives with the first key that is an
+expression.
+
+Unifying them means deciding whose nullability is right and routing one answer through both
+backends, which is why `wire-schema.md` did not do it: that task moved the hand-written one so the
+recipe writer could stop adding a third, and stopped there.
+
+<a id="t197"></a>
+### #197 — `reduce` builds a union over branches nothing consumed, and it has no defined output
+
+`writer.rs:145` emits a structural `CudfUnion` over the branches a node did not consume. If it ever
+ran, `execute_union` would concatenate two unrelated orphan subtrees — throwing on mismatched types,
+or succeeding and producing a table that means nothing. Neither is an output the plan can declare,
+which is how it was found: `wire-schema.md` puts `output_schema` on every fb node and this is the one
+node with no true answer to write.
+
+No corpus plan contains one — `grep -c CudfUnion testdata/goldens/bp-recipe-payloads.txt` is 0 and no
+`.plans.txt` has one — so the arm is reachable by construction and unexercised, and no golden would
+catch a wrong choice made about it. That is what makes it a ticket rather than a judgement call
+inside the task: the question is not what schema to write but whether the node should be emitted at
+all.
+
+Until it is answered, `output_schema` is left unset on this one node, which the fb reader already
+handles and which asserts nothing false.
+
 <a id="t196"></a>
 ### #196 — the moved rust-only tests have never once built against a restored cache
 
@@ -871,6 +923,21 @@ ordinal into a confusing type error further along. Legacy has no plan-time check
 for those modes this is still the whole guard. The third closure #135 named is unstarted and
 belongs here too: a per-node type check in the GPU tiers, the only thing that would surface a
 wrong-order subtree before the root.
+
+`wire-schema.md` added a second vector to the same struct, `column_precisions`, and the same gap
+came with it: `declared_precisions` returns empty when the node declares a different number of
+columns than the call produced, and the export then defaults to 38 as it always did. Shrugging is
+right for a positional list — applying one across a width disagreement hands a column somebody
+else's precision, which is worse than a wide one — but the silence is only local, and what
+follows it is worse than silence. An empty list means the export defaults, the decimals come back at
+(38, s), and the Rust unload's concat refuses with "expected Decimal128(15, 2) but found
+Decimal128(38, 2)" — #187's message, from a ticket that is closed. A width disagreement therefore
+fails loudly wearing the face of a fixed bug, and the operator goes looking at the export type table,
+which will be right, rather than at a precision list dropped two layers down.
+
+That is where the assert above belongs. The reason it was not written there is worth keeping: a throw
+introduced mid-rollout surfaces as a device failure with no way to tell a real width bug from the
+new code.
 
 <a id="t163"></a>
 ### #163 — a declared type is never checked against the expression that produces it

@@ -181,6 +181,29 @@ NodeSession::~NodeSession() = default;
 
 size_t NodeSession::node_count() const { return impl_->post_order.size(); }
 
+// The decimal precision each of this node's columns was declared with, or 0 where the
+// column is not a decimal. cuDF stores a decimal's scale and not its precision, so the plan
+// is the only place the export can learn it.
+//
+// Empty where the node declares nothing, or where it declares a different number of columns
+// than the call produced: a positional list applied across a width disagreement would give a
+// column somebody else's precision, and defaulting to what cuDF does is the smaller wrong.
+static std::vector<int32_t> declared_precisions(const fb::PlanNode* node, size_t produced) {
+  const auto* schema = node->output_schema();
+  if (schema == nullptr || schema->fields() == nullptr) return {};
+  const auto* fields = schema->fields();
+  if (fields->size() != produced) return {};
+  std::vector<int32_t> precisions;
+  precisions.reserve(produced);
+  for (flatbuffers::uoffset_t i = 0; i < fields->size(); ++i) {
+    const auto* field = fields->Get(i);
+    precisions.push_back(field->data_type() == fb::DataType_Decimal128
+                             ? static_cast<int32_t>(field->decimal_precision())
+                             : 0);
+  }
+  return precisions;
+}
+
 void NodeSession::execute_node(uint64_t seq, const uint64_t* input_handles,
                                const uint64_t* input_child_counts, size_t n_children,
                                uint64_t* out_handles, size_t out_cap, size_t* out_count,
@@ -218,6 +241,7 @@ void NodeSession::execute_node(uint64_t seq, const uint64_t* input_handles,
             scan, map_groups
                       ? cudf::host_span<const uint32_t>{map_groups->data(), map_groups->size()}
                       : cudf::host_span<const uint32_t>{});
+        result.column_precisions = declared_precisions(node, result.column_names.size());
         const uint64_t us = timer.stop_us();
         auto tv = result.table->view();
         if (out_stats)
@@ -254,17 +278,18 @@ void NodeSession::execute_node(uint64_t seq, const uint64_t* input_handles,
       impl_->registry.erase(it);
       views.push_back(owned.back().table->view());
     }
-    // A collapse of nothing has no schema to answer with: the node's own output_schema is
-    // absent on a recipe plan, and concatenating no views gives a table of no columns,
-    // which is not a batch anything above can read. Both backends emit nothing for an
-    // empty lane instead, so reaching this is a driver that called a node it had no
-    // batches for (#173).
+    // Concatenating no views gives a table of no columns, which is not a batch anything
+    // above can read. The schema to answer with IS here now — every node carries its
+    // `output_schema` — and what is missing is the code that builds an empty table from it,
+    // which is #173's work rather than this throw's. Both backends emit nothing for an empty
+    // lane, so reaching this is still a driver that called a node it had no batches for.
     if (views.empty())
       throw std::runtime_error(
           "NodeSession::execute_node: a collapse with no input handles has no columns to "
           "answer with — an empty lane emits nothing rather than calling this");
     TableResult result;
     result.column_names = owned[0].column_names;
+    result.column_precisions = declared_precisions(node, result.column_names.size());
 
     const fb::CudfSortPreservingMerge* spm =
         (node->node_type() == fb::PlanNodeKind_CudfSortPreservingMerge)
@@ -397,6 +422,7 @@ void NodeSession::execute_node(uint64_t seq, const uint64_t* input_handles,
       cudf::table_view slice = cudf::slice(pv, {start, end}).front();
       TableResult part;
       part.column_names = column_names;
+      part.column_precisions = declared_precisions(node, column_names.size());
       part.table = std::make_unique<cudf::table>(slice);
       uint64_t us = (p == 0) ? shared_timer.stop_us() : own->stop_us();
       auto ptv = part.table->view();
@@ -441,6 +467,7 @@ void NodeSession::execute_node(uint64_t seq, const uint64_t* input_handles,
     }
     ScopedNodeTimer timer;
     TableResult result = execute_one(node, std::move(inputs));
+    result.column_precisions = declared_precisions(node, result.column_names.size());
     const uint64_t us = timer.stop_us();
     auto tv = result.table->view();
     if (out_stats)
@@ -473,6 +500,7 @@ uint64_t NodeSession::execute_scan_rowgroups(uint64_t seq,
   TableResult result;
   try {
     result = execute_scan(node->node_as_CudfScan(), row_groups);
+    result.column_precisions = declared_precisions(node, result.column_names.size());
   } catch (const std::exception& e) {
     // cuDF names neither the node nor the list it was handed, and the caller here is a
     // partitioner's mapping — an index it cannot read is a planner defect, so the
@@ -515,6 +543,8 @@ uint64_t NodeSession::slice_handle(uint64_t handle, uint64_t offset, uint64_t le
   auto [begin, end] = clamp_row_range(offset, length, input.table->view().num_rows());
   TableResult result;
   result.column_names = input.column_names;
+  // No node here — a slice addresses a handle, so what it emits is what it was given.
+  result.column_precisions = input.column_precisions;
   // An owning copy of the kept rows, so the input table can go: a view would keep the
   // whole batch resident, which is the cost the mid-plan limit exists to avoid.
   result.table =

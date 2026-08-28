@@ -1,6 +1,6 @@
 # The declared schema on the wire, and the precision the export is never told
 
-**This task closes [#187](bp-tickets.md#t187)** — the device widens a decimal the plan declared
+**This task closes [#187](../archive/archived-tickets.md#t187)** — the device widens a decimal the plan declared
 narrow — by giving the export the precision it currently defaults to 38 for, rather than by casting
 the result back.
 
@@ -32,20 +32,63 @@ precision exists nowhere.
 
 `PlanNode.output_schema: Schema` already exists in `gpu_plan.fbs` and is documented "Output schema of
 this node". The bp writer never fills it: `fb::PlanNode::create` appears once on this path, in
-`Writer::push` (`recipe/writer.rs:97`), with `output_schema: None`. That is the whole change — every
-bp node goes through that funnel, `GpuNode::schema()` is node-local with nothing to derive, and
-`serialize_schema` already fills `decimal_precision`/`decimal_scale` from `Decimal128(p, s)`.
+`Writer::push` (`recipe/writer.rs:97`), with `output_schema: None`. `serialize_schema` already fills
+`decimal_precision`/`decimal_scale` from `Decimal128(p, s)`, so the field is the only thing missing.
+
+**The schema is per fb node, and a plan node's schema is not it.** An earlier draft of this spec said
+`GpuNode::schema()` is node-local with nothing to derive; that is true only of the nodes emitting one
+seq. `GpuAggregateBatches` emits `CudfCoalescePartitions`, `CudfAggregate{Merge}` and
+`CudfProject{finalize}`, and the first two output aggregate state rather than the node's columns.
+`GpuJoin` emits a key project, the join, and a pad or narrow project, and the key project outputs the
+probe's keys alone. Writing the plan node's schema on all of them declares something false for every
+seq but the last, which is worse than the `None` there today — `union.cpp:35` reads this field, so a
+consumer would believe it.
+
+So the schema rides on `Payload`: the closure that builds a payload is the only thing that knows what
+that payload outputs, and `Writer::push` — which takes a `Payload` and nothing else — stays the one
+funnel. Most arms already have it: five emit the rows they were given, so their output is their
+input, and the two aggregates carry `intermediate()`, the state schema the planner computed once.
+
+`GpuJoin` carries no equivalent, and its join seq needs one — for Left and Full the join call emits
+the per-call shape and the pad project is what makes the output the node's schema. **It gains an
+`intermediate()` too**, computed in `translate/mod.rs` where `join.left().schema()` and
+`join.right().schema()` are already read for the key ordinals, so the value is a concatenation of
+things in scope rather than new work. The writer must not derive it instead: the C++ computes this
+shape and the pad project assumes it, and a third guess in a task about deriving a value once would
+be the wrong direction. **The pad project reads the same `intermediate()`**, which is what makes this
+one value replacing an assumption rather than one more value to keep true.
 
 Write it for **every** node, not only where a decimal appears: `fb_text.rs`'s own header warns that
 "not set" and "set to zero" are different instructions to the executor, and a conditional wire format
 is a worse thing to own than a slightly larger buffer.
 
 The C++ then reads it where `TableResult` is built (`plan_executor.h:15`, today `table` +
-`column_names` only), carries a per-column precision alongside the name, and
-`export_table_to_ipc` sets `column_metadata.precision` instead of leaving it empty. `operators/
-union.cpp:35` already reads an `output_schema` for the neighbouring problem — branches landing
-different fixed_point scales — so this is an existing mechanism reaching one more node kind rather
-than a new one.
+`column_names` only) and carries a per-column precision alongside the name. `operators/union.cpp:35`
+already reads an `output_schema` for the neighbouring problem — branches landing different
+fixed_point scales — so this is an existing mechanism reaching one more node kind rather than a new
+one.
+
+**The precision is set on the Arrow side, not on `column_metadata`.** An earlier draft said
+`export_table_to_ipc` sets `column_metadata.precision`; that field does not exist in 25.02, whose
+`column_metadata` is `name` + `children_meta` (`interop.hpp:108`). It arrives in 26.02. Since 25.02
+is the leg that runs — shad-gpu and `cpp-build-2502` both build it, and build-test.md's rule is that
+a functional run there is the verification while 26.02 need only compile — writing that field would
+compile on the leg that only compiles and break the one that runs, taking every device test with it.
+
+`export_table_to_ipc` already goes `to_arrow_schema` → `arrow::ImportSchema` → `to_arrow_host` →
+`ImportRecordBatch(array, schema)`. Rebuild the imported schema with `arrow::decimal128(p, s)` from
+the declared fields before the batch import. An Arrow decimal128 is 16 bytes whatever precision it
+declares — which is why cuDF can default it to 38 in the first place — so this is metadata and not a
+cast, it needs no `#if CUDF_VERSION`, and it does not rest on a field one leg lacks.
+
+25.02's own header documents #187 as intended: "since the precision is not stored for them in
+libcudf, decimals will be converted to an Arrow decimal128 which has the widest precision that cudf
+supports". That is the sentence this task makes untrue for our exports.
+
+The open question is whether `arrow::ImportRecordBatch` accepts a schema whose decimal precision
+differs from what `to_arrow_host` produced, or validates the two against each other. If it validates,
+the fallback is a post-import cast on the Arrow arrays, which is heavier and is a decision to bring
+back rather than take.
 
 With precision on the wire, `export_type_for`'s `Decimal128(p,s) → Decimal128(38,s)` row stops being
 true: the divergence is removed rather than absorbed. Update the row in
@@ -67,12 +110,18 @@ scope, so `node->output_schema()` is directly readable once step 1 populates it.
 `input.column_names` from a `TableResult` that already exists, and precision rides along the same
 way. **No threading from an origin is required, and no signature changes.**
 
-### 2. `schema_text` renders precision and scale
+### 2. The payload golden shows what step 1 writes
 
 `fb_text.rs:229` formats fields as `{}:{:?}` over `f.data_type()`, so `bp-recipe-payloads.txt` prints
 bare `Decimal128` while expressions on the same page print `Decimal128(23, 2)`. Two fields that are
 on the wire are invisible to the golden whose job is to pin the wire — a change to either, including
 one that broke step 1, would not move it. Render them for `Decimal128` fields.
+
+That is not enough on its own, and the gap only shows when step 1 lands: rendering precision reaches
+the schemas the file already prints — a scan's `file_schema`, a union's own `output_schema` — and
+`PlanNode.output_schema` was not one of them. Twenty digests move and nothing in the text says why.
+So `payload_text` prints `declares:` for **every** node, `unset` where the field is absent, which is
+what makes the absence on the structural union a thing a reader notices rather than a blank.
 
 ### 3. Unit tests
 
@@ -89,11 +138,19 @@ Same idiom as [`casts.md`](casts.md) — build the node, run its recipe fn, `wri
 ## What this task should also carry
 
 `casts.md` leaves `exports=` predicting types that nothing compares against: the golden is checked
-by eye and the runtime check at `unload` sees only the divergences the cast absorbs. The device tier
-already holds both sides — it reads the cpu-authored section and has the exported schema in hand — so
-"the types the device exported are the ones `exports=` predicted" is one comparison in a place that
-already runs. It also covers the `StringType` arm, which the cast otherwise hides from every
-observer: the assertion sees the export before the absorption, where a reader of results cannot.
+by eye and the runtime check at `unload` sees only the divergences the cast absorbs. "The types the
+device exported are the ones `exports=` predicted" makes it a property.
+
+**Not in the device tier**, which was this section's first answer and is wrong: `gpu_case` reads
+`report.batches`, the driver's output, which is post-absorption. By then the cast has made a column
+that arrived as predicted and one that did not into the same object — the tier holds the declared
+side twice rather than both sides. The only code that sees the export before the absorption is
+`cast_declared`, which is where the assertion goes.
+
+It closes a hole rather than restating one: `absorb` cast by ordinal without checking what it found,
+so a column predicted `Utf8` arriving as anything else was converted by `cast` instead of caught. It
+now fails naming both types, and `Exports::casts()` carries the predicted type beside the ordinal so
+there is one filter rather than two.
 
 ## Restriction
 
@@ -126,3 +183,29 @@ plan, and step 2 is what makes that diff legible instead of opaque.
    a number rather than a crossing failing, so expect those here too. A cell whose cause changed is a ticket edit, not a cell that stays
    where it was.
 3. Close #187 only when its cells are gone from the registry, and correct its text as it closes.
+
+## What the work measured
+
+#187 closed on a device with the case it was opened on: `tpch/filter-project` declares
+`Decimal128(15,2)` and comes back as `(15,2)`, with `aggregate-groupby` at `(25,2)` beside it so it
+is not one width getting lucky. Thirty-nine cells over four batches — 5 green, 25 to
+[#185](bp-tickets.md#t185), 9 to [#195](bp-tickets.md#t195) — and **none to a type failure of any
+kind**. Device cells went 17 to 34.
+
+The divergence is gone rather than absorbed, which is what splitting this from `casts.md` was for:
+`export_type_for`'s decimal arm is identity and `Divergence::DecimalPrecision` is deleted, so
+nothing predicts a widening any more. The prediction that remains is checked rather than rendered —
+`cast_declared` compares the exported type against the predicted one before casting, which closed a
+hole `casts.md` shipped, where `absorb` cast by ordinal without looking at what it found.
+
+What the task leaves standing: #185 and #195 hold 60 of the 63 device cells still disabled, and both
+are a golden and the device disagreeing about a number the plan produced rather than anything
+crossing the ABI.
+
+What it cannot prove: the export now trusts the plan. Every decimal used to leave at precision 38,
+which is true of any decimal128 value; it now leaves at whatever the plan declared, and nothing
+checks that the values fit — `WithType` does not validate and the buffers are untouched by design.
+That is the right authority, since the CPU tier already believes the same declaration, but it is a
+trade this task makes and not a property it establishes. `with_declared_precision`'s guard branches
+are unreached for a related reason: it is `static` in a `.cpp`, so the width-disagreement arm that
+[#164](../tickets.md#t164) says produces a closed ticket's message cannot be called from a test.

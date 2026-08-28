@@ -23,6 +23,7 @@ use super::super::node::GpuNode;
 use super::super::nodes::join::per_call_join_type;
 use super::super::nodes::{NodeRef, as_node_ref};
 use super::super::recipe::RecipePlan;
+use super::super::recipe::join::key_schema;
 use super::accumulate::{GpuAccumulator, GpuPartitionAccumulator};
 use super::emit::GpuEmitter;
 use super::join::{GpuJoin, GpuProbingJoin};
@@ -162,17 +163,6 @@ impl Backend for GpuBackend {
             }
         })
     }
-}
-
-/// The probe's key columns in the order the join hashes them, keeping the probe's own
-/// names — the shape `recipe::join::key_project` writes, and the schema its output is
-/// priced by.
-fn key_schema(probe: &ArrowSchema, keys: &[(u32, u32)]) -> ArrowSchema {
-    ArrowSchema::new(
-        keys.iter()
-            .map(|(_, probe_ordinal)| probe.field(*probe_ordinal as usize).clone())
-            .collect::<Vec<_>>(),
-    )
 }
 
 /// A source holds nothing between calls: the handle a read produces is its output, and

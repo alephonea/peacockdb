@@ -9,6 +9,7 @@
 //! [`fields_with_one_value`] names a field no fixture varies — the one a later arm could
 //! drop unseen.
 
+use peacockdb_core::batch_partitioned::nodes::join::joined_schema;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
@@ -101,6 +102,7 @@ pub fn rebuild(node: &dyn GpuNode, children: Vec<Box<dyn GpuNode>>) -> Box<dyn G
                 join.null_equals_null,
                 join.projection.clone(),
                 schema_of(node),
+                join.intermediate().clone(),
             ))
         }
         NodeRef::CrossJoin(join) => {
@@ -305,6 +307,7 @@ pub fn every_kind() -> Vec<Box<dyn GpuNode>> {
             true,
             Some(vec![0, 3]),
             columns(),
+            joined_schema(&columns().fields, &columns().fields, JoinType::LeftSemi),
         )),
         Box::new(GpuJoin::new(
             other_source(),
@@ -316,6 +319,7 @@ pub fn every_kind() -> Vec<Box<dyn GpuNode>> {
             false,
             None,
             other_columns(),
+            joined_schema(&other_columns().fields, &columns().fields, JoinType::Inner),
         )),
         Box::new(GpuCrossJoin::new(
             source(None),

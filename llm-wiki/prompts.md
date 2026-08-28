@@ -103,7 +103,10 @@ arrive from the human one at a time.
   finding like any other; (7) the completeness pass — once every finding is addressed, you and
   the reviewer each read the whole branch diff as one change and ask what is **missing**, which
   is a different question from what is wrong. Independently means neither of you sees the
-  other's list first.
+  other's list first, and **the second pass to finish is the one that waits** — a monitor
+  surfaces a message the moment it lands, so the agent who finishes first cannot arrange this
+  by intent and the one who finishes second can. A pass written after reading the other's is
+  informed rather than independent; say so rather than sending it as though it were not.
 - **Green CI is the last gate and only the last gate.** A task is done when the reviewer
   approves, both completeness passes are closed with their gaps, and CI is green on the tip.
   Until development and review are both finished, a red or pending run changes what is being

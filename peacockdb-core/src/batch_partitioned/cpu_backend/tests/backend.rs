@@ -5,6 +5,7 @@
 //! at run time and named — but only for a node some plan actually reaches. Every node kind
 //! is asked here instead.
 
+use crate::batch_partitioned::nodes::join::joined_schema;
 use super::*;
 use crate::batch_partitioned::backend::Backend;
 use crate::batch_partitioned::cpu_backend::accumulate::CpuAccumulator;
@@ -112,6 +113,11 @@ fn every_kind() -> Vec<Box<dyn GpuNode>> {
             false,
             None,
             schema_of(&[GROUPED, GROUPED].concat()),
+            joined_schema(
+                &schema_of(&GROUPED).fields,
+                &schema_of(&GROUPED).fields,
+                JoinType::Inner,
+            ),
         )),
         Box::new(GpuCrossJoin::new(
             one_batch(),
@@ -398,5 +404,10 @@ fn semi_join(join_type: JoinType) -> GpuJoin {
         false,
         None,
         output,
+        joined_schema(
+            &schema_of(&GROUPED).fields,
+            &schema_of(&GROUPED).fields,
+            join_type,
+        ),
     )
 }
