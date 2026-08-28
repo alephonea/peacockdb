@@ -79,11 +79,15 @@ them. "One role, not a mechanism" is true of the recipe and not of the executor 
 
 - **`RightAnti` owes the probe side unpadded.** Its output is the probe columns alone, and an empty
   build side makes every probe row unmatched — so the answer *is* the probe batch. **Route it, do
-  not call** — provided routing is free: no pad, no kernel, no handle beyond the one the driver
-  holds. A driver learns the build side was empty only at `done`, after probe batches have been
-  offered, so routing may mean something holds every probe batch of the lane. **If it does, route
-  nothing** and answer through the call like the other two: the preference was an argument from
-  memory, and a version that costs memory has no argument left.
+  not call**, and it costs nothing new. The worry was that a driver learns the build side was empty
+  only at `done`, so routing would mean holding every probe batch of the lane. It does not: once
+  `NoBuild` puts the lane in `Draining`, `single_partition.rs:188` answers each arriving probe batch
+  with `LaneCall::DropProbe`, which releases it and nothing else — "the probe side is still
+  producing for this lane, and what it produces has to be read to be let go of". The driver holds no
+  probe batch in order to route one, because a lane that has lost its build side is already being
+  handed each batch to release. Routing is that same walk with the release replaced by an emit.
+- **`Right` and `Full` take the same walk**, with a pad call per batch where `RightAnti` emits — one
+  kernel over a batch the driver was about to drop. No lane-wide accumulation on either path.
 - **`Right` and `Full` owe it padded**, with typed NULLs in the build columns. That is the mirror of
   the pad that already exists: `ProjectRole::NullPad { nulls }` with `pad_project` and
   `padded_columns` (`recipe/join.rs:114`, `:261`, `:423`) appends one NULL per **probe** column a
