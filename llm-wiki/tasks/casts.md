@@ -138,9 +138,11 @@ The tripwire fired during the rollout: the attribute predicted the decimal diver
 before they ran, over six declared widths — (7,2), (15,2), (17,2), (25,2), (27,2), (33,2) — and the
 device answered (38,2) to every one.
 
-That confirms the precision half of `Decimal128(38, *scale)` and only that half. Every decimal this
-corpus puts in a sink is scale 2, so nothing here distinguishes "the scale is carried through" from
-"the export happens to produce 2"; a sink decimal at another scale would be the first test of it.
+That confirms the precision half of `Decimal128(38, *scale)`, and one query confirms the other half:
+`tpcds/q59` declares `Decimal128(23,6)` and is found at `(38,6)`. It is the only sink decimal in this
+corpus at a scale other than 2, so it is the one observation that can separate "the scale is carried
+through" from "the export happens to produce 2" — the other twenty cannot. If q59 ever leaves the
+corpus the evidence leaves with it.
 And it is one arm of the table rather than the table: `StringType` is cast at the unload and so can
 never be observed as a landing, and `DateAsTimestamp` has no corpus query. More batches add
 instances of the same arm.
@@ -171,3 +173,33 @@ Every other cell now completes its plan on the device and is held by a golden di
 number: #185 where a node reports its own output as `in_rows`, #195 where the two engines cut a node
 into different batches. The commit message on 4f6138b says the first kind stopped as well. It did
 not, and #187's first line is the counterexample.
+
+## What the rollout measured
+
+Nine batches, fifty-two device cells, and the shape of the answer is not the one the plan expected.
+Five cells went green — `tpch/nested-loop-join` and `shuffle-stddev` at all five modes, `tpcds/q84`
+at `bp-tp1-single` — and #183 closed with no registry row citing it, against sixty at the start.
+Device cells in the corpus went from 6 to 17.
+
+Everything else moved to the cause that refuses it next, and the split is the useful number:
+
+| landing | cells | tickets |
+|---|---|---|
+| green | 5 | — |
+| still refused at the unload | 20 | #187 (18), #191 (2) |
+| plan completes, a golden disagrees | 25 | #185 (14), #195 (11) |
+| refused before the unload | 4 | #152 |
+
+**Twenty cells still fail at the unload and eighteen of them have their fix already written**:
+`wire-schema.md` puts the decimal's precision on the wire rather than casting it. That is the number
+a reader of #187 comes here for. The spec expected #152 to be the common landing place and it was
+the rarest.
+
+The other twenty-five are a different and better problem: the crossing stopped refusing them and the
+golden started disagreeing about a number. Two new tickets came out of it — #195, where the two
+engines cut a node into different batches and the cpu charges per-batch overhead to batches carrying
+no rows, and its cells are the ones that made that arithmetic visible.
+
+What the task cannot say: whether the cast is right for a string type the corpus does not reach.
+`LargeUtf8` maps the same way and no query declares one, so its row of the table rests on the
+argument rather than on a run.
