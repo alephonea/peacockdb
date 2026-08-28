@@ -182,12 +182,15 @@ impl GpuProbingJoin {
     /// The question a streamed probe could not answer, in the calls the recipe names: the
     /// keys concatenated, the finish join against the build side, and the pad where the
     /// node's output is the joined schema.
+    ///
+    /// A lane whose probe was empty takes the same three calls rather than a case of its own:
+    /// the concat of no keys answers with an empty table of the key schema (#173), and the
+    /// finish against it produces exactly what the cpu backend produces by concatenating no
+    /// batches against the same schema. Which is why there is no switch on `join_type` here —
+    /// what a semi, a mark or an outer owes an empty probe is what its own finish computes.
     pub fn finish_and_fetch(mut self) -> CallResult<Vec<GpuBatch>> {
         if self.join.at_done.is_empty() {
             return Ok((Vec::new(), CallStats::default()));
-        }
-        if self.accumulated.is_empty() {
-            return self.finish_without_keys();
         }
         let mut prior: Option<GpuBatch> = None;
         let mut none = None;
@@ -195,46 +198,6 @@ impl GpuProbingJoin {
             prior = Some(self.make(call, &mut none, &mut prior)?);
         }
         Ok((prior.into_iter().collect(), CallStats::default()))
-    }
-
-    /// A lane whose probe was empty accumulated no keys, and the concat of none is a
-    /// refusal on this side (#173). What the finish would have computed is known without
-    /// it — nothing matched — so an anti join hands its build side up, which is the answer
-    /// and the one this backend can express. A semi join owes no rows and a mark join owes
-    /// a column of `false`, and neither is a table the frozen surface makes out of nothing.
-    ///
-    /// Decided by the node's type and not by the calls it published: a Left outer's finish
-    /// is a LeftAnti too, and its answer is those build rows PADDED — so a switch reading
-    /// the kind at done would hand a Left outer the wrong rows rather than refusing it.
-    fn finish_without_keys(mut self) -> CallResult<Vec<GpuBatch>> {
-        let owed = match self.join.join_type {
-            Some(JoinType::LeftAnti) => {
-                return Ok((
-                    self.build.take().into_iter().collect(),
-                    CallStats::default(),
-                ));
-            }
-            Some(JoinType::LeftSemi) => "no rows, which is a table of no rows",
-            Some(JoinType::LeftMark) => {
-                "every build row with a false mark, which is a \
-                                         table of literals"
-            }
-            Some(JoinType::Left | JoinType::Full) => {
-                "every build row padded with a typed NULL per probe column, which is a \
-                 table of literals"
-            }
-            other => {
-                return Err(BackendError::new(format!(
-                    "{other:?} publishes no finish, so a lane with no probe keys cannot \
-                     reach one"
-                )));
-            }
-        };
-        Err(BackendError::new(format!(
-            "this lane's probe was empty, so its finish has no keys to join against — and \
-             what it owes is {owed}, which the frozen surface cannot make without one \
-             (#173)"
-        )))
     }
 
     /// One call, its named inputs resolved to the handles this join is holding.

@@ -1314,3 +1314,75 @@ int main(int argc, char** argv) {
   peacock::install_rmm_pool();
   return RUN_ALL_TESTS();
 }
+
+// --- #173: a node owing rows it never received -------------------------------
+//
+// A collapse of no handles used to throw, because nothing on the wire carried a bp node's
+// schema. `wire-schema.md` put it there, so the answer is buildable without an ABI call.
+
+namespace {
+/// `make_schema` with a scale, since a decimal's is what an empty column of it has to carry.
+flatbuffers::Offset<fb::Schema> make_decimal_schema(flatbuffers::FlatBufferBuilder& fbb) {
+  std::vector<flatbuffers::Offset<fb::Field>> fields{
+      fb::CreateField(fbb, fbb.CreateString("price"), fb::DataType_Decimal128,
+                      /*nullable=*/true, /*decimal_precision=*/15, /*decimal_scale=*/2),
+      fb::CreateField(fbb, fbb.CreateString("name"), fb::DataType_Utf8, true),
+  };
+  return fb::CreateSchema(fbb, fbb.CreateVector(fields));
+}
+
+/// A collapse whose only child is a stub, and which declares `schema` as its output.
+std::vector<uint8_t> collapse_plan(flatbuffers::FlatBufferBuilder& fbb,
+                                   flatbuffers::Offset<fb::Schema> schema) {
+  auto stub = fb::CreateCudfScan(fbb);
+  auto stub_node = make_plan_node(fbb, fb::PlanNodeKind_CudfScan, stub.Union());
+  auto cp = fb::CreateCudfCoalescePartitions(fbb, stub_node);
+  auto node = make_plan_node(fbb, fb::PlanNodeKind_CudfCoalescePartitions, cp.Union(), schema);
+  return finish_plan(fbb, node);
+}
+}  // namespace
+
+TEST(EmptyAnswers, ACollapseOfNoHandlesAnswersWithItsDeclaredSchema) {
+  flatbuffers::FlatBufferBuilder fbb;
+  auto buf = collapse_plan(fbb, make_schema(fbb, {{"k", fb::DataType_Int64},
+                                                  {"v", fb::DataType_Float64}}));
+  peacock::NodeSession session(buf.data(), buf.size());
+
+  uint64_t out = 0;
+  size_t count = 0;
+  peacock::NodeStats stats{};
+  // One child contributing zero handles, which is what an empty lane hands a collapse.
+  const uint64_t child_counts[1] = {0};
+  session.execute_node(/*seq=*/1, nullptr, child_counts, 1, &out, 1, &count, &stats);
+
+  ASSERT_EQ(count, 1u);
+  const auto& table = session.table_for(out);
+  EXPECT_EQ(table.table->num_rows(), 0);
+  ASSERT_EQ(table.table->num_columns(), 2);
+  EXPECT_EQ(table.column_names[0], "k");
+  EXPECT_EQ(table.column_names[1], "v");
+  EXPECT_EQ(stats.rows, 0u);
+}
+
+// The types are load-bearing rather than cosmetic, and for a reason beyond the collapse: the
+// finish join of a lane whose probe was empty joins AGAINST this table. An empty keys table of
+// a default type would match nothing and answer nothing, and there are no rows downstream for
+// anyone to notice with. A declared type cuDF cannot express is refused loudly instead — the
+// same shape as `exports.rs`'s refusal arm, one language over.
+TEST(EmptyAnswers, TheColumnTypesAreTheDeclaredOnesAndNotDefaults) {
+  flatbuffers::FlatBufferBuilder fbb;
+  auto buf = collapse_plan(fbb, make_decimal_schema(fbb));
+  peacock::NodeSession session(buf.data(), buf.size());
+
+  uint64_t out = 0;
+  size_t count = 0;
+  peacock::NodeStats stats{};
+  const uint64_t child_counts[1] = {0};
+  session.execute_node(/*seq=*/1, nullptr, child_counts, 1, &out, 1, &count, &stats);
+
+  const auto& table = session.table_for(out);
+  ASSERT_EQ(table.table->num_columns(), 2);
+  EXPECT_EQ(table.table->view().column(0).type().id(), cudf::type_id::DECIMAL128);
+  EXPECT_EQ(table.table->view().column(0).type().scale(), -2);
+  EXPECT_EQ(table.table->view().column(1).type().id(), cudf::type_id::STRING);
+}
