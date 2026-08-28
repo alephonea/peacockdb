@@ -67,21 +67,6 @@ in the corpus and in the injected set, so nothing new is declared.
 T17a's drain half is untouched: a drained lane changes rows per lane, so q16's 104.7 MB against
 77.9 MB stands.
 
-<a id="t183"></a>
-### #183 — the device exports Utf8 where the sink declares Utf8View
-
-`GpuUnload lane 0: the exported stream is not the sink's rows: column types must match schema
-types, expected Utf8View`. The sink's schema comes from DataFusion, which uses `Utf8View`; the
-device's IPC export produces `Utf8`. Same values, different arrow type.
-
-Twelve of T18's device cases over eleven queries — tpcds q3 q15 q37 q42 q43 q52 q55 q82, tpch q10
-q12 q15 — with `#183` on their gpu columns.
-
-The same divergence bit the digest comparator one layer up, where hashing the column type reddened
-eight legacy gpu cases whose rendered comparison had never looked at types. That one was a
-comparison artefact and was fixed by hashing names; this one is the export genuinely disagreeing
-with the schema the plan declared, and no comparison choice makes it go away.
-
 <a id="t184"></a>
 ### #184 — a hash repartition of one lane into four fails in cuDF
 
@@ -134,7 +119,7 @@ The value in question is the device's own export; DataFusion produces `(15,2)` t
 CPU tier is green. So this is two rules for produced-against-declared, one per engine, disagreeing
 on the same bytes — one tolerating and casting back, the other refusing. Whichever is right, one of
 them is wrong. Neighbour of [#163](../tickets.md#t163) for that reason, where
-[#183](bp-tickets.md#t183) is two representations of one value rather than two verdicts on it.
+[#183](../archive/archived-tickets.md#t183) is two representations of one value rather than two verdicts on it.
 
 First plain decimal projection to reach a device in the corpus: q6's decimals are sums, whose
 declared type is already wide, which is why twenty queries went past this and the twenty-first did
@@ -162,7 +147,7 @@ three tp4 ones already do.
 <a id="t195"></a>
 ### #195 — the two engines cut a node into different batches, and the byte total follows
 
-Six device cells, all reached for the first time now that [#183](#t183)'s cast lets a string sink
+Six device cells, all reached for the first time now that [#183](../archive/archived-tickets.md#t183)'s cast lets a string sink
 complete: the per-node `output_bytes` disagree, and so do the per-batch lists beside them.
 
 The delta is exactly the per-batch structural overhead of the boundaries the cpu has and the device

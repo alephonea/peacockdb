@@ -1,6 +1,6 @@
 # Task sequence
 
-## 1. [`casts.md`](casts.md) — closes [#183](bp-tickets.md#t183)
+## 1. [`casts.md`](casts.md) — closes [#183](../archive/archived-tickets.md#t183)
 
 Rust only, no FFI, no C++. Predict the export type at plan time in `attach_recipes`, render it as
 `exports=`, and cast the one divergence that is inherent — cuDF has a single string type. The

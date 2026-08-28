@@ -3355,7 +3355,7 @@ query from the injected tier would silently need a matching addition here, buys 
 run and costs the property that made the smaller list trustworthy.
 
 **A device cell's ticket names its FIRST failure, not its only one.** The causes are ordered by how
-far a plan gets: [#183](bp-tickets.md#t183) is the unload refusing an export, at the end of a plan
+far a plan gets: [#183](../archive/archived-tickets.md#t183) is the unload refusing an export, at the end of a plan
 that ran, and [#152](../tickets.md#t152) is a join refusing its second probe batch, earlier. So a
 mode whose join takes one probe batch reaches the unload and fails on the string, while a mode whose
 join takes two never gets there — the same query reporting two different causes, chosen by the
@@ -3458,7 +3458,7 @@ reconstruct from an empty column.
 **Four tasks were specced during T19 and none of them is T20's.** They came out of what the rollout
 found, and each closes tickets the device column is actually blocked on rather than shapes the corpus
 lacks: [`refcounted-tables.md`](refcounted-tables.md) for [#145](../tickets.md#t145) and
-[#152](../tickets.md#t152), [`casts.md`](casts.md) for [#183](bp-tickets.md#t183),
+[#152](../tickets.md#t152), [`casts.md`](casts.md) for [#183](../archive/archived-tickets.md#t183),
 [`wire-schema.md`](wire-schema.md) for [#187](bp-tickets.md#t187), and
 [`empty-answers.md`](empty-answers.md) for [#173](../tickets.md#t173) and
 [#175](../tickets.md#t175). Order matters twice: `casts.md` before `wire-schema.md`, which writes the

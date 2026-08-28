@@ -233,7 +233,7 @@ The file is at 852 lines against the 1000-line cap; `recipe/tests.rs` is at 887.
 **The registry is the slow part, not the code.** 75 queries carry #152. Each needs a device run and
 then either an enable or a ticket edit, in batches of about five on `shad-gpu` with
 `build-test-shadgpu.sh`, as T19 does. The causes are ordered, so a cell that stops failing on #152
-lands on whatever refuses next rather than going green — expect [#183](bp-tickets.md#t183) at the
+lands on whatever refuses next rather than going green — expect [#183](../archive/archived-tickets.md#t183) at the
 unload, which is what `casts.md` closes. **Close #152 and #145 when their cells are gone from the
 registry, not when the code lands.**
 

@@ -4,7 +4,7 @@ Two device cells fail on the same class of thing — the device hands back a col
 is not the one the plan declared — and each is currently discovered at the boundary rather than
 predicted before it. This task writes the prediction down where it can be checked, and closes both.
 
-**This task closes [#183](bp-tickets.md#t183)** — the device exports `Utf8` where the sink declares
+**This task closes [#183](../archive/archived-tickets.md#t183)** — the device exports `Utf8` where the sink declares
 `Utf8View` — by predicting the export type at plan time and casting the one divergence that is
 inherent.
 
