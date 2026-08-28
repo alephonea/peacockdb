@@ -134,10 +134,16 @@ nothing on the wire describes the sink's columns. The golden is documentation an
 the runtime check at `unload` is the only thing that enforces it. [`wire-schema.md`](wire-schema.md)
 is what makes it checkable against the buffer.
 
-The tripwire fired during the rollout: the attribute predicted the decimal divergence on six rows
-before they ran, and the device agreed on each. That is one arm of the table confirmed six times,
-not the table confirmed — `StringType` is cast at the unload and so can never be observed as a
-landing, and `DateAsTimestamp` has no corpus query. More batches add instances of the same arm.
+The tripwire fired during the rollout: the attribute predicted the decimal divergence on twenty rows
+before they ran, over six declared widths — (7,2), (15,2), (17,2), (25,2), (27,2), (33,2) — and the
+device answered (38,2) to every one.
+
+That confirms the precision half of `Decimal128(38, *scale)` and only that half. Every decimal this
+corpus puts in a sink is scale 2, so nothing here distinguishes "the scale is carried through" from
+"the export happens to produce 2"; a sink decimal at another scale would be the first test of it.
+And it is one arm of the table rather than the table: `StringType` is cast at the unload and so can
+never be observed as a landing, and `DateAsTimestamp` has no corpus query. More batches add
+instances of the same arm.
 Turning it into a claim about the table needs an assertion rather than more rows, and that is
 [`wire-schema.md`](wire-schema.md)'s, not this task's.
 
