@@ -901,6 +901,10 @@ std::unique_ptr<cudf::column> build_column(
                       : nullptr;
       if (!psv || !psv->string_val())
         throw std::runtime_error("LIKE pattern must be a string literal");
+      // Valid by construction rather than by assumption: the guard above refuses a pattern
+      // with no `string_val`, and the serializer writes a typed null as `is_null` with none —
+      // so anything reaching here is a present string. The ten literal arms read the flag
+      // instead; that this one does not is [#200](../../llm-wiki/tickets.md#t200).
       cudf::string_scalar pattern(psv->string_val()->str(), true);
       auto mask = cudf::strings::like(
           cudf::strings_column_view{strcol->view()}, pattern);
