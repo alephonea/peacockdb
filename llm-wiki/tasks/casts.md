@@ -156,3 +156,12 @@ cell that is currently disabled. After the code lands:
    them all green. Expect #152 to be the common landing place.
 3. Close #183 only when its cells are gone from the registry, not when the code lands. A ticket
    whose cells are still disabled against it is not closed.
+
+What the rollout found: #152 was not the common landing place. The landings are of two kinds, and
+neither is a refusal to cross. A cell whose sink carries a decimal still fails at the unload, because
+`DecimalPrecision` is the arm this task predicts and declines to cast — [`wire-schema.md`](wire-schema.md)
+removes it by putting the precision on the wire, so every one of those has its fix already specified.
+Every other cell now completes its plan on the device and is held by a golden disagreeing about a
+number: #185 where a node reports its own output as `in_rows`, #195 where the two engines cut a node
+into different batches. The commit message on 4f6138b says the first kind stopped as well. It did
+not, and #187's first line is the counterexample.
