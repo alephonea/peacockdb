@@ -6,7 +6,7 @@ anchor that the cost widget links to. Device labels are `tp<N>-<tier>` (micro=10
 mini=2GiB, standard=12GiB).
 
 A ticket carries a **Priority** line only when it is not medium; medium is the default.
-New tickets take the next free number (currently 198), which is also the counter for
+New tickets take the next free number (currently 199), which is also the counter for
 `tasks/bp-tickets.md` — the rollout's own list, separate file, one ID space. Finished and lapsed tickets move to
 `llm-wiki/archive/archived-tickets.md` (Done / Stale) — numbers are never reused, so an old
 reference still resolves there.
@@ -748,6 +748,22 @@ tripped, so something can branch on it, but there is nowhere to record into — 
 trip log, and `Underestimate` is the precedent for what one would look like. Related: #91.
 
 ## Infrastructure / process
+
+<a id="t198"></a>
+### #198 — the probe key project's schema is derived twice, once per backend
+
+`cpu_backend/join.rs:323` builds a DataFusion `ProjectionExec` and takes `project.schema()`;
+`gpu_backend`'s `key_schema` clones the probe's field per key by hand. Same rule, two
+implementations, nothing comparing them — the shape of [#130](archive/archived-tickets.md#t130).
+
+They agree on names and types and can differ on nullability: DataFusion recomputes it from the
+expression, the hand-written one inherits the field. Every key today is a bare column reference,
+where the two agree, so nothing is wrong now — the divergence arrives with the first key that is an
+expression.
+
+Unifying them means deciding whose nullability is right and routing one answer through both
+backends, which is why `wire-schema.md` did not do it: that task moved the hand-written one so the
+recipe writer could stop adding a third, and stopped there.
 
 <a id="t197"></a>
 ### #197 — `reduce` builds a union over branches nothing consumed, and it has no defined output
