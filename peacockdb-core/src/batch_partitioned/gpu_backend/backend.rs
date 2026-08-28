@@ -22,8 +22,8 @@ use super::super::gpu_batch::GpuBatch;
 use super::super::node::GpuNode;
 use super::super::nodes::join::per_call_join_type;
 use super::super::nodes::{NodeRef, as_node_ref};
-use super::super::recipe::join::key_schema;
 use super::super::recipe::RecipePlan;
+use super::super::recipe::join::key_schema;
 use super::accumulate::{GpuAccumulator, GpuPartitionAccumulator};
 use super::emit::GpuEmitter;
 use super::join::{GpuJoin, GpuProbingJoin};
@@ -164,7 +164,6 @@ impl Backend for GpuBackend {
         })
     }
 }
-
 
 /// A source holds nothing between calls: the handle a read produces is its output, and
 /// the row groups it still owes are a list, not a table.

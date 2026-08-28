@@ -61,8 +61,13 @@ impl GpuEmitter {
 
     pub fn emit(&mut self, batch: GpuBatch) -> CallResult<Vec<GpuBatch>> {
         let (_, handle) = batch.consume();
-        let produced_lanes =
-            execute_node_many(self.executor, self.seq, self.kind, &[vec![handle]], self.lanes)?;
+        let produced_lanes = execute_node_many(
+            self.executor,
+            self.seq,
+            self.kind,
+            &[vec![handle]],
+            self.lanes,
+        )?;
         if produced_lanes.len() != self.lanes {
             return Err(BackendError::new(format!(
                 "the scatter answered with {} handles where the plan declares {} lanes — a \

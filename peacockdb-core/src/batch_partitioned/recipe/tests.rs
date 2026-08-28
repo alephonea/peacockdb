@@ -139,7 +139,6 @@ fn join(join_type: JoinType, filter: bool, projection: Option<Vec<u32>>) -> GpuJ
     )
 }
 
-
 fn recipe_for(node: &GpuJoin) -> Recipe {
     let build = columns_of(&["k", "label"]);
     let probe = columns_of(&["fk", "v"]);
@@ -681,7 +680,6 @@ fn dim_fact_joined(join_type: JoinType) -> Schema {
     )
 }
 
-
 /// The buffer a join's recipe addresses, so a case can read the payload rather than the
 /// call list.
 fn written(node: &GpuJoin) -> (Recipe, Vec<u8>) {
@@ -940,19 +938,13 @@ fn an_unload_names_the_columns_the_device_will_not_hand_back_as_declared() {
         .expect("a sink drives the ABI");
     assert_eq!(
         recipe.exports.columns(),
-        &[
-            ColumnExport {
-                ordinal: 0,
-                exported: DataType::Utf8,
-                why: Divergence::StringType,
-            },
-            ColumnExport {
-                ordinal: 1,
-                exported: DataType::Decimal128(38, 2),
-                why: Divergence::DecimalPrecision,
-            },
-        ],
-        "the string and the decimal diverge and the Int64 does not"
+        &[ColumnExport {
+            ordinal: 0,
+            exported: DataType::Utf8,
+            why: Divergence::StringType,
+        }],
+        "the string is the only one left: the decimal's precision now rides the wire and the \
+         Int64 was never anything else"
     );
 }
 
@@ -973,25 +965,88 @@ fn a_column_cudf_has_no_type_for_is_refused_at_the_sink() {
     }
 }
 
-/// A decimal is predicted here and left to fail: `wire-schema.md` removes the divergence
-/// by putting the precision on the wire, where a cast would remove the check that found
-/// it instead. The prediction is written down before its fix exists.
+/// The decimal that #187 was: declared narrow and exported at 38, until the precision went
+/// on the wire and the export started declaring it. Identity now, and the cast list must
+/// stay empty — a decimal arm there would absorb the divergence rather than record that it
+/// is gone, and a golden pinning an absorbed divergence makes a fixed thing look inherent.
 #[test]
-fn a_decimal_is_predicted_at_the_maximum_precision_and_is_not_cast() {
+fn a_decimal_is_exported_as_declared_and_is_not_cast() {
     assert_eq!(
         export_type_for(&DataType::Decimal128(15, 2)).expect("a decimal maps"),
-        Export::Diverges {
-            exported: DataType::Decimal128(38, 2),
-            why: Divergence::DecimalPrecision,
-        },
-        "cuDF carries the scale and the export supplies no precision"
+        Export::Identity,
+        "the export declares what the plan declared"
     );
     let (node, schema) = unload_over(&[("price", DataType::Decimal128(15, 2))]);
     let recipe = unload(&node, &[&schema], &mut Writer::new())
         .expect("a decimal maps")
         .expect("a sink drives the ABI");
     assert!(
-        recipe.exports.cast_ordinals().is_empty(),
-        "the decimal is predicted and not cast"
+        recipe.exports.columns().is_empty(),
+        "nothing diverges, so the sink names nothing"
     );
+    assert!(
+        recipe.exports.cast_ordinals().is_empty(),
+        "and casts nothing"
+    );
+}
+
+/// The precision the wire carries, which is the whole of #187's fix:
+/// `Field.decimal_precision` existed and `serialize_schema` filled it, and nothing put the
+/// schema on the node — so the C++ had a value it could not reach. Red before
+/// `Writer::push` writes `output_schema`.
+#[test]
+fn a_declared_precision_reaches_the_payload() {
+    let schema = columns_typed(&[("price", DataType::Decimal128(15, 2))]);
+    let fields = declared_by(&schema);
+    assert_eq!(
+        (fields.0, fields.1, fields.2),
+        (fb::DataType::Decimal128, 15, 2),
+        "the declared precision, not the 38 cuDF would default to"
+    );
+}
+
+/// Every node, not only the ones carrying a decimal: a format present when a decimal exists
+/// and absent otherwise is the conditional wire format step 1 declined to own, and nothing
+/// else in the suite would notice it becoming one.
+#[test]
+fn a_node_of_plain_columns_still_declares_its_schema() {
+    let schema = columns_of(&["n", "m"]);
+    let fields = declared_by(&schema);
+    assert_eq!(fields.0, fb::DataType::Int64);
+    assert_eq!(fields.1, 0, "no decimal, so no precision");
+    assert_eq!(fields.3, 2, "and both columns are declared all the same");
+}
+
+/// A filter over `schema`, written to a buffer, read back as (type, precision, scale, width)
+/// of its declared output. A filter because it is the plainest node that takes an input and
+/// declares an output; what is under test is `Writer::push`, which every node goes through.
+fn declared_by(schema: &Schema) -> (fb::DataType, u8, i8, usize) {
+    let node = GpuFilter::new(
+        Box::new(Given {
+            kind: NodeKind::Intermediate {
+                layout: PartitionLayout::new(1),
+                schema: schema.clone(),
+            },
+        }),
+        Expr::column(0, schema.fields.field(0).name()),
+        None,
+        schema.clone(),
+    );
+    let mut writer = Writer::new();
+    let seq = writer
+        .node(1, |b, kids| node_writer::filter(b, &node, schema, kids))
+        .expect("a filter's payload is writable");
+    let (bytes, _) = writer.finish().expect("one root");
+    let plan = flatbuffers::root::<fb::GpuPlan>(&bytes).expect("the buffer verifies");
+    let declared = node_at(&plan, seq)
+        .and_then(|node| node.output_schema())
+        .and_then(|schema| schema.fields())
+        .expect("every node declares its columns");
+    let first = declared.get(0);
+    (
+        first.data_type(),
+        first.decimal_precision(),
+        first.decimal_scale(),
+        declared.len(),
+    )
 }

@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 use datafusion::arrow::array::RecordBatch;
 use datafusion::arrow::compute::{cast, concat_batches};
-use datafusion::arrow::datatypes::{Field, Schema as ArrowSchema, SchemaRef};
+use datafusion::arrow::datatypes::{DataType, Field, Schema as ArrowSchema, SchemaRef};
 use datafusion::arrow::ipc::reader::StreamReader;
 
 use peacockdb_ffi::raw::{
@@ -118,8 +118,9 @@ pub struct GpuExport {
     executor: *mut PeacockExecutor,
     schema: SchemaRef,
     /// The columns the device hands back as `Utf8` where the sink declared a wider string
-    /// — the one divergence neither side can avoid, and so the only one absorbed here.
-    casts: Vec<u32>,
+    /// — the one divergence neither side can avoid, and so the only one absorbed here —
+    /// each with the type `exports=` predicted it would arrive as.
+    casts: Vec<(usize, DataType)>,
 }
 
 impl GpuExport {
@@ -127,16 +128,17 @@ impl GpuExport {
     /// cross the boundary. `exports` is the plan's prediction about those same columns,
     /// derived where the plan was built.
     pub fn new(executor: *mut PeacockExecutor, schema: &ArrowSchema, exports: &Exports) -> Self {
-        let casts = exports.cast_ordinals();
+        let casts: Vec<(usize, DataType)> = exports
+            .casts()
+            .map(|column| (column.ordinal as usize, column.exported.clone()))
+            .collect();
         // The two arguments are two derivations of one node's input, and nothing in the
         // types says so: a pair from different nodes would index past the end at the cast.
         assert!(
-            casts
-                .iter()
-                .all(|at| (*at as usize) < schema.fields().len()),
+            casts.iter().all(|(at, _)| *at < schema.fields().len()),
             "the sink's exports address column {} and its schema declares {} — the schema \
              and the exports are about different nodes",
-            casts.iter().max().copied().unwrap_or(0),
+            casts.iter().map(|(at, _)| *at).max().unwrap_or(0),
             schema.fields().len()
         );
         Self {
@@ -223,8 +225,18 @@ impl GpuExport {
             .iter()
             .map(|field| field.as_ref().clone())
             .collect();
-        for ordinal in &self.casts {
-            let at = *ordinal as usize;
+        for (at, predicted) in &self.casts {
+            let at = *at;
+            // The prediction, checked where it is still visible. After the cast a column the
+            // device sent as something else is indistinguishable from one it sent as
+            // predicted, so nothing downstream — a result comparison included — can tell
+            // them apart. `cast` would convert whatever it found rather than object.
+            if columns[at].data_type() != predicted {
+                return Err(not_the_sinks_rows(format!(
+                    "column {at} was predicted to export as {predicted:?} and arrived as {:?}",
+                    columns[at].data_type()
+                )));
+            }
             let declared = self.schema.field(at).data_type();
             columns[at] = cast(&columns[at], declared).map_err(not_the_sinks_rows)?;
             fields[at] = fields[at].clone().with_data_type(declared.clone());

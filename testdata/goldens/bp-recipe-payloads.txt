@@ -491,7 +491,7 @@ GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range), ex
                                     schema: [l_orderkey:Int64, l_suppkey:Int64, l_commitdate:Date32, l_receiptdate:Date32]
 == tpch q22
 sha256=7e2a0adc31dc9f02f7587913e5d9ab8147af3eb11ed0c9e81a429b1029804efc
-GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range), exports=[cntrycode:Utf8, totacctbal:Decimal128(38,2)]
+GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range), exports=[cntrycode:Utf8]
   GpuMergeSortedPartitions: calling_lanes=1, at done: execute_node(#24 CudfSortPreservingMerge, all lanes)
       #24 CudfSortPreservingMerge
         declares: [cntrycode:Utf8View, numcust:Int64, totacctbal:Decimal128(25, 2)]
@@ -2930,7 +2930,7 @@ GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range), ex
                                                                                       schema: [ss_sold_date_sk:Int64, ss_item_sk:Int64]
 == tpcds q16
 sha256=821103ad668dc3befc541854f90022c5fcffaa9a509e74993f3234157ab66890
-GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range), exports=[`total shipping cost`:Decimal128(38,2), `total net profit`:Decimal128(38,2)]
+GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range), exports=none
   GpuProject: calling_lanes=1, per batch: execute_node(#40 CudfProject, batch)
       #40 CudfProject
         declares: [order count:Int64, total shipping cost:Decimal128(27, 2), total net profit:Decimal128(27, 2)]
@@ -3560,7 +3560,7 @@ GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range), ex
                                                                   schema: [inv_date_sk:Int64, inv_item_sk:Int64, inv_warehouse_sk:Int64, inv_quantity_on_hand:Int32]
 == tpcds q40
 sha256=310a04e7db78fbb57316b63736640b0af5ee28f5d955497ee9e5cc4996d265b5
-GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range), exports=[w_state:Utf8, i_item_id:Utf8, sales_before:Decimal128(38,2), sales_after:Decimal128(38,2)]
+GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range), exports=[w_state:Utf8, i_item_id:Utf8]
   GpuMergeSortedPartitions: calling_lanes=1, at done: execute_node(#37 CudfSortPreservingMerge, all lanes)
       #37 CudfSortPreservingMerge
         declares: [w_state:Utf8View, i_item_id:Utf8View, sales_before:Decimal128(33, 2), sales_after:Decimal128(33, 2)]
@@ -3881,7 +3881,7 @@ GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range), ex
                               schema: [i_category:Utf8View, i_manufact:Utf8View, i_size:Utf8View, i_color:Utf8View, i_units:Utf8View]
 == tpcds q45
 sha256=dfcc16d510cc6b98a959c8cac9f63595f65cb81dfb6dab12b88d716f5244de5a
-GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range), exports=[ca_zip:Utf8, ca_city:Utf8, sum(web_sales.ws_sales_price):Decimal128(38,2)]
+GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range), exports=[ca_zip:Utf8, ca_city:Utf8]
   GpuMergeSortedPartitions: calling_lanes=1, at done: execute_node(#44 CudfSortPreservingMerge, all lanes)
       #44 CudfSortPreservingMerge
         declares: [ca_zip:Utf8View, ca_city:Utf8View, sum(web_sales.ws_sales_price):Decimal128(17, 2)]
@@ -4107,7 +4107,7 @@ GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range), ex
                                 schema: [i_item_sk:Int64, i_item_id:Utf8View]
 == tpcds q5
 sha256=7003905d714c4a9977ed57222bf01a03a0d66347f2c74b34a7916b613112915d
-GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range), exports=[id:Utf8, sales:Decimal128(38,2), returns_:Decimal128(38,2), profit:Decimal128(38,2)]
+GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range), exports=[id:Utf8]
   GpuMergeSortedPartitions: calling_lanes=1, at done: execute_node(#98 CudfSortPreservingMerge, all lanes)
       #98 CudfSortPreservingMerge
         declares: [channel:Utf8, id:Utf8View, sales:Decimal128(27, 2), returns_:Decimal128(27, 2), profit:Decimal128(28, 2)]
@@ -4674,7 +4674,7 @@ GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range), ex
                                                                 schema: [ws_item_sk:Int64, ws_web_site_sk:Int64, ws_order_number:Int64]
 == tpcds q61
 sha256=9b2b55f610be1d827b903333c94241ffcf74f5e9b296b37a9b9565115149a07f
-GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range), exports=[promotions:Decimal128(38,2), total:Decimal128(38,2)]
+GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range), exports=none
   GpuAccumulateBatchesAndSort: calling_lanes=1, per batch: execute_node(#83 CudfSort, batch); at done: execute_node(#84 CudfSortPreservingMerge, lane batches)
       #83 CudfSort
         declares: [promotions:Decimal128(17, 2), total:Decimal128(17, 2), promotional_sales.promotions / all_sales.total * Int64(100):Decimal128(38, 8)]
@@ -5460,7 +5460,7 @@ GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range), ex
                                                       schema: [ss_sold_date_sk:Int64, ss_customer_sk:Int64]
 == tpcds q91
 sha256=21a02f4ea01409b9c05529ac2ff339923bdf6f87df2701384078448187ef34a2
-GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range), exports=[call_center:Utf8, call_center_name:Utf8, manager:Utf8, returns_loss:Decimal128(38,2)]
+GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range), exports=[call_center:Utf8, call_center_name:Utf8, manager:Utf8]
   GpuProject: calling_lanes=1, per batch: execute_node(#46 CudfProject, batch)
       #46 CudfProject
         declares: [call_center:Utf8View, call_center_name:Utf8View, manager:Utf8View, returns_loss:Decimal128(17, 2)]
@@ -5699,7 +5699,7 @@ GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range), ex
                                           schema: [cd_demo_sk:Int64, cd_marital_status:Utf8View, cd_education_status:Utf8View]
 == tpcds q95
 sha256=fb2be053933dbcede1dc2b74ea04321ba3cc1352a53373d8c8d39421f0bd038a
-GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range), exports=[`total shipping cost`:Decimal128(38,2), `total net profit`:Decimal128(38,2)]
+GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range), exports=none
   GpuProject: calling_lanes=1, per batch: execute_node(#53 CudfProject, batch)
       #53 CudfProject
         declares: [order count:Int64, total shipping cost:Decimal128(27, 2), total net profit:Decimal128(27, 2)]

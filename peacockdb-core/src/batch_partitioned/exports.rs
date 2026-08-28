@@ -6,9 +6,7 @@
 //! languages, so before this nobody could answer what a column comes back as without
 //! reading all three. Most of it is identity; the arms that are not are named below.
 
-use datafusion::arrow::datatypes::{
-    DECIMAL128_MAX_PRECISION, DataType, Schema as ArrowSchema, TimeUnit,
-};
+use datafusion::arrow::datatypes::{DataType, Schema as ArrowSchema, TimeUnit};
 
 use super::error::PlanError;
 
@@ -21,11 +19,6 @@ pub enum Divergence {
     /// ([#183](../../../../llm-wiki/tasks/bp-tickets.md#t183)). Neither side can be
     /// changed to avoid it, which is what makes the unload the place to absorb it.
     StringType,
-    /// cuDF decimals carry a scale and no precision, and the export passes no precision
-    /// through `column_metadata`, so every decimal arrives at the maximum
-    /// ([#187](../../../../llm-wiki/tasks/bp-tickets.md#t187)). Predicted here and not
-    /// cast: `wire-schema.md` puts the precision on the wire instead.
-    DecimalPrecision,
     /// `Date64` is a millisecond timestamp to cuDF and comes back as one. No corpus query
     /// declares a `Date64`, so nothing reaches this.
     DateAsTimestamp,
@@ -67,16 +60,10 @@ pub fn export_type_for(declared: &DataType) -> Result<Export, PlanError> {
             exported: DataType::Timestamp(TimeUnit::Millisecond, None),
             why: Divergence::DateAsTimestamp,
         },
-        // The export's fallback is `max_precision<__int128_t>()`, which is this constant.
-        // A column declared at it already is what it comes back as, which is why twenty
-        // corpus queries of decimal sums went past #187 and the first plain projection
-        // did not.
-        DataType::Decimal128(precision, scale) if *precision != DECIMAL128_MAX_PRECISION => {
-            Export::Diverges {
-                exported: DataType::Decimal128(DECIMAL128_MAX_PRECISION, *scale),
-                why: Divergence::DecimalPrecision,
-            }
-        }
+        // Identity since the declared precision goes on the wire and `export_table_to_ipc`
+        // puts it on the exported schema. cuDF still carries only a scale, so this is
+        // identity because the plan tells the export what to declare, not because cuDF
+        // knows — which is what #187 was.
         DataType::Decimal128(_, _) => Export::Identity,
         // The five `fb_to_type_id` answers `EMPTY` for. The wire carries them, so the column
         // reaches the device with no type at all rather than being stopped on the way.
@@ -142,16 +129,21 @@ impl Exports {
         self.columns.is_empty()
     }
 
-    /// The ordinals the unload casts back to what was declared: the string arm and
-    /// nothing else. The concat against the sink's schema is the only thing checking that
-    /// the device produced what the plan said it would, and a cast per divergence would
-    /// leave nothing checking it at all.
-    pub fn cast_ordinals(&self) -> Vec<u32> {
+    /// The columns the unload casts back to what was declared: the string arm and nothing
+    /// else. The concat against the sink's schema is the only thing checking that the
+    /// device produced what the plan said it would, and a cast per divergence would leave
+    /// nothing checking it at all.
+    ///
+    /// Each carries the type it was predicted to arrive as, because the cast is where that
+    /// prediction can be checked — after it, a cast column and an identity one look alike.
+    pub fn casts(&self) -> impl Iterator<Item = &ColumnExport> {
         self.columns
             .iter()
             .filter(|column| column.why == Divergence::StringType)
-            .map(|column| column.ordinal)
-            .collect()
+    }
+
+    pub fn cast_ordinals(&self) -> Vec<u32> {
+        self.casts().map(|column| column.ordinal).collect()
     }
 }
 
@@ -239,13 +231,7 @@ mod tests {
                     why: Divergence::DateAsTimestamp,
                 }),
             ),
-            "Decimal128" => (
-                DataType::Decimal128(15, 2),
-                Some(Export::Diverges {
-                    exported: DataType::Decimal128(38, 2),
-                    why: Divergence::DecimalPrecision,
-                }),
-            ),
+            "Decimal128" => identity(DataType::Decimal128(15, 2)),
             "Null" => (DataType::Null, None),
             "Float16" => (DataType::Float16, None),
             "Binary" => (DataType::Binary, None),
