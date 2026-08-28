@@ -482,16 +482,16 @@ Rules that keep this healthy:
   long run.
 - **Large CPU + GPU batches run in parallel** — kick off the shad-gpu run and the
   verda/local CPU run concurrently; neither waits for the other.
-- **A shad-gpu batch and CI's `gpu-tests` job collide sometimes, and the answer is to rerun**,
-  not to take turns. Both run the C++ `peacock_*_tests`, whose `main()` installs an RMM pool
-  reserving `kDiscreteInitialPercent = 85` of free memory (`rmm_pool.hpp:72`). Whichever starts
-  second gets a pool sized to the leftovers and the sf40 cases die with "Maximum pool size
-  exceeded" — 20.3 GiB free of a 139.7 GiB card in run 33126362612, with neither side using
-  more than a fraction of it. The failure is a reservation, not memory pressure, and it is
-  never a code failure: it lands on whoever was second and passes alone. The Rust GPU binaries
-  do not reserve — `install_rmm_pool`'s only Rust callers are in `tests/common/benchmark.rs` —
-  so a corpus batch alone never causes this. [#178](tickets.md#t178) is the fix, a concurrency
-  group keyed on the host; until then the cost is a rerun.
+- **A rollout batch runs `PCK_RUN_CPP=0` and then cannot collide with CI at all.** What collides
+  is two runs of the C++ `peacock_*_tests`, whose `main()` installs an RMM pool reserving
+  `kDiscreteInitialPercent = 85` of free memory (`rmm_pool.hpp:72`): whichever starts second gets
+  a pool sized to the leftovers and the sf40 cases die with "Maximum pool size exceeded" — 20.3
+  GiB free of a 139.7 GiB card in run 33126362612, neither side using a fraction of it. A
+  reservation rather than memory pressure, and never a code failure. With the C++ suites skipped
+  the run reserves nothing: `install_rmm_pool`'s only Rust callers are in
+  `tests/common/benchmark.rs`, so the corpus binary never touches it. For a run that does want
+  the C++ suites — `--all`, and CI — an overlap is possible and the answer is to rerun the loser,
+  not to take turns. [#178](tickets.md#t178) is the fix, a concurrency group keyed on the host.
 
 ## Benchmarks
 
