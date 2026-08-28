@@ -107,6 +107,13 @@ both `emitted` arms grow. Estimated 150-250 lines across three files plus a devi
 **before** section 2: #175 puts a second pad into one of the two engines, and the per-type contract is
 what that pad then rests on. Written afterwards it is the same work with the pad already on top of it.
 
+If it runs materially past that estimate, four gtests plus a ticket is the honest fallback — and the
+ticket is **the two pads are compared by nothing**, not "executor_cases rows are owed". The first
+names the shape this chain has met four times and can be prioritised against
+[#198](../tickets.md#t198) and [#199](../tickets.md#t199); the second reads as a chore and is
+deferred forever. Written here because a ticket filed at the moment of abandoning a harness is the
+one most likely to describe the harness instead of the defect.
+
 ### Unit, Rust
 
 - **the empty-build decision by type** — `empty_build_answers_nothing` returns true for the six that
