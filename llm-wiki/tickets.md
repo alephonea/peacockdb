@@ -6,7 +6,7 @@ anchor that the cost widget links to. Device labels are `tp<N>-<tier>` (micro=10
 mini=2GiB, standard=12GiB).
 
 A ticket carries a **Priority** line only when it is not medium; medium is the default.
-New tickets take the next free number (currently 195), which is also the counter for
+New tickets take the next free number (currently 198), which is also the counter for
 `tasks/bp-tickets.md` — the rollout's own list, separate file, one ID space. Finished and lapsed tickets move to
 `llm-wiki/archive/archived-tickets.md` (Done / Stale) — numbers are never reused, so an old
 reference still resolves there.
@@ -748,6 +748,24 @@ tripped, so something can branch on it, but there is nowhere to record into — 
 trip log, and `Underestimate` is the precedent for what one would look like. Related: #91.
 
 ## Infrastructure / process
+
+<a id="t197"></a>
+### #197 — `reduce` builds a union over branches nothing consumed, and it has no defined output
+
+`writer.rs:145` emits a structural `CudfUnion` over the branches a node did not consume. If it ever
+ran, `execute_union` would concatenate two unrelated orphan subtrees — throwing on mismatched types,
+or succeeding and producing a table that means nothing. Neither is an output the plan can declare,
+which is how it was found: `wire-schema.md` puts `output_schema` on every fb node and this is the one
+node with no true answer to write.
+
+No corpus plan contains one — `grep -c CudfUnion testdata/goldens/bp-recipe-payloads.txt` is 0 and no
+`.plans.txt` has one — so the arm is reachable by construction and unexercised, and no golden would
+catch a wrong choice made about it. That is what makes it a ticket rather than a judgement call
+inside the task: the question is not what schema to write but whether the node should be emitted at
+all.
+
+Until it is answered, `output_schema` is left unset on this one node, which the fb reader already
+handles and which asserts nothing false.
 
 <a id="t196"></a>
 ### #196 — the moved rust-only tests have never once built against a restored cache
