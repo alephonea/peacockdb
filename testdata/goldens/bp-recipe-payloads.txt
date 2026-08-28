@@ -1,6 +1,6 @@
 == tpch nested-loop-join
 sha256=34d62c265e64a097b084cda15fd4c49b107bba83331ada5fb8da23d745f30352
-GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
+GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range), exports=[r_name:Utf8, r_comment:Utf8, n_name:Utf8, n_comment:Utf8]
   GpuNestedLoopJoin: calling_lanes=1, per probe batch: execute_node(#3 CudfNestedLoopJoin, build copy, batch)
       #3 CudfNestedLoopJoin
         join_type: Inner
@@ -17,7 +17,7 @@ GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
           schema: [n_nationkey:Int32, n_name:Utf8View, n_regionkey:Int32, n_comment:Utf8View]
 == tpch nested-loop-left-join
 sha256=96129087c412b067dc211c6db28df655a4f009b743d66a1b3d9aa2063da1b67b
-GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
+GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range), exports=[r_name:Utf8, r_comment:Utf8, n_name:Utf8, n_comment:Utf8]
   GpuNestedLoopJoin: calling_lanes=1, per probe batch: execute_node(#4 CudfNestedLoopJoin, build, batch)
       #4 CudfNestedLoopJoin
         join_type: Left
@@ -36,7 +36,7 @@ GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
             schema: [n_nationkey:Int32, n_name:Utf8View, n_regionkey:Int32, n_comment:Utf8View]
 == tpch q13
 sha256=6ff55ae97eb70538df478974f4910d03ef12825c357e22eb130809a36aec64f7
-GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
+GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range), exports=none
   GpuMergeSortedPartitions: calling_lanes=1, at done: execute_node(#25 CudfSortPreservingMerge, all lanes)
       #25 CudfSortPreservingMerge
         by: custdist@1 desc nulls first, c_count@0 desc nulls first
@@ -124,7 +124,7 @@ GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
                                       schema: [o_orderkey:Int64, o_custkey:Int64, o_comment:Utf8View]
 == tpch q15
 sha256=6a4e78e0356f80927b17c14ce9ce8b7f534f431f1c042d7109cfdcc3a1c12292
-GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
+GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range), exports=[s_name:Utf8, s_address:Utf8, s_phone:Utf8]
   GpuMergeSortedPartitions: calling_lanes=1, at done: execute_node(#25 CudfSortPreservingMerge, all lanes)
       #25 CudfSortPreservingMerge
         by: s_suppkey@0 asc nulls last
@@ -222,7 +222,7 @@ GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
                           schema: [l_suppkey:Int64, l_extendedprice:Decimal128, l_discount:Decimal128, l_shipdate:Date32]
 == tpch q21
 sha256=45b56d046b6379d256eba55be2563ede2bf5cd37b29303e00cd672a2197d736f
-GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
+GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range), exports=[s_name:Utf8]
   GpuMergeSortedPartitions: calling_lanes=1, at done: execute_node(#41 CudfSortPreservingMerge, all lanes)
       #41 CudfSortPreservingMerge
         by: numwait@1 desc nulls first, s_name@0 asc nulls last
@@ -389,7 +389,7 @@ GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
                                     schema: [l_orderkey:Int64, l_suppkey:Int64, l_commitdate:Date32, l_receiptdate:Date32]
 == tpch q22
 sha256=5b56bf33ee7b02acdbef7a04675597d709629bdb662c8ad87375ca35a93a11df
-GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
+GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range), exports=[cntrycode:Utf8, totacctbal:Decimal128(38,2)]
   GpuMergeSortedPartitions: calling_lanes=1, at done: execute_node(#24 CudfSortPreservingMerge, all lanes)
       #24 CudfSortPreservingMerge
         by: cntrycode@0 asc nulls last
@@ -486,7 +486,7 @@ GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
                               schema: [o_custkey:Int64]
 == tpch shuffle-stddev
 sha256=35a83f705867e37b73e42d27cacba7d85aeba385bf5e7101dfc006c4999b7958
-GpuUnload: calling_lanes=4, per handle: result_from_handle(batch, row range)
+GpuUnload: calling_lanes=4, per handle: result_from_handle(batch, row range), exports=[l_returnflag:Utf8, l_linestatus:Utf8]
   GpuProject: calling_lanes=4, per batch: execute_node(#9 CudfProject, batch)
       #9 CudfProject
         l_returnflag: l_returnflag@0
@@ -544,7 +544,7 @@ GpuUnload: calling_lanes=4, per handle: result_from_handle(batch, row range)
                       schema: [l_quantity:Decimal128, l_returnflag:Utf8View, l_linestatus:Utf8View]
 == tpcds q10
 sha256=7415026788f5e6a34ef567c576205537f3ac26a059abcd255dee755ab4e80c6b
-GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
+GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range), exports=[cd_gender:Utf8, cd_marital_status:Utf8, cd_education_status:Utf8, cd_credit_rating:Utf8]
   GpuMergeSortedPartitions: calling_lanes=1, at done: execute_node(#61 CudfSortPreservingMerge, all lanes)
       #61 CudfSortPreservingMerge
         by: cd_gender@0 asc nulls last, cd_marital_status@1 asc nulls last, cd_education_status@2 asc nulls last, cd_purchase_estimate@4 asc nulls last, cd_credit_rating@6 asc nulls last, cd_dep_count@8 asc nulls last, cd_dep_employed_count@10 asc nulls last, cd_dep_college_count@12 asc nulls last
@@ -797,7 +797,7 @@ GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
                                       schema: [cs_sold_date_sk:Int64, cs_ship_customer_sk:Int64]
 == tpcds q14
 sha256=a747b79d28dbf4fdf6178b1212986bb9bb8a7b1d224b678bef359c9654e0e1d0
-GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
+GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range), exports=none
   GpuMergeSortedPartitions: calling_lanes=1, at done: execute_node(#385 CudfSortPreservingMerge, all lanes)
       #385 CudfSortPreservingMerge
         by: channel@0 asc nulls first, i_brand_id@1 asc nulls first, i_class_id@2 asc nulls first, i_category_id@3 asc nulls first
@@ -2349,7 +2349,7 @@ GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
                                                                                       schema: [ss_sold_date_sk:Int64, ss_item_sk:Int64]
 == tpcds q16
 sha256=3aee92d57696cd279d33bd8b4d39ad3f1721a11f8c85699f82ba8f6e6e479388
-GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
+GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range), exports=[`total shipping cost`:Decimal128(38,2), `total net profit`:Decimal128(38,2)]
   GpuProject: calling_lanes=1, per batch: execute_node(#40 CudfProject, batch)
       #40 CudfProject
         order count: order count@0
@@ -2518,7 +2518,7 @@ GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
                             schema: [cr_order_number:Int64]
 == tpcds q39
 sha256=2817cc1efaf554efe40f8fe009ebb9eed875d95efb67768175a760aeb12e3336
-GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
+GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range), exports=none
   GpuProject: calling_lanes=1, per batch: execute_node(#71 CudfProject, batch)
       #71 CudfProject
         wsk1: wsk1@0
@@ -2866,7 +2866,7 @@ GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
                                                                   schema: [inv_date_sk:Int64, inv_item_sk:Int64, inv_warehouse_sk:Int64, inv_quantity_on_hand:Int32]
 == tpcds q40
 sha256=e465d12be45ecc7095cb3af16bad38fd4cfbf78559da10e6d543123be41db586
-GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
+GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range), exports=[w_state:Utf8, i_item_id:Utf8, sales_before:Decimal128(38,2), sales_after:Decimal128(38,2)]
   GpuMergeSortedPartitions: calling_lanes=1, at done: execute_node(#37 CudfSortPreservingMerge, all lanes)
       #37 CudfSortPreservingMerge
         by: w_state@0 asc nulls last, i_item_id@1 asc nulls last
@@ -3034,7 +3034,7 @@ GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
                                                           schema: [cs_sold_date_sk:Int64, cs_warehouse_sk:Int64, cs_item_sk:Int64, cs_order_number:Int64, cs_sales_price:Decimal128]
 == tpcds q41
 sha256=f266432e5606e5fde98065cf65d938bc8cc08f8b722f023832728b265d13fe95
-GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
+GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range), exports=[i_product_name:Utf8]
   GpuMergeSortedPartitions: calling_lanes=1, at done: execute_node(#24 CudfSortPreservingMerge, all lanes)
       #24 CudfSortPreservingMerge
         by: i_product_name@0 asc nulls last
@@ -3125,7 +3125,7 @@ GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
                               schema: [i_category:Utf8View, i_manufact:Utf8View, i_size:Utf8View, i_color:Utf8View, i_units:Utf8View]
 == tpcds q45
 sha256=106133682ba617f1ea35f3e1b9ef58205b8b42e78edb0c442fc23a4f10570f28
-GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
+GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range), exports=[ca_zip:Utf8, ca_city:Utf8, sum(web_sales.ws_sales_price):Decimal128(38,2)]
   GpuMergeSortedPartitions: calling_lanes=1, at done: execute_node(#44 CudfSortPreservingMerge, all lanes)
       #44 CudfSortPreservingMerge
         by: ca_zip@0 asc nulls last, ca_city@1 asc nulls last
@@ -3306,7 +3306,7 @@ GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
                                 schema: [i_item_sk:Int64, i_item_id:Utf8View]
 == tpcds q5
 sha256=efc8a72184d45dae7f8772cdbbbe7760d83b527c5cf7e9c2aee0c17cb521be6a
-GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
+GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range), exports=[id:Utf8, sales:Decimal128(38,2), returns_:Decimal128(38,2), profit:Decimal128(38,2)]
   GpuMergeSortedPartitions: calling_lanes=1, at done: execute_node(#98 CudfSortPreservingMerge, all lanes)
       #98 CudfSortPreservingMerge
         by: channel@0 asc nulls first, id@1 asc nulls first
@@ -3777,7 +3777,7 @@ GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
                                                                 schema: [ws_item_sk:Int64, ws_web_site_sk:Int64, ws_order_number:Int64]
 == tpcds q61
 sha256=f3b96483b1d70484168423e7e0f04008caddcefd2864626106217f5465ef5b73
-GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
+GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range), exports=[promotions:Decimal128(38,2), total:Decimal128(38,2)]
   GpuAccumulateBatchesAndSort: calling_lanes=1, per batch: execute_node(#83 CudfSort, batch); at done: execute_node(#84 CudfSortPreservingMerge, lane batches)
       #83 CudfSort
         by: promotions@0 asc nulls last, total@1 asc nulls last
@@ -4107,7 +4107,7 @@ GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
                                           schema: [c_customer_sk:Int64, c_current_addr_sk:Int64]
 == tpcds q87
 sha256=381d144a0e4a9ce2ddeb68754ea9d88ff526329a51b1edcef6cabc98efb5d7af
-GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
+GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range), exports=none
   GpuAggregateBatches: calling_lanes=1, per compaction and at done: execute_node(#76 CudfCoalescePartitions, lane batches), execute_node(#77 CudfAggregate{Merge}, prior output); at done: execute_node(#78 CudfProject{finalize}, prior output)
       #76 CudfCoalescePartitions
       #77 CudfAggregate{Merge}
@@ -4399,7 +4399,7 @@ GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
                                                       schema: [ss_sold_date_sk:Int64, ss_customer_sk:Int64]
 == tpcds q91
 sha256=ea442f38ac3256230457fdc4ca17a0793f692fc2184bbb49b4fcd13ab4ae9b0f
-GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
+GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range), exports=[call_center:Utf8, call_center_name:Utf8, manager:Utf8, returns_loss:Decimal128(38,2)]
   GpuProject: calling_lanes=1, per batch: execute_node(#46 CudfProject, batch)
       #46 CudfProject
         call_center: call_center@0
@@ -4591,7 +4591,7 @@ GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
                                           schema: [cd_demo_sk:Int64, cd_marital_status:Utf8View, cd_education_status:Utf8View]
 == tpcds q95
 sha256=f1d67225e06b2eef31a17f1f2ad215092c2b6f7db6eaba956d28b2626e7dcee5
-GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
+GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range), exports=[`total shipping cost`:Decimal128(38,2), `total net profit`:Decimal128(38,2)]
   GpuProject: calling_lanes=1, per batch: execute_node(#53 CudfProject, batch)
       #53 CudfProject
         order count: order count@0
@@ -4807,7 +4807,7 @@ GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
                                 schema: [ws_warehouse_sk:Int64, ws_order_number:Int64]
 == tpcds q97
 sha256=20525389e66cb0ab1e062db383cde31b6f7f3bdaec882d23963ee7c847abfd1c
-GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range)
+GpuUnload: calling_lanes=1, per handle: result_from_handle(batch, row range), exports=none
   GpuProject: calling_lanes=1, per batch: execute_node(#45 CudfProject, batch)
       #45 CudfProject
         store_only: sum(CASE WHEN ssci.customer_sk IS NOT NULL AND csci.customer_sk IS NULL THEN Int64(1) ELSE Int64(0) END)@0

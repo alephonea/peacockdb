@@ -202,63 +202,84 @@ mod tests {
         names
     }
 
-    /// A value per wire type, since a parameterized arm carries no arguments to build from.
-    /// Exhaustive on purpose: a type added to the wire fails here naming itself rather than
-    /// defaulting to something that happens to pass.
-    fn value_of(name: &str) -> DataType {
+    /// One case per wire type: a value to ask about, and the answer the table at the top of
+    /// this module gives. `None` is a refusal. Exhaustive on purpose — a type added to the
+    /// wire fails here naming itself rather than defaulting to something that happens to pass.
+    fn case_of(name: &str) -> (DataType, Option<Export>) {
+        let identity = |dt| (dt, Some(Export::Identity));
+        let string = |dt| {
+            (
+                dt,
+                Some(Export::Diverges {
+                    exported: DataType::Utf8,
+                    why: Divergence::StringType,
+                }),
+            )
+        };
         match name {
-            "Null" => DataType::Null,
-            "Boolean" => DataType::Boolean,
-            "Int8" => DataType::Int8,
-            "Int16" => DataType::Int16,
-            "Int32" => DataType::Int32,
-            "Int64" => DataType::Int64,
-            "UInt8" => DataType::UInt8,
-            "UInt16" => DataType::UInt16,
-            "UInt32" => DataType::UInt32,
-            "UInt64" => DataType::UInt64,
-            "Float16" => DataType::Float16,
-            "Float32" => DataType::Float32,
-            "Float64" => DataType::Float64,
-            "Utf8" => DataType::Utf8,
-            "LargeUtf8" => DataType::LargeUtf8,
-            "Binary" => DataType::Binary,
-            "LargeBinary" => DataType::LargeBinary,
-            "Date32" => DataType::Date32,
-            "Date64" => DataType::Date64,
-            "Decimal128" => DataType::Decimal128(15, 2),
-            "Utf8View" => DataType::Utf8View,
-            "BinaryView" => DataType::BinaryView,
-            other => panic!("{other} reaches the wire and has no value here — add one"),
+            "Boolean" => identity(DataType::Boolean),
+            "Int8" => identity(DataType::Int8),
+            "Int16" => identity(DataType::Int16),
+            "Int32" => identity(DataType::Int32),
+            "Int64" => identity(DataType::Int64),
+            "UInt8" => identity(DataType::UInt8),
+            "UInt16" => identity(DataType::UInt16),
+            "UInt32" => identity(DataType::UInt32),
+            "UInt64" => identity(DataType::UInt64),
+            "Float32" => identity(DataType::Float32),
+            "Float64" => identity(DataType::Float64),
+            "Utf8" => identity(DataType::Utf8),
+            "Date32" => identity(DataType::Date32),
+            "Utf8View" => string(DataType::Utf8View),
+            "LargeUtf8" => string(DataType::LargeUtf8),
+            "Date64" => (
+                DataType::Date64,
+                Some(Export::Diverges {
+                    exported: DataType::Timestamp(TimeUnit::Millisecond, None),
+                    why: Divergence::DateAsTimestamp,
+                }),
+            ),
+            "Decimal128" => (
+                DataType::Decimal128(15, 2),
+                Some(Export::Diverges {
+                    exported: DataType::Decimal128(38, 2),
+                    why: Divergence::DecimalPrecision,
+                }),
+            ),
+            "Null" => (DataType::Null, None),
+            "Float16" => (DataType::Float16, None),
+            "Binary" => (DataType::Binary, None),
+            "LargeBinary" => (DataType::LargeBinary, None),
+            "BinaryView" => (DataType::BinaryView, None),
+            other => panic!("{other} reaches the wire and has no case here — add one"),
         }
     }
 
-    /// Totality as a property rather than as three examples. The catch-all makes every
-    /// unnamed type an `Err`, so a type that should be identity and was forgotten would be
-    /// refused with nothing going red; this is what notices.
+    /// Every arm pinned in both directions, which asserting `is_err` alone did not do: it
+    /// left `Date64` and `LargeUtf8` free to answer anything that is not an error, and those
+    /// two are exactly the rows no corpus query reaches. The table exists because the answer
+    /// lives in three files and two languages; this is what holds it to the table.
     #[test]
-    fn every_type_the_wire_carries_is_answered_and_the_five_typeless_ones_refuse() {
-        let typeless = ["Null", "Float16", "Binary", "LargeBinary", "BinaryView"];
+    fn every_type_the_wire_carries_exports_what_the_table_says() {
         let mut refused = 0;
         for name in wire_types() {
-            let answer = export_type_for(&value_of(name));
-            assert_eq!(
-                answer.is_err(),
-                typeless.contains(&name),
-                "{name}: cuDF maps it to {}, and export_type_for {}",
-                if typeless.contains(&name) {
-                    "nothing"
-                } else {
-                    "a type"
-                },
-                if answer.is_err() {
-                    "refuses"
-                } else {
-                    "answers"
+            let (declared, expected) = case_of(name);
+            let answer = export_type_for(&declared);
+            match expected {
+                Some(export) => assert_eq!(
+                    answer.as_ref().ok(),
+                    Some(&export),
+                    "{name}: the round trip gives {export:?}"
+                ),
+                None => {
+                    assert!(
+                        answer.is_err(),
+                        "{name}: cuDF maps it to no type, so it refuses"
+                    );
+                    refused += 1;
                 }
-            );
-            refused += usize::from(answer.is_err());
+            }
         }
-        assert_eq!(refused, typeless.len(), "every typeless type is reached");
+        assert_eq!(refused, 5, "the five typeless types are all reached");
     }
 }

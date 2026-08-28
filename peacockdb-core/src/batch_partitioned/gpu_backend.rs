@@ -131,8 +131,11 @@ impl GpuExport {
         // The two arguments are two derivations of one node's input, and nothing in the
         // types says so: a pair from different nodes would index past the end at the cast.
         assert!(
-            casts.iter().all(|at| (*at as usize) < schema.fields().len()),
-            "the sink's exports address column {} and its schema declares {} — the schema and              the exports are about different nodes",
+            casts
+                .iter()
+                .all(|at| (*at as usize) < schema.fields().len()),
+            "the sink's exports address column {} and its schema declares {} — the schema \
+             and the exports are about different nodes",
             casts.iter().max().copied().unwrap_or(0),
             schema.fields().len()
         );

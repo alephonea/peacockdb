@@ -6,8 +6,8 @@ use std::fmt::Write as _;
 use crate::generated::gpu_plan_generated::peacock::plan as fb;
 
 use super::super::node::GpuNode;
-use super::super::nodes::category_of;
-use super::super::recipe::RecipePlan;
+use super::super::nodes::{NodeRef, as_node_ref, category_of};
+use super::super::recipe::{Recipe, RecipePlan};
 use super::fb_text;
 
 /// Whether the section prints what each call passes the executor, or only which kernel it
@@ -47,7 +47,14 @@ pub fn render_plan_recipes(root: &dyn GpuNode, plan: &RecipePlan, payloads: Payl
         flatbuffers::root_with_opts::<fb::GpuPlan>(&options, plan.bytes())
             .expect("the plan we just wrote")
     });
-    render_recipe_node(root, 0, &mut Sequence::default(), plan, buffer.as_ref(), &mut text);
+    render_recipe_node(
+        root,
+        0,
+        &mut Sequence::default(),
+        plan,
+        buffer.as_ref(),
+        &mut text,
+    );
     text
 }
 
@@ -107,7 +114,11 @@ fn render_recipe_node(
     // while its tree line says four. On the line with the calls and nowhere else — a node
     // that makes none has no number to give.
     let line = match plan.get(position) {
-        Some(recipe) => format!("calling_lanes={}, {recipe}", instances(node)),
+        Some(recipe) => format!(
+            "calling_lanes={}, {recipe}{}",
+            instances(node),
+            exports_text(node, recipe)
+        ),
         None => "none".to_string(),
     };
     let _ = writeln!(text, "{}{}: {line}", "  ".repeat(depth), node.name());
@@ -123,8 +134,9 @@ fn render_recipe_node(
             // Expect rather than default: a seq with no node is the numbering outrunning
             // the tree, and printing nothing there would render a plan whose every later
             // seq addresses the wrong node as if it were fine.
-            let node = fb_text::node_at(buffer, seq)
-                .unwrap_or_else(|| panic!("seq #{seq} is published as {kind} and the plan has no node there"));
+            let node = fb_text::node_at(buffer, seq).unwrap_or_else(|| {
+                panic!("seq #{seq} is published as {kind} and the plan has no node there")
+            });
             assert_eq!(
                 node.node_type(),
                 kind.wire_kind(),
@@ -136,4 +148,39 @@ fn render_recipe_node(
     for line in lines {
         text.push_str(&line);
     }
+}
+
+/// What the device hands back that is not what the sink declared. The sink's line only:
+/// every other node's `Exports` is empty, and an attribute on all of them would say
+/// nothing on most.
+///
+/// Read off the recipe the driver will use rather than derived again over the tree — the
+/// cast at the unload reads this same list, so the golden cannot be right about a value
+/// the runtime does not hold. Names come from the child's declared schema, which is the
+/// one part a recipe does not carry. `none` rather than an omitted attribute: absence
+/// would read the same as a list nothing computed.
+fn exports_text(node: &dyn GpuNode, recipe: &Recipe) -> String {
+    if !matches!(as_node_ref(node), NodeRef::Unload(_)) {
+        return String::new();
+    }
+    if recipe.exports.is_empty() {
+        return ", exports=none".to_string();
+    }
+    let input = node
+        .children()
+        .first()
+        .and_then(|child| child.kind().schema());
+    let columns: Vec<String> = recipe
+        .exports
+        .columns()
+        .iter()
+        .map(|column| {
+            format!(
+                "{}:{}",
+                super::name_at(input, column.ordinal),
+                super::type_text(&column.exported)
+            )
+        })
+        .collect();
+    format!(", exports=[{}]", columns.join(", "))
 }
