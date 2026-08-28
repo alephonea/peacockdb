@@ -115,11 +115,14 @@ plan, and step 2 is what makes that diff legible instead of opaque.
 
 ## Device workflow
 
-1. Run the **10 queries carrying #187** on `shad-gpu` with `build-test-shadgpu.sh`, in batches of
-   about five, as T19 does: `tpcds` q16 q33 q61 q77 q90 q94 q95, `tpch` q2, `filter-project`,
-   `hash-join`.
+1. Run the **39 queries carrying #187** on `shad-gpu` with `build-test-shadgpu.sh`, in batches of
+   about five, as T19 does. It was ten when this spec was written; `casts.md`'s rollout moved
+   twenty-nine cells here from #183, which is the bulk of what that task produced. The list is
+   `awk -F, 'NR>1 && $NF ~ /(^| )187( |$)/' testdata/cost-registry.csv`, and it is the list rather
+   than a copy of it here, because it moves as the tickets do.
 2. For each, **either enable the device cells or update the ticket**. The causes are ordered, so a
-   cell that stops failing on #187 lands on whatever refuses next rather than going green — expect
-   [#152](../tickets.md#t152). A cell whose cause changed is a ticket edit, not a cell that stays
+   cell that stops failing on #187 lands on whatever refuses next rather than going green. `casts.md`
+   expected #152 and got #185 and #195 instead — thirteen cells each, both goldens disagreeing about
+   a number rather than a crossing failing, so expect those here too. A cell whose cause changed is a ticket edit, not a cell that stays
    where it was.
 3. Close #187 only when its cells are gone from the registry, and correct its text as it closes.
