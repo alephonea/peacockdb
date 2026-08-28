@@ -15,6 +15,13 @@ namespace peacock {
 struct TableResult {
   std::unique_ptr<cudf::table> table;
   std::vector<std::string> column_names;
+  /// The decimal precision each column was DECLARED with, or 0 where it is not a decimal.
+  /// cuDF stores a decimal's scale and not its precision, so the export would otherwise
+  /// hand back the widest the type can hold (38) for every one — which is what the plan
+  /// node's `output_schema` is read here to prevent.
+  ///
+  /// Empty where a path has no node to read, and then the export defaults as it always did.
+  std::vector<int32_t> column_precisions;
 };
 
 /// Per-node actual costs returned across the FFI. The byte formula lives ONLY in

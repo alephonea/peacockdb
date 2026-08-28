@@ -7,6 +7,7 @@
 //! executor built is the one the node's category names, found at the post-order the driver
 //! would have handed in.
 
+use peacockdb_core::batch_partitioned::nodes::join::joined_schema;
 use super::*;
 
 use datafusion::common::JoinType;
@@ -68,6 +69,7 @@ fn tree() -> Box<dyn GpuNode> {
         false,
         None,
         Schema::new(Arc::new(columns())),
+        joined_schema(&columns(), &columns(), JoinType::LeftSemi),
     );
     Box::new(GpuUnload::new(Box::new(joined), None))
 }

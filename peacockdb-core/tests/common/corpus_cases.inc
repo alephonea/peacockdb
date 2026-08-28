@@ -50,10 +50,10 @@ corpus_query!(tpch, 1, q10, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp
 // filter-project, and #188 for scan-limit, where cuDF refuses row groups and a row count in
 // one read — the same limit-in-the-scan shape #186 is about, erroring rather than ignored.
 corpus_query!(tpch, 1, scan_limit, bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, none, data_fusion_subset, live_cpu);
-corpus_query!(tpch, 1, filter_project, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, none, data_fusion_exact, live_cpu);
-corpus_query!(tpch, 1, aggregate_groupby, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, none, data_fusion_exact, golden_exact);
+corpus_query!(tpch, 1, filter_project, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, bp_tp1_single, data_fusion_exact, live_cpu);
+corpus_query!(tpch, 1, aggregate_groupby, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, bp_tp1_single, data_fusion_exact, golden_exact);
 corpus_query!(tpch, 1, cross_join, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, none, data_fusion_exact, golden_exact);
-corpus_query!(tpch, 1, shuffle_additive, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, none, data_fusion_exact, golden_exact);
+corpus_query!(tpch, 1, shuffle_additive, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, bp_tp1_single, data_fusion_exact, golden_exact);
 
 // T19 batch 2, the five smallest joins. semi-join and anti-join return whole `orders` rows,
 // which is over the result cap, so the device compares against a live cpu run.
