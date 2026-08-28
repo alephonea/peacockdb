@@ -114,6 +114,21 @@ names the shape this chain has met four times and can be prioritised against
 deferred forever. Written here because a ticket filed at the moment of abandoning a harness is the
 one most likely to describe the harness instead of the defect.
 
+**What the table found on its first run**, recorded because it is the argument for having built it:
+three of the four cases agree across the engines and the fourth does not. A Left outer's pad answers
+`NULL` on the cpu and `0` on the device, for the Int64 column and not the string.
+
+Two literal paths in `expr.cpp` disagree. `build_scalar` (`:453`) reads the flag — `bool valid =
+!sv->is_null()` — so a typed NULL becomes an invalid scalar of that type. `build_expr`'s AST path
+(`:158` onward) hardcodes `true` in every arm, so the same literal becomes a valid scalar holding the
+default: 0 for an Int64, false for a Boolean. Strings escape it only because cuDF's AST has no string
+literal and they fall through to `build_scalar`.
+
+Pre-existing and unreachable until now: the pad has always written these literals, and this task is
+what makes an empty-probe finish run one on a device. **Fixed here rather than ticketed** — a wrong
+answer in a path this task opens is not the third capability the Restriction refuses, and the
+alternative is shipping the pad answering with zeros while disabling the case that proves it.
+
 ### Unit, Rust
 
 - **the empty-build decision by type** — `empty_build_answers_nothing` returns true for the six that
