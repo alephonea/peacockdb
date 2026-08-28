@@ -50,10 +50,10 @@ corpus_query!(tpch, 1, q10, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp
 // filter-project, and #188 for scan-limit, where cuDF refuses row groups and a row count in
 // one read — the same limit-in-the-scan shape #186 is about, erroring rather than ignored.
 corpus_query!(tpch, 1, scan_limit, bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, none, data_fusion_subset, live_cpu);
-corpus_query!(tpch, 1, filter_project, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, bp_tp1_single, data_fusion_exact, live_cpu);
-corpus_query!(tpch, 1, aggregate_groupby, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, bp_tp1_single, data_fusion_exact, golden_exact);
+corpus_query!(tpch, 1, filter_project, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, data_fusion_exact, live_cpu);
+corpus_query!(tpch, 1, aggregate_groupby, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, data_fusion_exact, golden_exact);
 corpus_query!(tpch, 1, cross_join, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, none, data_fusion_exact, golden_exact);
-corpus_query!(tpch, 1, shuffle_additive, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, bp_tp1_single, data_fusion_exact, golden_exact);
+corpus_query!(tpch, 1, shuffle_additive, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, data_fusion_exact, golden_exact);
 
 // T19 batch 2, the five smallest joins. semi-join and anti-join return whole `orders` rows,
 // which is over the result cap, so the device compares against a live cpu run.
@@ -137,8 +137,8 @@ corpus_query!(tpcds, 1, q55, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | b
 // run, so this is a mode-scoped disablement rather than a query-scoped one.
 corpus_query!(tpcds, 1, q96, bp_tp1_single | bp_tp1_rowgroup, none, data_fusion_exact, golden_exact);
 corpus_query!(tpcds, 1, q15, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, none, data_fusion_exact, golden_exact);
-corpus_query!(tpcds, 1, q37, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, none, data_fusion_exact, golden_exact);
-corpus_query!(tpcds, 1, q82, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, none, data_fusion_exact, golden_exact);
+corpus_query!(tpcds, 1, q37, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, bp_tp1_single, data_fusion_exact, golden_exact);
+corpus_query!(tpcds, 1, q82, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, bp_tp1_single, data_fusion_exact, golden_exact);
 
 // T19 batch 3, tpcds, chosen for feature spread rather than size: q48 carries no feature code,
 // q21 and q84 are top_n, q93 adds an outer join and q34 a correlated subquery. The three smaller
