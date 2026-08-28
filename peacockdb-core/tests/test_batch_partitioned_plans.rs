@@ -481,6 +481,13 @@ fn call_shapes(text: &str) -> std::collections::BTreeSet<String> {
                     }
                     _ => line.to_string(),
                 };
+                // The sink's exports are its columns, not a call shape, and nothing on the
+                // wire carries them — so the payload file has nothing to show for one, and
+                // keeping them would turn the cover into a list of queries.
+                let line = match line.find(", exports=") {
+                    Some(at) => line[..at].to_string(),
+                    None => line,
+                };
                 let stripped = line
                     .split('#')
                     .enumerate()

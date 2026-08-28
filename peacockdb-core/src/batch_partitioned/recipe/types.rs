@@ -5,6 +5,7 @@ use std::fmt;
 
 use datafusion::common::JoinType;
 
+use super::super::exports::Exports;
 use crate::generated::gpu_plan_generated::peacock::plan as fb;
 
 /// A node of the recipe plan, addressed by its position in it. The number is the whole
@@ -222,11 +223,21 @@ impl Call {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Recipe {
     pub calls: Vec<Call>,
+    /// Empty for every node but the sink, which is the only one whose rows leave the
+    /// device and so the only one with a declaration to be handed back something else.
+    pub exports: Exports,
 }
 
 impl Recipe {
     pub(super) fn of(calls: Vec<Call>) -> Self {
-        Self { calls }
+        Self {
+            calls,
+            exports: Exports::default(),
+        }
+    }
+
+    pub(super) fn unload(calls: Vec<Call>, exports: Exports) -> Self {
+        Self { calls, exports }
     }
 
     /// The seqs this node addresses, in the order it emits them.

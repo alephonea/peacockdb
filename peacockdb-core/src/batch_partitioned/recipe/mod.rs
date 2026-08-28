@@ -18,6 +18,7 @@ mod types;
 mod writer;
 
 use super::error::PlanError;
+use super::exports::Exports;
 use super::node::GpuNode;
 use super::nodes::{
     GpuAccumulateBatchesAndSort, GpuAggregate, GpuAggregateBatches, GpuCoalesceAllBatches,
@@ -417,16 +418,24 @@ fn limit(
 
 /// Also no seq, and for the same reason: the row range the sink exports is counted across
 /// lanes at run time. A batch outside a root-adjacent interval is released without a call.
+///
+/// The one node that derives more than its calls: what the device hands back for the
+/// columns it consumes is a fact about the crossing, and this is where the schema
+/// declaring them is already in hand.
 fn unload(
     _node: &GpuUnload,
-    _inputs: &[&Schema],
+    inputs: &[&Schema],
     _writer: &mut Writer,
 ) -> Result<Option<Recipe>, PlanError> {
-    Ok(Some(Recipe::of(vec![Call::bare(
-        AbiSymbol::ResultFromHandle,
-        vec![Input::Batch, Input::RowRange],
-        CallPattern::PerHandle,
-    )])))
+    let exports = Exports::of(&inputs[0].fields)?;
+    Ok(Some(Recipe::unload(
+        vec![Call::bare(
+            AbiSymbol::ResultFromHandle,
+            vec![Input::Batch, Input::RowRange],
+            CallPattern::PerHandle,
+        )],
+        exports,
+    )))
 }
 
 #[cfg(test)]

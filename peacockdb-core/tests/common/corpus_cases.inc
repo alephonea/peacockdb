@@ -24,13 +24,14 @@ corpus_query!(tpch, 1, q1, none, none, data_fusion_exact, golden_exact);
 corpus_query!(tpch, 1, q14, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, none, data_fusion_exact, golden_exact);
 corpus_query!(tpch, 1, q19, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, bp_tp1_single, data_fusion_exact, golden_exact);
 corpus_query!(tpch, 1, q12, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, none, data_fusion_exact, golden_exact);
-// THE DEVICE COLUMN, after the first two cycles. q6 runs at all five modes and q19 at
-// bp-tp1-single; every other device cell is off against a ticket. Four causes, none of them
-// this task's to fix: #152 refuses a join whose recipe copies a side the ABI cannot copy (52
-// cases, by name rather than by crash), #183 is an unload declaring Utf8View where the device
-// exports Utf8, #184 is a cuDF failure in the hash scatter, and #185 is the device reporting
-// one input row where the cpu reports the group count — which is the golden catching exactly
-// what it is for. T19 is where these are settled query by query.
+// THE DEVICE COLUMN. Sixteen cells: q6, nested-loop-join and shuffle-stddev at all five modes,
+// q19 at bp-tp1-single. The last two arrived with T20's export cast, and what they have in
+// common is a sink carrying a string and nothing else that diverges — the cast removes #183 and
+// leaves them with no second cause to meet.
+// Every other cell is off against a ticket, and the ticket is what T20 settled for sixteen more
+// queries: fourteen moved off #183 onto whatever refuses them now — #195 for six, #185 for four,
+// #191 for two, #152 for two — and the two above went green. The causes are ordered by where the
+// plan stops, so a query meets the first one on its path and the next only when that one lifts.
 corpus_query!(tpch, 1, q13, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, none, data_fusion_exact, golden_exact);
 corpus_query!(tpch, 1, q15, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, none, data_fusion_exact, golden_exact);
 corpus_query!(tpch, 1, q17, none, none, data_fusion_exact, golden_exact);
@@ -64,7 +65,7 @@ corpus_query!(tpch, 1, hash_join, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_singl
 corpus_query!(tpch, 1, left_join, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, none, data_fusion_exact, golden_exact);
 corpus_query!(tpch, 1, semi_join, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, none, data_fusion_exact, live_cpu);
 corpus_query!(tpch, 1, anti_join, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, none, data_fusion_exact, live_cpu);
-corpus_query!(tpch, 1, nested_loop_join, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, none, data_fusion_exact, golden_exact);
+corpus_query!(tpch, 1, nested_loop_join, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, data_fusion_exact, golden_exact);
 
 // T19 batch 4, the small end of the tpch list emptied, and two firsts.
 // shuffle-additive-avg is out at every mode on BOTH engines — #163's UInt64 count state against
@@ -81,7 +82,7 @@ corpus_query!(tpch, 1, nested_loop_join, bp_tp1_single | bp_tp1_rowgroup | bp_tp
 // rather than "crossed and was refused" — #168's interval `ScalarValue`, and the plan golden
 // carries the reason at every mode.
 corpus_query!(tpch, 1, shuffle_additive_avg, none, none, data_fusion_exact, golden_exact);
-corpus_query!(tpch, 1, shuffle_stddev, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, none, data_fusion_approximate, golden_approx_std);
+corpus_query!(tpch, 1, shuffle_stddev, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, data_fusion_approximate, golden_approx_std);
 corpus_query!(tpch, 1, mixed_join, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, none, data_fusion_exact, golden_exact);
 corpus_query!(tpch, 1, nested_loop_left_join, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, none, data_fusion_exact, golden_exact);
 corpus_query!(tpch, 1, nested_limits, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, none, data_fusion_exact, golden_exact);
@@ -151,7 +152,7 @@ corpus_query!(tpcds, 1, q48, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | b
 corpus_query!(tpcds, 1, q21, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, none, data_fusion_exact, golden_exact);
 corpus_query!(tpcds, 1, q93, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, none, data_fusion_exact, golden_exact);
 corpus_query!(tpcds, 1, q34, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, none, data_fusion_exact, golden_exact);
-corpus_query!(tpcds, 1, q84, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, none, data_fusion_exact, golden_exact);
+corpus_query!(tpcds, 1, q84, bp_tp1_single | bp_tp1_rowgroup | bp_tp4_single | bp_tp4_rowgroup | bp_tp4_sized, bp_tp1_single, data_fusion_exact, golden_exact);
 
 // T19 batch 8, tpcds, chosen by expected executor calls rather than plan size: row groups scanned
 // times joins, off the bp-tp4-rowgroup plans. q32 and q26 score as low and are skipped for the

@@ -346,7 +346,7 @@ fn schema_text(schema: &Schema) -> String {
 
 /// Arrow's own rendering, minus the noise a plan reader does not need. Decimal precision
 /// and scale stay: an explicit cast's target is unreadable without them.
-fn type_text(data_type: &DataType) -> String {
+pub(super) fn type_text(data_type: &DataType) -> String {
     match data_type {
         DataType::Decimal128(precision, scale) => format!("Decimal128({precision},{scale})"),
         other => format!("{other:?}"),
@@ -409,7 +409,7 @@ fn quoted(name: &str) -> String {
 
 /// The name a schema declares at that position. An empty name is what a reference past
 /// the end renders as, and validation is what refuses the plan.
-fn name_at(schema: Option<&Schema>, index: u32) -> String {
+pub(super) fn name_at(schema: Option<&Schema>, index: u32) -> String {
     schema
         .and_then(|schema| schema.fields.fields().get(index as usize))
         .map(|field| quoted(field.name()))

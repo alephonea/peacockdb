@@ -4,7 +4,7 @@ Two device cells fail on the same class of thing — the device hands back a col
 is not the one the plan declared — and each is currently discovered at the boundary rather than
 predicted before it. This task writes the prediction down where it can be checked, and closes both.
 
-**This task closes [#183](bp-tickets.md#t183)** — the device exports `Utf8` where the sink declares
+**This task closes [#183](../archive/archived-tickets.md#t183)** — the device exports `Utf8` where the sink declares
 `Utf8View` — by predicting the export type at plan time and casting the one divergence that is
 inherent.
 
@@ -119,7 +119,8 @@ writer, no generalizing `export_type_for` beyond the table, no second cast site,
 
 | golden | how it moves | why |
 |---|---|---|
-| `bp-*.plans.txt` (10 files) | every `GpuUnload` line gains `exports=` | new field; `GpuUnload` renders bare today |
+| `bp-*.plans.txt` (10 files) | every `GpuUnload` line in the recipes section gains `exports=` | new field; `GpuUnload` renders bare today |
+| `bp-recipe-payloads.txt` | the same twenty lines, no `sha256=` moving | it renders the same section; unchanged digests are the proof nothing reached the wire |
 | `<mode>-<tier>.cpu.txt` | **no change** | `memory.rs:43` prices `Utf8View` and `Utf8` identically at `(rows+1)*4`, and content size is Σ value lengths for both |
 | `<mode>-<tier>.cost.txt` | **no change** | derived from the `.cpu.txt` sections, which do not move |
 | `bp-<tier>.result.txt` | **no change** | values are unaffected; only types were ever in question |
@@ -129,10 +130,31 @@ writer, no generalizing `export_type_for` beyond the table, no second cast site,
 attribute would make "nothing diverges" and "the list was never computed" identical in the golden,
 which is the invisible-absence shape `coding-style.md` records twice.
 
+It renders in the recipes section rather than on the node line, from `recipe.exports` — the same
+list the cast reads. The node line cannot: `render_plan` takes only the tree, so putting it there
+meant the renderer deriving its own answer, and a golden that reports a value the runtime does not
+use is a tripwire wired to the wrong circuit. Names still come from the child's declared schema,
+which is the one part a recipe does not carry; the ordinals and the types come from the recipe.
+
 `exports=` is a Rust-side prediction that the C++ never receives: the unload writes no payload, so
 nothing on the wire describes the sink's columns. The golden is documentation and a tripwire, and
 the runtime check at `unload` is the only thing that enforces it. [`wire-schema.md`](wire-schema.md)
 is what makes it checkable against the buffer.
+
+The tripwire fired during the rollout: the attribute predicted the decimal divergence on twenty-nine cells
+before they ran, over six declared widths — (7,2), (15,2), (17,2), (25,2), (27,2), (33,2) — and the
+device answered (38,2) to every one.
+
+That confirms the precision half of `Decimal128(38, *scale)`, and one query confirms the other half:
+`tpcds/q59` declares `Decimal128(23,6)` and is found at `(38,6)`. It is the only sink decimal in this
+corpus at a scale other than 2, so it is the one observation that can separate "the scale is carried
+through" from "the export happens to produce 2" — the other twenty-eight cannot. If q59 ever leaves the
+corpus the evidence leaves with it.
+And it is one arm of the table rather than the table: `StringType` is cast at the unload and so can
+never be observed as a landing, and `DateAsTimestamp` has no corpus query. More batches add
+instances of the same arm.
+Turning it into a claim about the table needs an assertion rather than more rows, and that is
+[`wire-schema.md`](wire-schema.md)'s, not this task's.
 
 ## Device workflow
 
@@ -149,3 +171,45 @@ cell that is currently disabled. After the code lands:
    them all green. Expect #152 to be the common landing place.
 3. Close #183 only when its cells are gone from the registry, not when the code lands. A ticket
    whose cells are still disabled against it is not closed.
+
+What the rollout found: #152 was not the common landing place. The landings are of two kinds, and
+neither is a refusal to cross. A cell whose sink carries a decimal still fails at the unload, because
+`DecimalPrecision` is the arm this task predicts and declines to cast — [`wire-schema.md`](wire-schema.md)
+removes it by putting the precision on the wire, so every one of those has its fix already specified.
+Every other cell now completes its plan on the device and is held by a golden disagreeing about a
+number: #185 where a node reports its own output as `in_rows`, #195 where the two engines cut a node
+into different batches. The commit message on 4f6138b says the first kind stopped as well. It did
+not, and #187's first line is the counterexample.
+
+## What the rollout measured
+
+Nine batches and 74 cells — 62 queries at `bp-tp1-single` plus the twelve further-mode cells of the
+three that went green — and the shape of the answer is not the one the plan expected.
+Three queries went green — `tpch/nested-loop-join` and `shuffle-stddev` at all five modes, `tpcds/q84`
+at `bp-tp1-single` and refused on #152 at the other four — and #183 closed with no registry row
+citing it, against sixty at the start. Device cells in the corpus went from 6 to 17. Two of the 74
+never cited #183 at all: `tpcds/q6` was on #163 and `tpcds/q41` on #152, which is why 74 is not 60
+plus modes.
+
+Everything else moved to the cause that refuses it next, and the split is the useful number:
+
+| landing | cells | tickets |
+|---|---|---|
+| green | 11 | — |
+| still refused at the unload | 31 | #187 (29), #191 (2) |
+| plan completes, a golden disagrees | 26 | #185 (13), #195 (13) |
+| refused before the unload | 6 | #152 |
+
+**Thirty-one cells still fail at the unload and twenty-nine of them have their fix already written**:
+`wire-schema.md` puts the decimal's precision on the wire rather than casting it. That is the number
+a reader of #187 comes here for. The spec expected #152 to be the common landing place; it took six
+cells and #187 took twenty-nine.
+
+The other twenty-five are a different and better problem: the crossing stopped refusing them and the
+golden started disagreeing about a number. Two new tickets came out of it — #195, where the two
+engines cut a node into different batches and the cpu charges per-batch overhead to batches carrying
+no rows, and its cells are the ones that made that arithmetic visible.
+
+What the task cannot say: whether the cast is right for a string type the corpus does not reach.
+`LargeUtf8` maps the same way and no query declares one, so its row of the table rests on the
+argument rather than on a run.

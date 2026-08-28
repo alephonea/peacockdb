@@ -18,8 +18,8 @@ pub mod source;
 use std::sync::Arc;
 
 use datafusion::arrow::array::RecordBatch;
-use datafusion::arrow::compute::concat_batches;
-use datafusion::arrow::datatypes::{Schema as ArrowSchema, SchemaRef};
+use datafusion::arrow::compute::{cast, concat_batches};
+use datafusion::arrow::datatypes::{Field, Schema as ArrowSchema, SchemaRef};
 use datafusion::arrow::ipc::reader::StreamReader;
 
 use peacockdb_ffi::raw::{
@@ -32,6 +32,7 @@ use crate::memory::logical_size_from_schema;
 use super::cpu_batch::CpuBatch;
 use super::error::PlanError;
 use super::executor::{BackendError, CallResult, CallStats, RowRange};
+use super::exports::Exports;
 use super::gpu_batch::GpuBatch;
 use super::recipe::{CallPattern, FbKind, Input, Recipe, Seq};
 
@@ -116,15 +117,32 @@ impl GpuExec {
 pub struct GpuExport {
     executor: *mut PeacockExecutor,
     schema: SchemaRef,
+    /// The columns the device hands back as `Utf8` where the sink declared a wider string
+    /// — the one divergence neither side can avoid, and so the only one absorbed here.
+    casts: Vec<u32>,
 }
 
 impl GpuExport {
     /// A sink declares no schema of its own, so this is its input's — the columns that
-    /// cross the boundary.
-    pub fn new(executor: *mut PeacockExecutor, schema: &ArrowSchema) -> Self {
+    /// cross the boundary. `exports` is the plan's prediction about those same columns,
+    /// derived where the plan was built.
+    pub fn new(executor: *mut PeacockExecutor, schema: &ArrowSchema, exports: &Exports) -> Self {
+        let casts = exports.cast_ordinals();
+        // The two arguments are two derivations of one node's input, and nothing in the
+        // types says so: a pair from different nodes would index past the end at the cast.
+        assert!(
+            casts
+                .iter()
+                .all(|at| (*at as usize) < schema.fields().len()),
+            "the sink's exports address column {} and its schema declares {} — the schema \
+             and the exports are about different nodes",
+            casts.iter().max().copied().unwrap_or(0),
+            schema.fields().len()
+        );
         Self {
             executor,
             schema: Arc::new(schema.clone()),
+            casts,
         }
     }
 
@@ -162,14 +180,64 @@ impl GpuExport {
         }
         let decoded = decode(unsafe { std::slice::from_raw_parts(ipc, len as usize) });
         unsafe { peacock_result_free(ipc) };
-        let batches = decoded?;
-        let batch = concat_batches(&self.schema, batches.iter()).map_err(|error| {
-            BackendError::new(format!(
-                "the exported stream is not the sink's rows: {error}"
-            ))
-        })?;
+        let batches = self.absorb(decoded?)?;
+        let batch = concat_batches(&self.schema, batches.iter()).map_err(not_the_sinks_rows)?;
         Ok((CpuBatch::new(batch), CallStats::default()))
     }
+
+    /// The decoded batches under the sink's own schema, casting the columns the plan
+    /// predicted would need it and leaving every other difference to fail.
+    ///
+    /// Narrow on purpose: the concat below is the only thing checking that the device
+    /// produced what the plan declared, and a blanket cast to the schema would fix #183
+    /// by removing the check that found #187.
+    fn absorb(&self, batches: Vec<RecordBatch>) -> Result<Vec<RecordBatch>, BackendError> {
+        if self.casts.is_empty() {
+            return Ok(batches);
+        }
+        batches
+            .into_iter()
+            .map(|batch| self.cast_declared(batch))
+            .collect()
+    }
+
+    /// The exported batch under its own schema with the cast columns retyped — not under
+    /// the sink's. Handing it the sink's schema would name the columns rather than compare
+    /// them, and the concat below compares names, nullability and every type this did not
+    /// touch.
+    fn cast_declared(&self, batch: RecordBatch) -> Result<RecordBatch, BackendError> {
+        // An ordinal comes from the declared schema, so it addresses the exported batch
+        // only while the two are the same width. Zipping instead would truncate to the
+        // shorter and lose the check the concat makes when nothing is cast.
+        if batch.num_columns() != self.schema.fields().len() {
+            return Err(not_the_sinks_rows(format!(
+                "{} exported columns against {} declared",
+                batch.num_columns(),
+                self.schema.fields().len()
+            )));
+        }
+        let mut columns = batch.columns().to_vec();
+        let mut fields: Vec<Field> = batch
+            .schema()
+            .fields()
+            .iter()
+            .map(|field| field.as_ref().clone())
+            .collect();
+        for ordinal in &self.casts {
+            let at = *ordinal as usize;
+            let declared = self.schema.field(at).data_type();
+            columns[at] = cast(&columns[at], declared).map_err(not_the_sinks_rows)?;
+            fields[at] = fields[at].clone().with_data_type(declared.clone());
+        }
+        let schema = ArrowSchema::new_with_metadata(fields, batch.schema().metadata().clone());
+        RecordBatch::try_new(Arc::new(schema), columns).map_err(not_the_sinks_rows)
+    }
+}
+
+fn not_the_sinks_rows(error: impl std::fmt::Display) -> BackendError {
+    BackendError::new(format!(
+        "the exported stream is not the sink's rows: {error}"
+    ))
 }
 
 fn decode(bytes: &[u8]) -> Result<Vec<RecordBatch>, BackendError> {

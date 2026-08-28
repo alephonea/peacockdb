@@ -18,7 +18,7 @@ reference still resolves there.
 | [Critical correctness](#critical-correctness) | 15 | #166 #153 #80 #59 #46 #47 #60 #121 #122 #123 #118 #119 #120 #117 #41 |
 | [Blockers for disabled coverage](#blockers-for-disabled-coverage) | 19 | #169 #168 #158 #175 #173 #97 #23 #32 #65 #62 #91 #95 #57 #45 #63 #56 #55 #96 #143 |
 | [Performance / architecture](#performance--architecture) | 28 | #179 #177 #170 #155 #154 #152 #150 #149 #148 #19 #16 #20 #71 #101 #73 #110 #75 #136 #137 #138 #139 #140 #141 #147 #146 #145 #144 #142 |
-| [Infrastructure / process](#infrastructure--process) | 27 | #178 #176 #174 #167 #164 #163 #159 #160 #161 #162 #113 #114 #116 #126 #134 #133 #132 #131 #130 #129 #128 #127 #125 #13 #94 #69 #49 |
+| [Infrastructure / process](#infrastructure--process) | 29 | #196 #194 #178 #176 #174 #167 #164 #163 #159 #160 #161 #162 #113 #114 #116 #126 #134 #133 #132 #131 #130 #129 #128 #127 #125 #13 #94 #69 #49 |
 
 ## Critical correctness
 
@@ -748,6 +748,34 @@ tripped, so something can branch on it, but there is nowhere to record into — 
 trip log, and `Underestimate` is the precedent for what one would look like. Related: #91.
 
 ## Infrastructure / process
+
+<a id="t196"></a>
+### #196 — the moved rust-only tests have never once built against a restored cache
+
+`Planner join capability` is the first `--features rust-only` cargo step in `dataset-matrix`, and it
+carries the whole rust-only build: 839s, then 793s. In its old home, the `cost-report` job, the same
+step took 42s.
+
+Both numbers are cold. The 25.02 job on d2bf7d0 prints "No cache found." at its `Cache Rust build`
+step and then compiles 257 crates from `proc-macro2` up to `datafusion v45` inside the step —
+13m13s of dependency tree, not of tests. There is no warm measurement of this step in existence, so
+the 46-second difference between the two runs is two cold builds differing by runner noise.
+
+The miss is branch scoping, not feature graphs. The key moved when `CMAKE_GENERATOR` and `RUSTFLAGS`
+became job-level (32382ce), and the only save under the new key happened on `ENS-bp-corpus-rollout`.
+A run can restore caches from its own branch and from the default branch, so `ENS-bp-export-types`
+sees neither that one nor master's, which is still under the old key. The merge to master repopulates
+the new key there, and the first branch run after it is the first that can restore anything.
+
+`rust-only` is defined on `peacockdb-core` and forwards to `peacockdb-ffi` and nowhere else, so it
+never reaches the DataFusion/Arrow graph that `[profile.dev.package."*"] opt-level = 3` makes
+expensive. The dep artifacts are identical under both feature sets. Whatever the warm cost turns out
+to be, two feature graphs against one cache is not the mechanism.
+
+What is still unknown: the leg total against master, which is the only number that says whether the
+move added time or moved it — `dataset-matrix` builds the rust-only graph later in `Build Rust
+tests` regardless of where the seven sit. Measure that on a run that restores the cache, and only
+then decide whether anything needs doing.
 
 <a id="t194"></a>
 ### #194 — the cost gate's git baseline ignores which section it was asked for

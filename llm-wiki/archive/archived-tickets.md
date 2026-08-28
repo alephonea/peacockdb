@@ -23,6 +23,30 @@ the report rather than emitting one that goes nowhere.
 
 ## Done
 
+<a id="t183"></a>
+### #183 — the device exports Utf8 where the sink declares Utf8View
+
+`GpuUnload lane 0: the exported stream is not the sink's rows: column types must match schema
+types, expected Utf8View`. The sink's schema comes from DataFusion, which uses `Utf8View`; the
+device's IPC export produces `Utf8`. Same values, different arrow type.
+
+Twelve of T18's device cases over eleven queries — tpcds q3 q15 q37 q42 q43 q52 q55 q82, tpch q10
+q12 q15 — with `#183` on their gpu columns.
+
+The same divergence bit the digest comparator one layer up, where hashing the column type reddened
+eight legacy gpu cases whose rendered comparison had never looked at types. That one was a
+comparison artefact and was fixed by hashing names; this one is the export genuinely disagreeing
+with the schema the plan declared, and no comparison choice makes it go away.
+
+**Closed 2026-08-28** by predicting the export type at plan time and casting this one divergence
+at the unload — cuDF has a single string type, so the cast is the only place to absorb it
+(`llm-wiki/tasks/casts.md`). No registry row cites #183; sixty did when the rollout started.
+
+The 52 cells it was holding did not go green: two tpch queries did, at all five modes, plus
+`tpcds/q84` at one, and the rest moved to the cause that refuses them next — 18 to #187, 2 to
+#191, 14 to #185, 11 to #195, and 4 to #152. That is the ordering the spec predicted; what it got
+wrong was expecting #152 to be the common landing place.
+
 <a id="t103"></a>
 ### #103 — GPU SIGSEGV: shuffle_stddev tp8-standard (Welford N-way merge)
 `gpu_partitioned_tpch_sf1_shuffle_stddev_partitioned_tp8_standard` segfaults (139) or fails as a contained
