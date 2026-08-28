@@ -25,18 +25,31 @@ symbol.** The C++ said so before either of us did — `node_session.cpp:257`:
 
 ## 1. #173 — an empty table of the declared schema
 
-Three sites refuse, and all three want the same thing:
+**One site refuses, not three.** This spec listed three, taking two of them from doc comments in
+`gpu_backend/accumulate.rs` that say "the device refuses that (#173)". The code there has never
+refused: both arms return `Ok((Vec::new(), ..))` and emit nothing, exactly as their CPU counterparts
+at `cpu_backend/accumulate.rs:139`, `:197` and `:270` do. Making them call the device — which now
+answers with an empty table — would have the device emit one empty batch where the CPU emits none: a
+disagreement introduced by a fix for a disagreement. The comments are corrected here; the code is not
+touched.
 
 | site | what owes rows |
 |---|---|
 | `cpp/src/node_session.cpp:261-266` | a collapse with no input handles |
-| `gpu_backend/accumulate.rs:331` | a merge of no runs — "the collapse of nothing under another name" |
 | `gpu_backend/join.rs:236` | a finish whose probe was empty, so it has no keys to join against |
 
+The join's finish is where the two engines genuinely differ. `cpu_backend/join.rs:257` concats the
+accumulated keys against an explicit `key_schema`, so with none accumulated it gets an empty keys
+batch rather than an error, runs the finish against it, and answers; the device refuses.
+
 In `execute_node`, build the answer from `node->output_schema()`: one `cudf::make_empty_column` per
-field (`cudf/column/column_factories.hpp:43`), assembled into a table with the declared names. The
-two Rust refusals then stop being refusals — the call they could not make is a call that now
-answers.
+field (`cudf/column/column_factories.hpp:43`), assembled into a table with the declared names.
+
+The join's finish then needs no case per join type. The keys it joins against come from a collapse
+over the accumulated key batches, and a collapse of no handles is what now answers with an empty
+table of its declared schema — so the device makes the same two calls the CPU makes and gets the same
+answer. `finish_without_keys`'s five arms, which describe what cannot be built rather than building
+it, collapse into making the calls.
 
 **The global aggregate is the exception and must stay one.** #173: *"a global aggregate owes its
 identity row whatever arrived"* — `count` is 0, not absent. An empty-of-schema answer there would
