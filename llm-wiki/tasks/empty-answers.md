@@ -1,5 +1,10 @@
 # Answering with nothing: the table no call can build
 
+**Status.** #173 done: the collapse answers, `finish_without_keys` is deleted, and four contract rows
+caught a typed NULL the AST path dropped. #175 in progress: `RightAnti` routes on the drain walk,
+`Right` and `Full` pad on the same walk. Left: the Rust unit tests, q77 back on the end-to-end list,
+goldens, the two #175 device cells, and both completeness passes.
+
 Two refusals, one wall. A node owes rows it did not receive, and every entry point on the surface
 loads a table by reading one — so there is no call to make.
 
