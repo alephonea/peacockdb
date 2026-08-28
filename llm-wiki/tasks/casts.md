@@ -119,7 +119,8 @@ writer, no generalizing `export_type_for` beyond the table, no second cast site,
 
 | golden | how it moves | why |
 |---|---|---|
-| `bp-*.plans.txt` (10 files) | every `GpuUnload` line gains `exports=` | new field; `GpuUnload` renders bare today |
+| `bp-*.plans.txt` (10 files) | every `GpuUnload` line in the recipes section gains `exports=` | new field; `GpuUnload` renders bare today |
+| `bp-recipe-payloads.txt` | the same twenty lines, no `sha256=` moving | it renders the same section; unchanged digests are the proof nothing reached the wire |
 | `<mode>-<tier>.cpu.txt` | **no change** | `memory.rs:43` prices `Utf8View` and `Utf8` identically at `(rows+1)*4`, and content size is Σ value lengths for both |
 | `<mode>-<tier>.cost.txt` | **no change** | derived from the `.cpu.txt` sections, which do not move |
 | `bp-<tier>.result.txt` | **no change** | values are unaffected; only types were ever in question |
@@ -129,19 +130,25 @@ writer, no generalizing `export_type_for` beyond the table, no second cast site,
 attribute would make "nothing diverges" and "the list was never computed" identical in the golden,
 which is the invisible-absence shape `coding-style.md` records twice.
 
+It renders in the recipes section rather than on the node line, from `recipe.exports` — the same
+list the cast reads. The node line cannot: `render_plan` takes only the tree, so putting it there
+meant the renderer deriving its own answer, and a golden that reports a value the runtime does not
+use is a tripwire wired to the wrong circuit. Names still come from the child's declared schema,
+which is the one part a recipe does not carry; the ordinals and the types come from the recipe.
+
 `exports=` is a Rust-side prediction that the C++ never receives: the unload writes no payload, so
 nothing on the wire describes the sink's columns. The golden is documentation and a tripwire, and
 the runtime check at `unload` is the only thing that enforces it. [`wire-schema.md`](wire-schema.md)
 is what makes it checkable against the buffer.
 
-The tripwire fired during the rollout: the attribute predicted the decimal divergence on twenty rows
+The tripwire fired during the rollout: the attribute predicted the decimal divergence on twenty-nine cells
 before they ran, over six declared widths — (7,2), (15,2), (17,2), (25,2), (27,2), (33,2) — and the
 device answered (38,2) to every one.
 
 That confirms the precision half of `Decimal128(38, *scale)`, and one query confirms the other half:
 `tpcds/q59` declares `Decimal128(23,6)` and is found at `(38,6)`. It is the only sink decimal in this
 corpus at a scale other than 2, so it is the one observation that can separate "the scale is carried
-through" from "the export happens to produce 2" — the other twenty cannot. If q59 ever leaves the
+through" from "the export happens to produce 2" — the other twenty-eight cannot. If q59 ever leaves the
 corpus the evidence leaves with it.
 And it is one arm of the table rather than the table: `StringType` is cast at the unload and so can
 never be observed as a landing, and `DateAsTimestamp` has no corpus query. More batches add
@@ -176,24 +183,27 @@ not, and #187's first line is the counterexample.
 
 ## What the rollout measured
 
-Nine batches, and the shape of the answer is not the one the plan expected.
-Five cells went green — `tpch/nested-loop-join` and `shuffle-stddev` at all five modes, `tpcds/q84`
-at `bp-tp1-single` — and #183 closed with no registry row citing it, against sixty at the start.
-Device cells in the corpus went from 6 to 17.
+Nine batches and 74 cells — 62 queries at `bp-tp1-single` plus the twelve further-mode cells of the
+three that went green — and the shape of the answer is not the one the plan expected.
+Three queries went green — `tpch/nested-loop-join` and `shuffle-stddev` at all five modes, `tpcds/q84`
+at `bp-tp1-single` and refused on #152 at the other four — and #183 closed with no registry row
+citing it, against sixty at the start. Device cells in the corpus went from 6 to 17. Two of the 74
+never cited #183 at all: `tpcds/q6` was on #163 and `tpcds/q41` on #152, which is why 74 is not 60
+plus modes.
 
 Everything else moved to the cause that refuses it next, and the split is the useful number:
 
 | landing | cells | tickets |
 |---|---|---|
-| green | 5 | — |
-| still refused at the unload | 20 | #187 (18), #191 (2) |
-| plan completes, a golden disagrees | 25 | #185 (14), #195 (11) |
-| refused before the unload | 4 | #152 |
+| green | 11 | — |
+| still refused at the unload | 31 | #187 (29), #191 (2) |
+| plan completes, a golden disagrees | 26 | #185 (13), #195 (13) |
+| refused before the unload | 6 | #152 |
 
-**Twenty cells still fail at the unload and eighteen of them have their fix already written**:
+**Thirty-one cells still fail at the unload and twenty-nine of them have their fix already written**:
 `wire-schema.md` puts the decimal's precision on the wire rather than casting it. That is the number
-a reader of #187 comes here for. The spec expected #152 to be the common landing place and it was
-the rarest.
+a reader of #187 comes here for. The spec expected #152 to be the common landing place; it took six
+cells and #187 took twenty-nine.
 
 The other twenty-five are a different and better problem: the crossing stopped refusing them and the
 golden started disagreeing about a number. Two new tickets came out of it — #195, where the two
