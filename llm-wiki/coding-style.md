@@ -163,3 +163,13 @@ through an anonymous-namespace `thread_local`, which is per-translation-unit —
 the file would have silently forked the variable and re-executed whole subtrees (correct
 answers, exponential cost, invisible to correctness tests). Pass inputs and outputs
 explicitly through parameters; never smuggle them through thread-locals or globals.
+
+### A reader that stops at the first match, in a place with several
+
+`read_total` took the first section, `diff_label` the first segment, the workflow reader the first
+invocation, and a golden's cover truncated at the first `, exports=`. Four instances, each green
+until a second thing appeared beside the first — which is the failure mode: the code is correct for
+every input anyone has tried, and the input that breaks it is one nobody has written yet.
+
+Read all of them or state in a line why one is the right one. "There is only ever one today" is the
+sentence that stops being true without anybody editing the reader.

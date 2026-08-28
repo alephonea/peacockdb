@@ -1,5 +1,10 @@
 # Answering with nothing: the table no call can build
 
+**Status.** #173 done: the collapse answers, `finish_without_keys` is deleted, and four contract rows
+caught a typed NULL the AST path dropped. #175 in progress: `RightAnti` routes on the drain walk,
+`Right` and `Full` pad on the same walk. Left: the Rust unit tests, q77 back on the end-to-end list,
+goldens, the two #175 device cells, and both completeness passes.
+
 Two refusals, one wall. A node owes rows it did not receive, and every entry point on the surface
 loads a table by reading one — so there is no call to make.
 
@@ -25,18 +30,31 @@ symbol.** The C++ said so before either of us did — `node_session.cpp:257`:
 
 ## 1. #173 — an empty table of the declared schema
 
-Three sites refuse, and all three want the same thing:
+**One site refuses, not three.** This spec listed three, taking two of them from doc comments in
+`gpu_backend/accumulate.rs` that say "the device refuses that (#173)". The code there has never
+refused: both arms return `Ok((Vec::new(), ..))` and emit nothing, exactly as their CPU counterparts
+at `cpu_backend/accumulate.rs:139`, `:197` and `:270` do. Making them call the device — which now
+answers with an empty table — would have the device emit one empty batch where the CPU emits none: a
+disagreement introduced by a fix for a disagreement. The comments are corrected here; the code is not
+touched.
 
 | site | what owes rows |
 |---|---|
 | `cpp/src/node_session.cpp:261-266` | a collapse with no input handles |
-| `gpu_backend/accumulate.rs:331` | a merge of no runs — "the collapse of nothing under another name" |
 | `gpu_backend/join.rs:236` | a finish whose probe was empty, so it has no keys to join against |
 
+The join's finish is where the two engines genuinely differ. `cpu_backend/join.rs:257` concats the
+accumulated keys against an explicit `key_schema`, so with none accumulated it gets an empty keys
+batch rather than an error, runs the finish against it, and answers; the device refuses.
+
 In `execute_node`, build the answer from `node->output_schema()`: one `cudf::make_empty_column` per
-field (`cudf/column/column_factories.hpp:43`), assembled into a table with the declared names. The
-two Rust refusals then stop being refusals — the call they could not make is a call that now
-answers.
+field (`cudf/column/column_factories.hpp:43`), assembled into a table with the declared names.
+
+The join's finish then needs no case per join type. The keys it joins against come from a collapse
+over the accumulated key batches, and a collapse of no handles is what now answers with an empty
+table of its declared schema — so the device makes the same two calls the CPU makes and gets the same
+answer. `finish_without_keys`'s five arms, which describe what cannot be built rather than building
+it, collapse into making the calls.
 
 **The global aggregate is the exception and must stay one.** #173: *"a global aggregate owes its
 identity row whatever arrived"* — `count` is 0, not absent. An empty-of-schema answer there would
@@ -54,9 +72,27 @@ what is missing is what to do when it returns false. Its own doc names the split
 
 > *"what they owe is the probe side, **padded or not**"*
 
+**Both engines refuse here, which #173 did not.** `cpu_backend/join.rs:186` and
+`gpu_backend/join.rs:111` carry the same sentence, so there is no counterpart to check the other
+against and "make the device agree with the cpu" is not available. The contract rows in
+`executor_cases.inc` are the only thing that can say the two agree, so **#175's types get rows there
+too** — the harness the section above builds is what makes that cheap.
+
+**And `without_build` returns unit.** `without_build(self) -> Result<(), BackendError>` on both
+backends cannot hand back a batch, so answering is a signature change in both and in whatever drives
+them. "One role, not a mechanism" is true of the recipe and not of the executor contract.
+
 - **`RightAnti` owes the probe side unpadded.** Its output is the probe columns alone, and an empty
   build side makes every probe row unmatched — so the answer *is* the probe batch. **Route it, do
-  not call.** No pad, no kernel, no handle beyond the one the driver holds.
+  not call**, and it costs nothing new. The worry was that a driver learns the build side was empty
+  only at `done`, so routing would mean holding every probe batch of the lane. It does not: once
+  `NoBuild` puts the lane in `Draining`, `single_partition.rs:188` answers each arriving probe batch
+  with `LaneCall::DropProbe`, which releases it and nothing else — "the probe side is still
+  producing for this lane, and what it produces has to be read to be let go of". The driver holds no
+  probe batch in order to route one, because a lane that has lost its build side is already being
+  handed each batch to release. Routing is that same walk with the release replaced by an emit.
+- **`Right` and `Full` take the same walk**, with a pad call per batch where `RightAnti` emits — one
+  kernel over a batch the driver was about to drop. No lane-wide accumulation on either path.
 - **`Right` and `Full` owe it padded**, with typed NULLs in the build columns. That is the mirror of
   the pad that already exists: `ProjectRole::NullPad { nulls }` with `pad_project` and
   `padded_columns` (`recipe/join.rs:114`, `:261`, `:423`) appends one NULL per **probe** column a
@@ -74,6 +110,47 @@ oracle answer a query the device refuses. **Put q77 back on that list as part of
 reason it was removed outlives the reason.
 
 ## 3. Tests
+
+### The contract both engines owe
+
+Deleting `finish_without_keys` gives four join types an answer they did not have — LeftAnti,
+LeftSemi, LeftMark and Left/Full — and no golden can catch a wrong one, because the old code refused
+rather than answering differently. The two engines reach these answers through separate code:
+`cpu_backend/join.rs` has its own pad beside `recipe/join.rs`'s, so "the cpu does the same" is the
+claim needing proof rather than the proof.
+
+Four rows in `executor_cases.inc`, one per type, each a finish whose probe produced no keys. The cpu
+backend runs them in `test_cpu_executors` and the device runs the same rows in `test_gpu_executors`,
+so a disagreement between the engines is what goes red.
+
+**This costs more than four rows and is authorised anyway.** Every existing case is one node with one
+input, and neither harness mentions `GpuJoin`; a finish-with-no-probe needs a build side, a probe
+that produced nothing, and `finish_and_fetch` driven at done — a two-input node with a lifecycle, so
+both `emitted` arms grow. Estimated 150-250 lines across three files plus a device cycle. It lands
+**before** section 2: #175 puts a second pad into one of the two engines, and the per-type contract is
+what that pad then rests on. Written afterwards it is the same work with the pad already on top of it.
+
+If it runs materially past that estimate, four gtests plus a ticket is the honest fallback — and the
+ticket is **the two pads are compared by nothing**, not "executor_cases rows are owed". The first
+names the shape this chain has met four times and can be prioritised against
+[#198](../tickets.md#t198) and [#199](../tickets.md#t199); the second reads as a chore and is
+deferred forever. Written here because a ticket filed at the moment of abandoning a harness is the
+one most likely to describe the harness instead of the defect.
+
+**What the table found on its first run**, recorded because it is the argument for having built it:
+three of the four cases agree across the engines and the fourth does not. A Left outer's pad answers
+`NULL` on the cpu and `0` on the device, for the Int64 column and not the string.
+
+Two literal paths in `expr.cpp` disagree. `build_scalar` (`:453`) reads the flag — `bool valid =
+!sv->is_null()` — so a typed NULL becomes an invalid scalar of that type. `build_expr`'s AST path
+(`:158` onward) hardcodes `true` in every arm, so the same literal becomes a valid scalar holding the
+default: 0 for an Int64, false for a Boolean. Strings escape it only because cuDF's AST has no string
+literal and they fall through to `build_scalar`.
+
+Pre-existing and unreachable until now: the pad has always written these literals, and this task is
+what makes an empty-probe finish run one on a device. **Fixed here rather than ticketed** — a wrong
+answer in a path this task opens is not the third capability the Restriction refuses, and the
+alternative is shipping the pad answering with zeros while disabling the case that proves it.
 
 ### Unit, Rust
 

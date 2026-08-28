@@ -8,6 +8,10 @@
 
 mod common;
 
+use datafusion::common::JoinType;
+use peacockdb_core::batch_partitioned::cpu_backend::join::CpuJoin;
+use peacockdb_core::batch_partitioned::nodes::GpuJoin;
+use peacockdb_core::batch_partitioned::nodes::join::joined_schema;
 use std::sync::Arc;
 
 use datafusion::arrow::array::{ArrayRef, Int64Array, RecordBatch, StringArray};
@@ -102,6 +106,41 @@ fn batches() -> Vec<CpuBatch> {
             )
         })
         .collect()
+}
+
+/// The fixture as one batch, which is what a build side is: `batches()` cuts the same rows
+/// into the three a probe arrives in.
+fn whole_lane() -> CpuBatch {
+    let keys: ArrayRef = Arc::new(StringArray::from(
+        INPUT.iter().map(|(k, _)| Some(*k)).collect::<Vec<_>>(),
+    ));
+    let values: ArrayRef = Arc::new(Int64Array::from(
+        INPUT.iter().map(|(_, v)| Some(*v)).collect::<Vec<_>>(),
+    ));
+    CpuBatch::new(
+        RecordBatch::try_new(rows().fields.clone(), vec![keys, values])
+            .expect("the rows fit their schema"),
+    )
+}
+
+/// A join of `join_type` over two copies of the fixture's columns, keyed on `k`. Both sides
+/// the same shape because what is under test is what the finish owes, not what it matches.
+fn finishing_join(join_type: JoinType) -> GpuJoin {
+    GpuJoin::new(
+        Given::of(rows(), BatchLayout::SingleBatch),
+        Given::of(rows(), BatchLayout::MultipleBatches),
+        join_type,
+        vec![(0, 0)],
+        None,
+        Vec::new(),
+        false,
+        None,
+        // With no projection the node's output IS the joined shape, which differs per type:
+        // the build side for a semi or anti, plus a mark for a mark join, both sides for an
+        // outer. Same value twice because the two questions have one answer here.
+        joined_schema(&rows().fields, &rows().fields, join_type),
+        joined_schema(&rows().fields, &rows().fields, join_type),
+    )
 }
 
 fn ctx() -> Arc<TaskContext> {
@@ -286,6 +325,17 @@ fn emitted(shape: Shape) -> Vec<String> {
                     format!("{}|{}", cells[0], cells[2])
                 })
                 .collect()
+        }
+        Shape::FinishWithNoProbe { join_type } => {
+            // The build side set and done called with no probe batch — the lifecycle a lane
+            // whose probe was empty produces. What comes back is the finish computed against
+            // an empty key table, which is the answer the device could not build before #173.
+            let node = finishing_join(join_type);
+            let join = CpuJoin::hash(&node, &rows().fields, &rows().fields, ctx())
+                .expect("the join builds");
+            let (probing, _) = join.set_build(whole_lane()).expect("the build side is set");
+            let (finished, _) = probing.finish_and_fetch().expect("the finish runs");
+            rendered(&finished)
         }
         Shape::ScatterLanes { lanes } => {
             let node = GpuEmitPartitions::new(

@@ -221,8 +221,8 @@ impl Collapse {
 }
 
 /// Each batch sorted as it arrives, the runs merged into one at done — and nothing at all
-/// where none arrived, since a merge of no runs is the collapse of nothing by another name
-/// and the device refuses that (#173).
+/// where none arrived, which is what the cpu backend emits there too. Both answer with no
+/// batch rather than with an empty one, and that agreement is the point.
 pub struct SortedRuns {
     executor: *mut PeacockExecutor,
     sort: (Seq, FbKind),
@@ -327,8 +327,9 @@ impl AggregateBatches {
 }
 
 /// The one node of the partition-accumulator category: every lane's sorted run merged into
-/// one at the last lane's done, and nothing where no lane sent anything — a merge of no
-/// runs is the collapse of nothing under another name, and the device refuses that (#173).
+/// one at the last lane's done, and nothing where no lane sent anything — which is what the
+/// cpu backend emits there too, so the two engines agree by both answering with no batch
+/// rather than with an empty one.
 ///
 /// One call per lane event, since that is what round-robin driving produces, and the call
 /// carrying the last `Done` is the emitting one. The handles go into the merge in lane

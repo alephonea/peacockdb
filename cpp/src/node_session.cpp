@@ -6,6 +6,7 @@
 #include "peacock/expr.h"
 #include "peacock/partitioning.hpp"
 
+#include <cudf/column/column_factories.hpp>
 #include <cudf/concatenate.hpp>
 #include <cudf/copying.hpp>
 #include <cudf/merge.hpp>
@@ -204,6 +205,44 @@ static std::vector<int32_t> declared_precisions(const fb::PlanNode* node, size_t
   return precisions;
 }
 
+// The table a node answers with when it owes rows it never received: no rows, and the columns
+// its `output_schema` declares. Needs no call the frozen surface lacks — the schema is on the
+// wire, which is what #173 was waiting for rather than an ABI symbol.
+//
+// A global aggregate is NOT this: it owes its identity row whatever arrived, so its `count` is
+// 0 rather than absent, and it keeps its own path.
+static TableResult empty_of_declared_schema(const fb::PlanNode* node) {
+  const auto* schema = node->output_schema();
+  if (schema == nullptr || schema->fields() == nullptr)
+    throw std::runtime_error(
+        "NodeSession::execute_node: a node owing rows it did not receive has no declared "
+        "schema to answer with");
+  const auto* fields = schema->fields();
+  std::vector<std::unique_ptr<cudf::column>> columns;
+  columns.reserve(fields->size());
+  TableResult result;
+  result.column_names.reserve(fields->size());
+  for (flatbuffers::uoffset_t i = 0; i < fields->size(); ++i) {
+    const auto* field = fields->Get(i);
+    const auto id = fb_to_type_id(field->data_type());
+    if (id == cudf::type_id::EMPTY)
+      throw std::runtime_error(std::string("NodeSession::execute_node: the declared type ") +
+                               fb::EnumNameDataType(field->data_type()) +
+                               " maps to no cuDF type, so an empty table of it cannot be built");
+    // The scale rides the type for a decimal, as everywhere else: cuDF carries it there and
+    // an empty column of the wrong scale is a wrong answer nothing downstream can notice.
+    const cudf::data_type type =
+        field->data_type() == fb::DataType_Decimal128
+            ? cudf::data_type{id, -static_cast<int32_t>(field->decimal_scale())}
+            : cudf::data_type{id};
+    columns.push_back(cudf::make_empty_column(type));
+    result.column_names.push_back(field->name() ? field->name()->str() : std::string());
+  }
+  result.table = std::make_unique<cudf::table>(std::move(columns));
+  result.column_precisions = declared_precisions(node, result.column_names.size());
+  return result;
+}
+
 void NodeSession::execute_node(uint64_t seq, const uint64_t* input_handles,
                                const uint64_t* input_child_counts, size_t n_children,
                                uint64_t* out_handles, size_t out_cap, size_t* out_count,
@@ -278,15 +317,18 @@ void NodeSession::execute_node(uint64_t seq, const uint64_t* input_handles,
       impl_->registry.erase(it);
       views.push_back(owned.back().table->view());
     }
-    // Concatenating no views gives a table of no columns, which is not a batch anything
-    // above can read. The schema to answer with IS here now — every node carries its
-    // `output_schema` — and what is missing is the code that builds an empty table from it,
-    // which is #173's work rather than this throw's. Both backends emit nothing for an empty
-    // lane, so reaching this is still a driver that called a node it had no batches for.
-    if (views.empty())
-      throw std::runtime_error(
-          "NodeSession::execute_node: a collapse with no input handles has no columns to "
-          "answer with — an empty lane emits nothing rather than calling this");
+    // Concatenating no views gives a table of no columns, which is not a batch anything above
+    // can read — so a collapse of nothing answers with the schema it declares instead (#173).
+    // The cpu backend emits nothing here, which is the same answer: no rows.
+    if (views.empty()) {
+      TableResult empty = empty_of_declared_schema(node);
+      if (out_stats) out_stats[0] = NodeStats{0, 0, 0};
+      uint64_t handle = impl_->next_handle++;
+      impl_->registry.emplace(handle, std::move(empty));
+      out_handles[0] = handle;
+      *out_count = 1;
+      return;
+    }
     TableResult result;
     result.column_names = owned[0].column_names;
     result.column_precisions = declared_precisions(node, result.column_names.size());
