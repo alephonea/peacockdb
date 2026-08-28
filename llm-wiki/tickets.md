@@ -926,10 +926,16 @@ wrong-order subtree before the root.
 came with it: `declared_precisions` returns empty when the node declares a different number of
 columns than the call produced, and the export then defaults to 38 as it always did. Shrugging is
 right for a positional list — applying one across a width disagreement hands a column somebody
-else's precision, which is worse than a wide one — but it means the first place the declared schema
-meets the produced table is a place that notices they disagree and says nothing. That is where the
-assert above belongs, and the reason it was not written there is worth keeping: a throw introduced
-mid-rollout surfaces as a device failure with no way to tell a real width bug from the new code.
+else's precision, which is worse than a wide one — but the silence is only local, and what
+follows it is worse than silence. An empty list means the export defaults, the decimals come back at
+(38, s), and the Rust unload's concat refuses with "expected Decimal128(15, 2) but found
+Decimal128(38, 2)" — #187's message, from a ticket that is closed. A width disagreement therefore
+fails loudly wearing the face of a fixed bug, and the operator goes looking at the export type table,
+which will be right, rather than at a precision list dropped two layers down.
+
+That is where the assert above belongs. The reason it was not written there is worth keeping: a throw
+introduced mid-rollout surfaces as a device failure with no way to tell a real width bug from the
+new code.
 
 <a id="t163"></a>
 ### #163 — a declared type is never checked against the expression that produces it
