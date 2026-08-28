@@ -295,12 +295,15 @@ fn every_lanes_sorted_run_is_merged_at_the_last_done() {
     );
 }
 
-/// And the arm it does not call is a refusal now (#173). A collapse of no handles has no
-/// schema to answer with — it used to hand back a table of no columns, which reads as a
-/// batch until something asks for a column. Constructed here through the ABI, since no
-/// executor makes this call any more.
+/// And the arm it does not call: a collapse of no handles ANSWERS now (#173), with an empty
+/// table of the schema the node declares. It used to refuse, and before that it handed back a
+/// table of no columns — which reads as a batch until something asks for a column.
+///
+/// Constructed through the ABI, since no executor makes this call: an accumulator with
+/// nothing held emits no batch rather than calling, which is what the cpu backend does too.
+/// So this is the capability under the accumulator rather than a path a driver takes.
 #[test]
-fn a_collapse_with_no_input_handles_is_refused_by_the_device() {
+fn a_collapse_with_no_input_handles_answers_with_its_declared_schema() {
     let tree: Box<dyn GpuNode> = Box::new(GpuCoalesceAllBatches::new(source_per_row_group()));
     let session = Session::open(tree.as_ref());
     let (seq, _) = session.recipe(1).calls[0]
@@ -323,12 +326,20 @@ fn a_collapse_with_no_input_handles_is_refused_by_the_device() {
             stats.as_mut_ptr(),
         )
     };
-    assert_ne!(rc, 0, "a collapse of nothing cannot answer");
-    let message = error_of(session.executor);
-    assert!(
-        message.contains("no input handles"),
-        "the refusal has to say what it was asked for: {message}"
-    );
+    assert_eq!(rc, 0, "a collapse of nothing answers: {}", error_of(session.executor));
+    assert_eq!(produced, 1, "one handle, holding no rows");
+    assert_eq!(stats[0].rows, 0);
+    // The columns are the node's, which is the whole point: an empty table of the wrong
+    // shape is what nothing downstream has rows to notice.
+    let (back, _) = session
+        .export(&columns())
+        .unload(
+            GpuBatch::new(session.executor, handles[0], stats[0].rows as usize, 0),
+            RowRange::WHOLE,
+        )
+        .expect("the empty rows cross the boundary");
+    assert_eq!(back.record_batch().num_rows(), 0);
+    assert_eq!(back.record_batch().num_columns(), columns().fields().len());
 }
 
 /// The Welford merge on a device, and the merge where #103 actually bit. Three lane

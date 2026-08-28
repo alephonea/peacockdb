@@ -5,10 +5,14 @@
 //! implementations of one contract answer alike. A case here that a backend gets wrong is
 //! wrong against the other engine, not against a fixture of its own.
 
+use datafusion::common::JoinType;
 use super::*;
 
 use peacockdb_core::batch_partitioned::gpu_backend::accumulate::GpuAccumulator;
 use peacockdb_core::batch_partitioned::gpu_backend::emit::GpuEmitter;
+use peacockdb_core::batch_partitioned::gpu_backend::join::GpuJoin as GpuJoinExec;
+use peacockdb_core::batch_partitioned::nodes::GpuJoin;
+use peacockdb_core::batch_partitioned::nodes::join::joined_schema;
 use peacockdb_core::batch_partitioned::nodes::{
     GpuAccumulateBatchesAndSort, GpuAggregateBatches, GpuCoalesceAllBatches, GpuEmitPartitions,
 };
@@ -205,6 +209,37 @@ fn emitted(shape: Shape) -> Vec<String> {
                 })
                 .collect()
         }
+        Shape::FinishWithNoProbe { join_type } => {
+            // The build side set and done called with no probe batch. Before #173 the device
+            // refused here; now the concat of no keys answers with an empty table of the key
+            // schema and the finish computes against it, which is what the cpu backend does
+            // with an empty concat of its own. The rows are the contract's, not this file's.
+            let out = joined_schema(&columns(), &columns(), join_type);
+            let tree = finishing_join(join_type, &out);
+            let session = Session::open(tree.as_ref());
+            let keys = schema_of(&[("k", DataType::Utf8)]);
+            let join = GpuJoinExec::new(
+                session.executor,
+                session.recipe(2),
+                Some(join_type),
+                Some(&keys),
+                &out.fields,
+            )
+            .expect("the join builds");
+            let (probing, _): (_, _) = join
+                .set_build(session.scan(&ROW_GROUPS))
+                .expect("the build side is set");
+            let (finished, _) = probing.finish_and_fetch().expect("the finish runs");
+            let mut answered = Vec::new();
+            for batch in finished {
+                let (back, _) = session
+                    .export(&out.fields)
+                    .unload(batch, RowRange::WHOLE)
+                    .expect("the rows cross the boundary");
+                answered.extend(rendered(&back));
+            }
+            answered
+        }
         Shape::ScatterLanes { lanes } => {
             let out = columns();
             let tree: Box<dyn GpuNode> = Box::new(GpuEmitPartitions::new(
@@ -231,6 +266,24 @@ fn emitted(shape: Shape) -> Vec<String> {
             answered
         }
     }
+}
+
+/// A join of `join_type` over two copies of the fixture, keyed on `k`, declaring `out`. Both
+/// sides the same shape because what is under test is what the finish owes rather than what
+/// it matches — the probe never produces a batch.
+fn finishing_join(join_type: JoinType, out: &Schema) -> Box<dyn GpuNode> {
+    Box::new(GpuJoin::new(
+        source(),
+        source_per_row_group(),
+        join_type,
+        vec![(0, 0)],
+        None,
+        Vec::new(),
+        false,
+        None,
+        out.clone(),
+        out.clone(),
+    ))
 }
 
 fn per_batch(tree: Box<dyn GpuNode>, out: &ArrowSchema) -> Vec<String> {

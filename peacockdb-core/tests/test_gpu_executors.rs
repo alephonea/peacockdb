@@ -10,6 +10,7 @@
 #[macro_use]
 mod common;
 
+use datafusion::common::JoinType;
 use std::path::PathBuf;
 
 use std::sync::Arc;

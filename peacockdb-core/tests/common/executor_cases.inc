@@ -38,6 +38,11 @@ pub enum Shape {
     CoalesceLane,
     /// The hash scatter: the answer is which lane each row landed in.
     ScatterLanes { lanes: usize },
+    /// A finish pass whose probe produced no keys: the build side set, no probe batch, done.
+    /// What each type owes there is its own finish computed against an empty key table, and
+    /// until #173 the device refused rather than computing it — so these are the rows a
+    /// backend could not previously produce, which is why they are stated once for both.
+    FinishWithNoProbe { join_type: JoinType },
 }
 
 impl Shape {
@@ -108,6 +113,51 @@ pub const CASES: &[Case] = &[
         name: "a merge over a state whose keys include a grouping id",
         shape: Shape::SumByKeyAndGroupingId,
         expect: &["a|12", "b|9"],
+    },
+    // The four a finish can be. Each is every build row or none of them, decided by what the
+    // type owes a probe that matched nothing — and each is a row neither backend could emit
+    // before #173, so there is no golden behind them and this table is the whole contract.
+    Case {
+        name: "an anti finish over no probe keys owes every build row",
+        shape: Shape::FinishWithNoProbe {
+            join_type: JoinType::LeftAnti,
+        },
+        expect: &["a|2", "a|4", "a|6", "b|1", "b|3", "b|5"],
+    },
+    Case {
+        name: "a semi finish over no probe keys owes none of them",
+        shape: Shape::FinishWithNoProbe {
+            join_type: JoinType::LeftSemi,
+        },
+        expect: &[],
+    },
+    Case {
+        name: "a mark finish over no probe keys marks every build row false",
+        shape: Shape::FinishWithNoProbe {
+            join_type: JoinType::LeftMark,
+        },
+        expect: &[
+            "a|2|false",
+            "a|4|false",
+            "a|6|false",
+            "b|1|false",
+            "b|3|false",
+            "b|5|false",
+        ],
+    },
+    Case {
+        name: "a left outer over no probe keys pads every build row",
+        shape: Shape::FinishWithNoProbe {
+            join_type: JoinType::Left,
+        },
+        expect: &[
+            "a|2|NULL|NULL",
+            "a|4|NULL|NULL",
+            "a|6|NULL|NULL",
+            "b|1|NULL|NULL",
+            "b|3|NULL|NULL",
+            "b|5|NULL|NULL",
+        ],
     },
     Case {
         name: "the scatter puts each row in the lane its key hashes to",

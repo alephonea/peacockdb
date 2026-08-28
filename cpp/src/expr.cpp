@@ -158,53 +158,60 @@ cudf::ast::expression& build_expr(const fb::Expr* expr, ExprContext& ctx,
       auto* lit = expr->node_as_LiteralExpr();
       auto* sv = lit->value();
       if (!sv) throw std::runtime_error("LiteralExpr has no value");
+      // The same flag `build_scalar` reads below, and it has to be read in both places: a
+      // cuDF AST literal carries its scalar's validity, so a typed NULL built valid here is
+      // a literal ZERO of that type rather than a null — which is what a Left outer's pad
+      // put in its probe columns until the two engines were asked the same question. The
+      // string arms have no such bug because cuDF's AST has no string literal and they fall
+      // through to `build_scalar`.
+      const bool valid = !sv->is_null();
 
       switch (sv->type()) {
         case fb::DataType_Boolean: {
           auto s = std::make_unique<cudf::numeric_scalar<bool>>(
-              sv->bool_val(), true);
+              sv->bool_val(), valid);
           auto& ref = *s;
           ctx.scalars.push_back(std::move(s));
           return ctx.keep(std::make_unique<cudf::ast::literal>(ref));
         }
         case fb::DataType_Int8: {
           auto s = std::make_unique<cudf::numeric_scalar<int8_t>>(
-              static_cast<int8_t>(sv->int_val()), true);
+              static_cast<int8_t>(sv->int_val()), valid);
           auto& ref = *s;
           ctx.scalars.push_back(std::move(s));
           return ctx.keep(std::make_unique<cudf::ast::literal>(ref));
         }
         case fb::DataType_Int16: {
           auto s = std::make_unique<cudf::numeric_scalar<int16_t>>(
-              static_cast<int16_t>(sv->int_val()), true);
+              static_cast<int16_t>(sv->int_val()), valid);
           auto& ref = *s;
           ctx.scalars.push_back(std::move(s));
           return ctx.keep(std::make_unique<cudf::ast::literal>(ref));
         }
         case fb::DataType_Int32: {
           auto s = std::make_unique<cudf::numeric_scalar<int32_t>>(
-              static_cast<int32_t>(sv->int_val()), true);
+              static_cast<int32_t>(sv->int_val()), valid);
           auto& ref = *s;
           ctx.scalars.push_back(std::move(s));
           return ctx.keep(std::make_unique<cudf::ast::literal>(ref));
         }
         case fb::DataType_Int64: {
           auto s = std::make_unique<cudf::numeric_scalar<int64_t>>(
-              sv->int_val(), true);
+              sv->int_val(), valid);
           auto& ref = *s;
           ctx.scalars.push_back(std::move(s));
           return ctx.keep(std::make_unique<cudf::ast::literal>(ref));
         }
         case fb::DataType_Float32: {
           auto s = std::make_unique<cudf::numeric_scalar<float>>(
-              static_cast<float>(sv->float_val()), true);
+              static_cast<float>(sv->float_val()), valid);
           auto& ref = *s;
           ctx.scalars.push_back(std::move(s));
           return ctx.keep(std::make_unique<cudf::ast::literal>(ref));
         }
         case fb::DataType_Float64: {
           auto s = std::make_unique<cudf::numeric_scalar<double>>(
-              sv->float_val(), true);
+              sv->float_val(), valid);
           auto& ref = *s;
           ctx.scalars.push_back(std::move(s));
           return ctx.keep(std::make_unique<cudf::ast::literal>(ref));
@@ -218,7 +225,7 @@ cudf::ast::expression& build_expr(const fb::Expr* expr, ExprContext& ctx,
           double dval = static_cast<double>(val);
           for (int8_t i = 0; i < scale; ++i) dval /= 10.0;
           for (int8_t i = 0; i > scale; --i) dval *= 10.0;
-          auto s = std::make_unique<cudf::numeric_scalar<double>>(dval, true);
+          auto s = std::make_unique<cudf::numeric_scalar<double>>(dval, valid);
           auto& ref = *s;
           ctx.scalars.push_back(std::move(s));
           return ctx.keep(std::make_unique<cudf::ast::literal>(ref));
@@ -230,7 +237,7 @@ cudf::ast::expression& build_expr(const fb::Expr* expr, ExprContext& ctx,
           // owned vs. view strings on the device side, so all three flavors
           // map to the same scalar type.
           auto s = std::make_unique<cudf::string_scalar>(
-              std::string(sv->string_val() ? sv->string_val()->str() : ""), true);
+              std::string(sv->string_val() ? sv->string_val()->str() : ""), valid);
           auto& ref = *s;
           ctx.scalars.push_back(std::move(s));
           return ctx.keep(std::make_unique<cudf::ast::literal>(ref));
@@ -238,7 +245,7 @@ cudf::ast::expression& build_expr(const fb::Expr* expr, ExprContext& ctx,
         case fb::DataType_Date32: {
           // Date32 = days since UNIX epoch (int32).
           auto s = std::make_unique<cudf::timestamp_scalar<cudf::timestamp_D>>(
-              cudf::duration_D{static_cast<int32_t>(sv->int_val())}, true);
+              cudf::duration_D{static_cast<int32_t>(sv->int_val())}, valid);
           auto& ref = *s;
           ctx.scalars.push_back(std::move(s));
           return ctx.keep(std::make_unique<cudf::ast::literal>(ref));
