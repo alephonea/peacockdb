@@ -176,7 +176,7 @@ not, and #187's first line is the counterexample.
 
 ## What the rollout measured
 
-Nine batches, fifty-two device cells, and the shape of the answer is not the one the plan expected.
+Nine batches, and the shape of the answer is not the one the plan expected.
 Five cells went green — `tpch/nested-loop-join` and `shuffle-stddev` at all five modes, `tpcds/q84`
 at `bp-tp1-single` — and #183 closed with no registry row citing it, against sixty at the start.
 Device cells in the corpus went from 6 to 17.
