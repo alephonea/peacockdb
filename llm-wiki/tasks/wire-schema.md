@@ -63,11 +63,32 @@ Write it for **every** node, not only where a decimal appears: `fb_text.rs`'s ow
 is a worse thing to own than a slightly larger buffer.
 
 The C++ then reads it where `TableResult` is built (`plan_executor.h:15`, today `table` +
-`column_names` only), carries a per-column precision alongside the name, and
-`export_table_to_ipc` sets `column_metadata.precision` instead of leaving it empty. `operators/
-union.cpp:35` already reads an `output_schema` for the neighbouring problem — branches landing
-different fixed_point scales — so this is an existing mechanism reaching one more node kind rather
-than a new one.
+`column_names` only) and carries a per-column precision alongside the name. `operators/union.cpp:35`
+already reads an `output_schema` for the neighbouring problem — branches landing different
+fixed_point scales — so this is an existing mechanism reaching one more node kind rather than a new
+one.
+
+**The precision is set on the Arrow side, not on `column_metadata`.** An earlier draft said
+`export_table_to_ipc` sets `column_metadata.precision`; that field does not exist in 25.02, whose
+`column_metadata` is `name` + `children_meta` (`interop.hpp:108`). It arrives in 26.02. Since 25.02
+is the leg that runs — shad-gpu and `cpp-build-2502` both build it, and build-test.md's rule is that
+a functional run there is the verification while 26.02 need only compile — writing that field would
+compile on the leg that only compiles and break the one that runs, taking every device test with it.
+
+`export_table_to_ipc` already goes `to_arrow_schema` → `arrow::ImportSchema` → `to_arrow_host` →
+`ImportRecordBatch(array, schema)`. Rebuild the imported schema with `arrow::decimal128(p, s)` from
+the declared fields before the batch import. An Arrow decimal128 is 16 bytes whatever precision it
+declares — which is why cuDF can default it to 38 in the first place — so this is metadata and not a
+cast, it needs no `#if CUDF_VERSION`, and it does not rest on a field one leg lacks.
+
+25.02's own header documents #187 as intended: "since the precision is not stored for them in
+libcudf, decimals will be converted to an Arrow decimal128 which has the widest precision that cudf
+supports". That is the sentence this task makes untrue for our exports.
+
+The open question is whether `arrow::ImportRecordBatch` accepts a schema whose decimal precision
+differs from what `to_arrow_host` produced, or validates the two against each other. If it validates,
+the fallback is a post-import cast on the Arrow arrays, which is heavier and is a decision to bring
+back rather than take.
 
 With precision on the wire, `export_type_for`'s `Decimal128(p,s) → Decimal128(38,s)` row stops being
 true: the divergence is removed rather than absorbed. Update the row in
