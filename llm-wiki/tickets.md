@@ -242,8 +242,10 @@ Each refuses by name rather than inventing rows, and the CPU backend emits nothi
 places so the two stay one engine. The exception is a global aggregate, which owes its identity
 row whatever arrived.
 
-Unfreezing buys a make-empty-of-schema call and the refusals go. Until then the refusal is the
-contract, and the shapes that reach it are the ones a lane can be empty in.
+The schema to answer with is on the wire since `wire-schema.md` — every fb node carries its
+`output_schema` — so what is left is the code that builds an empty table from it, and no ABI
+symbol. Until that lands the refusal is the contract, and the shapes that reach it are the ones
+a lane can be empty in.
 
 <a id="t97"></a>
 ### #97 — Semi/anti/outer joins at real-8-way
