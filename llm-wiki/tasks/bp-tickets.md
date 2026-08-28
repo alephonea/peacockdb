@@ -164,8 +164,8 @@ its bytes, and twenty-five empty batches do not make it bigger: the cpu's number
 how the stream was cut and the device's is the node.
 
 What stays open is where to fix it, since the golden asserts the per-batch lists as well as the
-totals. Eleven cells: `tpch` cross-join, nested-loop-left-join, q15, q4, q20, q21; `tpcds` q4, q10,
-q11, q23, q29.
+totals. Thirteen cells: `tpch` cross-join, nested-loop-left-join, q15, q4, q20, q21; `tpcds` q4, q10, q11,
+q23, q29, q69, q74.
 
 <a id="t192"></a>
 ### #192 — tpcds/q64 needs 13 GB of host memory and no budget stops it
