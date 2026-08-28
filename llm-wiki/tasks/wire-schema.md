@@ -138,11 +138,19 @@ Same idiom as [`casts.md`](casts.md) — build the node, run its recipe fn, `wri
 ## What this task should also carry
 
 `casts.md` leaves `exports=` predicting types that nothing compares against: the golden is checked
-by eye and the runtime check at `unload` sees only the divergences the cast absorbs. The device tier
-already holds both sides — it reads the cpu-authored section and has the exported schema in hand — so
-"the types the device exported are the ones `exports=` predicted" is one comparison in a place that
-already runs. It also covers the `StringType` arm, which the cast otherwise hides from every
-observer: the assertion sees the export before the absorption, where a reader of results cannot.
+by eye and the runtime check at `unload` sees only the divergences the cast absorbs. "The types the
+device exported are the ones `exports=` predicted" makes it a property.
+
+**Not in the device tier**, which was this section's first answer and is wrong: `gpu_case` reads
+`report.batches`, the driver's output, which is post-absorption. By then the cast has made a column
+that arrived as predicted and one that did not into the same object — the tier holds the declared
+side twice rather than both sides. The only code that sees the export before the absorption is
+`cast_declared`, which is where the assertion goes.
+
+It closes a hole rather than restating one: `absorb` cast by ordinal without checking what it found,
+so a column predicted `Utf8` arriving as anything else was converted by `cast` instead of caught. It
+now fails naming both types, and `Exports::casts()` carries the predicted type beside the ordinal so
+there is one filter rather than two.
 
 ## Restriction
 
