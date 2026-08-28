@@ -32,9 +32,22 @@ precision exists nowhere.
 
 `PlanNode.output_schema: Schema` already exists in `gpu_plan.fbs` and is documented "Output schema of
 this node". The bp writer never fills it: `fb::PlanNode::create` appears once on this path, in
-`Writer::push` (`recipe/writer.rs:97`), with `output_schema: None`. That is the whole change — every
-bp node goes through that funnel, `GpuNode::schema()` is node-local with nothing to derive, and
-`serialize_schema` already fills `decimal_precision`/`decimal_scale` from `Decimal128(p, s)`.
+`Writer::push` (`recipe/writer.rs:97`), with `output_schema: None`. `serialize_schema` already fills
+`decimal_precision`/`decimal_scale` from `Decimal128(p, s)`, so the field is the only thing missing.
+
+**The schema is per fb node, and a plan node's schema is not it.** An earlier draft of this spec said
+`GpuNode::schema()` is node-local with nothing to derive; that is true only of the nodes emitting one
+seq. `GpuAggregateBatches` emits `CudfCoalescePartitions`, `CudfAggregate{Merge}` and
+`CudfProject{finalize}`, and the first two output aggregate state rather than the node's columns.
+`GpuJoin` emits a key project, the join, and a pad or narrow project, and the key project outputs the
+probe's keys alone. Writing the plan node's schema on all of them declares something false for every
+seq but the last, which is worse than the `None` there today — `union.cpp:35` reads this field, so a
+consumer would believe it.
+
+So the schema rides on `Payload`: the closure that builds a payload is the only thing that knows what
+that payload outputs, and `Writer::push` — which takes a `Payload` and nothing else — stays the one
+funnel. Most `node_writer` arms already name their output columns (a project writes its `aliases`, a
+join its projection). The multi-call arms in `join.rs` and `aggregate_writer.rs` are the work.
 
 Write it for **every** node, not only where a decimal appears: `fb_text.rs`'s own header warns that
 "not set" and "set to zero" are different instructions to the executor, and a conditional wire format
