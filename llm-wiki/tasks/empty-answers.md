@@ -88,6 +88,25 @@ reason it was removed outlives the reason.
 
 ## 3. Tests
 
+### The contract both engines owe
+
+Deleting `finish_without_keys` gives four join types an answer they did not have — LeftAnti,
+LeftSemi, LeftMark and Left/Full — and no golden can catch a wrong one, because the old code refused
+rather than answering differently. The two engines reach these answers through separate code:
+`cpu_backend/join.rs` has its own pad beside `recipe/join.rs`'s, so "the cpu does the same" is the
+claim needing proof rather than the proof.
+
+Four rows in `executor_cases.inc`, one per type, each a finish whose probe produced no keys. The cpu
+backend runs them in `test_cpu_executors` and the device runs the same rows in `test_gpu_executors`,
+so a disagreement between the engines is what goes red.
+
+**This costs more than four rows and is authorised anyway.** Every existing case is one node with one
+input, and neither harness mentions `GpuJoin`; a finish-with-no-probe needs a build side, a probe
+that produced nothing, and `finish_and_fetch` driven at done — a two-input node with a lifecycle, so
+both `emitted` arms grow. Estimated 150-250 lines across three files plus a device cycle. It lands
+**before** section 2: #175 puts a second pad into one of the two engines, and the per-type contract is
+what that pad then rests on. Written afterwards it is the same work with the pad already on top of it.
+
 ### Unit, Rust
 
 - **the empty-build decision by type** — `empty_build_answers_nothing` returns true for the six that
