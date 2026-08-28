@@ -220,7 +220,9 @@ reasoning. Anchors: `llm-wiki/architecture.md` (invariants) and `llm-wiki/build-
   regenerations, restating comments, dead code.
 - **The completeness pass in the coordinator's task loop is yours too**, and it is a
   separate reading from your findings pass: the branch as one change, and what it does not
-  contain.
+  contain. Once its gaps are addressed, the reading that signs the branch off carries no
+  nits: only a new `important` or `blocking` is raised and acted on. A branch whose gaps are
+  closed is one pass from done, and a pass that can still return polish never reaches it.
 - Findings format: severity (`blocking`/`important`/`nit`), file:line, one-sentence
   issue, the anchor it violates (a missing anchor is itself a finding), concrete fix.
   Lead with counts. If the diff is clean, say so in one paragraph — don't manufacture
