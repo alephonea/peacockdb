@@ -76,8 +76,11 @@ arrive from the human one at a time.
   and reviewer never mutate git state. Stage the paths you mean and read `git status` before
   committing: `git add -A <dir>` sweeps in whatever untracked files happen to sit there, and
   `git add -u` skips the new files a task just added.
-- **You watch CI runs.** The developer works the tests directly and never waits on CI, so a red
-  pipeline is yours to notice, read and route.
+- **You watch CI runs, and CI never blocks development.** The developer works the tests
+  directly and never waits on a runner, so a red pipeline is yours to notice, read and route.
+  Route it as one more finding into the work already in flight: a red run is a fact about a
+  commit, not a stop signal for the branch. Nobody parks, reverts or idles for it. The one
+  moment CI is allowed to hold anything is the last one — see the task loop's step 7.
 - **Merging to master happens *only* when a human instructs it, in that message.** Never
   on your own judgment, however green CI is and however satisfied the reviewer. The
   instruction covers only the PR or chain it names and does not carry forward to the
@@ -94,16 +97,22 @@ arrive from the human one at a time.
   unreadable.
 - Task loop: (1) branch; (2) send the task to the developer with the needed context from
   architecture/tickets; (3) iterate until the developer reports tests green; (4) commit,
-  push, open the PR, pass the CI URL to the developer; (5) send the PR to the reviewer
+  push, open the PR; (5) send the PR to the reviewer
   (with the task description); have the developer address blocking/important findings;
-  (6) repeat until reviewer is satisfied and CI is green; (7) the completeness pass — once
-  every finding is addressed, you and the reviewer each read the whole branch diff as one
-  change and ask what is **missing**, which is a different question from what is wrong.
-  Independently means neither of you sees the other's list first. A task is done when CI is
-  green, the reviewer approves, and both completeness passes are closed with their gaps.
-- You may start the next task while the previous task's CI runs, but only one task ahead.
-  If the previous task's CI fails: have the developer park a minimum unit of the current
-  work, commit it, return to the failed branch, fix, verify, push, then rebase and resume.
+  (6) repeat until the reviewer is satisfied, routing anything CI reports along the way as a
+  finding like any other; (7) the completeness pass — once every finding is addressed, you and
+  the reviewer each read the whole branch diff as one change and ask what is **missing**, which
+  is a different question from what is wrong. Independently means neither of you sees the
+  other's list first.
+- **Green CI is the last gate and only the last gate.** A task is done when the reviewer
+  approves, both completeness passes are closed with their gaps, and CI is green on the tip.
+  Until development and review are both finished, a red or pending run changes what is being
+  worked on and never whether work continues. Waiting for a run to declare a task done is the
+  only wait anyone in this ensemble performs.
+- You may start the next task at any point once the previous one is developed and reviewed;
+  its CI does not have to have landed, and only one task runs ahead. A failure on that
+  previous branch is fixed on that branch when it lands — nobody parks the current work to go
+  back for it, since the current work is what a rebase carries forward anyway.
 - Regressions in the enabled-test set are not allowed unless a human explicitly
   authorizes them (see the developer's flaky-test exception).
 - **Keeping `architecture.md` and `build-test.md` true is yours.** When a task changes
@@ -150,8 +159,10 @@ Style: `llm-wiki/coding-style.md`.
 - **Smallest failing test first**, then widen. After small fixes run only the affected
   subsets; kick heavy suites off in the background rather than blocking. Full-suite runs
   are for milestones/handoffs.
-- **You do not run CI.** Work the tests directly, locally or on a remote host; troubleshoot CI
-  freely, but never wait on it.
+- **You do not run CI and are never blocked by it.** Work the tests directly, locally or on a
+  remote host. Troubleshoot a failure the coordinator routes to you, and treat it as one more
+  finding on the pile rather than as an interrupt: finish the unit in your hands first. Never
+  watch a run, wait on one, or ask what one is doing.
 - **Iteration cap:** if 5 edits don't fix a test, stop and write up what you found.
 - For large test/regen runs, arm a monitor that reports progress every 2 minutes
   (progress may stall — see build-test.md). A silent stall looks exactly like a long
