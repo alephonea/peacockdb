@@ -183,3 +183,29 @@ plan, and step 2 is what makes that diff legible instead of opaque.
    a number rather than a crossing failing, so expect those here too. A cell whose cause changed is a ticket edit, not a cell that stays
    where it was.
 3. Close #187 only when its cells are gone from the registry, and correct its text as it closes.
+
+## What the work measured
+
+#187 closed on a device with the case it was opened on: `tpch/filter-project` declares
+`Decimal128(15,2)` and comes back as `(15,2)`, with `aggregate-groupby` at `(25,2)` beside it so it
+is not one width getting lucky. Thirty-nine cells over four batches — 5 green, 25 to
+[#185](bp-tickets.md#t185), 9 to [#195](bp-tickets.md#t195) — and **none to a type failure of any
+kind**. Device cells went 17 to 34.
+
+The divergence is gone rather than absorbed, which is what splitting this from `casts.md` was for:
+`export_type_for`'s decimal arm is identity and `Divergence::DecimalPrecision` is deleted, so
+nothing predicts a widening any more. The prediction that remains is checked rather than rendered —
+`cast_declared` compares the exported type against the predicted one before casting, which closed a
+hole `casts.md` shipped, where `absorb` cast by ordinal without looking at what it found.
+
+What the task leaves standing: #185 and #195 hold 60 of the 63 device cells still disabled, and both
+are a golden and the device disagreeing about a number the plan produced rather than anything
+crossing the ABI.
+
+What it cannot prove: the export now trusts the plan. Every decimal used to leave at precision 38,
+which is true of any decimal128 value; it now leaves at whatever the plan declared, and nothing
+checks that the values fit — `WithType` does not validate and the buffers are untouched by design.
+That is the right authority, since the CPU tier already believes the same declaration, but it is a
+trade this task makes and not a property it establishes. `with_declared_precision`'s guard branches
+are unreached for a related reason: it is `static` in a `.cpp`, so the width-disagreement arm that
+[#164](../tickets.md#t164) says produces a closed ticket's message cannot be called from a test.
