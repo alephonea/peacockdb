@@ -89,12 +89,18 @@ scope, so `node->output_schema()` is directly readable once step 1 populates it.
 `input.column_names` from a `TableResult` that already exists, and precision rides along the same
 way. **No threading from an origin is required, and no signature changes.**
 
-### 2. `schema_text` renders precision and scale
+### 2. The payload golden shows what step 1 writes
 
 `fb_text.rs:229` formats fields as `{}:{:?}` over `f.data_type()`, so `bp-recipe-payloads.txt` prints
 bare `Decimal128` while expressions on the same page print `Decimal128(23, 2)`. Two fields that are
 on the wire are invisible to the golden whose job is to pin the wire — a change to either, including
 one that broke step 1, would not move it. Render them for `Decimal128` fields.
+
+That is not enough on its own, and the gap only shows when step 1 lands: rendering precision reaches
+the schemas the file already prints — a scan's `file_schema`, a union's own `output_schema` — and
+`PlanNode.output_schema` was not one of them. Twenty digests move and nothing in the text says why.
+So `payload_text` prints `declares:` for **every** node, `unset` where the field is absent, which is
+what makes the absence on the structural union a thing a reader notices rather than a blank.
 
 ### 3. Unit tests
 
