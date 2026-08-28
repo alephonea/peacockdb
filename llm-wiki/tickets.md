@@ -922,6 +922,15 @@ for those modes this is still the whole guard. The third closure #135 named is u
 belongs here too: a per-node type check in the GPU tiers, the only thing that would surface a
 wrong-order subtree before the root.
 
+`wire-schema.md` added a second vector to the same struct, `column_precisions`, and the same gap
+came with it: `declared_precisions` returns empty when the node declares a different number of
+columns than the call produced, and the export then defaults to 38 as it always did. Shrugging is
+right for a positional list — applying one across a width disagreement hands a column somebody
+else's precision, which is worse than a wide one — but it means the first place the declared schema
+meets the produced table is a place that notices they disagree and says nothing. That is where the
+assert above belongs, and the reason it was not written there is worth keeping: a throw introduced
+mid-rollout surfaces as a device failure with no way to tell a real width bug from the new code.
+
 <a id="t163"></a>
 ### #163 — a declared type is never checked against the expression that produces it
 
