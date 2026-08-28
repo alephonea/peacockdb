@@ -46,8 +46,17 @@ consumer would believe it.
 
 So the schema rides on `Payload`: the closure that builds a payload is the only thing that knows what
 that payload outputs, and `Writer::push` — which takes a `Payload` and nothing else — stays the one
-funnel. Most `node_writer` arms already name their output columns (a project writes its `aliases`, a
-join its projection). The multi-call arms in `join.rs` and `aggregate_writer.rs` are the work.
+funnel. Most arms already have it: five emit the rows they were given, so their output is their
+input, and the two aggregates carry `intermediate()`, the state schema the planner computed once.
+
+`GpuJoin` carries no equivalent, and its join seq needs one — for Left and Full the join call emits
+the per-call shape and the pad project is what makes the output the node's schema. **It gains an
+`intermediate()` too**, computed in `translate/mod.rs` where `join.left().schema()` and
+`join.right().schema()` are already read for the key ordinals, so the value is a concatenation of
+things in scope rather than new work. The writer must not derive it instead: the C++ computes this
+shape and the pad project assumes it, and a third guess in a task about deriving a value once would
+be the wrong direction. **The pad project reads the same `intermediate()`**, which is what makes this
+one value replacing an assumption rather than one more value to keep true.
 
 Write it for **every** node, not only where a decimal appears: `fb_text.rs`'s own header warns that
 "not set" and "set to zero" are different instructions to the executor, and a conditional wire format
