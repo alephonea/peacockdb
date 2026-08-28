@@ -6,7 +6,7 @@ Rust only, no FFI, no C++. Predict the export type at plan time in `attach_recip
 `exports=`, and cast the one divergence that is inherent — cuDF has a single string type. The
 decimal is predicted here and deliberately not cast. Moves ten `.plans.txt`; 59 queries carry it.
 
-## 2. [`wire-schema.md`](wire-schema.md) — closes [#187](bp-tickets.md#t187)
+## 2. [`wire-schema.md`](wire-schema.md) — closes [#187](../archive/archived-tickets.md#t187)
 
 Crosses the FFI but small: `Writer::push` is the one funnel that must fill `PlanNode.output_schema`,
 and the C++ carries a per-column precision into `column_metadata`, which cuDF currently defaults to

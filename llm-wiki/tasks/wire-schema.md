@@ -1,6 +1,6 @@
 # The declared schema on the wire, and the precision the export is never told
 
-**This task closes [#187](bp-tickets.md#t187)** — the device widens a decimal the plan declared
+**This task closes [#187](../archive/archived-tickets.md#t187)** — the device widens a decimal the plan declared
 narrow — by giving the export the precision it currently defaults to 38 for, rather than by casting
 the result back.
 

@@ -3459,7 +3459,7 @@ reconstruct from an empty column.
 found, and each closes tickets the device column is actually blocked on rather than shapes the corpus
 lacks: [`refcounted-tables.md`](refcounted-tables.md) for [#145](../tickets.md#t145) and
 [#152](../tickets.md#t152), [`casts.md`](casts.md) for [#183](../archive/archived-tickets.md#t183),
-[`wire-schema.md`](wire-schema.md) for [#187](bp-tickets.md#t187), and
+[`wire-schema.md`](wire-schema.md) for [#187](../archive/archived-tickets.md#t187), and
 [`empty-answers.md`](empty-answers.md) for [#173](../tickets.md#t173) and
 [#175](../tickets.md#t175). Order matters twice: `casts.md` before `wire-schema.md`, which writes the
 schema `empty-answers.md` then reads. Between them they cover the two causes that hold 134 of the 138

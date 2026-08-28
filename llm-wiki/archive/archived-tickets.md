@@ -23,6 +23,57 @@ the report rather than emitting one that goes nowhere.
 
 ## Done
 
+<a id="t187"></a>
+### #187 — the device widens a decimal the plan declared narrow
+
+`tpch/filter-project` at all five modes: `expected Decimal128(15, 2) but found Decimal128(38, 2)`
+at the unload. The query is `SELECT l_orderkey, l_quantity FROM lineitem WHERE l_quantity > 30` —
+no arithmetic anywhere, so this is the export or the filter widening the column rather than a scale
+rule at a binop.
+
+The CPU has a rule for this: `widened_decimal` (`cpu_backend.rs:499`) accepts a produced decimal
+wider than the declared one at equal scale, and `declared_as` casts it back — over every exec
+stage's output, not only a merged state, though its doc argues the merge that motivated it. The
+device's unload has no such rule: `gpu_backend.rs:166` concats against the sink schema and arrow
+refuses the type outright.
+
+The value in question is the device's own export; DataFusion produces `(15,2)` throughout and the
+CPU tier is green. So this is two rules for produced-against-declared, one per engine, disagreeing
+on the same bytes — one tolerating and casting back, the other refusing. Whichever is right, one of
+them is wrong. Neighbour of [#163](../tickets.md#t163) for that reason, where
+[#183](../archive/archived-tickets.md#t183) is two representations of one value rather than two verdicts on it.
+
+First plain decimal projection to reach a device in the corpus: q6's decimals are sums, whose
+declared type is already wide, which is why twenty queries went past this and the twenty-first did
+not.
+
+Two sightings, and the pair narrows it: `filter-project`'s projected column declares `(15,2)` and
+`hash-join`'s sum declares `(25,2)`, and both are found as `(38,2)`. Same scale, same 38, two
+different declarations — so the export appears to produce one width rather than widening each
+value by a step, which is a different fix from a scale rule and points at the export rather than at
+anything upstream of it. Six device cells across T19's first two batches.
+
+**Closed 2026-08-28** by `llm-wiki/tasks/wire-schema.md`, and the framing above is wrong twice over.
+
+It was not two engine rules disagreeing. cuDF's decimal carries scale but not precision, so
+`export_table_to_ipc` never had a precision to pass and `decimals_to_arrow` fell back to
+`max_precision<__int128_t>()`, which is 38. The CPU's `widened_decimal` was never the other half of
+a disagreement — it was the only side that had been told anything.
+
+Nor was it a defect. 25.02's own header says so: "since the precision is not stored for them in
+libcudf, decimals will be converted to an Arrow decimal128 which has the widest precision that cudf
+supports". A documented default that nobody had overridden.
+
+The fix tells the export what the plan declared. `PlanNode.output_schema` is filled for every fb
+node by the builder that knows what its payload emits, `TableResult` carries a per-column precision
+beside the names, and `export_table_to_ipc` rebuilds the imported Arrow schema with
+`arrow::decimal128(p, s)` — Arrow's side rather than `cudf::column_metadata`, which gains a
+`precision` field only in 26.02 and does not have one on the 25.02 leg that runs.
+
+Thirty-nine cells: 5 green, 25 to #185, 9 to #195, and none to a type failure of any kind. The
+observation the ticket got right is the one that pointed at the export: `(15,2)` and `(25,2)` both
+arriving as `(38,2)` is one width being produced rather than each declaration widened by a step.
+
 <a id="t183"></a>
 ### #183 — the device exports Utf8 where the sink declares Utf8View
 
