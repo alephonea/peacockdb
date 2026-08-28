@@ -67,9 +67,23 @@ what is missing is what to do when it returns false. Its own doc names the split
 
 > *"what they owe is the probe side, **padded or not**"*
 
+**Both engines refuse here, which #173 did not.** `cpu_backend/join.rs:186` and
+`gpu_backend/join.rs:111` carry the same sentence, so there is no counterpart to check the other
+against and "make the device agree with the cpu" is not available. The contract rows in
+`executor_cases.inc` are the only thing that can say the two agree, so **#175's types get rows there
+too** — the harness the section above builds is what makes that cheap.
+
+**And `without_build` returns unit.** `without_build(self) -> Result<(), BackendError>` on both
+backends cannot hand back a batch, so answering is a signature change in both and in whatever drives
+them. "One role, not a mechanism" is true of the recipe and not of the executor contract.
+
 - **`RightAnti` owes the probe side unpadded.** Its output is the probe columns alone, and an empty
   build side makes every probe row unmatched — so the answer *is* the probe batch. **Route it, do
-  not call.** No pad, no kernel, no handle beyond the one the driver holds.
+  not call** — provided routing is free: no pad, no kernel, no handle beyond the one the driver
+  holds. A driver learns the build side was empty only at `done`, after probe batches have been
+  offered, so routing may mean something holds every probe batch of the lane. **If it does, route
+  nothing** and answer through the call like the other two: the preference was an argument from
+  memory, and a version that costs memory has no argument left.
 - **`Right` and `Full` owe it padded**, with typed NULLs in the build columns. That is the mirror of
   the pad that already exists: `ProjectRole::NullPad { nulls }` with `pad_project` and
   `padded_columns` (`recipe/join.rs:114`, `:261`, `:423`) appends one NULL per **probe** column a
