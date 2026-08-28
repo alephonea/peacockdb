@@ -169,13 +169,18 @@ The delta is exactly the per-batch structural overhead of the boundaries the cpu
 does not — `(rows+7)/8` per column plus `(rows+1)*4` per var-length column, charged once per batch.
 `tpch/cross-join` at bp-tp1-single: five cpu batches of 25 totalling 22990 against the device's
 22898, and 92 is what five charges over 25 rows cost above one charge over 125.
-`nested-loop-left-join`: two batches, 9477 against 9454, 23 to the byte. Recomputed from the parquet
-the whole-node figure is the device's, so neither side's arithmetic is wrong — they are summing
-different numbers of batches.
+`nested-loop-left-join`: two batches, 9477 against 9454, 23 to the byte.
 
-Which side moves is the open half: the golden asserts the per-batch lists, so a device that
-legitimately batches differently needs the golden to say so, and one that should batch as the cpu
-does needs the driver to. Cells: `tpch` cross-join, nested-loop-left-join, q15, q4, q20, q21.
+`tpcds/q29` is the sharpest, and it says which side is wrong. Its `GpuAggregate` totals 636 over 26
+batches whose rows read `[0,0,0,0,0,0,0,1,0,…]` — twenty-five EMPTY batches at 16 bytes each plus one
+at 236, and 25 x 16 + 236 = 636. The device reports 236. So the gap is entirely batches carrying no
+rows, each charged a validity bitmap and an offset `+1` for nothing. A node's size is its rows and
+its bytes, and twenty-five empty batches do not make it bigger: the cpu's number is an artefact of
+how the stream was cut and the device's is the node.
+
+What stays open is where to fix it, since the golden asserts the per-batch lists as well as the
+totals. Eleven cells: `tpch` cross-join, nested-loop-left-join, q15, q4, q20, q21; `tpcds` q4, q10,
+q11, q23, q29.
 
 <a id="t192"></a>
 ### #192 — tpcds/q64 needs 13 GB of host memory and no budget stops it
