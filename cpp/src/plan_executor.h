@@ -66,7 +66,7 @@ struct NodeStats {
   /// a Partial AVG under GROUPING SETS emitting one MEAN where DataFusion declares
   /// `[count]`+`[sum]` (aggregate.cpp, `avg_state_2col`), a union branch holding a
   /// decimal literal as FLOAT64 until `execute_union` retypes it (#41),
-  /// `__grouping_id` built INT32 against a declared UInt8 (#155) — are shape, not
+  /// `__grouping_id` built INT32 against a declared UInt8 (#196) — are shape, not
   /// byte-rule drift, and none can arise on the bare-cuDF sf40 path.
   uint64_t schema_faithful = 1;
 };

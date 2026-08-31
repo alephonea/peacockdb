@@ -71,7 +71,7 @@ uint64_t logical_size_from_table(const cudf::table_view& table, uint64_t varlen_
     }
     // Diagnostic, off unless asked for. When the Rust cross-check in
     // `gpu_node_executor` disagrees, it can name the Arrow schema but not the types
-    // cuDF actually materialized — and that gap is the whole finding (#154, #41).
+    // cuDF actually materialized — and that gap is the whole finding (#195, #41).
     // Printing the device side turns "the totals differ by N" into "column i came back
     // as type T". Correlate with the assertion by (rows, varlen, total).
     static const bool log_cols = std::getenv("PEACOCK_LOG_LOGICAL_BYTES") != nullptr;

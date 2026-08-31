@@ -267,11 +267,11 @@ impl NodeExecutor for GpuNodeExecutor {
             // two implementations of one byte rule can only be compared when both cost
             // the same columns. Legitimate shape divergences: a grouping-set/ROLLUP
             // Partial AVG emits one MEAN where DataFusion declares `[count]`+`[sum]`,
-            // `__grouping_id` is built INT32 against a declared UInt8 (#155), and a union
+            // `__grouping_id` is built INT32 against a declared UInt8 (#196), and a union
             // branch holds a decimal literal as FLOAT64 until `execute_union` retypes it
             // (#41). None can arise on the bare-cuDF sf40 path this protects, so skipping
             // them costs the calibration nothing. Flag set by `types_match_declared`
-            // (execute_plan.cpp); the one such divergence that was a real bug is #154.
+            // (execute_plan.cpp); the one such divergence that was a real bug is #195.
             if st.schema_faithful != 0 {
                 debug_assert_eq!(
                     st.logical_bytes as usize,

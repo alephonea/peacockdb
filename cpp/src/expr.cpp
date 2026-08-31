@@ -660,7 +660,7 @@ static std::unique_ptr<cudf::column> build_column_scalar_fn(
     else if (field == "SECOND")  comp = cudf::datetime::datetime_component::SECOND;
     else throw std::runtime_error("date_part: unsupported field " + field);
     auto ts = build_column(args->Get(1), table);
-    // #154: cuDF extracts components as INT16, DataFusion types date_part as Int32.
+    // #195: cuDF extracts components as INT16, DataFusion types date_part as Int32.
     // Cast so the materialized column matches the plan's declared output_schema —
     // values fit either way, but a batch whose schema disagrees with
     // ExecutionPlan::schema() breaks the contract the moment it reaches a CPU operator.
