@@ -12,25 +12,27 @@
 
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::error::Result as DfResult;
 use datafusion::physical_plan::ExecutionPlan;
 
 use crate::executors::executor::{NodeMemoryStats, PartitionStat};
-use crate::executors::node_by_node::NodeExecutor;
+use crate::executors::node_by_node::{NodeExecutor, RegionTimes};
 
 use arrow::ipc::reader::StreamReader;
 use datafusion::error::DataFusionError;
 
 use peacockdb_ffi::raw::{
-    peacock_executor_begin_plan, peacock_executor_collect_node_times, peacock_executor_end_plan,
+    peacock_executor_begin_plan, peacock_executor_collect_node_regions, peacock_executor_end_plan,
     peacock_executor_execute_node, peacock_handle_release, peacock_install_rmm_pool,
     peacock_last_error, peacock_result_free, peacock_result_from_handle,
-    peacock_measure_timing_floor_us, peacock_set_node_timing, peacock_set_nvtx_ranges,
+    peacock_measure_timing_floor_us, peacock_nvtx_pop_range, peacock_nvtx_push_range,
+    peacock_set_node_timing, peacock_set_nvtx_ranges,
     PeacockExecutor,
-    PeacockNodeDeviceTime, PeacockNodeStats, PeacockRmmPoolInfo, PEACOCK_NODE_TIMING_EVENTS,
-    PEACOCK_NODE_TIMING_OFF, PEACOCK_NODE_TIMING_SYNC, PEACOCK_RMM_POOL_INSTALLED,
+    PeacockNodeRegion, PeacockNodeStats, PeacockRmmPoolInfo, PEACOCK_NODE_TIMING_EVENTS,
+    PEACOCK_NODE_TIMING_OFF, PEACOCK_RMM_POOL_INSTALLED,
 };
 
 use crate::cpu_executor::logical_size_from_schema;
@@ -105,36 +107,43 @@ pub fn install_rmm_pool() -> RmmPool {
     }
 }
 
-/// How per-node GPU regions are measured. `Off` by default, because neither mode
-/// is free and one of them changes how the engine SCHEDULES.
+/// How per-node GPU regions are measured. `Off` by default, because measuring is not
+/// free.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum NodeTiming {
     /// No measurement. Every timing field stays 0.
     #[default]
     Off,
-    /// Host clock per region, closed by a `cudaStreamSynchronize` into
-    /// [`PartitionStat::host_submit_us`]. The sync serializes what cuDF would pipeline,
-    /// so measuring changes what is measured. Kept as the baseline for `Events`.
-    Sync,
     /// CUDA events around the device work, host clock around the host work, no sync
-    /// inside the region. Device numbers arrive via `collect_device_times` after the
+    /// inside the region. Device numbers arrive via `collect_regions` after the
     /// root materialize, into [`PartitionStat::device_us`].
     Events,
 }
 
 /// Select the per-node GPU timing mode (process-global, [`NodeTiming::Off`] by default).
 ///
-/// Why it is opt-in in either mode, and why the split into host setup / host submit /
-/// device exists, is argued once on `set_node_timing` and `mark_device_start` in
+/// Why it is opt-in, and why the split into host setup / host submit / device exists, is
+/// argued once on `set_node_timing` and `mark_device_start` in
 /// `cpp/src/plan_executor.h`. The GPU suite runs `--test-threads=1` (cuDF/RMM share one
 /// process-wide pool), so the global needs no cross-test guard.
 pub fn set_node_timing(mode: NodeTiming) {
     let raw = match mode {
         NodeTiming::Off => PEACOCK_NODE_TIMING_OFF,
-        NodeTiming::Sync => PEACOCK_NODE_TIMING_SYNC,
         NodeTiming::Events => PEACOCK_NODE_TIMING_EVENTS,
     };
+    MEASURING.store(mode != NodeTiming::Off, Ordering::Relaxed);
     unsafe { peacock_set_node_timing(raw) };
+}
+
+/// The mode the setter last selected, so this side can ask without crossing the FFI on
+/// every call. A mirror rather than a getter: the setter above is the only way the C++
+/// global moves, and the two cannot disagree without going around it.
+static MEASURING: AtomicBool = AtomicBool::new(false);
+
+/// Whether the run is measured. What arms the per-call bookkeeping that only a measured
+/// run has any use for.
+pub fn node_timing_on() -> bool {
+    MEASURING.load(Ordering::Relaxed)
 }
 
 /// Emit NVTX ranges around plan nodes and their output partitions (process-global, off
@@ -147,19 +156,50 @@ pub fn set_nvtx_ranges(on: bool) {
     unsafe { peacock_set_nvtx_ranges(i32::from(on)) };
 }
 
-/// Microseconds the measurement costs under [`NodeTiming::Sync`]: that mode's timed
-/// region around no work at all.
+/// A named NVTX range around whatever the caller is about to do, closed when the returned
+/// value drops.
 ///
-/// The resolution floor of every sync-mode time here. A node's number is its real work
-/// plus one of these, so a node at or below the floor is not cheap but unresolvable, and
-/// the two are indistinguishable unless the floor is printed beside them —
-/// `bench_stats_str` writes it into each record as `sync_floor_us`.
+/// For a benchmark harness naming the case it runs. Node ranges carry `<seq>.<call_index>`
+/// and seq numbering restarts with every plan, so a capture of several queries cannot say
+/// from those names which query a call was in; this range answers it by containment, and
+/// the reader stops needing to be told the query on its command line.
+///
+/// RAII rather than a pop the caller must remember: a case that panics mid-run would
+/// otherwise leave the range open and swallow every case after it into the wrong query.
+///
+/// A no-op while ranges are off, and nothing in the engine calls it — a shipping query
+/// pays nothing here because it never arrives.
+#[must_use = "the range closes when this is dropped, so dropping it at once ranges nothing"]
+pub fn nvtx_range(name: &str) -> NvtxRange {
+    // Interior NUL is not an error worth a Result: the name is built by the harness from
+    // its own case identifiers, and a NUL in one of those is a bug in the harness. The
+    // range is simply not opened, which shows up as a capture missing a level.
+    if let Ok(owned) = std::ffi::CString::new(name) {
+        unsafe { peacock_nvtx_push_range(owned.as_ptr()) };
+    }
+    NvtxRange(())
+}
+
+/// Closes the range [`nvtx_range`] opened.
+pub struct NvtxRange(());
+
+impl Drop for NvtxRange {
+    fn drop(&mut self) {
+        unsafe { peacock_nvtx_pop_range() };
+    }
+}
+
+/// Microseconds the measurement costs: a timed region around no work at all.
+///
+/// The resolution floor of every node time here. A node's number is its real work plus
+/// one of these, so a node at or below the floor is not cheap but unresolvable, and the
+/// two are indistinguishable unless the floor is printed beside them.
 ///
 /// Do not subtract it: node measurements vary by more than the floor itself, so
 /// subtracting manufactures zeros and clamped noise, hiding what reporting it exposes.
 ///
-/// Requires a live CUDA context (construct a `GpuExecutor` first) and an idle default
-/// stream. Returns 0 on CUDA error — self-announcing, since it is never actually free.
+/// Requires a live CUDA context (construct a `GpuExecutor` first). Returns 0 on CUDA
+/// error — self-announcing, since it is never actually free.
 pub fn measure_timing_floor_us(samples: u32) -> u64 {
     unsafe { peacock_measure_timing_floor_us(samples) }
 }
@@ -260,52 +300,21 @@ impl NodeExecutor for GpuNodeExecutor {
         // Σ over partitions, matching how C++ charges shared work (the hash-scatter
         // prologue lands on partition 0). Zero unless node timing is on. No `device_us`
         // here: it is not known yet, and the driver merges it in after materialize.
-        let mut host_setup_us = 0u64;
-        let mut host_submit_us = 0u64;
         let mut part_stats: Vec<PartitionStat> = Vec::with_capacity(n);
         for (k, st) in out_stats[..n].iter().enumerate() {
             let rp = st.rows as usize;
             let bp = logical_size_from_schema(&schema, rp, st.varlen_content_bytes as usize);
-            // C++ reconstructs the same total from cuDF types. Unused — `bp`
-            // is — but it must agree: the bare-cuDF sf40 tests never enter Rust and
-            // report THEIR number, so if the two ends count bytes differently, every
-            // coefficient fitted across both is wrong by an undetectable factor.
-            //
-            // Debug-only: `[profile.benchmarks]` inherits release, so the measured path
-            // pays nothing while every `cargo test` GPU run checks the whole corpus.
-            //
-            // Gated on the device having materialized the types the node DECLARES —
-            // two implementations of one byte rule can only be compared when both cost
-            // the same columns. Legitimate shape divergences: a grouping-set/ROLLUP
-            // Partial AVG emits one MEAN where DataFusion declares `[count]`+`[sum]`,
-            // `__grouping_id` is built INT32 against a declared UInt8 (#196), and a union
-            // branch holds a decimal literal as FLOAT64 until `execute_union` retypes it
-            // (#41). None can arise on the bare-cuDF sf40 path this protects, so skipping
-            // them costs the calibration nothing. Flag set by `types_match_declared`
-            // (execute_plan.cpp); the one such divergence that was a real bug is #195.
-            if st.schema_faithful != 0 {
-                debug_assert_eq!(
-                    st.logical_bytes as usize,
-                    bp,
-                    "{} partition {k}: C++ logical_bytes={} != Rust logical_size_from_schema={bp} \
-                     (rows={rp}, varlen={}); schema={:?}",
-                    node.name(),
-                    st.logical_bytes,
-                    st.varlen_content_bytes,
-                    schema,
-                );
-            }
             rows += rp;
             output_bytes += bp;
             max_batch_rows = max_batch_rows.max(rp);
-            host_setup_us += st.host_setup_us;
-            host_submit_us += st.host_submit_us;
+            // Times are zero here and filled by the collection: none of them crosses the
+            // FFI per call any more — see `collect_regions`.
             part_stats.push(PartitionStat {
                 out_rows: rp,
                 out_bytes: bp,
                 row_groups: scan_map.get(k).map(|e| e.row_groups.clone()).unwrap_or_default(),
-                host_setup_us: st.host_setup_us,
-                host_submit_us: st.host_submit_us,
+                host_setup_us: 0,
+                host_submit_us: 0,
                 device_us: 0,
             });
         }
@@ -317,8 +326,8 @@ impl NodeExecutor for GpuNodeExecutor {
             max_batch_rows,
             // Only N>1 carries sub-lines (matches the CPU golden's N==1 ⇒ none).
             part_stats: if n > 1 { part_stats } else { Vec::new() },
-            host_setup_us,
-            host_submit_us,
+            host_setup_us: 0,
+            host_submit_us: 0,
             device_us: 0,
         };
         Ok((out_handles, stat))
@@ -362,16 +371,16 @@ impl NodeExecutor for GpuNodeExecutor {
         }
     }
 
-    async fn collect_device_times(&mut self) -> DfResult<Vec<(usize, usize, u64)>> {
+    async fn collect_regions(&mut self) -> DfResult<Vec<RegionTimes>> {
         // One entry per (node, output partition) that recorded both events, so
         // nodes × OUT_CAP is the exact upper bound. C++ reports how many it HAD, not how
         // many fit, and fails if that exceeds `cap` — an under-sized buffer surfaces as
         // an error rather than as a device that quietly did less work.
         let cap = self.node_count * OUT_CAP;
-        let mut buf = vec![PeacockNodeDeviceTime::default(); cap];
+        let mut buf = vec![PeacockNodeRegion::default(); cap];
         let mut count: u64 = 0;
         let rc = unsafe {
-            peacock_executor_collect_node_times(
+            peacock_executor_collect_node_regions(
                 self.executor,
                 buf.as_mut_ptr(),
                 cap as u64,
@@ -379,11 +388,19 @@ impl NodeExecutor for GpuNodeExecutor {
             )
         };
         if rc != 0 {
-            return Err(last_error(self.executor, "peacock_executor_collect_node_times"));
+            return Err(last_error(self.executor, "peacock_executor_collect_node_regions"));
         }
         Ok(buf[..count as usize]
             .iter()
-            .map(|t| (t.seq as usize, t.partition as usize, t.device_us))
+            .map(|r| RegionTimes {
+                seq: r.seq as usize,
+                partition: r.partition as usize,
+                host_setup_us: r.host_setup_us,
+                host_submit_us: r.host_submit_us,
+                device_us: r.device_us,
+                logical_bytes: r.logical_bytes,
+                schema_faithful: r.schema_faithful,
+            })
             .collect())
     }
 }
