@@ -6,7 +6,7 @@ anchor that the cost widget links to. Device labels are `tp<N>-<tier>` (micro=10
 mini=2GiB, standard=12GiB).
 
 A ticket carries a **Priority** line only when it is not medium; medium is the default.
-New tickets take the next free number (currently 195), which is also the counter for
+New tickets take the next free number (currently 198), which is also the counter for
 `tasks/bp-tickets.md` — the rollout's own list, separate file, one ID space. Finished and lapsed tickets move to
 `llm-wiki/archive/archived-tickets.md` (Done / Stale) — numbers are never reused, so an old
 reference still resolves there.
@@ -15,7 +15,7 @@ reference still resolves there.
 
 | Section | Open | Tickets |
 |---|--:|---|
-| [Critical correctness](#critical-correctness) | 15 | #166 #153 #80 #59 #46 #47 #60 #121 #122 #123 #118 #119 #120 #117 #41 |
+| [Critical correctness](#critical-correctness) | 16 | #166 #153 #80 #59 #46 #47 #60 #121 #122 #123 #118 #119 #120 #117 #41 #196 |
 | [Blockers for disabled coverage](#blockers-for-disabled-coverage) | 19 | #169 #168 #158 #175 #173 #97 #23 #32 #65 #62 #91 #95 #57 #45 #63 #56 #55 #96 #143 |
 | [Performance / architecture](#performance--architecture) | 28 | #179 #177 #170 #155 #154 #152 #150 #149 #148 #19 #16 #20 #71 #101 #73 #110 #75 #136 #137 #138 #139 #140 #141 #147 #146 #145 #144 #142 |
 | [Infrastructure / process](#infrastructure--process) | 27 | #178 #176 #174 #167 #164 #163 #159 #160 #161 #162 #113 #114 #116 #126 #134 #133 #132 #131 #130 #129 #128 #127 #125 #13 #94 #69 #49 |
@@ -158,6 +158,30 @@ types, and if that shape changes the cast becomes untested silently, which is th
 ticket was filed to end. (tpch q5 is irrelevant — its plan has no `GpuUnionExec`.) Fix: a
 focused gtest building a two-branch union with FLOAT64 against DECIMAL128, asserting the
 concatenate succeeds with the declared type. Cheap, and independent of any corpus query.
+
+<a id="t196"></a>
+### #196 — __grouping_id is built INT32 against a width DataFusion picks per plan
+`execute_aggregate` synthesizes the grouping-set discriminator with
+`cudf::numeric_scalar<int32_t>` (`cpp/src/operators/aggregate.cpp` ~L408). DataFusion sizes
+that column to the group count — `Aggregate::grouping_id_type` gives UInt8 for ≤8 grouping
+expressions, UInt16 for ≤16, UInt32 for ≤32, UInt64 beyond. The id is a bitmask, one bit per
+grouping expression (`gid |= (1 << i)`), so that ladder is bits and not magnitude. The
+hardcoded INT32 is therefore not merely a width mismatch, it is wrong in both directions: too
+wide for every corpus query (all are ≤8 groups, declared UInt8), and too narrow for a plan
+with more than 32.
+
+Same shape as #195 (archived, fixed) and unnoticed for the same reasons — the ids are tiny,
+the goldens compare printed text, and `materialize` accepts whatever schema the IPC stream
+declares. Visible on tpcds q18/q22/q80, and only because the byte cross-check asks about
+produced types. The >32-group case is the one that is not merely cosmetic, but no corpus query
+reaches it.
+
+Not fixed: unlike #195 the correct width is not a constant, so the fix has to read the
+declared `output_schema` (or count grouping expressions) rather than pick a type. Excluded
+from the byte cross-check meanwhile — `NodeStats::schema_faithful`
+(`cpp/src/execute_plan.cpp`, `types_match_declared`) reports 0 for these nodes and the
+assertion skips them. Grouping sets cannot arise on the bare-cuDF sf40 path, so the
+calibration is unaffected.
 
 ## Blockers for disabled coverage
 
