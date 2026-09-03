@@ -31,18 +31,28 @@
 #   PCK_TEST_FILTER=bench_tpch_sf1_q1 ./scripts/build-test-shadgpu.sh --run-benchmarks
 #
 # BENCHMARK OUTPUT
-#   testdata/benchmark-results/<dataset>.sf<sf>/<query>.<label>.benchmark.txt
-# where <label> is the <mode>-<tp>-<tier> component the .cpu.txt goldens carry.
-# Written on the GPU host and copied back by --pull-benchmarks; llm-wiki/build-test.md
-# has the file format.
+#   testdata/benchmark-results/<dataset>.sf<sf>/<mode>.benchmark.txt
+# one file per (dataset, mode), holding a section per query timed at that mode. A run
+# with no filter times every declared mode, and each mode's sections land in its own
+# file — the modes do not share one. Written on the GPU host and copied back by
+# --pull-benchmarks; llm-wiki/build-test.md has the file format.
 #
 #   testdata/calibration/records.tsv        (git-ignored)
-# The same run also emits calibration rows, one per timed region. Unconditionally
+# The same run also emits calibration rows, one per cuDF CALL. Unconditionally
 # rather than behind a flag: the rows are derived from the run that wrote the tree
 # above, and a flag someone has to remember is a way for the two to silently
 # disagree about which measurement they describe. Truncated at the start of every
 # run -- one file per run is what a fit reads, and appending across runs would mix
-# build profiles and allocators under one header.
+# build profiles and allocators under one header. One file for every mode: `mode`
+# is a column, and what must not mix is the CONDITIONS, which the `# run:` heading
+# holds and record.rs refuses to merge across.
+#
+#   testdata/calibration/records-hbm.tsv    (PCK_BENCH_HBM only)
+#   testdata/calibration/capture-hbm.sqlite
+# The HBM pass's pair, and deliberately not the files above. Its times are measured
+# under GPU memory counters that cost the query ~7%, so it is read for TRAFFIC and
+# never for microseconds; nsys_hbm.py joins the two into hbm.tsv, whose tuple then
+# joins onto the clean records.tsv. That pass also writes no .benchmark.txt at all.
 
 # pipefail so a failing cargo in stage_cargo_test_binary's pipeline reports as a build
 # failure, not a missing binary. The remote scripts do not inherit it: see launch_remote.
@@ -65,6 +75,17 @@ BENCH_RECORD_REL=calibration/records.tsv
 # Only the export travels: the .nsys-rep is the profiler's own format and is tens of
 # times the size, and nothing on this side reads it.
 BENCH_CAPTURE_REL=calibration/capture
+# What the trace capture is turned into, here rather than on the host: the reader is a
+# local script reading local goldens, and the capture comes home anyway.
+BENCH_CALLS_REL=calibration/calls.tsv
+# Goldens the recipes cross-check reads. sf1 because that is where plan goldens live —
+# a plan's recipes are its shape and do not depend on how much data it reads.
+BENCH_PLANS_DIR=testdata/goldens/tpch.sf1
+# The HBM pass writes BOTH of these, and neither may be the clean pass's. Its capture is
+# a different nsys mode; its record holds the same rows measured ~7% slow, so it exists
+# to be read for TRAFFIC and never for time.
+BENCH_HBM_CAPTURE_REL=calibration/capture-hbm
+BENCH_HBM_RECORD_REL=calibration/records-hbm.tsv
 # opt-3: the default test profile leaves workspace crates at opt-level 1 and so measures
 # a host overhead that is not the engine's. See `[profile.benchmarks]` in Cargo.toml.
 BENCH_PROFILE=benchmarks
@@ -110,6 +131,11 @@ Knobs read from the environment, not flags:
   PCK_TEST_FILTER=<sub>       cargo-test name filter forwarded to the rust binaries
   PCK_BENCH_NSYS=1            --run-benchmarks captures under nsys (see the note at
                               PCK_BENCH_NSYS in this file)
+  PCK_BENCH_HBM=1             a SECOND pass under GPU memory counters, its own capture
+                              and its own record. PCK_BENCH_HBM_FILTER narrows it (it
+                              falls back to PCK_TEST_FILTER); unset means every case
+  PCK_BENCH_HBM_SET=<set>     nsys metric set for the device (default gh100)
+  PCK_BENCH_HBM_FREQ=<Hz>     counter sampling rate (default 20000)
   --all                       = --build --push-binaries --patch --run
 
 --all deliberately does NOT imply the benchmark phases: that is what keeps a
@@ -399,6 +425,18 @@ filter_q=$(printf '%q' "$PCK_TEST_FILTER")
 # traces, so the times in the .benchmark.txt of a captured run are not comparable with
 # any other. Something a caller has to type is the right shape for that.
 : "${PCK_BENCH_NSYS:=}"
+: "${PCK_BENCH_HBM:=}"
+# Which case the HBM pass runs. Falls back to the run's own filter, so the common form
+# is one variable: PCK_TEST_FILTER=<case> PCK_BENCH_HBM=1.
+: "${PCK_BENCH_HBM_FILTER:=${PCK_TEST_FILTER:-}}"
+# Device index, metric set and sampling rate for the counters. The set is a property of
+# the ARCHITECTURE — nsys numbers its metrics differently per set, which is why
+# nsys_hbm.py looks its ids up by name rather than assuming them.
+: "${PCK_BENCH_HBM_DEVICE:=0}"
+: "${PCK_BENCH_HBM_SET:=gh100}"
+: "${PCK_BENCH_HBM_FREQ:=20000}"
+# After the default above, which reads PCK_TEST_FILTER.
+hbm_filter_q=$(printf '%q' "$PCK_BENCH_HBM_FILTER")
 
 # --- run: the correctness gate ------------------------------------------------
 # Knobs, set in the caller's env rather than as flags:
@@ -427,7 +465,7 @@ remote_gate_script() {
     # runner deliberately does not export its equivalent — see the reason there.
     export LD_LIBRARY_PATH=$REMOTE_REPO/cpp/install/lib:/usr/local/cuda-12.5/compat:/home/info/glibc-2.35/lib:\$HOME/miniforge3/envs/rapids-cuda-12.2/lib:\$LD_LIBRARY_PATH
 
-    # Deliberately no `set -e`, matching CI: run every binary even after one fails and
+    # Deliberately no \`set -e\`, matching CI: run every binary even after one fails and
     # OR the codes into rc. Under set -e a SIGSEGV in one GPU binary cost us every
     # later result, which read as "not run" but looked like "fine".
     rc=0
@@ -598,52 +636,161 @@ remote_bench_script() {
     #
     # Exported to sqlite here, on the machine that wrote it: nsys export needs the same
     # nsys that captured, and only the export is small enough to want on the wire.
+    # Filters as variables of the REMOTE shell, assigned from text this heredoc expands.
+    # `printf %q ""` is two quote CHARACTERS, and the difference between them being shell
+    # syntax and being data decides everything: assigned here, the remote shell reads
+    # them and the variable is empty; passed as a string through a function argument they
+    # survive as an argument `''`, which libtest matches against every test name and
+    # filters all nine out. That is exactly how the main pass of the first end-to-end run
+    # measured nothing and said "0 passed" where a green run belonged.
+    main_filter=$filter_q
+    hbm_filter=$hbm_filter_q
+
+    # One invocation of the binary, with nsys wrapped around it or not.
+    #
+    # Output goes to the terminal AND to \$blog, which the checks below read: libtest's
+    # own "test result: N passed" is the only honest answer to "did the filter match
+    # anything", and counting files that appeared is not the same question.
+    #
+    # \`env\` between nsys and the binary, not LD_LIBRARY_PATH in front of nsys: the path
+    # carries glibc-2.35, and nsys is a host binary that would load it under the host's
+    # own loader and die — the same trap the bench_ld comment above describes. env
+    # inherits an untouched environment and sets the variable for its child alone.
+    #
+    # --test-threads=1 is not optional: cuDF/RMM share one process-wide pool and one
+    # default stream, so concurrent cases would measure each other's contention.
+    bench_run() {
+      local label=\$1 filter=\$2; shift 2
+      blog=/tmp/$BENCH_TARGET.\$label.log
+      if [ \$# -eq 0 ]; then
+        LD_LIBRARY_PATH="\$bench_ld:\${LD_LIBRARY_PATH:-}" \\
+          "\$bin" --nocapture --test-threads=1 \$filter 2>&1 | tee "\$blog"
+      else
+        "\$@" env LD_LIBRARY_PATH="\$bench_ld:\${LD_LIBRARY_PATH:-}" \\
+          "\$bin" --nocapture --test-threads=1 \$filter 2>&1 | tee "\$blog"
+      fi
+      return \${PIPESTATUS[0]}
+    }
+
+    # Red on "the filter matched nothing", NOT on "no .benchmark.txt appeared". The
+    # binary carries non-device tests of its own -- the record's switch, the section
+    # merge -- and a filter naming one of them runs, passes, and writes no tree file.
+    # Failing that is a red banner for a run that did exactly what was asked, which is
+    # how people learn to ignore the banner (the gate's \`rzero\` says the same).
+    #
+    # Per pass and immediately after it, not once at the end: two passes share nothing
+    # but the binary, and a check reading whichever log was written last would have let
+    # a main pass that ran nothing through on the strength of the HBM pass's one test.
+    # It did, once.
+    ran_check() {
+      local label=\$1 filter=\$2
+      local n
+      n=\$(sed -n 's/^test result:.* \([0-9][0-9]*\) passed.*/\1/p' \\
+            "/tmp/$BENCH_TARGET.\$label.log" | awk '{n += \$1} END {print n + 0}')
+      if [ "\$n" -eq 0 ]; then
+        echo "!!! the \$label pass ran no tests (filter '\$filter' matched nothing?)"
+        exit 1
+      fi
+      echo "==> the \$label pass ran \$n tests"
+    }
+
+    # Exported even after a failed run: a capture of the executions that did happen is
+    # still the only copy of them, and re-running to get one costs the whole run again.
+    # Exported here, on the machine that wrote it — nsys export needs the same nsys that
+    # captured, and only the export is small enough to want on the wire.
+    export_capture() {
+      nsys export --type=sqlite --force-overwrite=true -o "\$1.sqlite" "\$1.nsys-rep" || true
+      ls -l "\$1.nsys-rep" "\$1.sqlite" 2>/dev/null || true
+    }
+
+    fresh_capture() {
+      mkdir -p "\$(dirname "\$1")"
+      rm -f "\$1.nsys-rep" "\$1.sqlite"
+    }
+
     capture=""
     if [ -n "$PCK_BENCH_NSYS" ]; then
       capture=\$PEACOCK_TESTDATA_DIR/$BENCH_CAPTURE_REL
-      mkdir -p "\$(dirname "\$capture")"
-      rm -f "\$capture.nsys-rep" "\$capture.sqlite"
+      fresh_capture "\$capture"
       export PEACOCK_NVTX=1
       echo "==> capturing to \$capture.nsys-rep"
     fi
 
-    # --test-threads=1 is not optional: cuDF/RMM share one process-wide pool and one
-    # default stream, so concurrent cases would measure each other's contention.
     echo "==> $BENCH_TARGET (filter=$filter_q)"
     if [ -n "\$capture" ]; then
-      # `env` between nsys and the binary, not LD_LIBRARY_PATH in front of nsys: the
-      # path carries glibc-2.35, and nsys is a host binary that would load it under the
-      # host's own loader and die — the same trap the bench_ld comment above describes.
-      # env inherits an untouched environment and sets the variable for its child alone.
-      nsys profile --trace=nvtx,cuda --sample=none --cpuctxsw=none \\
-                   --force-overwrite=true -o "\$capture" \\
-        env LD_LIBRARY_PATH="\$bench_ld:\${LD_LIBRARY_PATH:-}" \\
-          "\$bin" --nocapture --test-threads=1 $filter_q
+      # --trace=nvtx,cuda and nothing else: no --sample (the CPU profiler's SIGPROF
+      # interrupts the very host spans the ranges measure) and no --gpu-metrics-device
+      # — that is the SECOND pass below, and combining them would change what is being
+      # measured twice over.
+      bench_run main "\$main_filter" \\
+        nsys profile --trace=nvtx,cuda --sample=none --cpuctxsw=none \\
+                     --force-overwrite=true -o "\$capture"
       status=\$?
-      # Even after a failed run: a capture of the executions that did happen is still
-      # the only copy of them, and re-running to get one costs the whole run again.
-      nsys export --type=sqlite --force-overwrite=true \\
-                  -o "\$capture.sqlite" "\$capture.nsys-rep" || true
-      ls -l "\$capture.nsys-rep" "\$capture.sqlite" 2>/dev/null || true
+      export_capture "\$capture"
     else
-      LD_LIBRARY_PATH="\$bench_ld:\${LD_LIBRARY_PATH:-}" \\
-        "\$bin" --nocapture --test-threads=1 $filter_q
+      bench_run main "\$main_filter"
       status=\$?
     fi
-
+    if [ "\$status" -ne 0 ]; then
+      echo "!!! $BENCH_TARGET FAILED (exit \$status)"
+      exit "\$status"
+    fi
+    ran_check main "\$main_filter"
     written=\$(find "\$results" -name '*.benchmark.txt' -newer "\$stamp" | wc -l)
     total=\$(find "\$results" -name '*.benchmark.txt' | wc -l)
     rm -f "\$stamp"
     echo "==> benchmark records written by this run: \$written (on host: \$total)"
     echo "==> calibration rows: \$(grep -vc '^#' "\$PEACOCK_RECORD_PATH" 2>/dev/null || echo 0)"
-    if [ "\$status" -ne 0 ]; then
-      echo "!!! $BENCH_TARGET FAILED (exit \$status)"
-      exit "\$status"
-    fi
+    # Not a failure: see ran_check. The main pass having run tests is already established.
     if [ "\$written" -eq 0 ]; then
-      echo "!!! this run wrote no records (filter $filter_q matched nothing?)"
-      exit 1
+      echo "==> no .benchmark.txt written: none of the tests that ran times a case"
     fi
+
+    # ── the HBM pass ───────────────────────────────────────────────────────────
+    # A SECOND run of the same cases under GPU memory counters. Separate rather than one
+    # capture with more flags, and it is not a preference:
+    #
+    #   - the counters cost what they measure. A capture with them on runs the query ~7%
+    #     slow and a heavy scan ~11%, so its times are not the times, and its record is
+    #     written to its OWN file for that reason alone. Nothing downstream should ever
+    #     read a microsecond out of it.
+    #   - the traffic is what it carries, and traffic does not care that the run was
+    #     slower. It joins onto the clean run's rows by the tuple, which is the whole
+    #     reason the record carries a tuple rather than a node number.
+    #
+    # ANY NUMBER OF CASES. The harness wraps each in a named NVTX range, so the capture
+    # says which query a call was in and \`nsys_hbm.py\` reads it rather than being told.
+    # PCK_BENCH_HBM_FILTER therefore narrows the pass for TIME — a capture under memory
+    # counters is minutes and gigabytes at sf40 — and no longer for correctness.
+    if [ -n "$PCK_BENCH_HBM" ]; then
+      hbm_capture=\$PEACOCK_TESTDATA_DIR/$BENCH_HBM_CAPTURE_REL
+      fresh_capture "\$hbm_capture"
+      export PEACOCK_NVTX=1
+      export PEACOCK_RECORD_PATH=\$PEACOCK_TESTDATA_DIR/$BENCH_HBM_RECORD_REL
+      rm -f "\$PEACOCK_RECORD_PATH"
+      # The tree file is the clean pass's. This pass would overwrite each section with
+      # times taken under the counters — the one number in it that is knowingly wrong.
+      export PEACOCK_BENCHMARK_RESULTS_RO=1
+      echo "==> HBM pass (filter=\$hbm_filter) to \$hbm_capture.nsys-rep"
+      # --gpu-metrics-frequency is part of the measurement, not a display detail: too
+      # high and the device cannot sustain the sampling, which nsys_hbm.py refuses by
+      # the >100%-of-peak check rather than reporting quietly wrong bytes.
+      bench_run hbm "\$hbm_filter" \\
+        nsys profile --trace=nvtx,cuda --sample=none --cpuctxsw=none \\
+                     --gpu-metrics-device=$PCK_BENCH_HBM_DEVICE \\
+                     --gpu-metrics-set=$PCK_BENCH_HBM_SET \\
+                     --gpu-metrics-frequency=$PCK_BENCH_HBM_FREQ \\
+                     --force-overwrite=true -o "\$hbm_capture"
+      hbm_status=\$?
+      export_capture "\$hbm_capture"
+      echo "==> HBM calibration rows: \$(grep -vc '^#' "\$PEACOCK_RECORD_PATH" 2>/dev/null || echo 0)"
+      if [ "\$hbm_status" -ne 0 ]; then
+        echo "!!! $BENCH_TARGET FAILED under GPU metrics (exit \$hbm_status)"
+        exit "\$hbm_status"
+      fi
+      ran_check hbm "\$hbm_filter"
+    fi
+
 EOF
 }
 
@@ -707,31 +854,92 @@ EOF
   # rides home on every later pull.
   resilient_rsync -r "$REMOTE:$REMOTE_REPO/testdata/benchmark-results/" testdata/benchmark-results/
   echo "==> fetched $(find testdata/benchmark-results -name '*.benchmark.txt' | wc -l) benchmark records"
-  # The calibration file, if the run that wrote it was recent enough to have one.
-  # Missing is not an error: --pull-benchmarks is also the recovery path for a run
-  # from before this existed, and for one that died before its first record. Tested
-  # over ssh rather than by letting the transfer fail -- resilient_rsync retries a
-  # missing source a hundred times before giving up, and eight minutes of backoff is
-  # not how "there is no record" should read.
-  if ssh "$REMOTE" test -f "$REMOTE_REPO/testdata/$BENCH_RECORD_REL"; then
-    mkdir -p "testdata/$(dirname "$BENCH_RECORD_REL")"
-    resilient_rsync "$REMOTE:$REMOTE_REPO/testdata/$BENCH_RECORD_REL" \
-      "testdata/$BENCH_RECORD_REL"
-    echo "==> fetched $(grep -vc '^#' "testdata/$BENCH_RECORD_REL") calibration rows"
-  else
-    echo "==> no calibration record on the host (a run from before it was emitted?)"
+  # The four files a run can leave beside the tree: two records and two sqlite exports,
+  # one pair per pass. Missing is not an error for any of them -- --pull-benchmarks is
+  # also the recovery path for a run from before they existed, for one that died before
+  # its first record, and for the ordinary case of a run with no capture at all.
+  #
+  # Tested over ssh rather than by letting the transfer fail: resilient_rsync retries a
+  # missing source a hundred times before giving up, and eight minutes of backoff is not
+  # how "there is no record" should read.
+  #
+  # Not the .nsys-rep beside each export -- see BENCH_CAPTURE_REL. Left on the host until
+  # the next capture overwrites it, so a pull following an ordinary run brings home the
+  # PREVIOUS capture; the file is dated by its mtime and nothing joins it to a record
+  # automatically.
+  pull_one() {                    # pull_one <relative path> <what it is>
+    local rel=$1 what=$2
+    if ! ssh "$REMOTE" test -f "$REMOTE_REPO/testdata/$rel"; then
+      echo "==> $what: nothing on the host"
+      return 0
+    fi
+    mkdir -p "testdata/$(dirname "$rel")"
+    resilient_rsync "$REMOTE:$REMOTE_REPO/testdata/$rel" "testdata/$rel"
+    case "$rel" in
+      *.tsv) echo "==> $what: $(grep -vc '^#' "testdata/$rel") rows" ;;
+      *)     echo "==> $what: $(du -h "testdata/$rel" | cut -f1)" ;;
+    esac
+  }
+  pull_one "$BENCH_RECORD_REL"            "the calibration record"
+  pull_one "$BENCH_CAPTURE_REL.sqlite"    "the trace capture"
+  pull_one "$BENCH_HBM_RECORD_REL"        "the HBM pass's record"
+  pull_one "$BENCH_HBM_CAPTURE_REL.sqlite" "the HBM capture"
+
+  # The trace capture read down to what a call splits into inside libcudf, which is a
+  # level `records.tsv` cannot hold: one ABI call is several libcudf calls, and a hash
+  # join's build, probe and gather cost differently — a coefficient fitted against their
+  # sum is wrong for all three.
+  #
+  # Derived here rather than on the host and rerun on every pull: it reads a capture that
+  # is already home and goldens that are already local, costs seconds, and a derived file
+  # older than the capture beside it is exactly the kind of stale that goes unnoticed.
+  if [ -f "testdata/$BENCH_CAPTURE_REL.sqlite" ]; then
+    if python3 scripts/calibration/nsys_calls.py \
+         --capture "testdata/$BENCH_CAPTURE_REL.sqlite" \
+         --plans-dir "$BENCH_PLANS_DIR" \
+         --out "testdata/$BENCH_CALLS_REL"; then
+      echo "==> the call breakdown: $(grep -vc '^#' "testdata/$BENCH_CALLS_REL") rows"
+    else
+      # Not fatal: the records and the tree are the measurement, and this is a reading of
+      # it. A capture from before the harness pushed case ranges refuses here and says so.
+      echo "!!! the call breakdown was not produced (see above); the rest of the pull stands"
+    fi
   fi
-  # The sqlite export of a PCK_BENCH_NSYS run, on the same terms: tested over ssh, and
-  # absent is the normal case rather than a failure. Not the .nsys-rep beside it -- see
-  # BENCH_CAPTURE_REL. Left on the host until the next capture overwrites it, so a pull
-  # that follows an ordinary run brings home the previous capture; the file is dated by
-  # its mtime and nothing joins it to a record automatically.
-  if ssh "$REMOTE" test -f "$REMOTE_REPO/testdata/$BENCH_CAPTURE_REL.sqlite"; then
-    mkdir -p "testdata/$(dirname "$BENCH_CAPTURE_REL")"
-    resilient_rsync "$REMOTE:$REMOTE_REPO/testdata/$BENCH_CAPTURE_REL.sqlite" \
-      "testdata/$BENCH_CAPTURE_REL.sqlite"
-    echo "==> fetched capture $(du -h "testdata/$BENCH_CAPTURE_REL.sqlite" | cut -f1)"
+
+  # What came home that nothing here writes any more.
+  #
+  # The host tree accumulates and the pull has no --delete (see above), so a file whose
+  # naming scheme is gone rides home on EVERY later pull. That is how 128 legacy
+  # `<query>.<label>.benchmark.txt` files, deleted from the working tree, came back
+  # without a word and stayed for weeks: the deletion was never staged, and the next
+  # pull recreated them byte for byte.
+  #
+  # Told apart by shape, which is exact for this tree: a current file is
+  # `<mode>.benchmark.txt` — one dot — and every legacy one carries the query in the name
+  # too. Reported rather than deleted: what to keep is not this script's call, and a pull
+  # that quietly removed measurements would be the same silence from the other side.
+  stale=$(find testdata/benchmark-results -name '*.*.benchmark.txt' | wc -l)
+  if [ "$stale" -gt 0 ]; then
+    echo "==> $stale file(s) here match no mode this build writes — a naming scheme that"
+    echo "    is gone. They live on the host and come home on every pull; deleting them"
+    echo "    locally does not stick until the host's copies go too:"
+    find testdata/benchmark-results -name '*.*.benchmark.txt' | head -3 | sed 's/^/      /'
+    echo "      ssh $REMOTE \"find $REMOTE_REPO/testdata/benchmark-results -name '*.*.benchmark.txt' -delete\""
   fi
+
+  # What is here now, not what this pull moved. The two differ whenever a filter ran, and
+  # the question a caller has after one invocation is "do I have what the plots need" —
+  # which is about the tree, not about the transfer.
+  echo "==> what is here now:"
+  for f in $(find testdata/benchmark-results -name '*.benchmark.txt' | sort); do
+    echo "      $f ($(grep -c '^== ' "$f") queries)"
+  done
+  for rel in "$BENCH_RECORD_REL" "$BENCH_HBM_RECORD_REL" "$BENCH_CALLS_REL"; do
+    [ -f "testdata/$rel" ] && echo "      testdata/$rel ($(($(grep -vc '^#' "testdata/$rel") - 1)) rows)"
+  done
+  for rel in "$BENCH_CAPTURE_REL.sqlite" "$BENCH_HBM_CAPTURE_REL.sqlite"; do
+    [ -f "testdata/$rel" ] && echo "      testdata/$rel ($(du -h "testdata/$rel" | cut -f1))"
+  done
 fi
 
 exit "$status_rc"

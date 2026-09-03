@@ -4,7 +4,13 @@
     PCK_BENCH_NSYS=1 PCK_TEST_FILTER=bench_tpch_sf40_q9_ \
         ./scripts/build-test-shadgpu.sh --run-benchmarks --pull-benchmarks
     scripts/calibration/nsys_calls.py --capture testdata/calibration/capture.sqlite \
-        --out testdata/calibration/calls.tsv
+        --out testdata/calibration/calls.tsv \
+        --plans testdata/goldens/tpch.sf40/bp-tp1-single.plans.txt
+
+Which query a region belongs to is READ OFF THE CAPTURE: the harness wraps each case in an
+NVTX range naming it, so nothing has to be told on the command line. `--plans` is still a
+path because the goldens live where they live, and its mode selects which of the capture's
+cases it can check.
 
 The calibration record has one number per region and one input size for it. For a hash
 join that input size is the SUM over both children -- `input_for` adds every child's
@@ -57,15 +63,15 @@ import bisect
 import collections
 import sqlite3
 import statistics
+import pathlib
+import re
 import sys
 
-# NVTX_EVENTS.eventType. 59 is a push/pop range, 75 the domain's own name record.
-NVTX_PUSHPOP_RANGE = 59
-NVTX_DOMAIN_CREATE = 75
+import nvtx_names
 
-# Our own domain, and the name the region range carries. See node_session.cpp: a node
-# pushes "<seq> <PlanNodeKind>" and the per-partition timer pushes "p<k>" inside it, so
-# the pair is what a record row calls a region.
+# Our own domain. The two levels it carries, and how their names are read, are
+# `nvtx_names` — shared with `nsys_hbm.py`, which reads the same capture for a different
+# number.
 OWN_DOMAIN = "peacockdb"
 
 DEVICE_TABLES = ("CUPTI_ACTIVITY_KIND_KERNEL",
@@ -82,7 +88,7 @@ def domain_ids(conn):
         for did, name in conn.execute(
             f"""select e.domainId, coalesce(e.text, s.value) from NVTX_EVENTS e
                 left join StringIds s on s.id = e.textId
-                where e.eventType = {NVTX_DOMAIN_CREATE}"""
+                where e.eventType = {nvtx_names.DOMAIN_CREATE}"""
         )
     }
 
@@ -92,33 +98,120 @@ def ranges(conn, domain_id):
     return list(conn.execute(
         f"""select e.start, e.end, coalesce(e.text, s.value), e.globalTid
             from NVTX_EVENTS e left join StringIds s on s.id = e.textId
-            where e.eventType = {NVTX_PUSHPOP_RANGE} and e.domainId = ?
+            where e.eventType = {nvtx_names.PUSHPOP_RANGE} and e.domainId = ?
               and e.end is not null
             order by e.start""",
         (domain_id,),
     ))
 
 
-def regions(own):
-    """Our domain's ranges -> [(node_seq, node_type, partition, start, end, tid)].
+def recipe_seqs(plans_path, query):
+    """The seqs a query's `--- recipes ---` section names, as {seq: kind}.
 
-    The two levels are told apart by their names rather than by nesting depth: a node
-    range is "<seq> <Kind>" and a partition range is "p<k>". Reading the level off the
-    name and then checking containment is what catches a capture whose two levels do not
-    line up -- a partition range outside every node range means the ranges did not come
-    from the code this script thinks they did.
+    The golden is the planner's own statement of what the C++ will be asked to run, so
+    checking a capture against it answers a question the capture alone cannot: whether the
+    regions in it are the ones this plan was supposed to produce. A capture of a different
+    query, or of a plan that has since moved, looks perfectly self-consistent.
     """
-    nodes = [r for r in own if not r[2].startswith("p") or " " in r[2]]
-    parts = [r for r in own if r not in nodes]
-    starts = [n[0] for n in nodes]
+    text = pathlib.Path(plans_path).read_text()
+    marker = f"\n== {query}\n"
+    if marker not in text:
+        sys.exit(f"{plans_path} has no `== {query}` section")
+    section = text.split(marker, 1)[1].split("\n== ", 1)[0]
+    if "--- recipes ---" not in section:
+        sys.exit(f"{plans_path}: `{query}` has no recipes section")
+    recipes = section.split("--- recipes ---", 1)[1].split("--- memory ---", 1)[0]
+    # `execute_node(#4 CudfAggregate{Merge}, prior output)` -> 4, CudfAggregate. The brace
+    # payload is the recipe's own annotation and is not what a capture's range carries.
+    found = {}
+    for seq, kind in re.findall(r"execute_\w+\(#(\d+) (\w+)", recipes):
+        found[int(seq)] = kind
+    return found
+
+
+def check_against_recipes(regs, plans_path):
+    """Every seq the recipes name was driven, with the kind they name, and no others.
+
+    Which query is read off the CAPTURE, not off the command line. A plans golden holds
+    every query of one mode, so the capture's own cases select their sections — and a case
+    from another mode is skipped rather than checked against a plan it never ran from.
+    """
+    # `bp-tp1-single.plans.txt` -> `bp-tp1-single`. The mode is in the filename because
+    # that is how the goldens are laid out.
+    mode = pathlib.Path(plans_path).name.split(".plans.txt")[0]
+    by_case = collections.defaultdict(dict)
+    for case, seq, _, kind, _, _, _, _ in regs:
+        by_case[case][seq] = kind
+    checked = sorted(c for c in by_case if c[3] == mode)
+    if not checked:
+        sys.exit(
+            f"{plans_path} is mode {mode!r} and the capture holds "
+            f"{sorted({c[3] for c in by_case})} -- nothing to check it against."
+        )
+    for case in checked:
+        _check_one(by_case[case], plans_path, case[2])
+
+
+def _check_one(seen, plans_path, query):
+    declared = recipe_seqs(plans_path, query)
+
+    missing = sorted(set(declared) - set(seen))
+    extra = sorted(set(seen) - set(declared))
+    wrong = sorted((seq, declared[seq], seen[seq]) for seq in set(declared) & set(seen)
+                   if declared[seq] != seen[seq])
+    if missing or extra or wrong:
+        parts = []
+        if missing:
+            parts.append(f"declared but never driven: {missing}")
+        if extra:
+            parts.append(f"driven but not declared: {extra}")
+        if wrong:
+            parts.append("kind differs: " + ", ".join(
+                f"#{s} is {d} in the plan and {c} in the capture" for s, d, c in wrong))
+        sys.exit(f"capture does not match {query}'s recipes -- " + "; ".join(parts))
+    print(f"recipes: {len(declared)} seqs declared for {query}, all driven with the "
+          f"kinds the plan names")
+
+
+def regions(own):
+    """Our domain's ranges -> [(case, seq, call_index, kind, partition, start, end, tid)].
+
+    The three levels are told apart by their names rather than by nesting depth -- that
+    rule is `nvtx_names`. What is added here is the CONTAINMENT check, twice: a partition
+    range outside every call range of its thread, or a call outside every case range,
+    means the ranges did not come from the code this script thinks they did, and a level
+    rule alone cannot see that.
+
+    `case` is `(dataset, sf, query, mode)`, read off the harness's own range. It used to
+    be a `--query` the CALLER typed, which is the shape of every quiet mistake: a capture
+    of q19 analysed under the name q6 is self-consistent all the way down, and even its
+    seq numbers line up, because seq numbering restarts with every plan.
+    """
+    cases = [(a, b, nvtx_names.case_of(t)) for a, b, t, _ in own if nvtx_names.is_case(t)]
+    if not cases:
+        sys.exit(
+            "the capture has no case range. It predates the harness pushing one, so the "
+            "query a region belonged to cannot be recovered from it -- retake it with a "
+            "build that does."
+        )
+    calls = [r for r in own
+             if not nvtx_names.is_partition(r[2]) and not nvtx_names.is_case(r[2])]
+    parts = [r for r in own if nvtx_names.is_partition(r[2])]
+    starts = [c[0] for c in calls]
 
     out = []
     for start, end, text, tid in parts:
         i = bisect.bisect_right(starts, start) - 1
-        if i < 0 or nodes[i][1] < end or nodes[i][3] != tid:
-            sys.exit(f"partition range at {start} is inside no node range of its thread")
-        seq, kind = nodes[i][2].split(" ", 1)
-        out.append((int(seq), kind, int(text[1:]), start, end, tid))
+        if i < 0 or calls[i][1] < end or calls[i][3] != tid:
+            sys.exit(f"partition range at {start} is inside no call range of its thread")
+        case = next((c for a, b, c in cases if a <= calls[i][0] < b), None)
+        if case is None:
+            sys.exit(
+                f"call range {calls[i][2]!r} at {calls[i][0]} is inside no case range. "
+                "Every call the harness makes is inside the case it belongs to."
+            )
+        seq, call, kind = nvtx_names.call_of(calls[i][2])
+        out.append((case, seq, call, kind, nvtx_names.partition_of(text), start, end, tid))
     return out
 
 
@@ -184,6 +277,11 @@ def main():
                     help="NVTX domain to break regions down by; repeatable, "
                          "default libcudf")
     ap.add_argument("--out", required=True)
+    ap.add_argument("--plans", help="one <mode>.plans.txt to check the capture against")
+    ap.add_argument("--plans-dir",
+                    help="a goldens directory; each case's <mode>.plans.txt is found in "
+                         "it, so a capture spanning several modes checks against all of "
+                         "them without the caller listing which")
     ap.add_argument("--top", type=int, default=12,
                     help="how many calls per node to print in the summary")
     args = ap.parse_args()
@@ -219,18 +317,27 @@ def main():
     device = DeviceWork(conn)
 
     # One bucket per (region identity, call name, depth), holding a list over the
-    # executions in the capture. A list and not a running total: the capture holds the
-    # warm-up execution too, and a mean over it and the measured ones is neither.
+    # executions in the capture. A list and not a running total: executions differ by
+    # more than noise — 7% at the median and 36% at the worst, measured — and a mean
+    # hides which of them the number came from. (It used to say the warm-up was in here
+    # too; it is not, since the harness turns ranges on after it.)
     per_exec = collections.defaultdict(lambda: collections.defaultdict(
         lambda: [0, 0, 0]))  # exec key -> (call, depth) -> [count, host_ns, device_ns]
     region_span = collections.defaultdict(list)
     seen = collections.Counter()
+    by_call = collections.defaultdict(set)
     in_regions_ns = 0
 
-    for seq, kind, part, r_start, r_end, tid in regs:
+    for case, seq, call, kind, part, r_start, r_end, tid in regs:
         ident = (seq, kind, part)
+        # `run` counts occurrences across the capture; `call` is the index within one
+        # execution, which is what a record row carries. They are not the same number and
+        # must not be conflated: a benchmark opens a session per run, so the C++ counter
+        # restarts at every one of them and a seq driven once per run is call 0 ten times
+        # over. What the two together say is how many executions the capture holds.
         run = seen[ident]
         seen[ident] += 1
+        by_call[ident].add(call)
         region_span[ident].append(r_end - r_start)
         bucket = per_exec[(ident, run)]
 
@@ -298,6 +405,24 @@ def main():
             fh.write("\t".join(str(r[c]) for c in cols) + "\n")
 
     runs_seen = set(seen.values())
+    if args.plans:
+        check_against_recipes(regs, args.plans)
+    if args.plans_dir:
+        # One goldens file per mode, found rather than listed: the capture already says
+        # which modes are in it, and a caller retyping that list is the same class of
+        # mistake `--query` was. A mode with no golden is reported, not skipped — the
+        # check silently covering less than the capture is how it stops meaning anything.
+        modes = sorted({case[3] for case, *_ in regs})
+        for mode in modes:
+            path = pathlib.Path(args.plans_dir) / f"{mode}.plans.txt"
+            if not path.exists():
+                print(f"recipes: no {path} — {mode} unchecked")
+                continue
+            check_against_recipes(regs, str(path))
+
+    calls_per_exec = {len(v) for v in by_call.values()}
+    print(f"call indices per region: {sorted(calls_per_exec)} "
+          f"(1 means every execution drove each seq once)")
     print(f"{len(regs)} region ranges, {len(seen)} distinct regions, "
           f"{sorted(runs_seen)} executions each")
     if len(runs_seen) != 1:

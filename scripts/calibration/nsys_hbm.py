@@ -1,15 +1,25 @@
 #!/usr/bin/env python3
-"""hbm_bytes per timed region, from an Nsight Systems capture.
+"""hbm_bytes per timed cuDF call, from an Nsight Systems capture.
 
 The calibration record deliberately has no hbm_bytes column: nothing inside the process
-can count HBM traffic, so it comes from a profiled run and joins back on
-(query, label, node_seq). This is that join's producer.
+can count HBM traffic, so it comes from a profiled run and joins back on the record's own
+coordinates. This is that join's producer.
+
+WHY IT IS A SEPARATE RUN. The capture distorts what it measures -- +7% on a query and
++11% on a heavy scan, measured -- so the times and the traffic cannot come from one file.
+They come from two runs joined on the tuple, which is the whole reason the record carries
+a tuple rather than a node number.
 
     nsys profile --trace=nvtx,cuda --sample=none --cpuctxsw=none \
                  --gpu-metrics-device=0 --gpu-metrics-set=<arch> \
                  --gpu-metrics-frequency=20000 -o cap -- <binary>
     nsys export --type=sqlite --force-overwrite=true -o cap.sqlite cap.nsys-rep
     scripts/calibration/nsys_hbm.py --capture cap.sqlite --record run.tsv --out hbm.tsv
+
+The capture and the record given here must be from ONE run: they are joined on the
+tuple, and a call in one that is not in the other means they describe different work. Any
+number of CASES may be in that run — the harness wraps each in a named NVTX range, so the
+capture says which query a call was in rather than being told on a command line.
 
 Nsight's general metric set reports DRAM traffic as a percentage of the device's peak
 bandwidth, not as bytes, so bytes are the integral of that percentage over the sampling
@@ -36,14 +46,23 @@ import sqlite3
 import statistics
 import sys
 
+import nvtx_names
+
 # nsys metric ids within the general set. Names are checked against the capture, since a
 # different --gpu-metrics-set numbers them differently.
 DRAM_READ = "DRAM Read Bandwidth"
 DRAM_WRITE = "DRAM Write Bandwidth"
 
-# NVTX_EVENTS.eventType. 59 is a push/pop range, 75 the domain's own name record.
-NVTX_PUSHPOP_RANGE = 59
-NVTX_DOMAIN_CREATE = 75
+# The record's coordinates, in the order the output writes them. Every one of them comes
+# from the RECORD: the capture names a call `"<seq>.<call_index> <Kind>"` and nothing
+# more, so which query and which plan node that was is knowable only from the row it
+# pairs with. Listed once and used for the required-column check, the output header and
+# the row copy, so the three cannot fall out of step.
+TUPLE = (
+    "dataset", "sf", "query", "mode",
+    "node_seq", "node_type", "lane",
+    "recipe_seq", "recipe_kind", "call_index", "run_index",
+)
 
 
 def metric_id(conn, name):
@@ -53,17 +72,6 @@ def metric_id(conn, name):
     if row is None:
         have = [r[0] for r in conn.execute("select metricName from TARGET_INFO_GPU_METRICS")]
         sys.exit(f"capture has no metric {name!r}; it has {have}")
-    return row[0]
-
-
-def domain_id(conn, name):
-    row = conn.execute(
-        f"""select e.domainId from NVTX_EVENTS e left join StringIds s on s.id = e.textId
-            where e.eventType = {NVTX_DOMAIN_CREATE} and coalesce(e.text, s.value) = ?""",
-        (name,),
-    ).fetchone()
-    if row is None:
-        sys.exit(f"capture has no NVTX domain {name!r} -- was the binary run with ranges on?")
     return row[0]
 
 
@@ -121,10 +129,112 @@ def read_record(path):
             rows.append(dict(zip(names, f)))
     if names is None:
         sys.exit(f"{path} has no column line")
-    missing = [c for c in ("query", "label", "node_seq") if c not in names]
+    missing = [c for c in TUPLE if c not in names]
     if missing:
         sys.exit(f"{path} has no {missing} column; it has {names}")
     return rows
+
+
+def cases_in(ranges):
+    """The capture's case ranges, in time order: `(start, end, (dataset, sf, query, mode))`.
+
+    A capture with none is refused rather than read as one case. It came from a harness
+    from before the case range existed, and reading it as "whatever the record says" is
+    exactly the guess this level was added to remove — a q19 scan under q6's coordinates
+    is correct bytes under the wrong name, and nothing downstream can tell.
+    """
+    found = [
+        (a, b, nvtx_names.case_of(t)) for a, b, t in ranges if nvtx_names.is_case(t)
+    ]
+    if not found:
+        sys.exit(
+            "the capture has no case range. It predates the harness pushing one, so the "
+            "query a call belonged to cannot be recovered from it -- retake it with a "
+            "build that does. (Before that range existed the reader had to be TOLD the "
+            "query, which is why it is now read rather than passed.)"
+        )
+    return found
+
+
+def case_at(cases, start):
+    """Which case range contains this call, by time.
+
+    Containment rather than order: cases run one after another, but a reader that assumed
+    so would attribute every call of a crashed case to the next one.
+    """
+    for a, b, case in cases:
+        if a <= start < b:
+            return case
+    return None
+
+
+def key_calls(calls):
+    """Capture calls keyed as the record keys them: the case, then the call, then the run.
+
+    `run_index` is not in the capture and is derived here, by the rule the record's own
+    heading states: a repeat of a key is the next execution. Time order is what makes it
+    derivable, and it is the only thing about the capture's order this reads.
+
+    Deliberately NOT a pairing by position. The record is written in PLAN order — the
+    driver walks pre-order, so its first row is the root's — and the capture is in
+    execution order, where the scan comes first. The two are both complete and differently
+    sorted, and a positional pairing silently reads one as the other. The old
+    `(query, label, node_seq)` join got away with it because the legacy record happened to
+    be in execution order.
+    """
+    keyed, made = {}, {}
+    for a, b, case, (seq, call_index) in calls:
+        within = (case, seq, call_index)
+        at = made.get(within, 0)
+        made[within] = at + 1
+        keyed[case + (seq, call_index, at)] = (a, b)
+    return keyed
+
+
+def row_key(row):
+    """A record row's key, in the order `key_calls` builds the capture's."""
+    return (
+        row["dataset"], row["sf"], row["query"], row["mode"],
+        int(row["recipe_seq"]), int(row["call_index"]), int(row["run_index"]),
+    )
+
+
+def report_loss(keyed, rows, record_path):
+    """Refuse a capture and a record that do not describe the same calls, saying which.
+
+    Both directions and named rather than counted: a mismatch means the two are not one
+    run, and "77 against 70" leaves the reader guessing which end is wrong.
+
+    The failure this is really here for is the warm-up. It used to run with ranges on and
+    is never written to the record, so the capture held one execution more than the file —
+    every key present, an extra `run_index` on each. The harness now turns ranges on AFTER
+    the warm-up, and this is what says so if that stops being true.
+    """
+    want = {row_key(r) for r in rows}
+    have = set(keyed)
+    if have == want:
+        return
+
+    def runs(keys):
+        return 1 + max((k[-1] for k in keys), default=-1)
+
+    lines = ["the capture and the record do not describe the same calls."]
+    extra, missing = sorted(have - want), sorted(want - have)
+    if extra:
+        lines.append(
+            f"  {len(extra)} captured calls have no row, first {extra[0]}."
+        )
+    if missing:
+        lines.append(
+            f"  {len(missing)} rows have no captured call, first {missing[0]}."
+        )
+    lines.append(f"  {runs(have)} executions captured, {runs(want)} in {record_path}.")
+    if extra and not missing and runs(have) == runs(want) + 1:
+        lines.append(
+            "  Exactly one execution more, and every key otherwise matched: that is the "
+            "warm-up, which the record does not hold. Ranges must be turned on AFTER it."
+        )
+    sys.exit("\n".join(lines))
 
 
 def main():
@@ -142,12 +252,12 @@ def main():
     args = ap.parse_args()
 
     conn = sqlite3.connect(args.capture)
-    dom = domain_id(conn, args.domain)
+    dom = nvtx_names.domain_id(conn, args.domain)
     ranges = list(
         conn.execute(
             f"""select e.start, e.end, coalesce(e.text, s.value) from NVTX_EVENTS e
                 left join StringIds s on s.id = e.textId
-                where e.eventType = {NVTX_PUSHPOP_RANGE} and e.domainId = ?
+                where e.eventType = {nvtx_names.PUSHPOP_RANGE} and e.domainId = ?
                 order by e.start""",
             (dom,),
         )
@@ -175,11 +285,34 @@ def main():
         )
 
     rows = read_record(args.record)
-    if len(rows) != len(ranges):
+    cases = cases_in(ranges)
+    # Only the call ranges, each tagged with the case containing it. The `p<k>` ranges
+    # nested inside them are skipped rather than summed: they lie INSIDE the call range,
+    # so integrating both would count their bytes twice, and a partition is not a unit
+    # that can be priced on its own — the calls' shared prologue is charged to p0.
+    # Dropped here rather than filtered later, so every count and message below is about
+    # calls.
+    skipped = sum(1 for _, _, t in ranges if nvtx_names.is_partition(t))
+    calls = []
+    for a, b, text in ranges:
+        if nvtx_names.is_partition(text) or nvtx_names.is_case(text):
+            continue
+        case = case_at(cases, a)
+        if case is None:
+            sys.exit(
+                f"call range {text!r} at {a} is inside no case range. Every call the "
+                "harness makes is inside the case it belongs to, so one outside means "
+                "the ranges did not come from the code this script thinks they did."
+            )
+        calls.append((a, b, case, nvtx_names.call_of(text)[:2]))
+    if not calls:
         sys.exit(
-            f"{len(ranges)} NVTX ranges against {len(rows)} record rows. The two come from "
-            "one run and pair up in execution order; a mismatch means they do not."
+            f"domain {args.domain!r} has {len(ranges)} ranges and none is named "
+            '"<seq>.<call_index> <kind>" -- the capture predates the batch-partitioned '
+            "recorder, or the ranges came from somewhere else"
         )
+    keyed = key_calls(calls)
+    report_loss(keyed, rows, args.record)
 
     merged = busy_union(conn)
     starts = [m[0] for m in merged]
@@ -197,37 +330,54 @@ def main():
             i += 1
         return total
 
+    # Driven by the RECORD, so the output is in the record's order and a row is emitted
+    # for every row of the file. `report_loss` has already established the key sets are
+    # equal, so the lookup cannot miss.
     out = []
-    for (a, b, text), row in zip(ranges, rows):
-        # The range is named "<seq> <op>" by the recorder; seq is the join key and this
-        # asserts the positional pairing above rather than assuming it.
-        seq = int(text.split()[0])
-        if seq != int(row["node_seq"]):
-            sys.exit(f"range {text!r} pairs with record row for node_seq {row['node_seq']}")
+    for row in rows:
+        a, b = keyed[row_key(row)]
         r, n = integral(read, a, b)
         w, _ = integral(write, a, b)
         busy = busy_ns(a, b)
         out.append(
-            (row["query"], row["label"], seq, round(r), round(w), round(r + w), n,
-             busy // 1000, (b - a - busy) // 1000)
+            [row[c] for c in TUPLE]
+            + [round(r), round(w), round(r + w), n, busy // 1000, (b - a - busy) // 1000]
         )
 
     with open(args.out, "w") as fh:
+        fh.write("# hbm_bytes per cuDF call, from an Nsight capture with GPU metrics on.\n")
         fh.write(
-            "query\tlabel\tnode_seq\thbm_read_bytes\thbm_write_bytes\thbm_bytes\t"
-            "samples\tdevice_busy_us\tdevice_idle_us\n"
+            "# The coordinates are records.tsv's, and joining on all of them is the point:\n"
+            "#   this file's TIMES are not usable — a capture costs the query ~7%, a heavy\n"
+            "#   scan ~11% — so it carries traffic, and the times come from a clean run.\n"
+            "# device_busy_us/device_idle_us are here as a READING of this capture, not as\n"
+            "#   a measurement to fit: idle inside a call is the device waiting through the\n"
+            "#   host prologue, and it says whether a thin sample count is a short call or\n"
+            "#   a stalled one.\n"
+            "# samples = GPU metric samples inside the call. Under ~10 the integral is an\n"
+            "#   estimate from too few points; the fit should weight or drop those rows.\n"
+        )
+        fh.write(
+            "\t".join(TUPLE)
+            + "\thbm_read_bytes\thbm_write_bytes\thbm_bytes\tsamples"
+            "\tdevice_busy_us\tdevice_idle_us\n"
         )
         for row in out:
             fh.write("\t".join(str(x) for x in row) + "\n")
 
-    thin = [r for r in out if r[6] < 10]
-    total = sum(r[5] for r in out)
-    print(f"{len(out)} regions, {total / 1e9:.2f} GB HBM, sampling period {period_ns / 1e3:.1f}us")
-    print(
-        f"{len(thin)} regions under 10 samples, carrying "
-        f"{sum(r[5] for r in thin) / 1e9:.3f} GB ({100 * sum(r[5] for r in thin) / total:.2f}%) "
-        "-- too few to integrate, and the fit should weight or drop them"
-    )
+    at = len(TUPLE)
+    thin = [r for r in out if r[at + 3] < 10]
+    total = sum(r[at + 2] for r in out)
+    print(f"{len(out)} calls, {total / 1e9:.2f} GB HBM, sampling period {period_ns / 1e3:.1f}us")
+    if skipped:
+        print(f"{skipped} partition ranges skipped — their bytes are inside their call's")
+    if thin:
+        print(
+            f"{len(thin)} calls under 10 samples, carrying "
+            f"{sum(r[at + 2] for r in thin) / 1e9:.3f} GB "
+            f"({100 * sum(r[at + 2] for r in thin) / total:.2f}%) "
+            "-- too few to integrate, and the fit should weight or drop them"
+        )
     print(f"wrote {args.out}")
 
 
