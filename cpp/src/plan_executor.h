@@ -32,64 +32,21 @@ struct NodeStats {
   /// Σ over var-length (string) output columns of content bytes
   /// (offsets[n]-offsets[0]); additive across columns, so one total suffices.
   uint64_t varlen_content_bytes = 0;
-  /// Host microseconds this output partition spent before touching the device:
-  /// flatbuffer decode, registry lookups, `ExprContext`/AST construction. 0 unless
-  /// node timing is on.
-  ///
-  /// The term the calibration calls `const_peacock`, and the reason the split exists:
-  /// bare cuDF has no such prologue, so one number covering both halves cannot be
-  /// fitted across the two datasets. Ends at `mark_device_start`, not at the
-  /// operator's first line — an operator that interleaves decode with column
-  /// materialization charges from its first kernel onward to `host_submit_us`, which
-  /// understates the peacockdb-only prologue rather than inflating it.
-  uint64_t host_setup_us = 0;
-  /// Host microseconds from the first device touch to the end of the region. What it
-  /// covers depends on the mode, and the two are NOT comparable:
-  ///   - `NodeTiming::Events` — no explicit drain; the device work is `device_us`,
-  ///     collected separately. Not launch cost, though: cuDF returns owned columns
-  ///     and rmm frees them, both synchronizing internally, so this tracks `device_us`
-  ///     closely (within 0.01% on tpch q3).
-  ///   - `NodeTiming::Sync`   — the region ends in a stream sync, so this contains the
-  ///     device execution outright. The legacy single number.
-  uint64_t host_submit_us = 0;
-  /// The same total Rust derives with `logical_size_from_schema`, recomputed from
-  /// cuDF types. Nothing on the peacockdb path consumes it; it exists to be compared
-  /// against Rust's, because the bare-cuDF sf40 tests have no Rust to ask and the
-  /// calibration only means anything if both datasets land on one byte axis. See
-  /// `logical_size_from_table`.
-  uint64_t logical_bytes = 0;
-  /// 1 when this partition's columns are one for one the types `output_schema`
-  /// declares; 0 when the device materialized something else.
-  ///
-  /// Scopes the comparison above: whether two implementations of the byte rule agree
-  /// is only askable where both look at the same columns. Legitimate divergences —
-  /// a Partial AVG under GROUPING SETS emitting one MEAN where DataFusion declares
-  /// `[count]`+`[sum]` (aggregate.cpp, `avg_state_2col`), a union branch holding a
-  /// decimal literal as FLOAT64 until `execute_union` retypes it (#41),
-  /// `__grouping_id` built INT32 against a declared UInt8 (#196) — are shape, not
-  /// byte-rule drift, and none can arise on the bare-cuDF sf40 path.
-  uint64_t schema_faithful = 1;
 };
 
-/// How per-node regions are measured. Off by default: both modes cost the normal path
-/// something, and one of them changes how the engine SCHEDULES.
+/// How per-node regions are measured. Off by default: measuring is not free.
 enum class NodeTiming : int {
   Off = 0,
-  /// Host clock around the region, closed by `cudaStreamSynchronize`. The sync
-  /// serializes what cuDF would pipeline, so measuring changes what is measured;
-  /// kept as the baseline the events mode is checked against.
-  Sync = 1,
   /// CUDA events around the device work, host clock around the host work, no sync
   /// inside the region. Device times are not known at region close and are read
-  /// afterwards by `collect_node_times`.
-  Events = 2,
+  /// afterwards by `collect_node_regions`.
+  Events = 1,
 };
 
 /// Set the timing mode (process-global; `Off` by default).
 ///
-/// Opt-in because `Sync` drains the default stream at every boundary — right for a
-/// benchmark, wrong for everything else — and `Events`, though cheap, still allocates
-/// an event pair per region and holds it until collection.
+/// Opt-in because `Events`, though cheap, still allocates an event pair per region and
+/// holds it until collection.
 ///
 /// Neither mode removes every sync: `varlen_content_bytes` reads `chars_size` back, so
 /// a node with STRING outputs synchronizes regardless.
@@ -116,6 +73,17 @@ void set_nvtx_ranges(bool on);
 /// Whether ranges are being emitted (see `set_nvtx_ranges`).
 bool nvtx_ranges();
 
+/// Open a named range in peacockdb's NVTX domain that outlives the call, and close it.
+///
+/// For a benchmark harness naming the case it is about to run, so a capture holding
+/// several cases can say which query each node range belongs to — seq numbering restarts
+/// with every plan, so the names alone cannot. No-ops while ranges are off.
+///
+/// One level: a second push without a pop replaces the first rather than nesting under
+/// it. Nothing in the engine calls either.
+void push_harness_range(const char* name);
+void pop_harness_range();
+
 /// Mark where the current timed region begins touching the device — after the decode,
 /// the registry lookups and any `ExprContext`/AST construction, immediately before
 /// issuing device work.
@@ -133,31 +101,62 @@ void mark_device_start();
 
 /// One collected region: which node output partition it belongs to, and what the
 /// device spent on it.
-struct NodeDeviceTime {
+/// One timed region: which call it was, and everything measured about it.
+///
+/// Separate from [`NodeStats`] because the two have different consumers. The driver reads
+/// stats on every call and needs two numbers; nothing on the execution path reads any of
+/// these. Carrying them in the returned struct made a shipping query pay for them on every
+/// output partition of every call.
+struct NodeRegion {
   uint64_t seq = 0;
   uint64_t partition = 0;
-  /// Microseconds between the region's start and stop events. Present only for
-  /// regions that recorded BOTH — see `NodeSession::collect_node_times`.
+  /// Calls already made against this seq when this one began; 0 for the first. Per CALL,
+  /// so the partitions of one call share it.
+  uint64_t call_index = 0;
+  uint64_t host_setup_us = 0;
+  uint64_t host_submit_us = 0;
+  /// Microseconds between the region's start and stop events. Present only for regions
+  /// that recorded BOTH — see `NodeSession::collect_node_regions`.
   uint64_t device_us = 0;
+  /// Rows this call answered with, for this output partition.
+  ///
+  /// The driver gets the same figure in `NodeStats` and keeps it; this copy is for the
+  /// calibration record, whose row is one CALL. A node driving several calls hands its
+  /// caller only the last one's, so the middle calls' outputs exist nowhere else.
+  uint64_t rows = 0;
+  /// The same total Rust derives with `logical_size_from_schema`, recomputed from cuDF
+  /// types.
+  ///
+  /// COMPARED against Rust's wherever Rust has one — that comparison is what keeps two
+  /// implementations of one formula from drifting, and it is why this is computed at all.
+  /// CONSUMED where Rust has none: a call in the middle of a node's chain hands the raw
+  /// handle on, so no batch is built from it and nothing on that side priced it. The
+  /// calibration record's `out_bytes` is one row per CALL, middle calls included, and this
+  /// is the only figure that exists for them.
+  ///
+  /// The rule is therefore "compare where both have it, consume where only this does" —
+  /// not "never consume", which was the rule while every row was a node rather than a call.
+  uint64_t logical_bytes = 0;
+  /// 1 when this partition's columns are one for one the types `output_schema` declares.
+  /// Scopes the comparison above: it is only askable where both ends see the same columns.
+  uint64_t schema_faithful = 1;
 };
 
-/// Cost of the measurement itself under `NodeTiming::Sync`, in microseconds: that mode's
-/// region around no work at all (two `steady_clock` reads plus `cudaStreamSynchronize`
-/// on an idle stream).
+/// Cost of the measurement itself, in microseconds: a timed region around no work at all,
+/// which is two `steady_clock` reads. Every node time is real work plus one of these, and
+/// without the floor beside them "cheap" and "below what the method resolves" look
+/// identical.
 ///
-/// A `Sync` node time is real work plus one of these, and the sync's return latency is
-/// not small next to a cheap node — without the floor beside them, "cheap" and "below
-/// what the method resolves" look identical.
-///
-/// Measures the SYNC mode even when the caller runs with events: it is the number that
-/// says what events bought. An events-mode floor is a different quantity.
+/// Event creation is NOT in it, and that is not an omission: the constructor creates the
+/// pair before taking `t0_`, so a real node does not report it either. The region is
+/// sampled with no sink for the same reason it needs none — nothing measurable changes.
 ///
 /// Returns the second-smallest of `samples` (min 2, forced), matching how the benchmark
 /// picks a run. Not subtracted from node times anywhere — node measurements are
 /// individually noisier than the floor, so subtracting manufactures zeros.
 ///
-/// PRECONDITION: no concurrent execution on the default stream (it synchronizes, and
-/// flips the global timing switch for the duration).
+/// PRECONDITION: no concurrent measurement — it flips the process-global timing switch
+/// for its duration and restores it after.
 uint64_t measure_timing_floor_us(unsigned samples);
 
 /// Execute a FlatBuffer-encoded GPU plan and return the result table.
@@ -200,20 +199,24 @@ std::pair<cudf::size_type, cudf::size_type> clamp_row_range(uint64_t offset, uin
 /// column surfaces as a mismatch against Rust, which is the intended outcome.
 uint64_t logical_size_from_table(const cudf::table_view& table, uint64_t varlen_content);
 
-/// Build a finished output partition's `NodeStats`. The one place both byte fields are
-/// derived, so the measured term and the modelled total cannot drift apart and
-/// `chars_size` is read back once rather than twice.
+/// Everything a finished output partition is worth reporting, before the split between
+/// what the driver reads and what only a measurement does.
 ///
 /// Takes the whole `TableResult` rather than a view because it needs the column NAMES:
 /// `execute_project` synthesizes a `__rowcount__` column for an empty projection (cuDF
 /// has no 0-column table with rows), which is absent from `output_schema` and excluded
-/// from both byte fields — a device representation detail must not reach the logical
-/// byte axis — while `rows` still comes from the full table.
-///
+/// from both byte fields — a device representation detail must not reach the logical byte
+/// axis — while `rows` still comes from the full table.
+struct CallOutcome {
+  uint64_t rows = 0;
+  uint64_t varlen_content_bytes = 0;
+  uint64_t logical_bytes = 0;
+  uint64_t schema_faithful = 1;
+};
+
 /// `declared` is the node's `output_schema`, used only for `schema_faithful`; nullptr
 /// reports 1 (nothing contradicts it) rather than 0.
-NodeStats node_stats_for(const TableResult& result, uint64_t host_setup_us,
-                         uint64_t host_submit_us, const fb::Schema* declared);
+CallOutcome call_outcome(const TableResult& result, const fb::Schema* declared);
 
 /// Node-by-node execution session: parses a plan once and drives ONE node at a
 /// time given already-resident child inputs, keeping intermediates resident in a
@@ -273,7 +276,7 @@ class NodeSession {
   /// `cudaErrorInvalidResourceHandle`, taking the whole collection down with it. A
   /// region that never touched the device recorded neither and is equally absent; its
   /// host halves are still in `NodeStats`.
-  std::vector<NodeDeviceTime> collect_node_times();
+  std::vector<NodeRegion> collect_node_regions();
 
   /// Borrow the resident table behind `handle` (for materialization at root).
   const TableResult& table_for(uint64_t handle) const;

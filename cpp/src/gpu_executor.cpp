@@ -40,18 +40,15 @@ struct peacock_executor {
 // sound only while the two are laid out identically. Adding a member to one and not
 // the other, or reordering either, fails here rather than silently handing Rust fields
 // from the wrong offsets.
+#define PCK_SAME_OFFSET(a, b, field) \
+  static_assert(offsetof(a, field) == offsetof(b, field), \
+                "the two definitions of " #field " must sit at the same offset")
+
 static_assert(sizeof(PeacockNodeStats) == sizeof(peacock::NodeStats));
 static_assert(offsetof(PeacockNodeStats, rows) == offsetof(peacock::NodeStats, rows));
 static_assert(offsetof(PeacockNodeStats, varlen_content_bytes) ==
               offsetof(peacock::NodeStats, varlen_content_bytes));
-static_assert(offsetof(PeacockNodeStats, host_setup_us) ==
-              offsetof(peacock::NodeStats, host_setup_us));
-static_assert(offsetof(PeacockNodeStats, host_submit_us) ==
-              offsetof(peacock::NodeStats, host_submit_us));
-static_assert(offsetof(PeacockNodeStats, logical_bytes) ==
-              offsetof(peacock::NodeStats, logical_bytes));
-static_assert(offsetof(PeacockNodeStats, schema_faithful) ==
-              offsetof(peacock::NodeStats, schema_faithful));
+static_assert(sizeof(PeacockNodeRegion) == sizeof(peacock::NodeRegion));
 
 // Export a cuDF table to an Arrow IPC stream buffer (malloc'd; free with
 // peacock_result_free). Shared by peacock_execute (fast path) and
@@ -149,9 +146,6 @@ void peacock_set_node_timing(int mode) {
   // passed a value this build does not know about gets no measurement rather than
   // an arbitrary one.
   switch (mode) {
-    case PEACOCK_NODE_TIMING_SYNC:
-      peacock::set_node_timing(peacock::NodeTiming::Sync);
-      break;
     case PEACOCK_NODE_TIMING_EVENTS:
       peacock::set_node_timing(peacock::NodeTiming::Events);
       break;
@@ -162,6 +156,10 @@ void peacock_set_node_timing(int mode) {
 }
 
 void peacock_set_nvtx_ranges(int on) { peacock::set_nvtx_ranges(on != 0); }
+
+void peacock_nvtx_push_range(const char* name) { peacock::push_harness_range(name); }
+
+void peacock_nvtx_pop_range() { peacock::pop_harness_range(); }
 
 uint64_t peacock_measure_timing_floor_us(unsigned samples) {
   // No executor handle here, so no `last_error` to park a message in — print and
@@ -339,8 +337,8 @@ int peacock_executor_slice_handle(peacock_executor_t* executor, uint64_t handle,
   }
 }
 
-int peacock_executor_collect_node_times(peacock_executor_t* executor,
-                                        PeacockNodeDeviceTime* out, uint64_t cap,
+int peacock_executor_collect_node_regions(peacock_executor_t* executor,
+                                        PeacockNodeRegion* out, uint64_t cap,
                                         uint64_t* out_count) {
   if (!executor || !out_count) return 1;
   if (!executor->session) {
@@ -348,20 +346,29 @@ int peacock_executor_collect_node_times(peacock_executor_t* executor,
     return 1;
   }
   try {
-    // Same layout argument as PeacockNodeStats above: the copy below is a field-by
-    // -field one rather than a reinterpret_cast, but the assert keeps the two
-    // definitions from drifting into different meanings for the same names.
-    static_assert(sizeof(PeacockNodeDeviceTime) == sizeof(peacock::NodeDeviceTime));
-    auto times = executor->session->collect_node_times();
+    // Copied whole rather than field by field, and the asserts are what make that safe.
+    //
+    // It was field by field, under a size assert. That assert cannot see the failure it
+    // looks like it covers: a field added to BOTH structs keeps the sizes equal, and the
+    // copy that forgot it compiles and reports zeros. That is exactly what `rows` did.
+    // A whole-struct copy has no line to forget; the per-field offsets below are what
+    // hold the two definitions in the same layout, which is the only thing it needs.
+    static_assert(sizeof(PeacockNodeRegion) == sizeof(peacock::NodeRegion));
+    PCK_SAME_OFFSET(PeacockNodeRegion, peacock::NodeRegion, seq);
+    PCK_SAME_OFFSET(PeacockNodeRegion, peacock::NodeRegion, partition);
+    PCK_SAME_OFFSET(PeacockNodeRegion, peacock::NodeRegion, call_index);
+    PCK_SAME_OFFSET(PeacockNodeRegion, peacock::NodeRegion, host_setup_us);
+    PCK_SAME_OFFSET(PeacockNodeRegion, peacock::NodeRegion, host_submit_us);
+    PCK_SAME_OFFSET(PeacockNodeRegion, peacock::NodeRegion, device_us);
+    PCK_SAME_OFFSET(PeacockNodeRegion, peacock::NodeRegion, rows);
+    PCK_SAME_OFFSET(PeacockNodeRegion, peacock::NodeRegion, logical_bytes);
+    PCK_SAME_OFFSET(PeacockNodeRegion, peacock::NodeRegion, schema_faithful);
+    auto times = executor->session->collect_node_regions();
     *out_count = static_cast<uint64_t>(times.size());
     auto n = std::min<uint64_t>(times.size(), out ? cap : 0);
-    for (uint64_t i = 0; i < n; ++i) {
-      out[i].seq = times[i].seq;
-      out[i].partition = times[i].partition;
-      out[i].device_us = times[i].device_us;
-    }
+    if (n > 0) std::memcpy(out, times.data(), n * sizeof(PeacockNodeRegion));
     if (times.size() > n) {
-      executor->last_error = "collect_node_times: buffer holds " +
+      executor->last_error = "collect_node_regions: buffer holds " +
                              std::to_string(cap) + " of " +
                              std::to_string(times.size()) + " recorded regions";
       return 1;

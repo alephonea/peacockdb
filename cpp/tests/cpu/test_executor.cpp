@@ -128,22 +128,18 @@ TEST(PeacockGpu, ExecutorNullOut) {
 }
 
 // The timing switch, on the tier that has no GPU because it needs none: it is a
-// process-global mode, and the whole safety argument for the benchmark work is that
-// the correctness suite never leaves it on. A switch stuck on Sync would put a
-// cudaStreamSynchronize after every node of every GPU test and nothing would fail —
-// the runs would just serialize, which reads as a slow host. Stuck on Events it would
-// leak a CUDA event pair per region until the session ends.
+// process-global mode, and the whole safety argument for the benchmark work is that the
+// correctness suite never leaves it on. Stuck on, it would leak a CUDA event pair per
+// region until the session ends, and nothing would fail.
 TEST(NodeTiming, DefaultsOff) {
   EXPECT_EQ(peacock::node_timing(), peacock::NodeTiming::Off);
   EXPECT_FALSE(peacock::node_timing_enabled());
 }
 
 TEST(NodeTiming, SwitchRoundTrips) {
-  for (auto mode : {peacock::NodeTiming::Sync, peacock::NodeTiming::Events}) {
-    peacock::set_node_timing(mode);
-    EXPECT_EQ(peacock::node_timing(), mode);
-    EXPECT_TRUE(peacock::node_timing_enabled());
-  }
+  peacock::set_node_timing(peacock::NodeTiming::Events);
+  EXPECT_EQ(peacock::node_timing(), peacock::NodeTiming::Events);
+  EXPECT_TRUE(peacock::node_timing_enabled());
   peacock::set_node_timing(peacock::NodeTiming::Off);
   EXPECT_EQ(peacock::node_timing(), peacock::NodeTiming::Off);
   EXPECT_FALSE(peacock::node_timing_enabled());

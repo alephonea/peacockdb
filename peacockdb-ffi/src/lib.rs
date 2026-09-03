@@ -18,27 +18,9 @@ pub mod raw {
     #[derive(Clone, Copy, Default)]
     pub struct PeacockNodeStats {
         pub rows: u64,
+        /// Σ over var-length (string) output columns of content bytes; additive across
+        /// columns, so one total suffices.
         pub varlen_content_bytes: u64,
-        /// Host microseconds this output partition spent BEFORE its first device
-        /// touch: flatbuffer decode, handle lookups, AST construction. The
-        /// peacockdb-only prologue bare cuDF has no analogue for, which is why it is
-        /// its own field. 0 unless [`peacock_set_node_timing`] selected a mode.
-        pub host_setup_us: u64,
-        /// Host microseconds from the first device touch to the end of the region; the
-        /// two modes are NOT comparable. Under [`PEACOCK_NODE_TIMING_EVENTS`] there is
-        /// no explicit drain and the device work arrives via
-        /// [`peacock_executor_collect_node_times`] — still not launch cost, since cuDF
-        /// and rmm synchronize internally (tpch q3: within 0.01% of device). Under
-        /// [`PEACOCK_NODE_TIMING_SYNC`] it contains the device execution outright.
-        pub host_submit_us: u64,
-        /// C++'s own reconstruction of the byte total, from cuDF types. Present to
-        /// be COMPARED against the Rust value, never consumed in its place — see
-        /// the debug assertion in `gpu_node_executor`.
-        pub logical_bytes: u64,
-        /// 1 when the partition's columns are, one for one, the types the node's
-        /// `output_schema` declares. Scopes the comparison above — see the debug
-        /// assertion in `gpu_node_executor` for which nodes legitimately report 0.
-        pub schema_faithful: u64,
     }
 
     /// What [`peacock_install_rmm_pool`] did — sizes are 0 unless `state` is
@@ -61,25 +43,38 @@ pub mod raw {
     pub const PEACOCK_RMM_POOL_UNAVAILABLE: i32 = 1;
 
     /// One collected device interval — which node output partition, and what the
-    /// device spent on it. Mirrors `PeacockNodeDeviceTime` in `cpp/include/peacock_gpu.h`.
+    /// device spent on it. Mirrors `PeacockNodeRegion` in `cpp/include/peacock_gpu.h`.
     #[repr(C)]
     #[derive(Clone, Copy, Default)]
-    pub struct PeacockNodeDeviceTime {
+    /// One timed region: which call it was, and everything measured about it.
+    ///
+    /// Separate from [`PeacockNodeStats`] because the two have different consumers. Stats
+    /// come back on every call and the driver needs both numbers; nothing on the execution
+    /// path reads any of these, so carrying them there made a shipping query pay per call.
+    pub struct PeacockNodeRegion {
         pub seq: u64,
         pub partition: u64,
+        /// Calls already made against this seq in this session when this one began; 0 for
+        /// the first. Per CALL, so the partitions of one call share it.
+        pub call_index: u64,
+        pub host_setup_us: u64,
+        pub host_submit_us: u64,
+        /// 0 where the region recorded no complete event pair.
         pub device_us: u64,
+        /// Rows this call answered with, for this output partition.
+        pub rows: u64,
+        /// C++'s own reconstruction of the byte total, to be COMPARED against Rust's.
+        pub logical_bytes: u64,
+        /// 1 when the produced types match the declared ones; scopes the comparison.
+        pub schema_faithful: u64,
     }
 
     /// The default, and the only mode a shipping query runs in.
     pub const PEACOCK_NODE_TIMING_OFF: i32 = 0;
-    /// Host clock per region, closed by a default-stream sync. The sync serializes what
-    /// cuDF would pipeline, so measuring changes what is measured; the baseline events
-    /// get checked against.
-    pub const PEACOCK_NODE_TIMING_SYNC: i32 = 1;
     /// CUDA events around the device work, host clock around the host work, no sync
     /// inside the region. Device times are read afterwards with
-    /// [`peacock_executor_collect_node_times`].
-    pub const PEACOCK_NODE_TIMING_EVENTS: i32 = 2;
+    /// [`peacock_executor_collect_node_regions`].
+    pub const PEACOCK_NODE_TIMING_EVENTS: i32 = 1;
 
     #[link(name = "peacock_gpu")]
     unsafe extern "C" {
@@ -121,9 +116,9 @@ pub mod raw {
         pub fn peacock_install_rmm_pool(out_info: *mut PeacockRmmPoolInfo) -> i32;
 
         /// Select the per-node timing mode (process-global; `PEACOCK_NODE_TIMING_OFF`
-        /// by default). Opt-in because neither mode is free: SYNC drains the default
-        /// stream at every boundary, EVENTS allocates a CUDA event pair per region and
-        /// holds it until collection. Unknown values are treated as OFF. Used by the
+        /// by default). Opt-in because EVENTS is not free: it allocates a CUDA event
+        /// pair per region and holds it until collection. Unknown values are treated as
+        /// OFF. Used by the
         /// `peacock_gpu_benchmarks` target.
         pub fn peacock_set_node_timing(mode: i32);
 
@@ -134,6 +129,21 @@ pub mod raw {
         /// show inside the node. Nonzero to emit.
         pub fn peacock_set_nvtx_ranges(on: i32);
 
+        /// Open a named NVTX range in peacockdb's domain that spans until
+        /// [`peacock_nvtx_pop_range`], and close it.
+        ///
+        /// For a BENCHMARK HARNESS naming the case it is about to run: a node range
+        /// is `<seq>.<call_index> <kind>` and seq numbering restarts with every plan,
+        /// so a capture of several queries cannot say from the names alone which one
+        /// a call belongs to. A range around the case answers it by containment.
+        ///
+        /// No-ops while ranges are off, and nothing in the engine calls either.
+        /// `name` is borrowed for the call; NVTX copies it.
+        pub fn peacock_nvtx_push_range(name: *const c_char);
+
+        /// Close the range [`peacock_nvtx_push_range`] opened. Idempotent.
+        pub fn peacock_nvtx_pop_range();
+
         /// Drain the device intervals recorded since the last call, in execution
         /// order. Only [`PEACOCK_NODE_TIMING_EVENTS`] produces any. Call AFTER the
         /// root [`peacock_result_from_handle`] and BEFORE
@@ -143,21 +153,20 @@ pub mod raw {
         /// exceeds `cap` the call returns non-zero and the surplus is gone (the drain
         /// already happened). Regions with an incomplete pair — a node that threw, one
         /// that never touched the device — are absent rather than zero.
-        pub fn peacock_executor_collect_node_times(
+        pub fn peacock_executor_collect_node_regions(
             executor: *mut PeacockExecutor,
-            out: *mut PeacockNodeDeviceTime,
+            out: *mut PeacockNodeRegion,
             cap: u64,
             out_count: *mut u64,
         ) -> i32;
 
-        /// Cost of the measurement itself under [`PEACOCK_NODE_TIMING_SYNC`]: that
-        /// mode's region around no work. A SYNC node time is real work plus one of
-        /// these, so a node at or below it is unresolvable rather than cheap — report
-        /// alongside, never subtract. Measures SYNC even under events, since it is what
-        /// says what events bought. Second-smallest of `samples` (clamped to >= 2), or
-        /// 0 on CUDA error.
+        /// Cost of the measurement itself: a timed region around no work. A node time is
+        /// real work plus one of these, so a node at or below it is unresolvable rather
+        /// than cheap — report alongside, never subtract. Second-smallest of `samples`
+        /// (clamped to >= 2), or 0 on CUDA error.
         ///
-        /// Needs a live CUDA context and no concurrent work on the default stream.
+        /// Needs a live CUDA context, and flips the global timing switch for its
+        /// duration.
         pub fn peacock_measure_timing_floor_us(samples: u32) -> u64;
 
         // --- node-by-node execution (unified node-executor interface) ---

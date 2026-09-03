@@ -38,12 +38,10 @@ rmm::cuda_stream_view const get_default_stream() { return cudf::get_default_stre
 // it has to hand back what it found. It is called mid-benchmark, between a warm-up
 // and the measured runs, and a leak in either direction changes what every later node
 // in that process measures — without failing anything.
-// Events is the mode the benchmark actually runs in, so it is the one that matters
-// here: the floor is deliberately a SYNC measurement, which means this call changes
-// the mode out from under an events run and has to change it back.
+// Both starting points matter: from Off the switch has to come back off, and from the
+// mode a benchmark runs in it has to stay there.
 TEST(NodeTiming, FloorRestoresTheSwitch) {
-  for (auto start : {peacock::NodeTiming::Off, peacock::NodeTiming::Sync,
-                     peacock::NodeTiming::Events}) {
+  for (auto start : {peacock::NodeTiming::Off, peacock::NodeTiming::Events}) {
     peacock::set_node_timing(start);
     (void)peacock::measure_timing_floor_us(4);
     EXPECT_EQ(peacock::node_timing(), start);

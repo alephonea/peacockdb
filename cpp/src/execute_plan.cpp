@@ -127,8 +127,7 @@ static bool types_match_declared(const cudf::table_view& table,
   return true;
 }
 
-NodeStats node_stats_for(const TableResult& result, uint64_t host_setup_us,
-                         uint64_t host_submit_us, const fb::Schema* declared) {
+CallOutcome call_outcome(const TableResult& result, const fb::Schema* declared) {
   const auto full = result.table->view();
 
   // Drop `__rowcount__` before costing. `execute_project` synthesizes that column
@@ -153,9 +152,9 @@ NodeStats node_stats_for(const TableResult& result, uint64_t host_setup_us,
   // Faithfulness is judged on `logical` too: for an empty projection the declared
   // schema has no fields and the placeholder is exactly what was just dropped, so
   // the two agree at zero columns rather than off by one.
-  return NodeStats{static_cast<uint64_t>(full.num_rows()), varlen, host_setup_us,
-                   host_submit_us, logical_size_from_table(logical, varlen),
-                   types_match_declared(logical, declared) ? 1u : 0u};
+  return CallOutcome{static_cast<uint64_t>(full.num_rows()), varlen,
+                     logical_size_from_table(logical, varlen),
+                     types_match_declared(logical, declared) ? 1u : 0u};
 }
 
 TableResult execute_plan(const uint8_t* plan_bytes, uint64_t plan_len) {
