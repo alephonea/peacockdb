@@ -31,7 +31,7 @@ use peacockdb_core::batch_partitioned::executor::RowRange;
 
 use peacockdb_core::batch_partitioned::expr::{BinaryOp, Expr, NamedExpr};
 
-use peacockdb_core::batch_partitioned::gpu_backend::{GpuExec, GpuExport};
+use peacockdb_core::batch_partitioned::gpu_backend::{Device, GpuExec, GpuExport};
 
 use peacockdb_core::batch_partitioned::layout::ColumnOrder;
 
@@ -178,6 +178,12 @@ impl Session {
         Self { executor, recipes }
     }
 
+    /// Where an executor drawn from this session sits: these tasks build one at a time,
+    /// so the place is the same for all of them and only the session pointer carries.
+    fn dev(&self) -> Device {
+        Device { executor: self.executor, node: 0, lane: 0 }
+    }
+
     /// The scan's one batch, by the call its own recipe names. The source is driven here
     /// rather than by an executor because nothing in this task owns one.
     fn scan(&self, groups: &[u32]) -> GpuBatch {
@@ -207,7 +213,7 @@ impl Session {
     /// recipes are indexed by.
     fn exec(&self, index: usize, schema: &ArrowSchema) -> GpuExec {
         let recipe = self.recipes.get(index).expect("the node makes ABI calls");
-        GpuExec::new(self.executor, recipe, schema).expect("the recipe is an exec node's")
+        GpuExec::new(self.dev(), recipe, schema).expect("the recipe is an exec node's")
     }
 
     /// The accumulator for the node at `index`, built from the recipe that node published.
@@ -220,7 +226,7 @@ impl Session {
     }
 
     fn export(&self, schema: &ArrowSchema) -> GpuExport {
-        GpuExport::new(self.executor, schema)
+        GpuExport::new(self.dev(), schema)
     }
 }
 

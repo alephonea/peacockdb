@@ -127,7 +127,7 @@ fn emitted(shape: Shape) -> Vec<String> {
             );
             let tree: Box<dyn GpuNode> = Box::new(node);
             let session = Session::open(tree.as_ref());
-            let accumulator = GpuAccumulator::sorted(session.executor, session.recipe(1), &out)
+            let accumulator = GpuAccumulator::sorted(session.dev(), session.recipe(1), &out)
                 .expect("the sort builds");
             at_done(&session, accumulator, &out)
         }
@@ -136,7 +136,7 @@ fn emitted(shape: Shape) -> Vec<String> {
             let tree: Box<dyn GpuNode> =
                 Box::new(GpuCoalesceAllBatches::new(source_per_row_group()));
             let session = Session::open(tree.as_ref());
-            let accumulator = GpuAccumulator::coalesce(session.executor, session.recipe(1), &out)
+            let accumulator = GpuAccumulator::coalesce(session.dev(), session.recipe(1), &out)
                 .expect("the coalesce builds");
             at_done(&session, accumulator, &out)
         }
@@ -213,7 +213,7 @@ fn emitted(shape: Shape) -> Vec<String> {
                 lanes,
             ));
             let session = Session::open(tree.as_ref());
-            let mut emitter = GpuEmitter::new(session.executor, session.recipe(1), &out)
+            let mut emitter = GpuEmitter::new(session.dev(), session.recipe(1), &out)
                 .expect("the scatter builds");
             let mut answered = Vec::new();
             for group in ROW_GROUPS {
@@ -299,7 +299,7 @@ fn merged_over(
     let merge_index = session.recipes_len() - 1;
     let mut partial = session.exec(merge_index - 1, &state_columns);
     let mut accumulator = GpuAccumulator::aggregate(
-        session.executor,
+        session.dev(),
         session.recipe(merge_index),
         &state_columns,
         &out,

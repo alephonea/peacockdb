@@ -62,7 +62,7 @@ fn a_left_joins_probe_batch_cannot_be_read_twice_and_says_which_ticket() {
     let session = Session::open(tree.as_ref());
     let keys = schema_of(&[("k", DataType::Utf8)]);
     let join = GpuJoinExec::new(
-        session.executor,
+        session.dev(),
         session.recipe(3),
         Some(JoinType::Left),
         Some(&keys),
@@ -157,7 +157,7 @@ fn every_member_of_the_semi_family_streams_and_answers_at_done() {
         };
         let key_schema = schema_of(&[key_column]);
         let join = GpuJoinExec::new(
-            session.executor,
+            session.dev(),
             session.recipe(2),
             Some(join_type),
             Some(&key_schema),
@@ -209,7 +209,7 @@ fn a_projecting_semi_joins_finish_emits_the_column_the_node_declares() {
     let session = Session::open(tree.as_ref());
     let keys = schema_of(&[("k", DataType::Utf8)]);
     let join = GpuJoinExec::new(
-        session.executor,
+        session.dev(),
         session.recipe(2),
         Some(JoinType::LeftSemi),
         Some(&keys),
@@ -265,7 +265,7 @@ fn a_second_probe_batch_of_a_copying_join_is_refused_by_name() {
     ));
     let session = Session::open(tree.as_ref());
     let join = GpuJoinExec::new(
-        session.executor,
+        session.dev(),
         session.recipe(2),
         Some(JoinType::Inner),
         None,
@@ -319,7 +319,7 @@ fn a_scatter_answers_with_one_handle_per_lane() {
     let session = Session::open(tree.as_ref());
     let out = columns();
     let mut emitter =
-        GpuEmitter::new(session.executor, session.recipe(1), &out).expect("the scatter builds");
+        GpuEmitter::new(session.dev(), session.recipe(1), &out).expect("the scatter builds");
     let (lanes, _) = emitter
         .emit(session.scan(&ROW_GROUPS))
         .expect("the scatter runs");
@@ -352,7 +352,7 @@ fn a_finish_over_no_probe_keys_hands_the_build_side_up() {
     let session = Session::open(tree.as_ref());
     let keys = schema_of(&[("k", DataType::Utf8)]);
     let join = GpuJoinExec::new(
-        session.executor,
+        session.dev(),
         session.recipe(2),
         Some(JoinType::LeftAnti),
         Some(&keys),

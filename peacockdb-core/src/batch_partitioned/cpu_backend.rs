@@ -39,7 +39,7 @@ use crate::executors::single_node::execute_single_node;
 use super::aggregates::{AggCall, PlanAgg};
 use super::cpu_batch::CpuBatch;
 use super::error::PlanError;
-use super::executor::{BackendError, CallResult, CallStats, RowRange};
+use super::executor::{AbiCalls, BackendError, CallResult, CallStats, RowRange};
 use super::expr_physical::{physical_expr, physical_projection};
 use super::layout::ColumnOrder;
 use super::node::GpuNode;
@@ -199,6 +199,9 @@ impl CpuExec {
             CpuBatch::new(kept),
             CallStats {
                 scratch_bytes: Some(scratch),
+                // This backend addresses no seq, so it has no call to name — and an empty
+                // list would claim it made none, which is a different statement.
+                calls: AbiCalls::default(),
             },
         ))
     }

@@ -182,5 +182,21 @@ pub fn post_order_of_every_node(root: &dyn GpuNode) -> Result<Vec<usize>, PlanEr
         .collect())
 }
 
+/// Each node as a record names it — its type and its children-first position — in the
+/// driver's own pre-order, which is the order [`RunReport`] is indexed by.
+///
+/// Both together and from here rather than from a caller's own walk: a caller collecting
+/// names by descending the tree itself would be a second walk, agreeing with the driver's
+/// order by coincidence until one of them changes.
+///
+/// [`RunReport`]: super::RunReport
+pub fn nodes_as_recorded(root: &dyn GpuNode) -> Result<Vec<(&'static str, usize)>, PlanError> {
+    Ok(PlanIndex::build(root)?
+        .nodes
+        .iter()
+        .map(|node| (node.node.name(), node.post_order))
+        .collect())
+}
+
 #[cfg(test)]
 mod tests;

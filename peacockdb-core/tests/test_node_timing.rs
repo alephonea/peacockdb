@@ -1,15 +1,13 @@
 //! Does the instrument change what it measures, and does it measure what it claims?
 //!
 //! Every record under `testdata/benchmark-results/` assumes a node's reported time is
-//! the time it would have taken unobserved. `Sync` cannot satisfy that by construction
-//! — it drains the stream at every region boundary — which is why the events mode
-//! exists; how much that buys is measured here rather than assumed.
+//! the time it would have taken unobserved. Events record without draining the stream,
+//! so they can satisfy that — whether they do is measured here rather than assumed.
 //!
 //! One query, because this is about the instrument and not the corpus:
 //!   1. Is `Off` actually off?
-//!   2. What does `Sync` cost? (reported, not asserted; it also calibrates 3)
-//!   3. Does `Events` cost anything measurable? (the assertion)
-//!   4. Do the events land where they claim?
+//!   2. Does `Events` cost anything measurable? (the assertion)
+//!   3. Do the events land where they claim?
 #![cfg(not(feature = "rust-only"))]
 mod common;
 
@@ -38,20 +36,17 @@ const MODE: ExecMode = ExecMode::FullTable;
 /// difference check 2 reports.
 const ROUNDS: usize = 7;
 
-/// Absolute backstop, far above the real cost of two `cudaEventRecord`s. Covers the
-/// case the calibrated bound cannot: a plan that was serial anyway, where sync costs
-/// nothing and there is no in-run scale to derive a threshold from. On a shared host a
-/// bound tight enough to fail on noise gets muted, which is worse than a loose one.
+/// The bound, and the only one: a guessed constant far above the real cost of two
+/// `cudaEventRecord`s. A tighter bound calibrated against a draining mode's cost stood
+/// beside it and went with that mode — on this plan it never engaged, since draining cost
+/// +0.1% here, below its own significance threshold. Measured: events cost +0.0% against
+/// unobserved, so the margin to this limit is twentyfold. Not tightened for that reason:
+/// on a shared host a bound tight enough to fail on noise gets muted, which is worse.
 const EVENTS_GROSS_LIMIT: f64 = 1.20;
-
-/// How far above unobserved `sync` must land to count as a usable scale rather than
-/// noise. Below it the two methods are indistinguishable on this plan and only
-/// [`EVENTS_GROSS_LIMIT`] applies.
-const SYNC_IS_SIGNIFICANT: f64 = 1.05;
 
 type Run = (u64, Arc<dyn ExecutionPlan>, Vec<NodeMemoryStats>);
 
-/// Second-smallest wall clock, matching `run_gpu_benchmark`: the minimum is the sample
+/// Second-smallest wall clock, matching the benchmark harness: the minimum is the sample
 /// most likely to have caught a favourable scheduling accident, the rest are dragged up
 /// by whatever else the host was doing.
 fn second_smallest(mut runs: Vec<Run>) -> Run {
@@ -83,8 +78,7 @@ async fn events_are_free_and_land_where_they_claim() {
         .unwrap();
 
     // The switch is process-global. A guard rather than a trailing reset: everything
-    // below unwraps, and an unwind would leave every later test in this binary measured
-    // — or, under Sync, draining the stream at every region boundary.
+    // below unwraps, and an unwind would leave every later test in this binary measured.
     struct Loan;
     impl Drop for Loan {
         fn drop(&mut self) {
@@ -98,7 +92,7 @@ async fn events_are_free_and_land_where_they_claim() {
     set_node_timing(NodeTiming::Off);
     gpu.execute_instrumented(&sql).await.unwrap();
 
-    let modes = [NodeTiming::Off, NodeTiming::Events, NodeTiming::Sync];
+    let modes = [NodeTiming::Off, NodeTiming::Events];
     let mut runs: Vec<Vec<Run>> = modes.iter().map(|_| Vec::with_capacity(ROUNDS)).collect();
     for _ in 0..ROUNDS {
         for (slot, mode) in runs.iter_mut().zip(modes) {
@@ -116,7 +110,6 @@ async fn events_are_free_and_land_where_they_claim() {
     let mut picked = runs.into_iter().map(second_smallest);
     let (off_us, _, off_stats) = picked.next().unwrap();
     let (events_us, plan, ev_stats) = picked.next().unwrap();
-    let (sync_us, _, sync_stats) = picked.next().unwrap();
 
     let ev_setup = sum(&ev_stats, |s| s.host_setup_us);
     let ev_device = sum(&ev_stats, |s| s.device_us);
@@ -124,16 +117,11 @@ async fn events_are_free_and_land_where_they_claim() {
     eprintln!(
         "node-timing {DATASET}/{QUERY} [{}] alloc=[{allocator}] nodes={}\n  \
          off    wall={off_us}us\n  \
-         events wall={events_us}us ({:+.1}%)  setup={ev_setup} submit={} device={ev_device}\n  \
-         sync   wall={sync_us}us ({:+.1}%)  setup={} submit={} device={}",
+         events wall={events_us}us ({:+.1}%)  setup={ev_setup} submit={} device={ev_device}",
         golden_label(MODE, DEVICE),
         ev_stats.len(),
         over(events_us),
         sum(&ev_stats, |s| s.host_submit_us),
-        over(sync_us),
-        sum(&sync_stats, |s| s.host_setup_us),
-        sum(&sync_stats, |s| s.host_submit_us),
-        sum(&sync_stats, |s| s.device_us),
     );
 
     // 1. Off is off. All three modes share one global, and a leak would put a stream
@@ -148,16 +136,7 @@ async fn events_are_free_and_land_where_they_claim() {
         );
     }
 
-    // 2. Sync's cost is printed above, not asserted: it is a property of the plan (how
-    // much cuDF could have pipelined), not of this code. A floor would fail on a plan
-    // that is serial anyway, a ceiling on exactly the plans most worth reporting.
-
-    // 3. The assertion this target exists for, on two bounds. The gross one is a guessed
-    // constant and catches only a gross regression. The calibrated one is the real
-    // check: when sync is measurably above off, that gap is what a synchronization back
-    // inside the region costs on this plan, host and run, so the midpoint discriminates
-    // at the scale of the actual failure and survives a slow host, which moves all three
-    // together.
+    // 2. The assertion this target exists for, against unobserved.
     assert!(
         events_us as f64 <= off_us as f64 * EVENTS_GROSS_LIMIT,
         "events mode cost {events_us}us against {off_us}us unobserved ({:+.1}%, limit \
@@ -167,29 +146,10 @@ async fn events_are_free_and_land_where_they_claim() {
         over(events_us),
         100.0 * (EVENTS_GROSS_LIMIT - 1.0),
     );
-    if sync_us as f64 >= off_us as f64 * SYNC_IS_SIGNIFICANT {
-        let midpoint = (off_us + sync_us) / 2;
-        assert!(
-            events_us <= midpoint,
-            "events wall {events_us}us sits on the SYNC side of the {midpoint}us \
-             midpoint between unobserved ({off_us}us) and per-region draining \
-             ({sync_us}us): the events mode is paying most of what the sync mode \
-             pays, which is what it exists not to do",
-        );
-    } else {
-        eprintln!(
-            "  note: sync cost only {:+.1}% here, below the {:.0}% significance \
-             threshold — no calibrated bound, only the {:.0}% gross one",
-            over(sync_us),
-            100.0 * (SYNC_IS_SIGNIFICANT - 1.0),
-            100.0 * (EVENTS_GROSS_LIMIT - 1.0),
-        );
-    }
-
-    // 4a. Zero means no region created its pair, or none reached `mark_device_start`.
+    // 3a. Zero means no region created its pair, or none reached `mark_device_start`.
     assert!(ev_device > 0, "events mode recorded no device time at all");
 
-    // 4b. Placement. Regions record on cuDF's single default stream in host program
+    // 3b. Placement. Regions record on cuDF's single default stream in host program
     // order, so their intervals are disjoint and must fit inside the wall clock.
     // Exceeding it means a pair spans work that is not its region's — what a mark left
     // at region ENTRY produces, since the start event is only reached after the host
@@ -200,7 +160,7 @@ async fn events_are_free_and_land_where_they_claim() {
          pairs are not disjoint, so at least one spans work outside its own region",
     );
 
-    // 4c. The split is not degenerate. `host_setup_us` is the peacockdb-only prologue
+    // 3c. The split is not degenerate. `host_setup_us` is the peacockdb-only prologue
     // the cost model fits as its own constant, and the reason the region is cut in two;
     // zero means the marks sit at region entry and the prologue is billed as device work.
     assert!(
@@ -210,10 +170,9 @@ async fn events_are_free_and_land_where_they_claim() {
          touch, and const_peacock cannot be fitted from records taken this way",
     );
 
-    // 4d. Same tree in all three modes — every comparison above is between whole-plan
-    // sums, so a mode that changed the plan would make them meaningless, not just wrong.
+    // 3d. Same tree in both modes — every comparison above is between whole-plan sums,
+    // so a mode that changed the plan would make them meaningless, not just wrong.
     assert_eq!(ev_stats.len(), off_stats.len(), "off and events ran different plans");
-    assert_eq!(ev_stats.len(), sync_stats.len(), "sync and events ran different plans");
     assert_eq!(ev_stats.len(), plan_nodes(&plan), "one stat per plan node");
 }
 

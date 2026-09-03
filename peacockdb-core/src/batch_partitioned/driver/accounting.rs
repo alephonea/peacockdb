@@ -179,7 +179,7 @@ impl ResidentAccountant {
         &mut self,
         slot: Slot,
         executor: &E,
-        stats: CallStats,
+        stats: &CallStats,
         modelled: usize,
     ) -> Result<(), Trip> {
         self.end(slot, Some(executor.resident_bytes()), stats, modelled)
@@ -191,7 +191,7 @@ impl ResidentAccountant {
     pub(crate) fn end_consuming_call(
         &mut self,
         slot: Slot,
-        stats: CallStats,
+        stats: &CallStats,
         modelled: usize,
     ) -> Result<(), Trip> {
         self.end(slot, None, stats, modelled)
@@ -208,7 +208,7 @@ impl ResidentAccountant {
         &mut self,
         slot: Slot,
         residency: Option<usize>,
-        stats: CallStats,
+        stats: &CallStats,
         modelled: usize,
     ) -> Result<(), Trip> {
         match residency {
