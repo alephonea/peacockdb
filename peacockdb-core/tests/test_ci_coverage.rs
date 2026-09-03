@@ -49,9 +49,9 @@ const INTENTIONALLY_NOT_IN_CI: &[(&str, Exemption)] = &[
     )),
     ("peacock_gpu_benchmarks", Exemption::NotRun(
         "GPU host only, tens of minutes, and it MEASURES rather than asserts — there is \
-         nothing for a merge gate to go red on. Correctness for the very same case list \
-         (all three targets include! common/gpu_cases.inc) is owned by \
-         test_gpu_full_table / test_gpu_partitioned, which is where a regression shows up. \
+         nothing for a merge gate to go red on. Correctness is owned by test_gpu_bp_corpus \
+         and the two legacy gpu tiers; the timing list is its own, since the sf worth \
+         timing and the sf worth checking differ. \
          NOT Exemption::GpuJob: that variant claims membership in the gpu-tests staging \
          array and is verified against it — this target is deliberately not in it",
     )),
