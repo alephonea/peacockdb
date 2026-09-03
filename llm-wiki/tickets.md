@@ -6,7 +6,7 @@ anchor that the cost widget links to. Device labels are `tp<N>-<tier>` (micro=10
 mini=2GiB, standard=12GiB).
 
 A ticket carries a **Priority** line only when it is not medium; medium is the default.
-New tickets take the next free number (currently 197), which is also the counter for
+New tickets take the next free number (currently 198), which is also the counter for
 `tasks/bp-tickets.md` — the rollout's own list, separate file, one ID space. Finished and lapsed tickets move to
 `llm-wiki/archive/archived-tickets.md` (Done / Stale) — numbers are never reused, so an old
 reference still resolves there.
@@ -164,12 +164,14 @@ concatenate succeeds with the declared type. Cheap, and independent of any corpu
 `execute_aggregate` synthesizes the grouping-set discriminator with
 `cudf::numeric_scalar<int32_t>` (`cpp/src/operators/aggregate.cpp` ~L408). DataFusion sizes
 that column to the group count — `Aggregate::grouping_id_type` gives UInt8 for ≤8 grouping
-expressions, UInt16 for ≤16, UInt32 for ≤32, UInt64 beyond. So the hardcoded INT32 is not
-merely a width mismatch, it is wrong in both directions: too wide for every corpus query
-(all are ≤8 groups, declared UInt8), and too narrow for a plan with more than 32.
+expressions, UInt16 for ≤16, UInt32 for ≤32, UInt64 beyond. The id is a bitmask, one bit per
+grouping expression (`gid |= (1 << i)`), so that ladder is bits and not magnitude. The
+hardcoded INT32 is therefore not merely a width mismatch, it is wrong in both directions: too
+wide for every corpus query (all are ≤8 groups, declared UInt8), and too narrow for a plan
+with more than 32.
 
-Same shape as #195 (archived, fixed) and harmless for the same reasons — the ids are tiny, the
-goldens compare printed text, and `materialize` accepts whatever schema the IPC stream
+Same shape as #195 (archived, fixed) and unnoticed for the same reasons — the ids are tiny,
+the goldens compare printed text, and `materialize` accepts whatever schema the IPC stream
 declares. Visible on tpcds q18/q22/q80, and only because the byte cross-check asks about
 produced types. The >32-group case is the one that is not merely cosmetic, but no corpus query
 reaches it.
