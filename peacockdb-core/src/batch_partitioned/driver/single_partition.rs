@@ -18,8 +18,8 @@ use crate::batch_partitioned::backend::{Backend, NodeExecutors};
 use crate::batch_partitioned::cpu_batch::CpuBatch;
 use crate::batch_partitioned::error::{PlanError, RunError};
 use crate::batch_partitioned::executor::{
-    BackendError, BatchAccumulatorExecutor, CallStats, ExecExecutor, JoinExecutor, ProbingJoin,
-    RowRange, SourceExecutor, SourceStep, UnloadExecutor,
+    AbiCalls, BackendError, BatchAccumulatorExecutor, CallStats, ExecExecutor, JoinExecutor,
+    ProbingJoin, RowRange, SourceExecutor, SourceStep, UnloadExecutor,
 };
 use crate::batch_partitioned::node::GpuNode;
 use crate::batch_partitioned::nodes::ExecutorCategory;
@@ -98,6 +98,21 @@ pub(crate) struct LaneOutcome<B: Backend> {
     pub outputs: LaneOutputs<B>,
     pub finished: bool,
     pub call: CallKind,
+    /// The ABI calls this one made, or `None` where no backend executor was reached at
+    /// all — an end-of-input, a lane that owed no build. Carried up rather than recorded
+    /// where it is taken: only the driver knows which node and which lane this was.
+    ///
+    /// `None` rather than an unmeasured `AbiCalls`, because the two say different things
+    /// and one of them must not take a place in the per-batch record: a driver-only step
+    /// that took a slot there would shift every batch after it by one.
+    pub calls: Option<AbiCalls>,
+}
+
+impl<B: Backend> LaneOutcome<B> {
+    fn made(mut self, calls: AbiCalls) -> Self {
+        self.calls = Some(calls);
+        self
+    }
 }
 
 /// The executor, in whichever state it is. `Unbuilt` is a lane never entered — for a join
@@ -249,8 +264,10 @@ impl<B: Backend> LaneDriver<B> {
                 let out = Held::of(out);
                 acct.release(batch.bytes)?;
                 acct.hold(out.bytes);
-                acct.end_call(site.slot, executor, stats, modelled)?;
-                Ok(self.outcome(LaneOutputs::Device(vec![out]), false, CallKind::Exec))
+                acct.end_call(site.slot, executor, &stats, modelled)?;
+                Ok(self
+                    .outcome(LaneOutputs::Device(vec![out]), false, CallKind::Exec)
+                    .made(stats.calls))
             }
             LaneCall::Unload => {
                 let batch = self.expect_input(input, site)?;
@@ -264,13 +281,13 @@ impl<B: Backend> LaneDriver<B> {
                 let out = Held::of(out);
                 acct.release(batch.bytes)?;
                 acct.hold(out.bytes);
-                acct.end_call(site.slot, executor, stats, modelled)?;
+                acct.end_call(site.slot, executor, &stats, modelled)?;
                 let kind = if rows == RowRange::WHOLE {
                     CallKind::Unload
                 } else {
                     CallKind::UnloadRange
                 };
-                Ok(self.outcome(LaneOutputs::Host(vec![out]), false, kind))
+                Ok(self.outcome(LaneOutputs::Host(vec![out]), false, kind).made(stats.calls))
             }
             LaneCall::Accumulate => {
                 let batch = self.expect_input(input, site)?;
@@ -282,8 +299,10 @@ impl<B: Backend> LaneDriver<B> {
                     .accumulate_and_fetch(batch.batch)
                     .map_err(|e| failed(site, acct, Some(n_bytes), e))?;
                 let out = hold_all(out, acct, Some(batch.bytes))?;
-                acct.end_call(site.slot, executor, stats, modelled)?;
-                Ok(self.outcome(LaneOutputs::Device(out), false, CallKind::Accumulate))
+                acct.end_call(site.slot, executor, &stats, modelled)?;
+                Ok(self
+                    .outcome(LaneOutputs::Device(out), false, CallKind::Accumulate)
+                    .made(stats.calls))
             }
             LaneCall::MarkDone => {
                 let LaneState::BatchAcc(executor) =
@@ -296,8 +315,10 @@ impl<B: Backend> LaneDriver<B> {
                     .mark_done_and_fetch()
                     .map_err(|e| failed(site, acct, None, e))?;
                 let out = hold_all(out, acct, None)?;
-                acct.end_consuming_call(site.slot, stats, modelled)?;
-                Ok(self.outcome(LaneOutputs::Device(out), true, CallKind::MarkDone))
+                acct.end_consuming_call(site.slot, &stats, modelled)?;
+                Ok(self
+                    .outcome(LaneOutputs::Device(out), true, CallKind::MarkDone)
+                    .made(stats.calls))
             }
             LaneCall::SetBuild => {
                 let batch = self.expect_input(input, site)?;
@@ -312,9 +333,11 @@ impl<B: Backend> LaneDriver<B> {
                 acct.release(batch.bytes)?;
                 // The successor reports for the same slot: what the build side became is
                 // this instance's residency now.
-                acct.end_call(site.slot, &probing, stats, modelled)?;
+                acct.end_call(site.slot, &probing, &stats, modelled)?;
                 self.state = LaneState::Probe(probing);
-                Ok(self.outcome(LaneOutputs::Device(Vec::new()), false, CallKind::SetBuild))
+                Ok(self
+                    .outcome(LaneOutputs::Device(Vec::new()), false, CallKind::SetBuild)
+                    .made(stats.calls))
             }
             LaneCall::NoBuild => {
                 let LaneState::Build(executor) = mem::replace(&mut self.state, LaneState::Draining)
@@ -348,8 +371,8 @@ impl<B: Backend> LaneDriver<B> {
                     .probe_and_fetch(batch.batch)
                     .map_err(|e| failed(site, acct, Some(n_bytes), e))?;
                 let out = hold_all(out, acct, Some(batch.bytes))?;
-                acct.end_call(site.slot, executor, stats, modelled)?;
-                Ok(self.outcome(LaneOutputs::Device(out), false, CallKind::Probe))
+                acct.end_call(site.slot, executor, &stats, modelled)?;
+                Ok(self.outcome(LaneOutputs::Device(out), false, CallKind::Probe).made(stats.calls))
             }
             LaneCall::Finish => {
                 let LaneState::Probe(executor) = mem::replace(&mut self.state, LaneState::Finished)
@@ -361,8 +384,8 @@ impl<B: Backend> LaneDriver<B> {
                     .finish_and_fetch()
                     .map_err(|e| failed(site, acct, None, e))?;
                 let out = hold_all(out, acct, None)?;
-                acct.end_consuming_call(site.slot, stats, modelled)?;
-                Ok(self.outcome(LaneOutputs::Device(out), true, CallKind::Finish))
+                acct.end_consuming_call(site.slot, &stats, modelled)?;
+                Ok(self.outcome(LaneOutputs::Device(out), true, CallKind::Finish).made(stats.calls))
             }
         }
     }
@@ -387,13 +410,15 @@ impl<B: Backend> LaneDriver<B> {
             } => {
                 let out = Held::of(batch);
                 acct.hold(out.bytes);
-                acct.end_call(site.slot, &source, stats, modelled)?;
+                acct.end_call(site.slot, &source, &stats, modelled)?;
                 self.state = LaneState::Source(source);
-                Ok(self.outcome(LaneOutputs::Device(vec![out]), false, CallKind::NextBatch))
+                Ok(self
+                    .outcome(LaneOutputs::Device(vec![out]), false, CallKind::NextBatch)
+                    .made(stats.calls))
             }
             // Exhaustion consumed the source, so the slot's liveness is the state itself.
             SourceStep::Exhausted => {
-                acct.end_consuming_call(site.slot, CallStats::default(), modelled)?;
+                acct.end_consuming_call(site.slot, &CallStats::default(), modelled)?;
                 Ok(self.outcome(
                     LaneOutputs::Device(Vec::new()),
                     true,
@@ -461,6 +486,7 @@ impl<B: Backend> LaneDriver<B> {
             outputs,
             finished,
             call,
+            calls: None,
         }
     }
 }

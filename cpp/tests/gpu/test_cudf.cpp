@@ -38,13 +38,15 @@ rmm::cuda_stream_view const get_default_stream() { return cudf::get_default_stre
 // it has to hand back what it found. It is called mid-benchmark, between a warm-up
 // and the measured runs, and a leak in either direction changes what every later node
 // in that process measures — without failing anything.
+// Both starting points matter: from Off the switch has to come back off, and from the
+// mode a benchmark runs in it has to stay there.
 TEST(NodeTiming, FloorRestoresTheSwitch) {
-  for (bool start : {false, true}) {
+  for (auto start : {peacock::NodeTiming::Off, peacock::NodeTiming::Events}) {
     peacock::set_node_timing(start);
     (void)peacock::measure_timing_floor_us(4);
-    EXPECT_EQ(peacock::node_timing_enabled(), start);
+    EXPECT_EQ(peacock::node_timing(), start);
   }
-  peacock::set_node_timing(false);
+  peacock::set_node_timing(peacock::NodeTiming::Off);
 }
 
 // The header promises a clamp rather than undefined behaviour: a second-smallest

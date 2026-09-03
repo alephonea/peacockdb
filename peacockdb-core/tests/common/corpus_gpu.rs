@@ -12,75 +12,14 @@
 
 use datafusion::arrow::array::RecordBatch;
 use peacockdb_core::batch_partitioned::driver::batch_partitioned_driver;
-use peacockdb_core::batch_partitioned::gpu_backend::backend::{GpuBackend, GpuContext};
+use peacockdb_core::batch_partitioned::gpu_backend::backend::GpuBackend;
 use peacockdb_core::batch_partitioned::plan_text::render_run;
-use peacockdb_core::batch_partitioned::recipe::{RecipePlan, attach_recipes};
-use peacockdb_ffi::raw::{
-    PeacockExecutor, peacock_executor_begin_plan, peacock_executor_create,
-    peacock_executor_destroy, peacock_executor_end_plan, peacock_last_error,
-};
 
-use super::bp_mode::{BUDGET, BpMode, mode_named};
+use super::bp_mode::{BpMode, mode_named};
+use super::gpu_session::Session;
 use super::corpus::{plan_at, run_cpu};
 use super::corpus_golden;
 use super::{GpuResultMode, assert_results_match, batches_to_sorted_str, gpu_result_mode};
-
-/// A device session over one plan: the recipes attached and the buffer handed across, which
-/// is the whole of what a `GpuContext` needs. Owns the executor and ends the plan on drop,
-/// so a failing case releases the device rather than leaving it holding a plan.
-struct Session {
-    executor: *mut PeacockExecutor,
-    recipes: Option<RecipePlan>,
-}
-
-impl Session {
-    fn open(tree: &dyn peacockdb_core::batch_partitioned::GpuNode, what: &str) -> Self {
-        let recipes = attach_recipes(tree).unwrap_or_else(|e| panic!("{what}: no recipes: {e}"));
-        let mut executor: *mut PeacockExecutor = std::ptr::null_mut();
-        assert_eq!(
-            unsafe { peacock_executor_create(BUDGET, &mut executor) },
-            0,
-            "{what}: peacock_executor_create failed"
-        );
-        let bytes = recipes.bytes();
-        let mut nodes = 0u64;
-        let rc = unsafe {
-            peacock_executor_begin_plan(executor, bytes.as_ptr(), bytes.len() as u64, &mut nodes)
-        };
-        assert_eq!(rc, 0, "{what}: begin_plan failed: {}", error_of(executor));
-        assert_eq!(nodes as usize, recipes.wire_nodes());
-        Self {
-            executor,
-            recipes: Some(recipes),
-        }
-    }
-
-    fn context(&mut self) -> GpuContext {
-        GpuContext {
-            executor: self.executor,
-            recipes: self.recipes.take().expect("the recipes are taken once"),
-        }
-    }
-}
-
-impl Drop for Session {
-    fn drop(&mut self) {
-        unsafe {
-            peacock_executor_end_plan(self.executor);
-            peacock_executor_destroy(self.executor);
-        }
-    }
-}
-
-fn error_of(executor: *mut PeacockExecutor) -> String {
-    let message = unsafe { peacock_last_error(executor) };
-    match message.is_null() {
-        true => "(no message)".to_string(),
-        false => unsafe { std::ffi::CStr::from_ptr(message) }
-            .to_string_lossy()
-            .into_owned(),
-    }
-}
 
 /// The whole of a device corpus case: plan, run on the device, then the two read-only
 /// assertions — the mode's `.cpu.txt` section, and the result the declaration names.

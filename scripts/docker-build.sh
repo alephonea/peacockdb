@@ -10,21 +10,19 @@
 #
 # It does not reimplement the build. docker/cudf-build.Dockerfile materializes the
 # paths scripts/lib/shadgpu-env.sh hardcodes — its conda prefix and /usr/bin/gcc-12 —
-# as symlinks onto the image's /opt/conda and conda gcc, so the committed scripts run
-# inside unmodified: they stay the source of truth for how to build, this one supplies
-# where.
+# as symlinks onto the image's own, so the committed scripts run inside unmodified:
+# they stay the source of truth for how to build, this one supplies where.
 #
-# Everything large (the CMake tree, the cargo target dir, the registry, ccache) lands
-# in --cache-dir on the host rather than in the repo, which is usually not on the
-# biggest disk. cpp/install/ is the exception: build-test-shadgpu.sh --push-binaries
-# reads it from there. The container runs as the invoking uid:gid.
+# Everything large (the CMake tree, the cargo target dir, ccache) lands in --cache-dir
+# on the host rather than in the repo, which is usually not on the biggest disk.
+# cpp/install/ is the exception: --push-binaries reads it from there. The container
+# runs as the invoking uid:gid.
 #
 # This entry point and a native build-test-shadgpu.sh --build do not share a cargo
-# cache: here CARGO_TARGET_DIR is /cache/cargo-target with RUSTFLAGS=-C debuginfo=0,
-# natively it is $PWD/target-cudf-<cudf>. Alternating between them costs a cold
-# DataFusion rebuild each way — a consequence of the isolation, not cache thrash to
-# diagnose. Point CARGO_TARGET_DIR at one of them to change that, and accept that the
-# debuginfo flag then differs per build.
+# cache (/cache/cargo-target with -C debuginfo=0 here, $PWD/target-cudf-<cudf>
+# natively), so alternating costs a cold DataFusion rebuild each way — a consequence
+# of the isolation, not cache thrash to diagnose. Point CARGO_TARGET_DIR at one of
+# them to change that, and accept that the debuginfo flag then differs per build.
 #
 # USAGE
 #   scripts/docker-build.sh                       # build cuDF 25.02, the default
@@ -56,9 +54,9 @@ IMAGE_ONLY=0
 SKIP_IMAGE=0
 INNER_CMD=()
 
-# Prints the header block above verbatim, so -h cannot drift from it: every comment
-# line after the shebang, stopping at the first line that is not one. Derived rather
-# than a fixed range, which truncated the help the moment the header grew.
+# Prints the header block verbatim, so -h cannot drift from it: comment lines after
+# the shebang, stopping at the first that is not one. A fixed line range truncated the
+# help the moment the header grew.
 usage() { sed -n '2,${/^#/!q;p;}' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 
 while [ $# -gt 0 ]; do
@@ -110,10 +108,10 @@ if [ -z "$CACHE_DIR" ]; then
 fi
 CACHE_DIR=$(mkdir -p "$CACHE_DIR" && cd "$CACHE_DIR" && pwd)
 
-# Default job: the committed build phase, nothing else. No runtime libs are copied
-# out of the conda prefix afterwards — this image pins Arrow to the version the GPU
-# host runs (ARROW_VERSION in docker/cudf-build.Dockerfile), so what gets built here
-# already asks for a soname the host can resolve.
+# Default job: the committed build phase, nothing else. Nothing is copied out of the
+# conda prefix afterwards — the image pins Arrow to the version the GPU host runs
+# (ARROW_VERSION in docker/cudf-build.Dockerfile), so the output already asks for a
+# soname the host can resolve.
 if [ ${#INNER_CMD[@]} -eq 0 ]; then
   INNER_CMD=(bash -c './scripts/build-test-shadgpu.sh --build')
 fi
@@ -160,10 +158,9 @@ docker_args=(
   -v "$CACHE_DIR/home:/cache/home"
   -v "$CACHE_DIR/cpm:/cache/cpm"
   -e HOME=/cache/home
-  # rapids-cmake fetches dependencies through CPM, and the project is configured
-  # twice with separate build trees — once by scripts/build.sh, again by
-  # peacockdb-ffi's build.rs inside cargo's OUT_DIR. A shared source cache stops the
-  # second tree downloading the same sources again.
+  # rapids-cmake fetches through CPM, and the project is configured twice with
+  # separate build trees — scripts/build.sh, then peacockdb-ffi's build.rs inside
+  # cargo's OUT_DIR. A shared source cache stops the second downloading it all again.
   -e CPM_SOURCE_CACHE=/cache/cpm
   -e CARGO_HOME=/cache/cargo-home
   -e CARGO_TARGET_DIR=/cache/cargo-target
@@ -180,10 +177,9 @@ docker_args=(
   -e GIT_CONFIG_COUNT=2
   -e GIT_CONFIG_KEY_0=safe.directory
   -e GIT_CONFIG_VALUE_0='*'
-  # cpp/CMakeLists.txt pulls flatbuffers via FetchContent rather than CPM, so unlike
-  # the CPM packages it is re-cloned per build tree — and there are two. That clone
-  # is the one thing that would still reach for the network after everything else is
-  # cached. Populate the mirror with:
+  # cpp/CMakeLists.txt pulls flatbuffers via FetchContent rather than CPM, so it is
+  # re-cloned per build tree — and there are two. That clone is the last thing still
+  # reaching for the network once everything else is cached. Populate the mirror with:
   #   git clone --mirror https://github.com/google/flatbuffers.git \
   #             "$CACHE_DIR/git-mirrors/flatbuffers.git"
   # Harmless when absent: git only rewrites URLs it has a mapping for.

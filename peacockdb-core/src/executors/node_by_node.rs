@@ -45,6 +45,37 @@ pub trait NodeExecutor {
 
     /// Release resident partition handles (idempotent).
     fn release(&mut self, handles: &[u64]);
+
+    /// Drain the per-region DEVICE times recorded during this walk, as
+    /// One entry per timed region.
+    ///
+    /// Separate from [`Self::execute_node`] because none of this belongs on the execution
+    /// path: the driver reads rows and bytes, and a shipping query should not carry the
+    /// rest across the FFI on every call. Device times additionally do not EXIST when a
+    /// node returns — no sync has happened, and forcing one would defeat the mode. Called
+    /// once, after [`Self::materialize`]. Only the GPU backend with timing on has anything
+    /// to report, hence the default.
+    async fn collect_regions(&mut self) -> DfResult<Vec<RegionTimes>> {
+        Ok(Vec::new())
+    }
+}
+
+/// What one timed region reported, once the measurement is collected.
+///
+/// Everything here is read by a benchmark or a calibration and by nothing on the
+/// execution path — which is why it arrives in one collection rather than on every call.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RegionTimes {
+    pub seq: usize,
+    pub partition: usize,
+    pub host_setup_us: u64,
+    pub host_submit_us: u64,
+    pub device_us: u64,
+    /// C++'s own byte total for this partition, to be COMPARED with Rust's.
+    pub logical_bytes: u64,
+    /// 1 where the produced types are the declared ones; the comparison above is only
+    /// askable then.
+    pub schema_faithful: u64,
 }
 
 /// Flatten a plan into canonical post-order (children left-to-right, then node),
@@ -84,6 +115,43 @@ pub async fn execute_node_by_node<E: NodeExecutor>(
 
     let root_handles = handles.last().expect("plan has at least one node").clone();
     let batches = backend.materialize(&root_handles).await?;
+
+    // After materialize (the root's device work is part of the walk) and before release
+    // (which tears down the session owning the events).
+    for r in backend.collect_regions().await? {
+        let Some(stat) = stats.get_mut(r.seq) else { continue };
+        stat.device_us += r.device_us;
+        stat.host_setup_us += r.host_setup_us;
+        stat.host_submit_us += r.host_submit_us;
+        // The byte cross-check, here because this is where both numbers meet: C++'s own
+        // reconstruction from cuDF types against the one Rust derived from the schema. A
+        // difference means the two ends of a calibration count bytes differently, which
+        // no fit can see. Debug-only, and gated on the device having materialized the
+        // declared types — two implementations of one rule are comparable only where both
+        // cost the same columns.
+        //
+        // `part_stats` is emptied at N==1 by the golden convention, so a missing entry is
+        // normal: the node total carries it instead.
+        if let Some(ps) = stat.part_stats.get_mut(r.partition) {
+            ps.device_us += r.device_us;
+            ps.host_setup_us += r.host_setup_us;
+            ps.host_submit_us += r.host_submit_us;
+            if r.schema_faithful != 0 {
+                debug_assert_eq!(
+                    r.logical_bytes as usize, ps.out_bytes,
+                    "{} partition {}: C++ logical_bytes={} != Rust={}",
+                    stat.node_name, r.partition, r.logical_bytes, ps.out_bytes,
+                );
+            }
+        } else if r.schema_faithful != 0 && stat.part_stats.is_empty() {
+            debug_assert_eq!(
+                r.logical_bytes as usize, stat.output_bytes,
+                "{}: C++ logical_bytes={} != Rust={}",
+                stat.node_name, r.logical_bytes, stat.output_bytes,
+            );
+        }
+    }
+
     backend.release(&root_handles);
     Ok((batches, stats))
 }

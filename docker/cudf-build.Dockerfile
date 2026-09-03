@@ -7,15 +7,14 @@
 #   scripts/lib/shadgpu-env.sh:15  CUDF_ROOT=/home/dmitry/data/miniforge3/envs/rapids-cuda-12.2
 #   scripts/lib/shadgpu-env.sh:23  CC=/usr/bin/gcc-12
 #
-# Instead of editing them, this image materializes those exact paths as symlinks
-# onto the RAPIDS image's own /opt/conda and its conda-forge gcc. The committed
-# scripts then run here unmodified, and the developer's own machine keeps working
-# exactly as before. Both hardcoded paths are ARGs, so a different fork of the
-# script (a different conda prefix, a different gcc) is a --build-arg away.
+# Rather than edit them, this image materializes those exact paths as symlinks onto
+# the RAPIDS image's own /opt/conda and conda-forge gcc, so the committed scripts run
+# here unmodified and the developer's machine keeps working as before. Both paths are
+# ARGs, so a fork of the script is a --build-arg away.
 #
-# The recipe otherwise mirrors .github/actions/cpp-build/action.yml, which is the
-# authoritative, green build for this project: build inside the official
-# rapidsai/base image with CUDF_ROOT=/opt/conda and conda-forge gcc/gxx.
+# The recipe otherwise mirrors .github/actions/cpp-build/action.yml, the authoritative
+# green build: the official rapidsai/base image, CUDF_ROOT=/opt/conda, conda-forge
+# gcc/gxx.
 #
 # Build it via scripts/docker-build.sh (which passes every ARG below); this file
 # is not meant to be `docker build`-ed by hand.
@@ -52,32 +51,28 @@ RUN conda install -y -n base -c conda-forge -c nvidia \
 #   rapidsai/base:25.02          libarrow 18.1.0  -> libarrow.so.1801
 #   host rapids-cuda-12.2 env    libarrow 19.0.1  -> libarrow.so.1900
 #
-# and NOT because the cuDF releases differ — the libcudf build string is identical
-# on both sides (25.02.02-cuda12_250303_g8139f3c84f_0). libcudf does not link Arrow
-# at all (`readelf -d libcudf.so | grep arrow` is empty), so conda was free to solve
-# a different Arrow into each, and did. Arrow is purely OUR dependency, which is why
-# moving it here is safe: nothing in the RAPIDS stack has an opinion about it.
+# and NOT because the cuDF releases differ — the libcudf build string is identical on
+# both sides. libcudf does not link Arrow at all (`readelf -d libcudf.so | grep arrow`
+# is empty), so conda was free to solve a different Arrow into each, and did. Arrow is
+# purely OUR dependency; nothing in the RAPIDS stack has an opinion about it, which is
+# why moving it is safe.
 #
-# The `rapids` metapackage is what pinned Arrow down. It drags custreamz -> cudf_kafka
-# -> librdkafka -> lz4-c <1.10, and Arrow 19 needs lz4-c 1.10; the solve is
-# unsatisfiable until it is gone. None of that subtree is used to BUILD peacockdb —
-# this image needs libcudf and its headers, not the kafka/streamz surface — and the
-# host env does not have it either (164 packages, no `rapids`, no kafka). So removing
-# it moves this image TOWARD the host rather than away from it.
+# The `rapids` metapackage is what pinned it: it drags custreamz -> cudf_kafka ->
+# librdkafka -> lz4-c <1.10, and Arrow 19 needs lz4-c 1.10, so the solve is
+# unsatisfiable until it is gone. Nothing in that subtree builds peacockdb, and the
+# host env does not have it either — removing it moves this image TOWARD the host.
 #
-# Without this the artifacts have to be shipped with their own Arrow tree and put
-# ahead of the host's on LD_LIBRARY_PATH, which is what CI still does
-# (.github/workflows/pipeline.yml, "Bundle Arrow/Parquet runtime libraries"). CI is
-# untouched by this file and keeps working; this path no longer needs the bundle.
+# Without this the artifacts have to ship their own Arrow tree ahead of the host's on
+# LD_LIBRARY_PATH, which is what CI still does (pipeline.yml, "Bundle Arrow/Parquet
+# runtime libraries"). CI is untouched by this file; this path no longer needs it.
 #
-# `=*_cpu` is not decoration: conda-forge also publishes `*_cuda` Arrow builds that
-# depend on the __cuda virtual package, which is absent during `docker build` (no
-# GPU), and the solve fails on it. CONDA_OVERRIDE_CUDA is belt-and-braces for the
-# rest of the solve, which sees cuda-version from the already-installed libcudf.
+# `=*_cpu` is not decoration: the `*_cuda` builds depend on the __cuda virtual
+# package, absent during `docker build`, and the solve fails on it. CONDA_OVERRIDE_CUDA
+# covers the rest of the solve for the same reason.
 #
-# The closing `test -e` asserts the soname the version implies (Arrow encodes it as
-# major*100+minor), so a wrong ARROW_VERSION fails the image build here instead of
-# surfacing three phases later as a link error that mentions nothing about conda.
+# The closing `test -e` asserts the soname the version implies (major*100+minor), so a
+# wrong ARROW_VERSION fails here rather than three phases later as a link error that
+# mentions nothing about conda.
 ARG ARROW_VERSION=19.0.1
 RUN conda remove -y -n base --force \
       rapids custreamz cudf_kafka libcudf_kafka librdkafka streamz \

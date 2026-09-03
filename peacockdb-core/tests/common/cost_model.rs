@@ -67,6 +67,13 @@ impl CostModel {
         self.categories.iter().position(|c| c.nodes.iter().any(|n| n == node_type))
     }
 
+    /// The category a node type bins into, by name. The calibration record tags every
+    /// row with this — it is the key the bare-cuDF rows are joined on, and the level
+    /// the multipliers are fitted at.
+    pub fn category_name_of(&self, node_type: &str) -> Option<&str> {
+        self.category_of(node_type).map(|i| self.categories[i].name.as_str())
+    }
+
     /// Derive the `.cost.txt` body from a `.cpu.txt` body. One line per category
     /// `<category>=<raw bytes> # <node types>`, then a `peacockdb_cost=<total>`
     /// footer where `total = Σ(multiplier * bytes)`. Panics (via `ctx` for the

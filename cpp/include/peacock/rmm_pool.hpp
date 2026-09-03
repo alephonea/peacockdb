@@ -6,23 +6,22 @@
 // a page-table walk and a zeroing pass — per intermediate. That is not background noise:
 // on GB10, TPC-H q1 over the whole table measured 76.5 s without a pool.
 //
-// This header lives under `cpp/include/` rather than `cpp/tests/` because three different
-// callers install the same pool and must not drift:
+// Under `cpp/include/` rather than `cpp/tests/` because three callers install the same pool
+// and must not drift:
 //   - the single-GPU gtest binaries, from their main();
 //   - `peacock_install_rmm_pool` in the FFI, which is how `peacock_gpu_benchmarks` — a Rust
-//     target that cannot include a C++ header — gets the same allocator the gtest binaries
-//     have. Without it the two families of numbers in the tree are taken under different
-//     allocators and quietly compared (llm-wiki/archive/archived-tickets.md #151);
-//   - `multi_gpu.cpp` keeps its own per-device installation, because a pool per worker
-//     thread on the device that worker owns is a different lifecycle, but reads the
-//     percentages from here.
+//     target that cannot include a C++ header — gets the same allocator. Without it the two
+//     families of numbers in the tree are taken under different allocators and quietly
+//     compared (llm-wiki/archive/archived-tickets.md #151);
+//   - `multi_gpu.cpp`, which keeps its own per-device installation (a pool per worker thread
+//     on the device that worker owns is a different lifecycle) but reads the percentages
+//     from here.
 //
-// The engine still does not install this on its own behalf: no path under `cpp/src/` calls
-// it except the FFI entry point above, which nothing but the benchmark harness invokes. So
-// a shipping query still allocates the expensive way, and `gpu_memory_limit` is still
-// accepted and ignored. That is #148, deliberately left open here: making the engine
-// self-install changes where every shipping query's memory comes from and what
-// `gpu_memory_limit` means, which is a decision about the product, not about measurement.
+// The engine still does not install this on its own behalf — nothing under `cpp/src/` calls
+// it but the FFI entry point, and only the benchmark harness calls that. So a shipping query
+// still allocates the expensive way and `gpu_memory_limit` is still accepted and ignored.
+// That is #148, deliberately left open: self-installing changes where every shipping query's
+// memory comes from, which is a decision about the product, not about measurement.
 #pragma once
 
 // RMM flattened rmm/mr/device/*.hpp into rmm/mr/*.hpp after 25.02, and peacock_tpch_tests
@@ -106,11 +105,10 @@ inline std::unique_ptr<StatsMr>& stats_mr() {
 // any cuDF work; the resources are function-local statics because rmm stores a non-owning
 // pointer to the current resource and the callers outlive any narrower scope.
 //
-// IDEMPOTENT, and that is load-bearing now that this is reachable from the FFI: a second
-// call returns the first call's outcome without building a second pool. Overwriting the
-// statics instead would drop a resource that live allocations still point into, and the
-// benchmark harness — 127 separate #[test] functions in one process — is exactly the shape
-// that would find it.
+// IDEMPOTENT, which is load-bearing now that the FFI can reach it: a second call returns the
+// first one's outcome rather than building a second pool. Overwriting the statics would drop
+// a resource live allocations still point into, and the benchmark harness — 127 `#[test]`
+// functions in one process — is the shape that finds it.
 inline const RmmPoolStatus& install_rmm_pool() {
   static RmmPoolStatus status;
   static bool done = false;

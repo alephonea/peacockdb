@@ -92,22 +92,17 @@ FetchContent_Declare(
 set(FLATBUFFERS_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(FLATBUFFERS_BUILD_FLATC ON CACHE BOOL "" FORCE)
 set(FLATBUFFERS_BUILD_FLATHASH OFF CACHE BOOL "" FORCE)
-# FlatBuffers is a BUILD-time dependency — a header-only runtime we link in and a
-# flatc we run for codegen. Nothing downstream consumes it as an installed package,
-# so its install rules are pure liability: with them on, `--target install` copies
-# flatbuffers' headers and cmake config into CMAKE_INSTALL_PREFIX, which for the
-# main build is cpp/install — the tree the deploy phase rsyncs to the GPU host. It
-# is bytes over a slow link for something nothing there reads.
+# FlatBuffers is a BUILD-time dependency — headers we link in and a flatc we run.
+# Nothing downstream consumes it as an installed package, so its install rules only
+# cost: `--target install` copies its headers and cmake config into cpp/install, the
+# tree the deploy phase rsyncs to the GPU host, for something nothing there reads.
 #
-# Not to be confused with the "Permission denied installing to /usr/local" failure
-# that shows up on a cold peacockdb-ffi reconfigure. That one is NOT about which
-# install rules exist: peacockdb-ffi's build.rs runs its own cmake tree in cargo's
-# OUT_DIR and the cmake crate does pass -DCMAKE_INSTALL_PREFIX=<OUT_DIR>, but if
-# that tree's cache was written with different compilers, cmake prints "you have
-# changed variables that require your cache to be deleted", wipes it, reconfigures,
-# and the prefix falls back to the default /usr/local. Turning install rules off
-# only moves which target trips over it first. The fix is to let the reconfigure
-# settle (re-run the build) or delete that OUT_DIR — not to prune install rules.
+# Not to be confused with the "Permission denied installing to /usr/local" failure on a
+# cold peacockdb-ffi reconfigure. That one is not about install rules: build.rs runs its
+# own cmake tree in cargo's OUT_DIR and the cmake crate does pass
+# -DCMAKE_INSTALL_PREFIX=<OUT_DIR>, but a cache written with different compilers gets
+# wiped and reconfigured, and the prefix falls back to /usr/local. Turning install rules
+# off only moves which target trips over it. Re-run the build or delete that OUT_DIR.
 set(FLATBUFFERS_INSTALL OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(flatbuffers)
 
@@ -210,8 +205,16 @@ set_tests_properties(peacock_plan_tests PROPERTIES LABELS "gpu")
 # dataset that lives on the GPU host, checked against committed DuckDB goldens. Skips
 # itself when that dataset is absent, so it is safe to run anywhere.
 add_executable(peacock_tpch_tests tests/gpu/test_tpch.cpp)
-target_include_directories(peacock_tpch_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(peacock_tpch_tests PRIVATE cudf::cudf GTest::gtest)
+# src/ for plan_executor.h, and the link to peacock_gpu, are both for one function:
+# logical_size_from_table, the byte formula the calibration record needs to be
+# identical at both ends. Re-deriving it here instead would be a third copy of a rule that
+# already has two, and a fit over two sources counting bytes differently is wrong by a
+# factor nothing in the pipeline can detect. The queries themselves stay bare cuDF.
+target_include_directories(peacock_tpch_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include
+                                                      ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(peacock_tpch_tests PRIVATE peacock_gpu cudf::cudf GTest::gtest)
+target_compile_definitions(peacock_tpch_tests PRIVATE
+                           PEACOCK_CXX_BUILD_PROFILE="${CMAKE_BUILD_TYPE}")
 set_target_properties(peacock_tpch_tests PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 add_test(NAME peacock_tpch_tests COMMAND peacock_tpch_tests)
 set_tests_properties(peacock_tpch_tests PROPERTIES LABELS "gpu")

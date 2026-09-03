@@ -1104,6 +1104,107 @@ TEST(ScanRowGroups, SubsetsUnionToTheWholeScan) {
   EXPECT_EQ(keys, whole);
 }
 
+// ---------------------------------------------------------------------------
+// The measurement side: what a region records, and the coordinate that tells two
+// calls of one seq apart. Nothing on the execution path reads any of it, so these
+// are the only checks it has.
+// ---------------------------------------------------------------------------
+
+/// A timing loan, so a failing expectation cannot leave the process-global switch on for
+/// every later test in this binary.
+struct TimingOn {
+  TimingOn() { peacock::set_node_timing(peacock::NodeTiming::Events); }
+  ~TimingOn() { peacock::set_node_timing(peacock::NodeTiming::Off); }
+};
+
+TEST(NodeRegions, CallIndexCountsCallsOfOneSeq) {
+  TimingOn timing;
+  flatbuffers::FlatBufferBuilder fbb;
+  auto buf = customer_scan_plan(fbb, {0});
+  peacock::NodeSession session(buf.data(), buf.size());
+
+  std::vector<uint32_t> first{0}, second{1};
+  session.execute_scan_rowgroups(0, first, nullptr);
+  session.execute_scan_rowgroups(0, second, nullptr);
+
+  auto regions = session.collect_node_regions();
+  ASSERT_EQ(regions.size(), 2u);
+  EXPECT_EQ(regions[0].seq, 0u);
+  EXPECT_EQ(regions[1].seq, 0u);
+  // The whole point of the field: without it the two rows are indistinguishable, and a
+  // record row cannot be matched to the call it describes.
+  EXPECT_EQ(regions[0].call_index, 0u);
+  EXPECT_EQ(regions[1].call_index, 1u);
+}
+
+TEST(NodeRegions, ANewSessionStartsTheCountAgain) {
+  TimingOn timing;
+  flatbuffers::FlatBufferBuilder fbb;
+  auto buf = customer_scan_plan(fbb, {0});
+  std::vector<uint32_t> groups{0};
+
+  // Two sessions over the same plan, as a benchmark's repeated runs are: the index is a
+  // coordinate WITHIN a run, so the second must not continue the first.
+  for (int run = 0; run < 2; ++run) {
+    peacock::NodeSession session(buf.data(), buf.size());
+    session.execute_scan_rowgroups(0, groups, nullptr);
+    auto regions = session.collect_node_regions();
+    ASSERT_EQ(regions.size(), 1u);
+    EXPECT_EQ(regions[0].call_index, 0u) << "run " << run;
+  }
+}
+
+TEST(NodeRegions, ARegionCarriesWhatOnlyAMeasurementReads) {
+  TimingOn timing;
+  flatbuffers::FlatBufferBuilder fbb;
+  auto buf = customer_scan_plan(fbb, {0, 1});
+  peacock::NodeSession session(buf.data(), buf.size());
+
+  std::vector<uint32_t> groups{0};
+  peacock::NodeStats stats{};
+  session.execute_scan_rowgroups(0, groups, &stats);
+  auto regions = session.collect_node_regions();
+  ASSERT_EQ(regions.size(), 1u);
+
+  // `NodeStats` keeps what the driver reads and nothing else; everything below travels
+  // by collection instead, which is what keeps a shipping query from paying per call.
+  EXPECT_GT(stats.rows, 0u);
+  EXPECT_GT(regions[0].host_setup_us + regions[0].host_submit_us, 0u);
+  EXPECT_GT(regions[0].device_us, 0u);
+  // The byte cross-check's own precondition: it is only askable where the device
+  // materialized the declared types.
+  EXPECT_EQ(regions[0].schema_faithful, 1u);
+  EXPECT_GT(regions[0].logical_bytes, 0u);
+}
+
+TEST(NodeRegions, CollectingTwiceReportsNothingTheSecondTime) {
+  TimingOn timing;
+  flatbuffers::FlatBufferBuilder fbb;
+  auto buf = customer_scan_plan(fbb, {0});
+  peacock::NodeSession session(buf.data(), buf.size());
+
+  std::vector<uint32_t> groups{0};
+  session.execute_scan_rowgroups(0, groups, nullptr);
+  EXPECT_EQ(session.collect_node_regions().size(), 1u);
+  // A second call must not report the same regions again, and a long session must not
+  // accumulate events without bound.
+  EXPECT_TRUE(session.collect_node_regions().empty());
+}
+
+TEST(NodeRegions, TimingOffRecordsNothing) {
+  // No loan: the switch is already off, and this test is about it staying that way.
+  flatbuffers::FlatBufferBuilder fbb;
+  auto buf = customer_scan_plan(fbb, {0});
+  peacock::NodeSession session(buf.data(), buf.size());
+
+  std::vector<uint32_t> groups{0};
+  peacock::NodeStats stats{};
+  session.execute_scan_rowgroups(0, groups, &stats);
+  // The driver's two numbers are always there; the measurement is not allocated at all.
+  EXPECT_GT(stats.rows, 0u);
+  EXPECT_TRUE(session.collect_node_regions().empty());
+}
+
 TEST(ScanRowGroups, ACallOnAnotherKindOfNodeSaysWhichKind) {
   flatbuffers::FlatBufferBuilder fbb;
   auto path = fbb.CreateString(parquet_path("region"));

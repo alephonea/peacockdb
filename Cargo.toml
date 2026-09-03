@@ -31,19 +31,16 @@ opt-level = 3
 # For `peacock_gpu_benchmarks` ONLY (scripts/build-test-shadgpu.sh --build-benchmarks).
 #
 # The opt-level-1 plateau measured above is right for the test suite and wrong here.
-# Per-node `time_us` is device work and barely notices, but `total_us -
-# nodes_total_us` — the per-query host overhead a record documents — is entirely
-# workspace Rust, and unoptimized that number is an upper bound rather than a
-# measurement.
+# Node times are device work and barely notice, but `total_us - nodes_total_us` — the
+# per-query host overhead a record documents — is entirely workspace Rust, and
+# unoptimized it is an upper bound rather than a measurement.
 #
-# A custom profile rather than raising `[profile.test]`: the latter would rebuild
-# the whole workspace at opt-3 for every `cargo test` in the repo — the rust-only
-# fast loop, all nine CPU tiers, the GPU correctness binaries — and invalidate
-# every warm cache including CI's.
+# A custom profile rather than raising `[profile.test]`, which would rebuild the whole
+# workspace at opt-3 for every `cargo test` in the repo and invalidate every warm cache,
+# CI's included.
 #
-# `debug = false` rather than `strip = "symbols"`: setup-glibc.sh strips only
-# debug sections on purpose, because patchelf needs the dynamic symbol table. A
-# profile-level symbol strip is a stronger cut than the ship path has ever taken.
+# `debug = false` rather than `strip = "symbols"`: setup-glibc.sh strips only debug
+# sections on purpose, since patchelf needs the dynamic symbol table.
 [profile.benchmarks]
 inherits = "release"
 opt-level = 3   # redundant under release; stated because it is the entire point

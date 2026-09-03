@@ -414,7 +414,7 @@ jobs:
       - name: Build and stage rust GPU test binaries
         run: |
           mkdir -p cpp/install/rust-tests
-          # The six GPU targets, one line each; build-test.md's test table is the detail.
+          # The GPU targets, one line each; build-test.md's test table is the detail.
           # test_gpu_full_table / test_gpu_partitioned = the per-query GPU verify, split by
           #   execution mode: each asserts the per-node cost tree against the matching
           #   .cpu.txt golden AND the final result, which catches an intermediate divergence
@@ -424,9 +424,13 @@ jobs:
           #   its companion test_gpu_batch needs no device and runs in dataset-matrix instead.
           # test_gpu_recipe_walk = a recipe plan driven by hand, DataFusion as the oracle.
           # test_gpu_executors = the exec executors, each handed its recipe and one batch.
+          # test_node_timing = the per-node TIMING method itself: that the events mode does
+          #   not slow the query it measures, and that its CUDA events bracket device work
+          #   rather than the host prologue. Every number under testdata/benchmark-results/
+          #   assumes both; nothing else checks either.
           # One line on purpose: the coverage guard reads the array below with a single
           # `lines().find`, so a continuation hides every target after the backslash.
-          for t in test_gpu_full_table test_gpu_partitioned test_inc2_conformance test_gpu_abi test_gpu_recipe_walk test_gpu_executors test_gpu_bp_corpus; do
+          for t in test_gpu_full_table test_gpu_partitioned test_inc2_conformance test_gpu_abi test_gpu_recipe_walk test_gpu_executors test_gpu_bp_corpus test_node_timing; do
             exec_path=$(cargo test --no-run -p peacockdb-core --test "$t" \
                 --message-format=json \
               | python3 -c '

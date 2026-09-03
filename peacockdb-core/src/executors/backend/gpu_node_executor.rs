@@ -12,22 +12,27 @@
 
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::error::Result as DfResult;
 use datafusion::physical_plan::ExecutionPlan;
 
 use crate::executors::executor::{NodeMemoryStats, PartitionStat};
-use crate::executors::node_by_node::NodeExecutor;
+use crate::executors::node_by_node::{NodeExecutor, RegionTimes};
 
 use arrow::ipc::reader::StreamReader;
 use datafusion::error::DataFusionError;
 
 use peacockdb_ffi::raw::{
-    peacock_executor_begin_plan, peacock_executor_end_plan, peacock_executor_execute_node,
-    peacock_handle_release, peacock_install_rmm_pool, peacock_last_error, peacock_result_free,
-    peacock_result_from_handle, peacock_measure_timing_floor_us, peacock_set_node_timing,
-    PeacockExecutor, PeacockNodeStats, PeacockRmmPoolInfo, PEACOCK_RMM_POOL_INSTALLED,
+    peacock_executor_begin_plan, peacock_executor_collect_node_regions, peacock_executor_end_plan,
+    peacock_executor_execute_node, peacock_handle_release, peacock_install_rmm_pool,
+    peacock_last_error, peacock_result_free, peacock_result_from_handle,
+    peacock_measure_timing_floor_us, peacock_nvtx_pop_range, peacock_nvtx_push_range,
+    peacock_set_node_timing, peacock_set_nvtx_ranges,
+    PeacockExecutor,
+    PeacockNodeRegion, PeacockNodeStats, PeacockRmmPoolInfo, PEACOCK_NODE_TIMING_EVENTS,
+    PEACOCK_NODE_TIMING_OFF, PEACOCK_RMM_POOL_INSTALLED,
 };
 
 use crate::cpu_executor::logical_size_from_schema;
@@ -43,7 +48,7 @@ use crate::cpu_executor::logical_size_from_schema;
 /// refuses it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RmmPool {
-    /// A pooled resource is installed. Sizes are what it was actually built with.
+    /// Sizes are what the pool was actually built with, not what was requested.
     Pool { integrated: bool, free_bytes: u64, initial_bytes: u64, maximum_bytes: u64 },
     /// The pool could not be built — typically a neighbour holding the device when the
     /// reservation was computed — so rmm's default resource is in place and nobody
@@ -74,20 +79,17 @@ impl std::fmt::Display for RmmPool {
 
 /// Install the pooled device allocator and report what happened.
 ///
-/// Idempotent, and the idempotency lives in C++ (`peacock::install_rmm_pool`) rather
-/// than behind a `OnceLock` here, so the process has exactly one guard no matter which
-/// side calls first — the gtest binaries call it from `main()`, this path calls it per
-/// case. A second call rebuilding the pool would drop a resource that live allocations
-/// still point into; the benchmark target, 127 `#[test]` functions sharing one process,
-/// is precisely the shape that would find that.
+/// Idempotent, in C++ (`peacock::install_rmm_pool`) rather than behind a `OnceLock` here,
+/// so the process has one guard whichever side calls first — the gtest binaries from
+/// `main()`, this path per case. A second call rebuilding the pool would drop a resource
+/// live allocations still point into.
 ///
-/// Must run before any GPU work. Cheap to call again afterwards — it returns the first
-/// call's outcome — which is why the caller can just ask for the label at write time.
+/// Must run before any GPU work; cheap afterwards, since it returns the first call's
+/// outcome, so the caller can ask for the label at write time.
 ///
-/// The engine does not install this for itself: a shipping query still allocates the
-/// expensive way, and `gpu_memory_limit` is still accepted and ignored. Changing that is
-/// `llm-wiki/tickets.md` #148, and it is a decision about the product rather than about
-/// measurement, which is why this entry point exists in the meantime.
+/// The engine does not install this for itself — a shipping query still allocates the
+/// expensive way and `gpu_memory_limit` is accepted and ignored. That is #148, a product
+/// decision rather than a measurement one, which is why this entry point exists.
 pub fn install_rmm_pool() -> RmmPool {
     let mut info = PeacockRmmPoolInfo::default();
     // Non-zero only for a null pointer, which cannot happen here.
@@ -105,36 +107,99 @@ pub fn install_rmm_pool() -> RmmPool {
     }
 }
 
-/// Turn per-node GPU timing on or off (process-global, OFF by default).
-///
-/// With it on, every unit of work inside the C++ `NodeSession` is bracketed by a
-/// `cudaStreamSynchronize`, and [`NodeMemoryStats::time_us`] /
-/// [`PartitionStat::time_us`] carry real microseconds instead of zeros. Why the sync
-/// is both what makes the number real and what makes it costly — hence opt-in — is
-/// argued once, on `set_node_timing` in `cpp/src/plan_executor.h`.
-///
-/// Process-global, and the GPU suite already runs `--test-threads=1` (cuDF/RMM share
-/// one process-wide pool), so there is no cross-test interleaving to guard against.
-pub fn set_node_timing(enabled: bool) {
-    unsafe { peacock_set_node_timing(if enabled { 1 } else { 0 }) };
+/// How per-node GPU regions are measured. `Off` by default, because measuring is not
+/// free.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum NodeTiming {
+    /// No measurement. Every timing field stays 0.
+    #[default]
+    Off,
+    /// CUDA events around the device work, host clock around the host work, no sync
+    /// inside the region. Device numbers arrive via `collect_regions` after the
+    /// root materialize, into [`PartitionStat::device_us`].
+    Events,
 }
 
-/// Microseconds the MEASUREMENT costs: [`set_node_timing`]'s timed region wrapped
-/// around no work at all.
+/// Select the per-node GPU timing mode (process-global, [`NodeTiming::Off`] by default).
 ///
-/// This is the resolution floor of every `time_us` in this module. A node's number
-/// is its real work PLUS one of these, so a node reporting at or below the floor is
-/// not cheap — it is unresolvable, and the two look identical unless the floor is
-/// printed next to them. That is the whole reason this exists; `bench_stats_str`
-/// writes it into each record as `sync_floor_us`.
+/// Why it is opt-in, and why the split into host setup / host submit / device exists, is
+/// argued once on `set_node_timing` and `mark_device_start` in
+/// `cpp/src/plan_executor.h`. The GPU suite runs `--test-threads=1` (cuDF/RMM share one
+/// process-wide pool), so the global needs no cross-test guard.
+pub fn set_node_timing(mode: NodeTiming) {
+    let raw = match mode {
+        NodeTiming::Off => PEACOCK_NODE_TIMING_OFF,
+        NodeTiming::Events => PEACOCK_NODE_TIMING_EVENTS,
+    };
+    MEASURING.store(mode != NodeTiming::Off, Ordering::Relaxed);
+    unsafe { peacock_set_node_timing(raw) };
+}
+
+/// The mode the setter last selected, so this side can ask without crossing the FFI on
+/// every call. A mirror rather than a getter: the setter above is the only way the C++
+/// global moves, and the two cannot disagree without going around it.
+static MEASURING: AtomicBool = AtomicBool::new(false);
+
+/// Whether the run is measured. What arms the per-call bookkeeping that only a measured
+/// run has any use for.
+pub fn node_timing_on() -> bool {
+    MEASURING.load(Ordering::Relaxed)
+}
+
+/// Emit NVTX ranges around plan nodes and their output partitions (process-global, off
+/// by default).
 ///
-/// Do NOT subtract it from node times. Individual node measurements vary by more
-/// than the floor itself, so subtracting manufactures zeros and negative-clamped
-/// noise — it would hide precisely what reporting the floor is meant to expose.
+/// Why this is not folded into [`set_node_timing`] is argued on `set_nvtx_ranges` in
+/// `cpp/src/plan_executor.h`. Nothing reads the ranges unless a profiler is attached,
+/// so this is for capture runs, not for the benchmark tree.
+pub fn set_nvtx_ranges(on: bool) {
+    unsafe { peacock_set_nvtx_ranges(i32::from(on)) };
+}
+
+/// A named NVTX range around whatever the caller is about to do, closed when the returned
+/// value drops.
 ///
-/// Requires a live CUDA context (construct a `GpuExecutor` first) and an idle
-/// default stream; returns 0 if CUDA errored, which is a self-announcing value
-/// since the instrumentation is never actually free.
+/// For a benchmark harness naming the case it runs. Node ranges carry `<seq>.<call_index>`
+/// and seq numbering restarts with every plan, so a capture of several queries cannot say
+/// from those names which query a call was in; this range answers it by containment, and
+/// the reader stops needing to be told the query on its command line.
+///
+/// RAII rather than a pop the caller must remember: a case that panics mid-run would
+/// otherwise leave the range open and swallow every case after it into the wrong query.
+///
+/// A no-op while ranges are off, and nothing in the engine calls it — a shipping query
+/// pays nothing here because it never arrives.
+#[must_use = "the range closes when this is dropped, so dropping it at once ranges nothing"]
+pub fn nvtx_range(name: &str) -> NvtxRange {
+    // Interior NUL is not an error worth a Result: the name is built by the harness from
+    // its own case identifiers, and a NUL in one of those is a bug in the harness. The
+    // range is simply not opened, which shows up as a capture missing a level.
+    if let Ok(owned) = std::ffi::CString::new(name) {
+        unsafe { peacock_nvtx_push_range(owned.as_ptr()) };
+    }
+    NvtxRange(())
+}
+
+/// Closes the range [`nvtx_range`] opened.
+pub struct NvtxRange(());
+
+impl Drop for NvtxRange {
+    fn drop(&mut self) {
+        unsafe { peacock_nvtx_pop_range() };
+    }
+}
+
+/// Microseconds the measurement costs: a timed region around no work at all.
+///
+/// The resolution floor of every node time here. A node's number is its real work plus
+/// one of these, so a node at or below the floor is not cheap but unresolvable, and the
+/// two are indistinguishable unless the floor is printed beside them.
+///
+/// Do not subtract it: node measurements vary by more than the floor itself, so
+/// subtracting manufactures zeros and clamped noise, hiding what reporting it exposes.
+///
+/// Requires a live CUDA context (construct a `GpuExecutor` first). Returns 0 on CUDA
+/// error — self-announcing, since it is never actually free.
 pub fn measure_timing_floor_us(samples: u32) -> u64 {
     unsafe { peacock_measure_timing_floor_us(samples) }
 }
@@ -145,7 +210,14 @@ pub fn measure_timing_floor_us(samples: u32) -> u64 {
 /// resident handles — the VRAM-safety net for mid-walk errors.
 pub struct GpuNodeExecutor {
     executor: *mut PeacockExecutor,
+    /// Post-order node count from `begin_plan`, kept only to size the device-time
+    /// collection buffer.
+    node_count: usize,
 }
+
+/// Output partition count is bounded by `target_partitions`; a fixed caller buffer
+/// avoids an FFI allocation/free per node for the handle array.
+const OUT_CAP: usize = 64;
 
 impl GpuNodeExecutor {
     /// Load the serialized plan into the C++ session (indexes post-order).
@@ -162,7 +234,7 @@ impl GpuNodeExecutor {
         if rc != 0 {
             return Err(last_error(executor, "peacock_executor_begin_plan"));
         }
-        Ok(Self { executor })
+        Ok(Self { executor, node_count: node_count as usize })
     }
 }
 
@@ -185,9 +257,6 @@ impl NodeExecutor for GpuNodeExecutor {
         // Flatten the per-child partition handles + per-child counts.
         let counts: Vec<u64> = input_handles.iter().map(|c| c.len() as u64).collect();
         let flat: Vec<u64> = input_handles.iter().flatten().copied().collect();
-        // Output partition count is bounded by target_partitions; a fixed
-        // caller buffer avoids an FFI allocation/free for the handle array.
-        const OUT_CAP: usize = 64;
         let mut out_buf = [0u64; OUT_CAP];
         let mut out_count: u64 = 0;
         // Per-partition stats (parallel to out_handles); see the FFI contract.
@@ -229,9 +298,8 @@ impl NodeExecutor for GpuNodeExecutor {
         let mut output_bytes = 0usize;
         let mut max_batch_rows = 0usize;
         // Σ over partitions, matching how C++ charges shared work (the hash-scatter
-        // prologue lands on partition 0) — so this is the node's total either way.
-        // Zero unless node timing is on; see `peacock_set_node_timing`.
-        let mut time_us = 0u64;
+        // prologue lands on partition 0). Zero unless node timing is on. No `device_us`
+        // here: it is not known yet, and the driver merges it in after materialize.
         let mut part_stats: Vec<PartitionStat> = Vec::with_capacity(n);
         for (k, st) in out_stats[..n].iter().enumerate() {
             let rp = st.rows as usize;
@@ -239,12 +307,15 @@ impl NodeExecutor for GpuNodeExecutor {
             rows += rp;
             output_bytes += bp;
             max_batch_rows = max_batch_rows.max(rp);
-            time_us += st.time_us;
+            // Times are zero here and filled by the collection: none of them crosses the
+            // FFI per call any more — see `collect_regions`.
             part_stats.push(PartitionStat {
                 out_rows: rp,
                 out_bytes: bp,
                 row_groups: scan_map.get(k).map(|e| e.row_groups.clone()).unwrap_or_default(),
-                time_us: st.time_us,
+                host_setup_us: 0,
+                host_submit_us: 0,
+                device_us: 0,
             });
         }
         let stat = NodeMemoryStats {
@@ -255,7 +326,9 @@ impl NodeExecutor for GpuNodeExecutor {
             max_batch_rows,
             // Only N>1 carries sub-lines (matches the CPU golden's N==1 ⇒ none).
             part_stats: if n > 1 { part_stats } else { Vec::new() },
-            time_us,
+            host_setup_us: 0,
+            host_submit_us: 0,
+            device_us: 0,
         };
         Ok((out_handles, stat))
     }
@@ -296,6 +369,39 @@ impl NodeExecutor for GpuNodeExecutor {
         for &handle in handles {
             unsafe { peacock_handle_release(self.executor, handle) };
         }
+    }
+
+    async fn collect_regions(&mut self) -> DfResult<Vec<RegionTimes>> {
+        // One entry per (node, output partition) that recorded both events, so
+        // nodes × OUT_CAP is the exact upper bound. C++ reports how many it HAD, not how
+        // many fit, and fails if that exceeds `cap` — an under-sized buffer surfaces as
+        // an error rather than as a device that quietly did less work.
+        let cap = self.node_count * OUT_CAP;
+        let mut buf = vec![PeacockNodeRegion::default(); cap];
+        let mut count: u64 = 0;
+        let rc = unsafe {
+            peacock_executor_collect_node_regions(
+                self.executor,
+                buf.as_mut_ptr(),
+                cap as u64,
+                &mut count,
+            )
+        };
+        if rc != 0 {
+            return Err(last_error(self.executor, "peacock_executor_collect_node_regions"));
+        }
+        Ok(buf[..count as usize]
+            .iter()
+            .map(|r| RegionTimes {
+                seq: r.seq as usize,
+                partition: r.partition as usize,
+                host_setup_us: r.host_setup_us,
+                host_submit_us: r.host_submit_us,
+                device_us: r.device_us,
+                logical_bytes: r.logical_bytes,
+                schema_faithful: r.schema_faithful,
+            })
+            .collect())
     }
 }
 impl Drop for GpuNodeExecutor {

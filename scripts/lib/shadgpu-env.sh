@@ -48,6 +48,31 @@ fi
 REMOTE=shad-gpu
 REMOTE_REPO=/home/info/peacockdb
 
+# One TCP connection for the whole invocation, shared by every ssh and rsync below.
+#
+# Not a speed-up. A phase makes a dozen separate connections -- push, patch, launch,
+# state polls, four pulls -- and sshd caps how many may be MID-HANDSHAKE at once
+# (MaxStartups). Past that it resets new ones before authentication, which surfaces as
+#
+#     kex_exchange_identification: read: Connection reset by peer
+#     Connection reset by <host> port 22
+#
+# and takes the whole phase down with rc=255 -- a benchmark run losing its measurement
+# to a limit we walked into ourselves. Observed on shad-gpu at roughly one connection
+# in two. With a master, the first connection pays the handshake and the rest ride it.
+#
+# The socket lives in the run's own directory and dies with it: %C is a hash of
+# host/port/user, so two checkouts against one host do not share a socket, and
+# ControlPersist=60 keeps it just past the gap between phases of one invocation.
+SSH_CONTROL_DIR="${SSH_CONTROL_DIR:-${TMPDIR:-/tmp}/peacock-ssh-$(id -u)}"
+mkdir -p "$SSH_CONTROL_DIR"
+chmod 700 "$SSH_CONTROL_DIR"
+export SSH_OPTS="-o ControlMaster=auto -o ControlPath=$SSH_CONTROL_DIR/%C -o ControlPersist=60"
+# `ssh` and `rsync -e ssh` both go through this, so neither can be left behind when the
+# options change. Quoted expansion is deliberate: the options contain no spaces inside a
+# single argument, and word-splitting them is how they reach ssh as separate flags.
+ssh() { command ssh $SSH_OPTS "$@"; }
+
 # rsync over the flaky, bursty shad-gpu link, made self-healing rather than
 # all-or-nothing: --partial --inplace so a retry resumes the same file instead of
 # restarting it, --timeout=90 so a stalled connection aborts and can reconnect.
@@ -56,8 +81,20 @@ REMOTE_REPO=/home/info/peacockdb
 resilient_rsync() {
   local attempt=1 max_attempts=100 rc=0
   while :; do
-    rsync -P --partial --inplace --timeout=90 "$@" && return 0
+    rsync -P --partial --inplace --timeout=90 -e "ssh $SSH_OPTS" "$@" && return 0
     rc=$?
+    # 23 is "some files were not transferred", and on this path it is almost always a
+    # source file that is not there — most often a tracked file deleted from the working
+    # tree but not staged, which `git ls-files --cached` still lists. Retrying cannot
+    # help: the file will not be there on the hundredth attempt either, and the loop
+    # spent eight minutes of backoff before saying so. Once, then out, naming the cause.
+    if [ "$rc" -eq 23 ]; then
+      echo "rsync: rc=23, some sources were not transferred — see the link_stat lines" >&2
+      echo "       above. A tracked file deleted but not staged is still in the file" >&2
+      echo "       list; 'git add -A <path>' or restore it. Not retrying: it is not a" >&2
+      echo "       stall." >&2
+      return "$rc"
+    fi
     if [ "$attempt" -ge "$max_attempts" ]; then
       echo "rsync: giving up after $attempt attempts (last rc=$rc)" >&2
       return "$rc"
@@ -80,18 +117,36 @@ stage_cargo_test_binary() {
   local exec_path
   # `set -o pipefail` in the caller is what makes a compile failure land here as a
   # build failure rather than as an empty result reported as a missing binary.
+  #
+  # The filter forwards compiler messages to stderr rather than dropping them. Under
+  # --message-format=json cargo puts its DIAGNOSTICS on stdout as json too, so a filter
+  # that keeps only the artifact line eats every error and warning -- and the failure
+  # then read "building X failed (cargo output above)" with nothing above it. Forwarded
+  # as they stream, so a long build shows its first error when it happens.
   if ! exec_path=$(cargo test --no-run -p peacockdb-core --test "$target" \
       --message-format=json "$@" \
     | python3 -c '
 import json, sys
 name = sys.argv[1]
+found = None
+# Read to the END rather than breaking at the artifact line. Breaking closes stdin while
+# cargo is still writing, and cargo then dies with `error: Broken pipe (os error 32)` --
+# which `set -o pipefail` reports as a build failure of a target that built fine.
 for line in sys.stdin:
     try: m = json.loads(line)
-    except ValueError: continue
+    except ValueError:
+        sys.stderr.write(line); sys.stderr.flush(); continue
+    if m.get("reason") == "compiler-message":
+        text = (m.get("message") or {}).get("rendered")
+        if text:
+            sys.stderr.write(text); sys.stderr.flush()
+        continue
     if m.get("executable") and (m.get("target") or {}).get("name") == name:
-        print(m["executable"]); break
+        found = m["executable"]
+if found:
+    print(found)
 ' "$target"); then
-    echo "ERROR: building $target failed (cargo output above)" >&2
+    echo "ERROR: building $target failed (see the compiler messages above)" >&2
     return 1
   fi
   if [ -z "$exec_path" ] || [ ! -f "$exec_path" ]; then

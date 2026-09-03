@@ -2,6 +2,7 @@
 //! accountant takes figures, so nothing below builds a plan or a backend.
 
 use super::*;
+use crate::batch_partitioned::executor::AbiCalls;
 
 /// State and model as two numbers the test sets, which is all the accountant reads.
 struct Held {
@@ -29,6 +30,7 @@ fn slot(index: usize) -> Slot {
 fn measured(bytes: usize) -> CallStats {
     CallStats {
         scratch_bytes: Some(bytes),
+        calls: AbiCalls::default(),
     }
 }
 
@@ -41,7 +43,7 @@ fn resident_is_in_flight_plus_executor_state() {
         scratch: 0,
     };
     let modelled = acct.begin_call(slot(0), &held, 0, 0).unwrap();
-    acct.end_call(slot(0), &held, CallStats::default(), modelled)
+    acct.end_call(slot(0), &held, &CallStats::default(), modelled)
         .unwrap();
     assert_eq!((acct.in_flight(), acct.resident()), (100, 140));
 }
@@ -54,7 +56,7 @@ fn the_cached_executor_total_tracks_a_live_sum() {
             resident,
             scratch: 0,
         };
-        acct.end_call(slot(index), &held, CallStats::default(), 0)
+        acct.end_call(slot(index), &held, &CallStats::default(), 0)
             .unwrap();
     }
     assert_eq!(acct.resident(), 40);
@@ -63,7 +65,7 @@ fn the_cached_executor_total_tracks_a_live_sum() {
         resident: 55,
         scratch: 0,
     };
-    acct.end_call(slot(0), &grown, CallStats::default(), 0)
+    acct.end_call(slot(0), &grown, &CallStats::default(), 0)
         .unwrap();
     assert_eq!(acct.resident(), 85);
 }
@@ -75,7 +77,7 @@ fn forgetting_an_executor_removes_its_contribution() {
         resident: 64,
         scratch: 0,
     };
-    acct.end_call(slot(0), &held, CallStats::default(), 0)
+    acct.end_call(slot(0), &held, &CallStats::default(), 0)
         .unwrap();
     assert_eq!(acct.resident(), 64);
     acct.forget(slot(0));
@@ -91,11 +93,11 @@ fn a_consuming_call_stops_the_slot_contributing() {
         resident: 64,
         scratch: 0,
     };
-    acct.end_call(slot(0), &held, CallStats::default(), 0)
+    acct.end_call(slot(0), &held, &CallStats::default(), 0)
         .unwrap();
     // mark_done_and_fetch and friends consume the executor, so there is nothing left to
     // ask — the slot goes to zero rather than keeping its last figure.
-    acct.end_consuming_call(slot(0), CallStats::default(), 0)
+    acct.end_consuming_call(slot(0), &CallStats::default(), 0)
         .unwrap();
     assert_eq!(acct.resident(), 0);
 }
@@ -139,7 +141,7 @@ fn the_post_check_trips_on_residency_the_model_did_not_predict() {
         scratch: 0,
     };
     let trip = acct
-        .end_call(slot(0), &kept, CallStats::default(), modelled)
+        .end_call(slot(0), &kept, &CallStats::default(), modelled)
         .expect_err("150 resident is over 100");
     assert_eq!((trip.when, trip.bytes), (When::PostCall, 150));
 }
@@ -153,7 +155,7 @@ fn no_budget_means_it_accounts_without_tripping() {
         scratch: 1 << 40,
     };
     let modelled = acct.begin_call(slot(0), &huge, 0, 0).expect("no budget");
-    acct.end_call(slot(0), &huge, CallStats::default(), modelled)
+    acct.end_call(slot(0), &huge, &CallStats::default(), modelled)
         .expect("no budget");
     assert_eq!(acct.resident(), 2 << 40);
 }
@@ -174,7 +176,7 @@ fn an_under_predicting_model_is_recorded_with_its_magnitude() {
         scratch: 10,
     };
     let modelled = acct.begin_call(slot(0), &executor, 0, 0).unwrap();
-    acct.end_call(slot(0), &executor, measured(25), modelled)
+    acct.end_call(slot(0), &executor, &measured(25), modelled)
         .unwrap();
     let recorded = acct.underestimates();
     assert_eq!(recorded.len(), 1);
@@ -192,7 +194,7 @@ fn model_accuracy_is_recorded_rather_than_enforced() {
     let modelled = acct.begin_call(slot(0), &executor, 0, 0).unwrap();
     // Under by 100x and the query still runs: the enforcer's contract is the accounted
     // peak against the budget, not that the model was right.
-    acct.end_call(slot(0), &executor, measured(1000), modelled)
+    acct.end_call(slot(0), &executor, &measured(1000), modelled)
         .expect("an under-estimate is a diagnostic, not a failure");
     assert_eq!(acct.underestimates().len(), 1);
 }
@@ -205,7 +207,7 @@ fn a_model_that_held_records_nothing() {
         scratch: 100,
     };
     let modelled = acct.begin_call(slot(0), &executor, 0, 0).unwrap();
-    acct.end_call(slot(0), &executor, measured(80), modelled)
+    acct.end_call(slot(0), &executor, &measured(80), modelled)
         .unwrap();
     assert!(acct.underestimates().is_empty());
 }
@@ -219,7 +221,7 @@ fn an_absent_measurement_is_not_recorded_as_an_underestimate() {
     };
     let modelled = acct.begin_call(slot(0), &executor, 0, 0).unwrap();
     // None is "this run was not instrumented", which is not a model of zero.
-    acct.end_call(slot(0), &executor, CallStats::default(), modelled)
+    acct.end_call(slot(0), &executor, &CallStats::default(), modelled)
         .unwrap();
     assert!(acct.underestimates().is_empty());
 }
