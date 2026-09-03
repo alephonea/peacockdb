@@ -1,11 +1,24 @@
-// The bare-cuDF half of the cost-model calibration record.
+// The bare-cuDF half of the cost-model calibration record, and a record of an OLDER
+// model than the one now measured.
 //
-// The fit needs rows from two engines on one set of axes: peacockdb pays a host prologue
-// per node that bare cuDF has no analogue for, and the difference between the two sources
-// is exactly what const_peacock is. This side produces rows in the format
-// `peacockdb-core/tests/common/record.rs` defines; that side implements it from the plan
-// tree, this one by hand, because these tests have no plan to walk. The format is shared
-// and the code is not — the two agree on what a row MEANS and on nothing else.
+// It was written for a fit over two engines on one set of axes: peacockdb pays a host
+// prologue per node that bare cuDF has no analogue for, and the difference between the
+// two sources was what `const_peacock` meant. That model is gone. The prologue is now
+// measured where it happens — `peacock_host_us` per call on the real C++ path — so a
+// second engine is no longer how it is separated from the device time.
+//
+// What follows from that, and is the reason for the two notes below: the two writers no
+// longer share a format. `record.rs` writes per-CALL rows keyed by
+// `(node, recipe step, call index)` with three time terms; this one writes per-cuDF-call
+// rows carrying `source`, `label`, `cuda_bytes` and `wall_us`. They agree on nothing but
+// the file being a TSV, and each has its OWN path variable so that a run with both
+// enabled cannot append two formats to one file.
+//
+// Left standing rather than removed because its only includer, `test_tpch.cpp`, is a
+// correctness test that predates this work by a month and belongs to it in no way: it
+// checks hand-written bare-cuDF TPC-H against DuckDB goldens, and stripping 93 call
+// sites out of it would be a large edit to a foreign test for no gain here. Unset the
+// variable and a region is the bare call plus one pointer check.
 //
 // The category mapping is written by hand at each call site and is the part of this work
 // worth reviewing. A cuDF call does not carry its role: the same `binary_operation` is a
@@ -78,8 +91,13 @@ using scoped_range = ::nvtx3::scoped_range_in<peacock_domain>;
 
 /// Set ⇒ rows are appended there. Unset ⇒ a region is the bare call plus one pointer
 /// check, which is why no site needs an `#ifdef` and the tests run as they did.
+///
+/// Deliberately NOT `PEACOCK_RECORD_PATH`, which is the node source's. The two shared it
+/// while they shared a format; they no longer do, and a shared variable would mean one
+/// file holding two column layouts — appended silently from this side, refused from the
+/// other, and in neither case the error it is.
 inline const char* record_path() {
-  static const char* p = std::getenv("PEACOCK_RECORD_PATH");
+  static const char* p = std::getenv("PEACOCK_CUDF_RECORD_PATH");
   return (p && *p) ? p : nullptr;
 }
 
@@ -259,9 +277,13 @@ inline std::string allocator_text() {
 /// the two copies room to drift apart.
 inline const char* header_notes() {
   return
-      "# peacockdb cost-model calibration record — BARE-cuDF source.\n"
-      "# Column meanings are defined in peacockdb-core/tests/common/record.rs. What is\n"
-      "# specific to this source:\n"
+      "# peacockdb cost-model calibration record — BARE-cuDF source, OLD format.\n"
+      "# Not the format peacockdb-core/tests/common/record.rs writes: that one is per\n"
+      "#   cuDF CALL, keyed by (plan node, recipe step, call index), and carries three\n"
+      "#   time terms. This one predates it and is kept for the older collections under\n"
+      "#   testdata/calibration/. The two are not appendable to one file, which is why\n"
+      "#   this source reads PEACOCK_CUDF_RECORD_PATH and that one PEACOCK_RECORD_PATH.\n"
+      "# What this source's columns mean:\n"
       "# node_type = the cuDF entry point, not a plan node: this chain has no plan.\n"
       "# node_seq = position in the hand-written chain, restarted per execute() call. The\n"
       "#   benchmark runs the chain several times, so a (query, label, node_seq) has one\n"

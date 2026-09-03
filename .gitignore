@@ -44,7 +44,9 @@ testdata/embeddings-cache/
 # so a `git add cpp` swept 1069 build artifacts into a commit once.
 cpp/build26/
 
-# sf40 benchmark output. The sf1 trees next to it ARE committed — they are a history of
-# measurements, read by nothing. These are not: the sf40 case list is still moving, so
-# every collection run would be a commit of files that are about to be renamed away.
-testdata/benchmark-results/tpch.sf40/
+# (was: testdata/benchmark-results/tpch.sf40/ — ignored while the sf40 case list was
+# still moving and every collection would have committed files about to be renamed away.
+# Both halves of that reason are gone: sf40 is now the ONLY tier timed — sf1 measures
+# mostly the host prologue and is not benchmarked at all — and the tree is one file per
+# (dataset, mode) rather than one per query, so a collection rewrites two files instead
+# of thirty-two. The measurement is the deliverable, and it is committed.)
