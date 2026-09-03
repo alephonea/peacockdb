@@ -4,7 +4,6 @@
 #[macro_use]
 mod common;
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use datafusion::arrow::array::Int64Array;
@@ -212,208 +211,58 @@ async fn test_instrumented_stats_are_populated() {
 
 // --- the calibration record -------------------------------------------------
 
-/// Every region the record emits, in emission order, as `(out_rows, out_bytes)` read
-/// off a `.cpu.txt` golden: a node's `p<k>:` sub-lines when it has them, its own
-/// `output_rows`/`output_bytes` when it does not (the golden's N=1 convention).
-fn golden_regions(text: &str) -> Vec<(usize, usize)> {
-    fn field(line: &str, key: &str) -> Option<usize> {
-        let rest = &line[line.find(key)? + key.len()..];
-        rest.chars().take_while(char::is_ascii_digit).collect::<String>().parse().ok()
-    }
-    let mut regions: Vec<(usize, usize)> = Vec::new();
-    // Index in `regions` of the node line still eligible to be replaced by its own
-    // sub-lines. Reset at each node line; a node with sub-lines contributes them
-    // INSTEAD of itself, which is exactly the record's rule.
-    let mut pending: Option<usize> = None;
-    for line in text.lines() {
-        let t = line.trim_start();
-        if t.starts_with('p') && t.split_once(':').is_some_and(|(k, _)| k[1..].chars().all(|c| c.is_ascii_digit())) {
-            if let Some(i) = pending.take() {
-                regions.truncate(i);
-            }
-            regions.push((field(t, "out_rows=").unwrap(), field(t, "out_bytes=").unwrap()));
-        } else if let (Some(r), Some(b)) = (field(t, "output_rows="), field(t, "output_bytes=")) {
-            pending = Some(regions.len());
-            regions.push((r, b));
-        }
-    }
-    regions
-}
 
-/// The record's proving test, and the half of it that can be checked
-/// without a GPU: which regions exist, in what order, and with what rows and bytes.
-/// The timing columns are zero here — those are gated by `test_node_timing` on the
-/// device. Split that way on purpose: the structural half is what silently rots when
-/// the plan shape or the partition accounting changes, and it costs nothing to run in
-/// every CPU tier.
+/// The benchmark path must not touch the CPU tier — neither what it PRODUCES nor what it
+/// RUNS.
 ///
-/// Both modes, because they are the two the record's per-partition regions have to
-/// survive: full-table is one region per node, partitioned is eight for every node below
-/// the coalesce, and only the golden knows which. With no partition column, the row
-/// ORDER is the only thing saying which region is which — so this test, which pairs rows
-/// against the golden's regions in order, is what holds that up.
-#[tokio::test]
-async fn calibration_record_regions_match_the_cpu_golden() {
-    use common::cost_model::CostModel;
-    use common::record::{record_rows, RunMeta, COLUMNS};
-    use common::{cpu_golden, data_dir_for, exec_mode::golden_label, queries_dir_for};
-    use peacockdb_core::executors::full_table_cpu_executor::execute_full_table_instrumented_enforced;
-    use peacockdb_core::node_executor::{execute_node_by_node, CpuNodeExecutor};
-
-    let model = CostModel::load();
-    for (query, mode, device) in
-        [("q6", ExecMode::FullTable, "tp8-mini"), ("q6", ExecMode::Partitioned, "tp8-standard")]
-    {
-        let (partitions, budget) = device_config(device);
-        let ctx = create_context_with_tables_mode(
-            &data_dir_for("tpch", "1"),
-            partitions,
-            budget,
-            mode.partition_mode(),
-        )
-        .await
-        .unwrap();
-        let sql =
-            std::fs::read_to_string(queries_dir_for("tpch").join(format!("{query}.sql"))).unwrap();
-        let plan = ctx.sql(&sql).await.unwrap().create_physical_plan().await.unwrap();
-
-        let stats: Vec<NodeMemoryStats> = match mode {
-            ExecMode::Partitioned => {
-                let mut backend = CpuNodeExecutor::new(ctx.task_ctx());
-                execute_node_by_node(&plan, &mut backend).await.unwrap().1
-            }
-            ExecMode::FullTable => {
-                let mut stats = vec![];
-                execute_full_table_instrumented_enforced(
-                    plan.clone(),
-                    ctx.task_ctx(),
-                    budget,
-                    &mut stats,
-                )
-                .await
-                .unwrap();
-                stats
-            }
-        };
-
-        let label = golden_label(mode, device);
-        let meta = RunMeta {
-            source: "peacockdb",
-            dataset: "tpch",
-            sf: "1",
-            query,
-            label: &label,
-            timing_mode: "off",
-            build_profile: "test",
-            allocator: "none",
-        };
-        let rows = record_rows(&plan, &stats, &meta, &model);
-        let golden =
-            std::fs::read_to_string(cpu_golden("tpch", "1", query, &label)).unwrap();
-        let expect = golden_regions(&golden);
-
-        assert_eq!(
-            rows.len(),
-            expect.len(),
-            "{query} @ {label}: record has {} regions, the golden {}",
-            rows.len(),
-            expect.len()
-        );
-        for (i, (row, (want_rows, want_bytes))) in rows.iter().zip(&expect).enumerate() {
-            let f: Vec<&str> = row.split('\t').collect();
-            assert_eq!(
-                f.len(),
-                COLUMNS.len(),
-                "{query} @ {label} region {i}: {} fields, {} columns",
-                f.len(),
-                COLUMNS.len()
-            );
-            let at = |name: &str| f[COLUMNS.iter().position(|c| *c == name).unwrap()];
-            assert_eq!(
-                (at("out_rows"), at("out_bytes")),
-                (want_rows.to_string().as_str(), want_bytes.to_string().as_str()),
-                "{query} @ {label} region {i} ({}): record disagrees with the golden",
-                at("node_type"),
-            );
-            // The regressor is the category's bytes, and on this source that is
-            // out_bytes — the property the sf40 side cannot check for us.
-            assert_eq!(at("cuda_bytes"), at("out_bytes"), "{query} @ {label} region {i}");
-            // Nothing here checks the cost category: it is not a column, and a node type
-            // the taxonomy does not bin makes `record_rows` panic above rather than
-            // reaching this loop.
-        }
-
-        // Σ over a node's regions must be its children's totals. The bytes columns are
-        // per-partition but the fit reads them as a decomposition of the node's input,
-        // and a partition mapping that drops part of a child is invisible row by row —
-        // a coalesce reporting one eighth of what it concatenates still looks plausible.
-        let mut sums: HashMap<usize, (usize, usize, usize, usize)> = HashMap::new();
-        for row in &rows {
-            let f: Vec<&str> = row.split('\t').collect();
-            let at = |name: &str| {
-                f[COLUMNS.iter().position(|c| *c == name).unwrap()].parse::<usize>().unwrap()
-            };
-            let e = sums.entry(at("node_seq")).or_default();
-            e.0 += at("in_rows");
-            e.1 += at("in_bytes");
-            e.2 += at("out_rows");
-            e.3 += at("out_bytes");
-        }
-        let mut edges: Vec<(usize, Vec<usize>)> = Vec::new();
-        fn walk_edges(
-            plan: &Arc<dyn ExecutionPlan>,
-            idx: &mut usize,
-            out: &mut Vec<(usize, Vec<usize>)>,
-        ) -> usize {
-            let kids: Vec<usize> =
-                plan.children().iter().map(|c| walk_edges(c, idx, out)).collect();
-            let seq = *idx;
-            *idx += 1;
-            out.push((seq, kids));
-            seq
-        }
-        walk_edges(&plan, &mut 0, &mut edges);
-        for (seq, kids) in &edges {
-            let want = kids.iter().fold((0, 0), |a, k| (a.0 + sums[k].2, a.1 + sums[k].3));
-            let got = (sums[seq].0, sums[seq].1);
-            assert_eq!(
-                got, want,
-                "{query} @ {label} node {seq}: Σ input over regions is {got:?}, children \
-                 produced {want:?}"
-            );
-        }
-    }
-}
-
-/// The benchmark path must not reach for anything the CPU tier produces.
+/// Two different prohibitions, and the second is the one this list used to miss.
 ///
-/// The measurement suite runs at sf40, where there are no `.cpu.txt` statistics and no
-/// `.result.txt` results, and where producing them would mean executing the query on the
-/// CPU over 42 GB of parquet. Today `run_gpu_benchmark` reads neither — it times the GPU
-/// plan and asserts nothing. That is a property of the code as it stands, not of its
-/// shape, and the way it breaks is one added call inside an existing function: the sf1
-/// rows would keep passing, and only the sf40 rows would fail, on a host, hours later,
-/// as a missing file.
+/// **Its goldens.** The measurement suite runs at sf40, where there are no `.cpu.txt`
+/// statistics and no `.result.txt` results, and where producing them would mean executing
+/// the query on the CPU over 42 GB of parquet. Reading one makes every case fail on a
+/// missing file, on the GPU host, long after the change.
 ///
-/// So it is checked here, in the CPU tier, on a machine with no GPU, at the moment the
-/// call is added.
+/// **Its execution.** `CpuBackend` is a working backend: a case that drove it would not
+/// fail at all. It would produce a whole tree of plausible microseconds measured on the
+/// wrong machine, and nothing downstream — not the record, not the fit, not a plot —
+/// carries a field that says which backend ran. That is worse than a missing file, and
+/// it is why the two names sit in one list.
 ///
-/// By source text rather than by types because the thing being forbidden is a call, and
+/// Deliberately NOT `CpuBatch`: it lives on the GPU path legitimately, because an unload
+/// hands back a host batch. Forbidding it would break correct code and teach the next
+/// person to edit this list instead of their change.
+///
+/// Checked here, in the CPU tier, on a machine with no GPU, at the moment the call is
+/// added — rather than as a device failure hours later.
+///
+/// By source text rather than by types because the thing being forbidden is a CALL, and
 /// no type says "this function was not called". Line comments are stripped first: the
-/// point is calls, and a comment explaining why the benchmark does not read a golden
-/// must not itself be the failure. Two known limits — a `//` inside a string literal
-/// hides the rest of that line from the search, and a rename of any of these functions
-/// silently empties the check. It is a tripwire, not a proof. The proof is structural
-/// and lives elsewhere: an sf40 row uses `bench_only_case!`, which is defined only in
-/// the benchmark target, so it cannot expand into a correctness test at all.
+/// point is calls, and a comment explaining why the benchmark does not read a golden must
+/// not itself be the failure. Two known limits — a `//` inside a string literal hides the
+/// rest of that line from the search, and a rename of any of these names silently empties
+/// the check. It is a tripwire, not a proof.
 #[test]
 fn the_benchmark_path_reads_no_cpu_side_golden() {
-    // Every accessor in common/ that names a file the CPU tier writes, plus the oracle
-    // comparison mode — the four goldens and the one enum are all of it.
-    const FORBIDDEN: &[&str] =
-        &["cpu_golden", "result_golden", "cost_golden", "plan_golden", "CpuOracle"];
-    // The two files the benchmark path is made of: the target and the runner it calls.
-    const SOURCES: &[&str] = &["tests/peacock_gpu_benchmarks.rs", "tests/common/benchmark.rs"];
+    // Every accessor in common/ that names a file the CPU tier writes, the oracle
+    // comparison mode, and the CPU backend itself. The first five are about READING what
+    // the CPU produced; the last is about RUNNING on it, which fails in the opposite way
+    // — silently, with numbers.
+    const FORBIDDEN: &[&str] = &[
+        "cpu_golden",
+        "result_golden",
+        "cost_golden",
+        "plan_golden",
+        "CpuOracle",
+        "CpuBackend",
+    ];
+    // The files the benchmark path is its own. `corpus.rs` is not among them: the path
+    // borrows `plan_at` from it, and the rest of that file is the corpus tier, which reads
+    // goldens for a living. A whole-file check cannot separate the two.
+    const SOURCES: &[&str] = &[
+        "tests/peacock_gpu_benchmarks.rs",
+        "tests/common/corpus_benchmark.rs",
+        "tests/common/gpu_session.rs",
+    ];
 
     for rel in SOURCES {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(rel);
@@ -432,11 +281,14 @@ fn the_benchmark_path_reads_no_cpu_side_golden() {
         for name in FORBIDDEN {
             assert!(
                 !code.contains(name),
-                "{rel} mentions `{name}`. The benchmark suite runs at sf40, where the \
-                 CPU tier's goldens do not exist and cannot be produced — reading one \
-                 makes every sf40 case fail on a missing file, on the GPU host, long \
-                 after the change. If the benchmark genuinely needs a CPU-side input, \
-                 that is a decision about the sf40 suite, not an edit to this list."
+                "{rel} mentions `{name}`. The benchmark suite runs at sf40 and must not \
+                 touch the CPU tier. A golden it reads does not exist there and cannot \
+                 be produced, so every case fails on a missing file — on the GPU host, \
+                 long after the change. `CpuBackend` is worse: it WORKS, and the run \
+                 would report a tree of plausible microseconds measured on the wrong \
+                 machine, with no column anywhere saying which backend produced them. \
+                 If the benchmark genuinely needs a CPU-side input, that is a decision \
+                 about the sf40 suite, not an edit to this list."
             );
         }
     }

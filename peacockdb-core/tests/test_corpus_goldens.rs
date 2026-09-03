@@ -704,3 +704,89 @@ fn a_regeneration_does_not_make_the_read_only_path_write() {
         "the read-only path wrote under a regeneration"
     );
 }
+
+/// Every `total_us` in a benchmark file is the sum of the `time_us` beside it.
+///
+/// The one thing about that file checkable without a device and without a second oracle:
+/// the renderer writes both numbers from the same measurement, so a file where they
+/// disagree is a file the renderer got wrong. That is the same claim the cost-tree cases
+/// above make — a golden with no external oracle is still checkable against its own
+/// redundancy.
+///
+/// `-` is NOT "measured and unknown" — it is "no region opened", which is what a call
+/// that made no ABI call of its own leaves behind: an accumulator below its compaction
+/// threshold, an unload exporting through a door that opens none. No device time is
+/// attributable to it, so the total sums the numeric entries and skips those. A node
+/// whose entries are ALL `-` has nothing to sum and carries `-` itself.
+///
+/// Which is why this is worth pinning rather than obvious: the other reading — any `-`
+/// poisons the total — is equally plausible from the file alone, and the two differ on
+/// every node that has both.
+///
+/// Absent files are skipped rather than failed: this tree is written by a run on a GPU
+/// host and a fresh checkout has none. What is NOT skipped is finding no file at all with
+/// timing lines in it — a check that silently examines nothing is the failure mode this
+/// suite exists to close.
+#[test]
+fn every_total_us_is_the_sum_of_the_time_us_beside_it() {
+    let root = common::testdata_root().join("benchmark-results");
+    let mut files = Vec::new();
+    collect_benchmark_files(&root, &mut files);
+
+    let mut checked = 0;
+    for path in &files {
+        let text = std::fs::read_to_string(path).expect("a benchmark file");
+        for (n, line) in text.lines().enumerate() {
+            let Some(rest) = line.trim().strip_prefix("time_us=") else {
+                continue;
+            };
+            let (array, total) = rest
+                .split_once(" total_us=")
+                .unwrap_or_else(|| panic!("{}:{}: no total_us on {line:?}", path.display(), n + 1));
+            // Every number between the brackets, in one pass: the nesting says which lane
+            // a call was on and the sum does not care.
+            let entries: Vec<&str> = array
+                .trim_matches(|c| c == '[' || c == ']')
+                .split(|c| c == ',' || c == '[' || c == ']')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .collect();
+            let numbers: Vec<u64> = entries.iter().filter_map(|e| e.parse().ok()).collect();
+            let unknown = entries.len() - numbers.len();
+            let want = match numbers.is_empty() {
+                false => numbers.iter().sum::<u64>().to_string(),
+                true => "-".to_string(),
+            };
+            assert_eq!(
+                total,
+                want,
+                "{}:{}: total_us disagrees with the {} measured entries beside it \
+                 ({unknown} opened no region) — {line:?}",
+                path.display(),
+                n + 1,
+                numbers.len()
+            );
+            checked += 1;
+        }
+    }
+    assert!(
+        files.is_empty() || checked > 0,
+        "{} benchmark file(s) and not one timing line: the format moved and this check \
+         is reading past it",
+        files.len()
+    );
+}
+
+fn collect_benchmark_files(dir: &Path, into: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_benchmark_files(&path, into);
+        } else if path.to_string_lossy().ends_with(".benchmark.txt") {
+            into.push(path);
+        }
+    }
+}
