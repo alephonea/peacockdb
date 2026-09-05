@@ -4,3 +4,41 @@
 # testdata/goldens/<dataset>.sf<N>/ (the unanchored form caught those too).
 /tpch.sf*/
 /tpcds.sf*/
+
+# Calibration output. The TEXT is committed and the CAPTURES are not, and the
+# line between them is size against regenerability, not importance.
+#
+# Committed, and rewritten in place by every collection — exactly as the
+# .benchmark.txt tree beside it is, and for the same reason: a measurement is
+# the deliverable, and `git diff` showing how the numbers moved between two runs
+# is the point rather than noise. All of it is sf40; sf1 measures mostly the host
+# prologue and is not timed at all (see corpus_benchmark_cases.inc).
+#
+#   records.tsv       one row per cuDF call, the fit's samples
+#   records-hbm.tsv   the HBM pass's own record — traffic, never its microseconds
+#   hbm.tsv           the two joined on the tuple, by nsys_hbm.py
+#   calls.tsv         what one ABI call splits into inside libcudf, from the trace
+#                     capture — a level records.tsv cannot hold
+#   plots/            every panel plus index.html, from one plot.py call
+#
+# NOT committed: the nsys captures. Binary git cannot diff, regenerable by re-running
+# with PCK_BENCH_NSYS / PCK_BENCH_HBM, and read by nothing except the scripts that
+# produce the .tsv files above. Their size grows with the WORK measured, not with the
+# number of cases: one case of q6 exported 49 MB, all three 381 MB, because q19 at sf40
+# runs eight times as long as q6 and emits events accordingly. Committing them would put
+# a third of a gigabyte of undiffable binary into every collection.
+# The shape below is deny-by-default plus a list of what is kept, which is the safe
+# direction: a new file in this directory is ignored until someone says otherwise. It
+# costs one wart. Re-including a DIRECTORY after excluding it works in git, but git's own
+# documented rule is "it is not possible to re-include a file if a parent directory of
+# that file is excluded", and third-party matchers -- an editor's file tree, most `.gitignore`
+# libraries -- implement the rule and stop there, greying out `plots/` even though git
+# tracks every file in it. So the contents are re-included EXPLICITLY as well: the two
+# lines say the same thing to git and disagree only in what a simpler reader makes of them.
+/calibration/*
+!/calibration/records.tsv
+!/calibration/records-hbm.tsv
+!/calibration/hbm.tsv
+!/calibration/calls.tsv
+!/calibration/plots/
+!/calibration/plots/**

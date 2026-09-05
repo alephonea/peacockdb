@@ -9,7 +9,7 @@
 
 mod accounting;
 pub(crate) mod index;
-pub use index::post_order_of_every_node;
+pub use index::{nodes_as_recorded, post_order_of_every_node};
 #[cfg(test)]
 mod mock;
 mod partitioned;
@@ -17,12 +17,14 @@ mod partitioned;
 mod plans;
 mod scheduler;
 mod single_partition;
+mod measurements;
 
 #[cfg(test)]
 mod tests;
 
 pub use accounting::Underestimate;
 pub use partitioned::{RunReport, batch_partitioned_driver};
+pub use measurements::{Measured, Measurements, Region, join_regions, node_measured};
 
 use crate::batch_partitioned::error::RunError;
 use accounting::Trip;

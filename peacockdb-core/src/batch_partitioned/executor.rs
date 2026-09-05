@@ -9,6 +9,7 @@
 
 use super::backend::Backend;
 use super::cpu_batch::CpuBatch;
+use super::recipe::{FbKind, Seq};
 
 /// Why a call failed: a message and no kind, because there is one response to all of them.
 /// The driver adds the node and the lane and fails the query — a retry with a smaller batch
@@ -38,10 +39,82 @@ impl std::error::Error for BackendError {}
 /// resets the session and every resident table with it, so there is nothing to resume from.
 pub type CallResult<T> = Result<(T, CallStats), BackendError>;
 
+/// One ABI call an executor made, as its CALLER saw it.
+///
+/// C++ reports what a call produced. What went IN only this side knows: the call consumes
+/// its handles, so by the time the far side could measure them the registry entries are
+/// gone (#152). The two halves meet by `seq` plus the order the calls were made in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AbiCall {
+    pub seq: Seq,
+    pub kind: FbKind,
+    /// Which call of this seq the session had reached — the number C++ answers with, and
+    /// the other half of the key the two records meet on.
+    ///
+    /// Zero as the backend records it and stamped by the driver, which is the one place
+    /// that sees every call in the order they were made. An executor sees only its own.
+    pub call_index: u64,
+    pub in_rows: u64,
+    /// `None` where the input was the call before it rather than a batch this side was
+    /// holding: nobody here priced it, and the C++ region for that call reports its
+    /// `logical_bytes`.
+    pub in_bytes: Option<u64>,
+}
+
+/// The ABI calls one executor call made, collected only while measuring.
+///
+/// `None` is not "made no calls" — it is "nobody was measuring", and a reader that cannot
+/// tell those apart reports a silent backend as a fast one. Boxed so an unmeasured run
+/// carries one null pointer rather than a vector's three words, which is the shape the C++
+/// side uses for the same reason.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AbiCalls(Option<Box<Vec<AbiCall>>>);
+
+impl AbiCalls {
+    /// Armed only for a measured run: unarmed, `record` is a branch and nothing else.
+    pub fn armed(measuring: bool) -> Self {
+        Self(measuring.then(Box::default))
+    }
+
+    /// Whether anything asked for these calls. What a caller checks BEFORE pricing an
+    /// input: the price is only ever read from here, so an unarmed run should not compute
+    /// one at all.
+    pub fn is_armed(&self) -> bool {
+        self.0.is_some()
+    }
+
+    pub fn record(&mut self, seq: Seq, kind: FbKind, in_rows: u64, in_bytes: Option<u64>) {
+        if let Some(calls) = &mut self.0 {
+            calls.push(AbiCall {
+                seq,
+                kind,
+                call_index: 0,
+                in_rows,
+                in_bytes,
+            });
+        }
+    }
+
+    /// `None` where the run was not measured, which is what keeps an unmeasured node from
+    /// rendering as one that made no calls.
+    pub fn recorded(&self) -> Option<&[AbiCall]> {
+        self.0.as_deref().map(Vec::as_slice)
+    }
+
+    /// For the driver alone, to stamp `call_index` — see the field.
+    pub fn recorded_mut(&mut self) -> Option<&mut [AbiCall]> {
+        self.0.as_deref_mut().map(Vec::as_mut_slice)
+    }
+}
+
 /// `scratch_bytes` is the measured transient; `None` when the run is not instrumented.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CallStats {
     pub scratch_bytes: Option<usize>,
+    /// The calls this one made, for a measured run only. The driver holds the coordinates
+    /// — which node, which lane, which batch — so a backend reports only what it alone
+    /// knows: the seq it addressed and what it handed over.
+    pub calls: AbiCalls,
 }
 
 pub trait Executor {

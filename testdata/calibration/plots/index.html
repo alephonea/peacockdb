@@ -1,0 +1,43 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>peacockdb calibration</title>
+<style>
+ body { font: 14px/1.5 system-ui, sans-serif; margin: 2rem auto; max-width: 1200px;
+        color: #222; }
+ h1 { font-size: 1.4rem; } h2 { font-size: 1.1rem; margin-top: 2rem; }
+ p.note { color: #555; max-width: 70ch; }
+ figure { margin: 1rem 0; } img { max-width: 100%; border: 1px solid #ddd; }
+ figcaption { font: 12px monospace; color: #666; }
+ .empty { color: #999; font-style: italic; }
+</style>
+<h1>peacockdb cost-model calibration</h1>
+<p class="note">Every picture here comes from one call to
+<code>scripts/calibration/plot.py</code>. Sources: testdata/calibration/records.tsv, testdata/calibration/hbm.tsv</p>
+<h2>Icicle: plan node → recipe step → cuDF call</h2>
+<p class="note">The record&#x27;s three-level tuple, drawn as three levels. Width is device time; a level&#x27;s children sum to it. One real execution — the one whose total is the median — because per-call medians give a picture belonging to no execution.</p>
+<figure><img src="icicle/tpch.sf40_q19_bp-tp1-single.png" alt="icicle/tpch.sf40_q19_bp-tp1-single.png"><figcaption>icicle/tpch.sf40_q19_bp-tp1-single.png</figcaption></figure>
+<figure><img src="icicle/tpch.sf40_q6_bp-tp1-single.png" alt="icicle/tpch.sf40_q6_bp-tp1-single.png"><figcaption>icicle/tpch.sf40_q6_bp-tp1-single.png</figcaption></figure>
+<figure><img src="icicle/tpch.sf40_q6_bp-tp4-sized.png" alt="icicle/tpch.sf40_q6_bp-tp4-sized.png"><figcaption>icicle/tpch.sf40_q6_bp-tp4-sized.png</figcaption></figure>
+<h2>Where a case&#x27;s time went</h2>
+<p class="note">Left: device time per plan node. Right: the three time terms side by side, NEVER summed — under CUDA events the host submission interval contains the device one, so adding them describes no interval.</p>
+<figure><img src="query/tpch.sf40_q19_bp-tp1-single.png" alt="query/tpch.sf40_q19_bp-tp1-single.png"><figcaption>query/tpch.sf40_q19_bp-tp1-single.png</figcaption></figure>
+<figure><img src="query/tpch.sf40_q6_bp-tp1-single.png" alt="query/tpch.sf40_q6_bp-tp1-single.png"><figcaption>query/tpch.sf40_q6_bp-tp1-single.png</figcaption></figure>
+<figure><img src="query/tpch.sf40_q6_bp-tp4-sized.png" alt="query/tpch.sf40_q6_bp-tp4-sized.png"><figcaption>query/tpch.sf40_q6_bp-tp4-sized.png</figcaption></figure>
+<h2>Load — the scan, alone</h2>
+<p class="note">read_parquet: decompression, page decode, PCIe. Kept apart from compute on purpose: one axis holding both draws a picture about two different machines.</p>
+<figure><img src="load/CudfScan.png" alt="load/CudfScan.png"><figcaption>load/CudfScan.png</figcaption></figure>
+<h2>Compute — everything else</h2>
+<p class="note">Arithmetic over resident columns. Log-log, because the model&#x27;s claim is t = a·bytes, a straight line of slope 1 whatever a is — so the eye checks the shape without knowing the coefficient.</p>
+<figure><img src="compute/CudfAggregate_Merge_.png" alt="compute/CudfAggregate_Merge_.png"><figcaption>compute/CudfAggregate_Merge_.png</figcaption></figure>
+<figure><img src="compute/CudfAggregate_Partial_.png" alt="compute/CudfAggregate_Partial_.png"><figcaption>compute/CudfAggregate_Partial_.png</figcaption></figure>
+<figure><img src="compute/CudfCoalescePartitions.png" alt="compute/CudfCoalescePartitions.png"><figcaption>compute/CudfCoalescePartitions.png</figcaption></figure>
+<figure><img src="compute/CudfFilter.png" alt="compute/CudfFilter.png"><figcaption>compute/CudfFilter.png</figcaption></figure>
+<figure><img src="compute/CudfHashJoin_Inner_.png" alt="compute/CudfHashJoin_Inner_.png"><figcaption>compute/CudfHashJoin_Inner_.png</figcaption></figure>
+<figure><img src="compute/CudfProject.png" alt="compute/CudfProject.png"><figcaption>compute/CudfProject.png</figcaption></figure>
+<figure><img src="compute/CudfProject_finalize_.png" alt="compute/CudfProject_finalize_.png"><figcaption>compute/CudfProject_finalize_.png</figcaption></figure>
+<h2>What a median discards</h2>
+<p class="note">Each execution&#x27;s device_us as a ratio to its own call&#x27;s median. A kind with a long tail is one whose coefficient would be fitted to scheduling noise.</p>
+<figure><img src="spread/by-kind.png" alt="spread/by-kind.png"><figcaption>spread/by-kind.png</figcaption></figure>
+<h2>HBM traffic</h2>
+<p class="note">Times from a clean run, traffic from a capture under GPU memory counters, joined on the tuple. The counters cost the query ~7%, which is why they are two runs.</p>
+<figure><img src="hbm/traffic.png" alt="hbm/traffic.png"><figcaption>hbm/traffic.png</figcaption></figure>

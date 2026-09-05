@@ -48,6 +48,7 @@ TableResult execute_union(const fb::CudfUnion* u, NodeInputs* in) {
         // branches; only retype numeric/decimal columns that actually differ.
         if (want_id != cudf::type_id::STRING && want_id != cudf::type_id::EMPTY &&
             cols[c]->type() != want) {
+          mark_device_start();
           cols[c] = cudf::cast(cols[c]->view(), want);
         }
       }
@@ -59,6 +60,7 @@ TableResult execute_union(const fb::CudfUnion* u, NodeInputs* in) {
   views.reserve(inputs.size());
   for (auto& in : inputs) views.push_back(in.table->view());
 
+  mark_device_start();
   auto out = cudf::concatenate(views);
   return {std::move(out), std::move(inputs[0].column_names)};
 }

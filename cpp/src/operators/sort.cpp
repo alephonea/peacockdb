@@ -47,6 +47,9 @@ TableResult execute_sort(const fb::CudfSort* sort, NodeInputs* in) {
   }
 
   cudf::table_view keys{key_cols};
+  // Column-ref keys reach here with nothing marked (the loop above was pure decode);
+  // expression keys already marked inside `build_column`, and this call is a no-op.
+  mark_device_start();
   auto sorted_indices = cudf::sorted_order(keys, orders, null_orders);
   auto result = cudf::gather(tv, sorted_indices->view());
 

@@ -18,6 +18,8 @@ pub mod raw {
     #[derive(Clone, Copy, Default)]
     pub struct PeacockNodeStats {
         pub rows: u64,
+        /// Σ over var-length (string) output columns of content bytes; additive across
+        /// columns, so one total suffices.
         pub varlen_content_bytes: u64,
         /// Microseconds this output partition took; 0 unless
         /// [`peacock_set_node_timing`] is on. A node's time is Σ over partitions.
@@ -43,6 +45,38 @@ pub mod raw {
     /// The pool could not be built: the default resource, NOT on purpose.
     pub const PEACOCK_RMM_POOL_UNAVAILABLE: i32 = 1;
 
+    /// One collected device interval — which node output partition, and what the
+    /// device spent on it. Mirrors `PeacockNodeRegion` in `cpp/include/peacock_gpu.h`.
+    #[repr(C)]
+    #[derive(Clone, Copy, Default)]
+    /// One timed region: which call it was, and everything measured about it.
+    ///
+    /// Separate from [`PeacockNodeStats`] because the two have different consumers. Stats
+    /// come back on every call and the driver needs both numbers; nothing on the execution
+    /// path reads any of these, so carrying them there made a shipping query pay per call.
+    pub struct PeacockNodeRegion {
+        pub seq: u64,
+        pub partition: u64,
+        /// Calls already made against this seq in this session when this one began; 0 for
+        /// the first. Per CALL, so the partitions of one call share it.
+        pub call_index: u64,
+        pub host_setup_us: u64,
+        pub host_submit_us: u64,
+        /// 0 where the region recorded no complete event pair.
+        pub device_us: u64,
+        /// Rows this call answered with, for this output partition.
+        pub rows: u64,
+        /// C++'s own reconstruction of the byte total, to be COMPARED against Rust's.
+        pub logical_bytes: u64,
+    }
+
+    /// The default, and the only mode a shipping query runs in.
+    pub const PEACOCK_NODE_TIMING_OFF: i32 = 0;
+    /// CUDA events around the device work, host clock around the host work, no sync
+    /// inside the region. Device times are read afterwards with
+    /// [`peacock_executor_collect_node_regions`].
+    pub const PEACOCK_NODE_TIMING_EVENTS: i32 = 1;
+
     #[link(name = "peacock_gpu")]
     unsafe extern "C" {
         pub fn peacock_gpu_version() -> *const c_char;
@@ -65,8 +99,9 @@ pub mod raw {
         pub fn peacock_result_free(result_bytes: *mut u8);
         pub fn peacock_last_error(executor: *mut PeacockExecutor) -> *const c_char;
 
-        /// Install rmm's pooled device resource for the current device (process-global,
-        /// idempotent, NOT installed by default). Must be called before any GPU work.
+        /// Install rmm's pooled device resource (process-global, idempotent, not
+        /// installed by default). Must be called before any GPU work; without it every
+        /// cuDF intermediate is a `cudaMalloc`/`cudaFree` round trip.
         ///
         /// Without it every cuDF intermediate the engine allocates is a
         /// `cudaMalloc`/`cudaFree` round trip. The C++ gtest binaries install the same
@@ -81,22 +116,50 @@ pub mod raw {
         /// harness it is.
         pub fn peacock_install_rmm_pool(out_info: *mut PeacockRmmPoolInfo) -> i32;
 
-        /// Turn per-node timing on/off (process-global; OFF by default). When on,
-        /// `peacock_executor_execute_node` synchronizes the default stream at every
-        /// measurement boundary and fills `PeacockNodeStats::time_us`. The sync is
-        /// what makes the number real (cuDF work is async and this path has no sync
-        /// of its own) and also what makes it costly — hence opt-in. Used by the
+        /// Select the per-node timing mode (process-global; `PEACOCK_NODE_TIMING_OFF`
+        /// by default). Opt-in because EVENTS is not free: it allocates a CUDA event
+        /// pair per region and holds it until collection. Unknown values are treated as
+        /// OFF. Used by the
         /// `peacock_gpu_benchmarks` target.
-        pub fn peacock_set_node_timing(enable: i32);
+        pub fn peacock_set_node_timing(mode: i32);
 
-        /// Cost of the measurement itself, in microseconds: the same timed region a
-        /// node pays, around no work. A node's `time_us` is real work PLUS one of
-        /// these, so a node at or below this is below the method's resolution rather
-        /// than cheap. Report alongside; never subtract. Returns the second-smallest
-        /// of `samples` (clamped to >= 2), or 0 if CUDA errored.
+        /// Emit NVTX ranges around plan nodes and their output partitions
+        /// (process-global; off by default). A separate switch from
+        /// [`peacock_set_node_timing`]: a profiling run wants the node boundaries
+        /// without the event pairs, whose recording is device work a capture would
+        /// show inside the node. Nonzero to emit.
+        pub fn peacock_set_nvtx_ranges(on: i32);
+
+        /// Open a named NVTX range in peacockdb's domain that spans until
+        /// [`peacock_nvtx_pop_range`], and close it.
         ///
-        /// Needs a live CUDA context and no concurrent work on the default stream.
-        pub fn peacock_measure_timing_floor_us(samples: u32) -> u64;
+        /// For a BENCHMARK HARNESS naming the case it is about to run: a node range
+        /// is `<seq>.<call_index> <kind>` and seq numbering restarts with every plan,
+        /// so a capture of several queries cannot say from the names alone which one
+        /// a call belongs to. A range around the case answers it by containment.
+        ///
+        /// No-ops while ranges are off, and nothing in the engine calls either.
+        /// `name` is borrowed for the call; NVTX copies it.
+        pub fn peacock_nvtx_push_range(name: *const c_char);
+
+        /// Close the range [`peacock_nvtx_push_range`] opened. Idempotent.
+        pub fn peacock_nvtx_pop_range();
+
+        /// Drain the device intervals recorded since the last call, in execution
+        /// order. Only [`PEACOCK_NODE_TIMING_EVENTS`] produces any. Call AFTER the
+        /// root [`peacock_result_from_handle`] and BEFORE
+        /// [`peacock_executor_end_plan`], which destroys the events.
+        ///
+        /// `out_count` is set to the number RECORDED, not the number that fit: when it
+        /// exceeds `cap` the call returns non-zero and the surplus is gone (the drain
+        /// already happened). Regions with an incomplete pair — a node that threw, one
+        /// that never touched the device — are absent rather than zero.
+        pub fn peacock_executor_collect_node_regions(
+            executor: *mut PeacockExecutor,
+            out: *mut PeacockNodeRegion,
+            cap: u64,
+            out_count: *mut u64,
+        ) -> i32;
 
         // --- node-by-node execution (unified node-executor interface) ---
         pub fn peacock_executor_begin_plan(

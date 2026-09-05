@@ -50,7 +50,7 @@ fn a_coalesce_answers_with_one_batch_holding_every_row_of_the_lane() {
     let tree: Box<dyn GpuNode> = Box::new(GpuCoalesceAllBatches::new(source_per_row_group()));
     let session = Session::open(tree.as_ref());
     let out = columns();
-    let accumulator = GpuAccumulator::coalesce(session.executor, session.recipe(1), &out)
+    let accumulator = GpuAccumulator::coalesce(session.dev(), session.recipe(1), &out)
         .expect("the coalesce builds");
     let answered = accumulate(&session, accumulator, &out);
     assert_eq!(answered.len(), 1, "a coalesce emits nothing until done");
@@ -86,7 +86,7 @@ fn an_accumulating_sort_orders_the_whole_lane() {
     let session = Session::open(tree.as_ref());
     let out = columns();
     let accumulator =
-        GpuAccumulator::sorted(session.executor, session.recipe(1), &out).expect("the sort builds");
+        GpuAccumulator::sorted(session.dev(), session.recipe(1), &out).expect("the sort builds");
     let answered = accumulate(&session, accumulator, &out);
     assert_eq!(
         rows(&answered[0])
@@ -106,7 +106,7 @@ fn an_accumulating_sort_with_a_fetch_keeps_the_top_of_the_lane() {
     let session = Session::open(tree.as_ref());
     let out = columns();
     let accumulator =
-        GpuAccumulator::sorted(session.executor, session.recipe(1), &out).expect("the sort builds");
+        GpuAccumulator::sorted(session.dev(), session.recipe(1), &out).expect("the sort builds");
     let answered = accumulate(&session, accumulator, &out);
     assert_eq!(
         rows(&answered[0])
@@ -157,7 +157,7 @@ fn a_merge_folds_the_partials_its_init_produced() {
     let out = schema_of(&[("k", DataType::Utf8), ("sum(v)", DataType::Int64)]);
     let mut partial = session.exec(1, &out);
     let mut merge = GpuAccumulator::aggregate(
-        session.executor,
+        session.dev(),
         session.recipe(2),
         &out,
         &out,
@@ -202,7 +202,7 @@ fn a_limit_drops_forwards_and_slices_by_where_the_batch_falls() {
     let session = Session::open(tree.as_ref());
     let out = columns();
     let accumulator = GpuAccumulator::limit(
-        session.executor,
+        session.dev(),
         session.recipe(1),
         RowInterval {
             skip: 2,
@@ -232,7 +232,7 @@ fn a_lane_that_received_nothing_emits_no_batch() {
     let tree: Box<dyn GpuNode> = Box::new(GpuCoalesceAllBatches::new(source_per_row_group()));
     let session = Session::open(tree.as_ref());
     let out = columns();
-    let accumulator = GpuAccumulator::coalesce(session.executor, session.recipe(1), &out)
+    let accumulator = GpuAccumulator::coalesce(session.dev(), session.recipe(1), &out)
         .expect("the coalesce builds");
     let (emitted, _) = accumulator
         .mark_done_and_fetch()
@@ -260,7 +260,7 @@ fn every_lanes_sorted_run_is_merged_at_the_last_done() {
     let out = columns();
     let mut per_batch = session.exec(1, &out);
     let mut merge =
-        GpuPartitionAccumulator::merge_sorted(session.executor, session.recipe(2), 2, &out)
+        GpuPartitionAccumulator::merge_sorted(session.dev(), session.recipe(2), 2, &out)
             .expect("the merge builds");
     let lanes: [(usize, &[u32]); 3] = [(0, &[0]), (1, &[1]), (1, &[2])];
     for (lane, groups) in lanes {
@@ -406,7 +406,7 @@ fn a_welford_triple_merges_as_one_aggregate_on_the_device() {
     let out = state.fields.as_ref().clone();
     let mut partial = session.exec(1, &out);
     let mut merge = GpuAccumulator::aggregate(
-        session.executor,
+        session.dev(),
         session.recipe(2),
         &out,
         &out,
@@ -462,7 +462,7 @@ fn a_sort_and_a_partition_merge_that_received_nothing_emit_nothing() {
     let session = Session::open(tree.as_ref());
     let out = columns();
     let accumulator =
-        GpuAccumulator::sorted(session.executor, session.recipe(1), &out).expect("the sort builds");
+        GpuAccumulator::sorted(session.dev(), session.recipe(1), &out).expect("the sort builds");
     let (emitted, _) = accumulator
         .mark_done_and_fetch()
         .expect("done is accepted whatever arrived");
@@ -473,7 +473,7 @@ fn a_sort_and_a_partition_merge_that_received_nothing_emit_nothing() {
         Box::new(GpuMergeSortedPartitions::new(Box::new(across), keys, None));
     let session = Session::open(tree.as_ref());
     let mut merge =
-        GpuPartitionAccumulator::merge_sorted(session.executor, session.recipe(2), 2, &out)
+        GpuPartitionAccumulator::merge_sorted(session.dev(), session.recipe(2), 2, &out)
             .expect("the merge builds");
     let mut emitted = Vec::new();
     for lane in [0, 1] {

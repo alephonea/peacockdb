@@ -274,3 +274,12 @@ invisible to every golden that is not a run.
 Neighbour to [#163](../tickets.md#t163) rather than the same thing: that one is a declared type
 never checked against the expression producing it, this one is a declared *nullability* the merge
 contradicts at run time. Found by T18's stage-4 enablement, disabled at three of five modes.
+
+<a id="t197"></a>
+### #197 — plan_text renders goldens from inside the library build
+
+`batch_partitioned/mod.rs:29` declares `pub mod plan_text` unconditionally, so seven files of
+golden rendering compile into every release build; every caller is a test (`render_plan`,
+`render_run`, `render_timings`, `render_plan_memory`, `render_plan_recipes`). `#[cfg(test)]`
+will not do it — the callers are integration tests in `peacockdb-core/tests/`, linking it
+as a dependency — so it wants a `plan-text` feature a dev-dependency on itself turns on.

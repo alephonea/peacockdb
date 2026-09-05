@@ -40,6 +40,30 @@ the latent read into a segfault on its first call.
 `gpu_case!(tpch, 1, shuffle_stddev, partitioned_tp8_standard, golden_approx_std)` is enabled
 again after 20 consecutive green runs on shad-gpu, and `common/gpu_cases.inc` names this ticket
 beside it: if it flakes again, reopen this rather than filing a new number.
+<a id="t195"></a>
+### #195 — date_part materializes INT16 where DataFusion declares Int32
+`cudf::datetime::extract_datetime_component` returns an `int16_t` column — cuDF's own header
+says so (`cudf/datetime.hpp` L66) — and `execute_scalar_function` returned it unchanged.
+DataFusion types `date_part` as `Int32`. Every `EXTRACT(YEAR …)` column was therefore 2
+bytes/row narrower on the device than the plan's own `output_schema` declared.
+
+Nothing returned a wrong answer, which is exactly why nothing caught it: years fit in 16 bits,
+cuDF promotes in downstream arithmetic, `materialize` (`gpu_node_executor.rs`) takes whatever
+schema the IPC stream declares without comparing it to `node.schema()`, and the goldens compare
+`pretty_format_batches` text, where `1995` prints identically from either width. Surfaced by
+the byte-total cross-check added for the cost-model calibration (#153) — the first thing in the
+tree that ever asked about a produced type rather than a produced value. Visible on tpch
+q7/q8/q9 and tpcds q18/q22.
+
+It stops being harmless as soon as a GPU node's output reaches a CPU operator: that is what
+`NodeByNodeBackend` exists for, and a batch whose schema disagrees with the declared
+`ExecutionPlan::schema()` breaks the contract. It was contained only because a GPU subtree runs
+the whole plan and materializes at the root.
+
+**Done.** `cudf::cast` to INT32 at the call site (`cpp/src/expr.cpp`) — one pass over a narrow
+column, and only where an EXTRACT exists. #196 is the same shape and stays open, because there
+the correct width is not a constant.
+
 <a id="t151"></a>
 ### #151 — the per-node benchmarks measured the engine with no RMM pool
 

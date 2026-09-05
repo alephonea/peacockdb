@@ -217,6 +217,7 @@ TableResult execute_aggregate(const fb::CudfAggregate* agg, NodeInputs* in) {
         base.type().id() == cudf::type_id::DECIMAL128) {
       int32_t want_exp = -static_cast<int32_t>(func->out_decimal_scale());
       if (base.type().scale() != want_exp) {
+        mark_device_start();
         computed_args.push_back(cudf::cast(
             base, cudf::data_type{cudf::type_id::DECIMAL128, want_exp}));
         base = computed_args.back()->view();
@@ -253,6 +254,8 @@ TableResult execute_aggregate(const fb::CudfAggregate* agg, NodeInputs* in) {
         }
 
         bool is_sum = (name == "sum" || name == "SUM");
+        // Every branch below reduces or materialises on the device.
+        mark_device_start();
         std::unique_ptr<cudf::column> result_col;
         if (is_count) {
           if (is_final) {
@@ -439,6 +442,11 @@ TableResult execute_aggregate(const fb::CudfAggregate* agg, NodeInputs* in) {
   // key — silently losing the NULL group (e.g. TPC-DS q15's NULL ca_zip row).
   // INCLUDE matches the peacock CPU oracle. Non-null keys are unaffected.
   cudf::groupby::groupby gb{keys_view, cudf::null_policy::INCLUDE};
+
+  // Nothing above this point touches the device on the plain-groupby path (the
+  // keys are views into the input); everything below — the argument casts in the
+  // request loop, gb.aggregate, the post-passes — does.
+  mark_device_start();
 
   AggPhase phase = agg_phase(agg->mode());
 

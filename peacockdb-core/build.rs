@@ -33,8 +33,8 @@ fn main() {
 /// The harness refuses to run from a non-release build, so this says WHICH release
 /// profile rather than whether it was one (`[profile.benchmarks]` in the workspace
 /// Cargo.toml says why the distinction is worth keeping). Baked at compile time
-/// because, unlike `sync_floor_us` and `allocator`, it is the one condition of a run
-/// the running process cannot ask about itself.
+/// because, unlike `allocator`, it is the one condition of a run the running process
+/// cannot ask about itself.
 ///
 /// Cargo hands a build script `OPT_LEVEL` directly, but not the profile NAME:
 /// `PROFILE` collapses every release-inheriting profile to "release". The profile

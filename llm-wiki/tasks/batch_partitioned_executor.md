@@ -3509,8 +3509,8 @@ two are different findings, and a record that cannot tell them apart measures no
 `CallStats` is already returned per call and is where the per-call figures come from.
 
 The record gains the mode and the tier — `<query>.<mode>.benchmark.txt` alongside the legacy
-`<query>.<mode>-<tp>-<tier>` — and keeps `build_profile`, `sync_floor_us`,
-`nodes_at_or_below_floor` and the rest, since they mean the same thing. It also carries which
+`<query>.<mode>-<tp>-<tier>` — and keeps `build_profile` and the rest, since they mean the
+same thing. It also carries which
 allocator measured the run: the pool landed with
 [#151](../archive/archived-tickets.md#t151), [#148](../tickets.md#t148) is still open, and a
 number taken without one is not comparable with a number taken with one.

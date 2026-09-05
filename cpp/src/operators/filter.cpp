@@ -22,6 +22,9 @@ TableResult execute_filter(const fb::CudfFilter* filter, NodeInputs* in) {
   if (is_ast_able(filter->predicate(), input.table->view())) {
     ExprContext ctx;
     auto& predicate = build_expr(filter->predicate(), ctx);
+    // `build_expr` assembles the AST on the HOST; this is the first device touch.
+    // (The other arm marks inside `build_column`.)
+    mark_device_start();
     mask = cudf::compute_column(input.table->view(), predicate);
   } else {
     mask = build_column(filter->predicate(), input.table->view());

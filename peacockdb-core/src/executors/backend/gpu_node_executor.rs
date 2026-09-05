@@ -11,6 +11,7 @@
 //! lifetimes; keep the two in view of each other when changing either.
 
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use datafusion::arrow::record_batch::RecordBatch;
@@ -26,8 +27,10 @@ use datafusion::error::DataFusionError;
 use peacockdb_ffi::raw::{
     peacock_executor_begin_plan, peacock_executor_end_plan, peacock_executor_execute_node,
     peacock_handle_release, peacock_install_rmm_pool, peacock_last_error, peacock_result_free,
-    peacock_result_from_handle, peacock_measure_timing_floor_us, peacock_set_node_timing,
-    PeacockExecutor, PeacockNodeStats, PeacockRmmPoolInfo, PEACOCK_RMM_POOL_INSTALLED,
+    peacock_nvtx_pop_range, peacock_nvtx_push_range, peacock_result_from_handle,
+    peacock_set_node_timing, peacock_set_nvtx_ranges,
+    PeacockExecutor, PeacockNodeStats, PeacockRmmPoolInfo,
+    PEACOCK_NODE_TIMING_EVENTS, PEACOCK_NODE_TIMING_OFF, PEACOCK_RMM_POOL_INSTALLED,
 };
 
 use crate::cpu_executor::logical_size_from_schema;
@@ -105,38 +108,86 @@ pub fn install_rmm_pool() -> RmmPool {
     }
 }
 
-/// Turn per-node GPU timing on or off (process-global, OFF by default).
-///
-/// With it on, every unit of work inside the C++ `NodeSession` is bracketed by a
-/// `cudaStreamSynchronize`, and [`NodeMemoryStats::time_us`] /
-/// [`PartitionStat::time_us`] carry real microseconds instead of zeros. Why the sync
-/// is both what makes the number real and what makes it costly — hence opt-in — is
-/// argued once, on `set_node_timing` in `cpp/src/plan_executor.h`.
-///
-/// Process-global, and the GPU suite already runs `--test-threads=1` (cuDF/RMM share
-/// one process-wide pool), so there is no cross-test interleaving to guard against.
-pub fn set_node_timing(enabled: bool) {
-    unsafe { peacock_set_node_timing(if enabled { 1 } else { 0 }) };
+/// How per-node GPU regions are measured. `Off` by default, because measuring is not
+/// free.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum NodeTiming {
+    /// No measurement. Every timing field stays 0.
+    #[default]
+    Off,
+    /// CUDA events around the device work, host clock around the host work, no sync
+    /// inside the region. Device numbers arrive via `collect_regions` after the
+    /// root materialize, into [`PartitionStat::device_us`].
+    Events,
 }
 
-/// Microseconds the MEASUREMENT costs: [`set_node_timing`]'s timed region wrapped
-/// around no work at all.
+/// Select the per-node GPU timing mode (process-global, [`NodeTiming::Off`] by default).
 ///
-/// This is the resolution floor of every `time_us` in this module. A node's number
-/// is its real work PLUS one of these, so a node reporting at or below the floor is
-/// not cheap — it is unresolvable, and the two look identical unless the floor is
-/// printed next to them. That is the whole reason this exists; `bench_stats_str`
-/// writes it into each record as `sync_floor_us`.
+/// Why it is opt-in, and why the split into host setup / host submit / device exists, is
+/// argued once on `set_node_timing` and `mark_device_start` in
+/// `cpp/src/plan_executor.h`. The GPU suite runs `--test-threads=1` (cuDF/RMM share one
+/// process-wide pool), so the global needs no cross-test guard.
+pub fn set_node_timing(mode: NodeTiming) {
+    let raw = match mode {
+        NodeTiming::Off => PEACOCK_NODE_TIMING_OFF,
+        NodeTiming::Events => PEACOCK_NODE_TIMING_EVENTS,
+    };
+    MEASURING.store(mode != NodeTiming::Off, Ordering::Relaxed);
+    unsafe { peacock_set_node_timing(raw) };
+}
+
+/// The mode the setter last selected, so this side can ask without crossing the FFI on
+/// every call. A mirror rather than a getter: the setter above is the only way the C++
+/// global moves, and the two cannot disagree without going around it.
+static MEASURING: AtomicBool = AtomicBool::new(false);
+
+/// Whether the run is measured. What arms the per-call bookkeeping that only a measured
+/// run has any use for.
+pub fn node_timing_on() -> bool {
+    MEASURING.load(Ordering::Relaxed)
+}
+
+/// Emit NVTX ranges around plan nodes and their output partitions (process-global, off
+/// by default).
 ///
-/// Do NOT subtract it from node times. Individual node measurements vary by more
-/// than the floor itself, so subtracting manufactures zeros and negative-clamped
-/// noise — it would hide precisely what reporting the floor is meant to expose.
+/// Why this is not folded into [`set_node_timing`] is argued on `set_nvtx_ranges` in
+/// `cpp/src/plan_executor.h`. Nothing reads the ranges unless a profiler is attached,
+/// so this is for capture runs, not for the benchmark tree.
+pub fn set_nvtx_ranges(on: bool) {
+    unsafe { peacock_set_nvtx_ranges(i32::from(on)) };
+}
+
+/// A named NVTX range around whatever the caller is about to do, closed when the returned
+/// value drops.
 ///
-/// Requires a live CUDA context (construct a `GpuExecutor` first) and an idle
-/// default stream; returns 0 if CUDA errored, which is a self-announcing value
-/// since the instrumentation is never actually free.
-pub fn measure_timing_floor_us(samples: u32) -> u64 {
-    unsafe { peacock_measure_timing_floor_us(samples) }
+/// For a benchmark harness naming the case it runs. Node ranges carry `<seq>.<call_index>`
+/// and seq numbering restarts with every plan, so a capture of several queries cannot say
+/// from those names which query a call was in; this range answers it by containment, and
+/// the reader stops needing to be told the query on its command line.
+///
+/// RAII rather than a pop the caller must remember: a case that panics mid-run would
+/// otherwise leave the range open and swallow every case after it into the wrong query.
+///
+/// A no-op while ranges are off, and nothing in the engine calls it — a shipping query
+/// pays nothing here because it never arrives.
+#[must_use = "the range closes when this is dropped, so dropping it at once ranges nothing"]
+pub fn nvtx_range(name: &str) -> NvtxRange {
+    // Interior NUL is not an error worth a Result: the name is built by the harness from
+    // its own case identifiers, and a NUL in one of those is a bug in the harness. The
+    // range is simply not opened, which shows up as a capture missing a level.
+    if let Ok(owned) = std::ffi::CString::new(name) {
+        unsafe { peacock_nvtx_push_range(owned.as_ptr()) };
+    }
+    NvtxRange(())
+}
+
+/// Closes the range [`nvtx_range`] opened.
+pub struct NvtxRange(());
+
+impl Drop for NvtxRange {
+    fn drop(&mut self) {
+        unsafe { peacock_nvtx_pop_range() };
+    }
 }
 
 /// GPU backend: intermediates stay GPU-resident behind handles in the C++

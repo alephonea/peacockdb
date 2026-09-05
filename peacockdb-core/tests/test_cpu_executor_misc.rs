@@ -208,3 +208,88 @@ async fn test_instrumented_stats_are_populated() {
         root_stat.output_bytes
     );
 }
+
+// --- the calibration record -------------------------------------------------
+
+
+/// The benchmark path must not touch the CPU tier — neither what it PRODUCES nor what it
+/// RUNS.
+///
+/// Two different prohibitions, and the second is the one this list used to miss.
+///
+/// **Its goldens.** The measurement suite runs at sf40, where there are no `.cpu.txt`
+/// statistics and no `.result.txt` results, and where producing them would mean executing
+/// the query on the CPU over 42 GB of parquet. Reading one makes every case fail on a
+/// missing file, on the GPU host, long after the change.
+///
+/// **Its execution.** `CpuBackend` is a working backend: a case that drove it would not
+/// fail at all. It would produce a whole tree of plausible microseconds measured on the
+/// wrong machine, and nothing downstream — not the record, not the fit, not a plot —
+/// carries a field that says which backend ran. That is worse than a missing file, and
+/// it is why the two names sit in one list.
+///
+/// Deliberately NOT `CpuBatch`: it lives on the GPU path legitimately, because an unload
+/// hands back a host batch. Forbidding it would break correct code and teach the next
+/// person to edit this list instead of their change.
+///
+/// Checked here, in the CPU tier, on a machine with no GPU, at the moment the call is
+/// added — rather than as a device failure hours later.
+///
+/// By source text rather than by types because the thing being forbidden is a CALL, and
+/// no type says "this function was not called". Line comments are stripped first: the
+/// point is calls, and a comment explaining why the benchmark does not read a golden must
+/// not itself be the failure. Two known limits — a `//` inside a string literal hides the
+/// rest of that line from the search, and a rename of any of these names silently empties
+/// the check. It is a tripwire, not a proof.
+#[test]
+fn the_benchmark_path_reads_no_cpu_side_golden() {
+    // Every accessor in common/ that names a file the CPU tier writes, the oracle
+    // comparison mode, and the CPU backend itself. The first five are about READING what
+    // the CPU produced; the last is about RUNNING on it, which fails in the opposite way
+    // — silently, with numbers.
+    const FORBIDDEN: &[&str] = &[
+        "cpu_golden",
+        "result_golden",
+        "cost_golden",
+        "plan_golden",
+        "CpuOracle",
+        "CpuBackend",
+    ];
+    // The files the benchmark path is its own. `corpus.rs` is not among them: the path
+    // borrows `plan_at` from it, and the rest of that file is the corpus tier, which reads
+    // goldens for a living. A whole-file check cannot separate the two.
+    const SOURCES: &[&str] = &[
+        "tests/peacock_gpu_benchmarks.rs",
+        "tests/common/corpus_benchmark.rs",
+        "tests/common/gpu_session.rs",
+    ];
+
+    for rel in SOURCES {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(rel);
+        let text = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+            panic!(
+                "cannot read {}: {e}. This guard names the benchmark path by path; if \
+                 the file moved, point it at the new one rather than dropping it.",
+                path.display()
+            )
+        });
+        let code: String = text
+            .lines()
+            .map(|l| l.split_once("//").map_or(l, |(before, _)| before))
+            .collect::<Vec<_>>()
+            .join("\n");
+        for name in FORBIDDEN {
+            assert!(
+                !code.contains(name),
+                "{rel} mentions `{name}`. The benchmark suite runs at sf40 and must not \
+                 touch the CPU tier. A golden it reads does not exist there and cannot \
+                 be produced, so every case fails on a missing file — on the GPU host, \
+                 long after the change. `CpuBackend` is worse: it WORKS, and the run \
+                 would report a tree of plausible microseconds measured on the wrong \
+                 machine, with no column anywhere saying which backend produced them. \
+                 If the benchmark genuinely needs a CPU-side input, that is a decision \
+                 about the sf40 suite, not an edit to this list."
+            );
+        }
+    }
+}
