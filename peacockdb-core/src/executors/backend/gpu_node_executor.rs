@@ -119,6 +119,7 @@ pub fn set_node_timing(enabled: bool) {
     unsafe { peacock_set_node_timing(if enabled { 1 } else { 0 }) };
 }
 
+
 /// GPU backend: intermediates stay GPU-resident behind handles in the C++
 /// `NodeSession`; the executor pointer is BORROWED (owned by `GpuExecutor`).
 /// On drop, `peacock_executor_end_plan` frees the session + all remaining

@@ -907,11 +907,11 @@ int  peacock_result_from_handle(peacock_executor_t* executor, uint64_t handle,
                                 uint64_t offset, uint64_t length,
                                 uint8_t** out_ipc, uint64_t* out_ipc_len);
 
-/* benchmark instrumentation: process-global, off by default. Enabling it makes
-   execute_node synchronize the default stream at every measurement boundary, so
-   time_us measures execution rather than kernel submission — and serializes what
-   cuDF would otherwise pipeline, which is why the correctness path never sets it. */
-void peacock_set_node_timing(int enable);
+/* benchmark instrumentation: process-global, off by default. Mode 1 puts CUDA
+   events around the device work and the host clock around the host work, with no
+   sync inside the region, so a measured run is not a serialized one. Device times
+   are not known when a region closes and are drained afterwards. */
+void peacock_set_node_timing(int mode);   /* 0 = off, 1 = events */
 
 /* the conformance hook: Spark-murmur3 partition ids over one Arrow C-data batch */
 int  peacock_spark_partition_ids(const void* schema, const void* array,
