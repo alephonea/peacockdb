@@ -8,7 +8,7 @@
 //! to [`super::single_partition`]; the three cross-lane categories are here, along with
 //! the one node the driver special-cases, a `GpuUnload` carrying a limit.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 
 use super::accounting::{Held, ResidentAccountant, Slot, Trip};
 use super::index::{PROBE_CHILD, PlanIndex, ROOT};
@@ -20,10 +20,12 @@ use crate::batch_partitioned::batch::Batch;
 use crate::batch_partitioned::cpu_batch::CpuBatch;
 use crate::batch_partitioned::error::{PlanError, RunError};
 use crate::batch_partitioned::executor::{
-    BackendError, LaneEvent, PartitionAccumulatorExecutor, PartitionEmitterExecutor, RowRange,
+    AbiCalls, BackendError, LaneEvent, PartitionAccumulatorExecutor, PartitionEmitterExecutor,
+    RowRange,
 };
 use crate::batch_partitioned::forwarder::{BatchForwarder, Forwarder};
 use crate::batch_partitioned::node::GpuNode;
+use crate::batch_partitioned::recipe::Seq;
 use crate::batch_partitioned::nodes::ExecutorCategory;
 use crate::batch_partitioned::validate::check_canonical_form;
 
@@ -58,6 +60,24 @@ pub struct RunReport {
     pub lanes_of: Vec<usize>,
     /// Per node, per output lane, the batches it emitted in order.
     pub emitted: Vec<Vec<Vec<EmittedBatch>>>,
+    /// Per node, its DRIVING lane count — how many lanes the schedule calls it on, which
+    /// is what [`abi_calls`](RunReport::abi_calls) is indexed by.
+    ///
+    /// Equal to [`lanes_of`](RunReport::lanes_of) everywhere except the two categories
+    /// whose input and output lanes differ: a scatter is driven on one lane and emits into
+    /// many, a cross-lane accumulator is driven on many and emits on one.
+    pub driving_lanes: Vec<usize>,
+    /// Per node, per DRIVING lane, the ABI calls each of that lane's backend calls made,
+    /// in order.
+    ///
+    /// One entry per call that reached an executor — the lane's batches, then its done —
+    /// and nothing for a step the driver answered itself, which would otherwise take a
+    /// place in the sequence and shift every batch after it.
+    ///
+    /// A backend that reports nothing leaves every entry unmeasured rather than empty —
+    /// the distinction `AbiCalls` carries, and what keeps a CPU run from rendering as a
+    /// device run that made no calls.
+    pub abi_calls: Vec<Vec<Vec<AbiCalls>>>,
     /// Per node, per output lane, rows it emitted that nobody consumed — the queues an early
     /// exit left standing. Zero everywhere on a run that drained, and what closes
     /// `consumed + abandoned == the child's emitted` into an equality on every run.
@@ -107,6 +127,10 @@ pub(crate) struct Driver<'a, B: Backend> {
     rows_skipped: Vec<u64>,
     peak_queued: Vec<usize>,
     emitted: Vec<Vec<Vec<EmittedBatch>>>,
+    abi_calls: Vec<Vec<Vec<AbiCalls>>>,
+    /// Calls made against each seq so far, which is what stamps `AbiCall::call_index`.
+    /// Empty on an unmeasured run: nothing is recorded, so nothing is counted.
+    calls_made: HashMap<Seq, u64>,
     abandoned: Vec<Vec<u64>>,
     consumed: Vec<Vec<Vec<u64>>>,
 }
@@ -167,6 +191,13 @@ impl<'a, B: Backend> Driver<'a, B> {
             .iter()
             .map(|node| vec![Vec::new(); node.lanes])
             .collect();
+        // By the lanes that DRIVE the node, not the ones it emits into: a cross-lane
+        // accumulator is called once per input lane and answers on one.
+        let abi_calls = index
+            .nodes
+            .iter()
+            .map(|node| vec![Vec::new(); node.ready_lanes])
+            .collect();
         let abandoned = index
             .nodes
             .iter()
@@ -195,6 +226,8 @@ impl<'a, B: Backend> Driver<'a, B> {
             rows_skipped: vec![0; nodes],
             peak_queued: vec![0; nodes],
             emitted,
+            abi_calls,
+            calls_made: HashMap::new(),
             abandoned,
             consumed,
         };
@@ -389,6 +422,7 @@ impl<'a, B: Backend> Driver<'a, B> {
                 self.states[node].out_done[lane] = true;
             }
             self.record(node, lane, outcome.call, produced);
+            self.record_calls(node, lane, outcome.calls);
         }
         Ok(())
     }
@@ -446,8 +480,9 @@ impl<'a, B: Backend> Driver<'a, B> {
         let Some(CrossExecutor::Emitter(emitter)) = &self.states[node].cross else {
             return Err(wrong_cross(self.index.nodes[node].node).into());
         };
-        self.acct.end_call(slot, emitter, stats, modelled)?;
+        self.acct.end_call(slot, emitter, &stats, modelled)?;
         self.record(node, 0, CallKind::Emit, emitted);
+        self.record_calls(node, 0, Some(stats.calls));
         Ok(())
     }
 
@@ -502,8 +537,9 @@ impl<'a, B: Backend> Driver<'a, B> {
             let Some(CrossExecutor::Accumulator(accumulator)) = &self.states[node].cross else {
                 return Err(wrong_cross(self.index.nodes[node].node).into());
             };
-            self.acct.end_call(slot, accumulator, stats, modelled)?;
+            self.acct.end_call(slot, accumulator, &stats, modelled)?;
             self.record(node, lane, kind, produced);
+            self.record_calls(node, lane, Some(stats.calls));
         }
         if self.states[node].lane_done_sent.iter().all(|sent| *sent) {
             self.states[node].out_done[0] = true;
@@ -864,6 +900,24 @@ impl<'a, B: Backend> Driver<'a, B> {
         self.consumed[node][slot][child_lane] += rows;
     }
 
+    /// What one lane call made, filed under the lane that drove it. Separate from
+    /// [`record`](Self::record) because only three of the call sites have any: the rest
+    /// are the driver's own bookkeeping, which addresses no seq.
+    fn record_calls(&mut self, node: usize, lane: usize, calls: Option<AbiCalls>) {
+        let Some(mut calls) = calls else { return };
+        // The number C++ counts to, counted here for the same seqs in the same order: the
+        // driver is the one place that sees every call, and an executor sees only its own.
+        // Nothing is touched on an unmeasured run — `recorded_mut` is `None` there.
+        if let Some(made) = calls.recorded_mut() {
+            for call in made {
+                let next = self.calls_made.entry(call.seq).or_insert(0);
+                call.call_index = *next;
+                *next += 1;
+            }
+        }
+        self.abi_calls[node][lane].push(calls);
+    }
+
     fn record(&mut self, node: usize, lane: usize, call: CallKind, outputs: usize) {
         self.trace.push(TraceEvent {
             step: self.steps as u32,
@@ -912,8 +966,10 @@ impl<'a, B: Backend> Driver<'a, B> {
             trace: self.trace,
             rows_skipped: self.rows_skipped,
             lanes_of: self.index.nodes.iter().map(|node| node.lanes).collect(),
+            driving_lanes: self.index.nodes.iter().map(|node| node.ready_lanes).collect(),
             peak_queued: self.peak_queued,
             emitted: self.emitted,
+            abi_calls: self.abi_calls,
             abandoned: self.abandoned,
             consumed: self.consumed,
             satisfied: (0..self.index.len())

@@ -7,6 +7,7 @@
 //! that trims rows, the loader's mapping verbatim, and the declared schema, without which
 //! an explicit cast's target means nothing.
 
+mod bench_text;
 mod expr_text;
 mod fb_text;
 mod memory;
@@ -17,6 +18,7 @@ pub use expr_text::expr_text;
 use expr_text::join_filter_text;
 pub use memory::render_plan_memory;
 pub use recipes::{Payloads, render_plan_recipes};
+pub use bench_text::render_timings;
 pub use run_text::render_run;
 
 use std::fmt::Write as _;

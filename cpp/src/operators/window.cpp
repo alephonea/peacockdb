@@ -42,6 +42,9 @@ TableResult execute_window(const fb::CudfWindow* win, NodeInputs* in) {
   // grouped_rolling_window preserves input row order.
   std::vector<std::unique_ptr<cudf::column>> out_cols;
   std::vector<std::string> out_names;
+  // Each of these is a device allocation and a memcpy, and they precede every
+  // other device touch here (build_column for the keys/args, the rolling window).
+  mark_device_start();
   for (cudf::size_type i = 0; i < tv.num_columns(); ++i) {
     out_cols.push_back(std::make_unique<cudf::column>(tv.column(i)));
     out_names.push_back(input.column_names[i]);

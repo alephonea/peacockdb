@@ -201,8 +201,8 @@ pub const BENCH_MEASURED_RUNS: usize = 10;
 ///      Taking a per-node minimum across runs instead would produce a tree whose
 ///      nodes belong to no single execution and can sum to less than any of them.
 ///
-/// Per-node times come from the C++ session with [`set_node_timing`] on — see its
-/// doc for why they would otherwise measure kernel submission rather than execution.
+/// Per-node times come from the C++ session with [`set_node_timing`] on — see its doc
+/// for what the measurement costs and why it is opt-in.
 #[cfg(not(feature = "rust-only"))]
 pub async fn run_gpu_benchmark(
     dataset: &str,
@@ -211,7 +211,7 @@ pub async fn run_gpu_benchmark(
     gpu_label: &str,
     mode: ExecMode,
 ) {
-    use peacockdb_core::gpu_executor::{set_node_timing, GpuExecutor};
+    use peacockdb_core::gpu_executor::{set_node_timing, GpuExecutor, NodeTiming};
 
     const _: () = assert!(BENCH_MEASURED_RUNS >= 2, "a second minimum needs >= 2 runs");
 
@@ -255,20 +255,17 @@ pub async fn run_gpu_benchmark(
     let (partitions, budget) = device_config(&device);
     let label = golden_label(mode, &device);
 
-    // Real per-node numbers require draining the stream at each measurement
-    // boundary; without it the host clock sees submission, not execution.
-    //
     // The switch is process-global, so turning it on is a loan. A guard rather than a
-    // trailing call: everything below unwraps, and an unwind past a trailing call
-    // would leave every later user in the process paying a stream sync per node.
+    // trailing call: everything below unwraps, and an unwind past a trailing call would
+    // leave every later user in the process measuring when it did not ask to.
     // Restored to off, the default, because the FFI exposes no way to read it back.
     struct NodeTimingLoan;
     impl Drop for NodeTimingLoan {
         fn drop(&mut self) {
-            peacockdb_core::gpu_executor::set_node_timing(false);
+            peacockdb_core::gpu_executor::set_node_timing(NodeTiming::Off);
         }
     }
-    set_node_timing(true);
+    set_node_timing(NodeTiming::Events);
     let _timing = NodeTimingLoan;
 
     let gpu = GpuExecutor::new_mode(&data_dir, partitions, budget, mode.partition_mode())

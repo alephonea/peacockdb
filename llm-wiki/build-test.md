@@ -4,7 +4,7 @@ Code and tests are authoritative; this page maps them.
 
 ## Test categories
 
-**Grand total: 2267 test cases — Rust 1833, C++ 65, Python 369.** The Python figure includes the 93 corpus queries, which only a manual dispatch runs. The header is the sum of the N column, and the rows below it count cases: a target's own `--list` total is larger, because its registry test is counted once in Registry ↔ CSV rather than again in each tier it belongs to. Comparing a row against a target total is how this page gets mistakenly reported as drifting.
+**Grand total: 2269 test cases — Rust 1835, C++ 65, Python 369.** The Python figure includes the 93 corpus queries, which only a manual dispatch runs. The header is the sum of the N column, and the rows below it count cases: a target's own `--list` total is larger, because its registry test is counted once in Registry ↔ CSV rather than again in each tier it belongs to. Comparing a row against a target total is how this page gets mistakenly reported as drifting.
 
 **Runs** — `dataset-matrix` = pipeline.yml's job with the generated dataset and the cuDF
 matrix, both legs unless a step says one · `cost-report` = the
@@ -24,7 +24,7 @@ and `2gpu` rows also runs locally; large CPU batches go to verda.
 | CPU exec, full_table tp1-mini (Rust) | one probe that tp1 also holds at 2 GiB | [scan_limit](../peacockdb-core/tests/test_cpu_full_table.rs#L24) | dataset-matrix | 1 |
 | CPU exec, partitioned tp8-standard (Rust) | real 8-way: N partitions stay live across nodes; the GPU tier's CPU oracle | [q6](../peacockdb-core/tests/test_cpu_partitioned.rs#L17), [shuffle_additive](../peacockdb-core/tests/test_cpu_partitioned.rs#L21) | dataset-matrix | 17 |
 | CPU exec, resident OOM micro (Rust) | the enforcer trips at a tight budget, and the boundary is real | [q78 oom](../peacockdb-core/tests/test_cpu_oom.rs#L24), [q7 fits](../peacockdb-core/tests/test_cpu_oom.rs#L27) | dataset-matrix | 3 |
-| CPU exec bespoke (Rust) | wrapper stripping, routing predicate, instrumented stats | [test_execution_strips_gpu_nodes](../peacockdb-core/tests/test_cpu_executor_misc.rs#L102) | dataset-matrix | 5 |
+| CPU exec bespoke (Rust) | wrapper stripping, routing predicate, instrumented stats, calibration record regions | [test_execution_strips_gpu_nodes](../peacockdb-core/tests/test_cpu_executor_misc.rs#L102) | dataset-matrix | 5 |
 | CPU node-by-node parity (Rust) | the unified walk must equal the recursive path, byte for byte | [cpu_node_executor_matches_recursive](../peacockdb-core/tests/test_node_executor.rs#L16) | dataset-matrix | 1 |
 | GPU exec, full_table tp1-standard (Rust) | one run asserts per-node rows+cost vs `.cpu.txt` AND the final result | [scan_limit](../peacockdb-core/tests/common/gpu_cases.inc#L29) | shad-gpu | 110 |
 | GPU exec, partitioned tp8-standard (Rust) | same on the real 8-way path, with per-partition asserts; `shuffle_stddev` is the only coverage of the 8-way Welford merge and names #103 beside itself | [q6](../peacockdb-core/tests/common/gpu_cases.inc#L154) | shad-gpu | 18 |
@@ -34,6 +34,7 @@ and `2gpu` rows also runs locally; large CPU batches go to verda.
 | Executors on a device (Rust) | each one handed its node's recipe — the exec nodes one batch at a time (filter, project, per-batch sort, aggregate with and without its finalize, the export with a row range, and an accumulator's recipe refused), the accumulators a stream of them (coalesce, the accumulating sort, the state merge, the Welford merge whose count exports Int64 against a UInt64 declaration ([#163](tickets.md#t163)), the mid-plan limit), and the joins what the matrix says a device runs: Inner at one probe batch, LeftAnti streamed through its finish pass, the scatter's N handles, and the refusals — Left and Full outright, a second probe batch, a zero-input collapse — each naming its ticket; plans hand-built over six rows the test writes itself, since the ABI loads a table only by reading one. `backend.rs` is the caller `executors_for` otherwise has none of: six of the seven categories built from a live session's recipes, and a node asked for at the wrong post-order refused, so the number is an address. The partition accumulator is the seventh and has no caller; its arm reads the child's lane count | [an_aggregate_that_finalizes_runs_both_of_its_calls](../peacockdb-core/tests/test_gpu_executors/exec.rs) | shad-gpu | 31 |
 | Batch-partitioned ABI (Rust) | the three per-call symbols on a live GPU — a scan's row groups, an export range, a slice — and the release skipped exactly where a call consumed the handle | [test_gpu_abi](../peacockdb-core/tests/test_gpu_abi.rs) | shad-gpu | 4 |
 | GpuBatch surface (Rust) | what the batch reports, and that `consume` hands the handle over without releasing it. Needs no device: the release is null-guarded on the executor, so a CPU tier is its home | [test_gpu_batch](../peacockdb-core/tests/test_gpu_batch.rs) | dataset-matrix | 3 |
+| GPU timing method (Rust) | the instrument, not the corpus: the events mode must not slow the query it measures, and its events must bracket device work rather than the host prologue | [events_are_free_and_land_where_they_claim](../peacockdb-core/tests/test_node_timing.rs#L83) | shad-gpu | 1 |
 | GPU all-at-once smoke (Rust) | whole-plan `peacock_execute` FFI; retires with [#110](tickets.md) | [scan_nation](../peacockdb-core/tests/test_gpu_executor_misc.rs#L18) | manual | 6 |
 | GPU per-node timing (Rust) | measures, asserts nothing: one `.benchmark.txt` per case, same list as the two GPU tiers ([`gpu_cases.inc`](../peacockdb-core/tests/common/gpu_cases.inc)), so a case returning to either tier arrives here too | [run_gpu_benchmark](../peacockdb-core/tests/peacock_gpu_benchmarks.rs) | manual | 128 |
 | Cost-model goldens (Rust) | `.cost.txt` derivation from `.cpu.txt` × `cost_model.conf` | [cost_goldens_match_and_total_is_byte_identical](../peacockdb-core/tests/test_cost_model.rs#L36) | dataset-matrix | 3 |
@@ -279,7 +280,7 @@ cost-report ──► deploy-pages (master push only)          s3-datasets
   their remaining env must stay byte-identical or the run step recompiles.
 - **cpp-build-2502** — builds the 25.02 C++ side, bundles the Arrow/Parquet runtime libs,
   and stages `test_gpu_full_table`, `test_gpu_partitioned`, `test_inc2_conformance`,
-  `test_gpu_abi`, `test_gpu_recipe_walk` and `test_gpu_executors` as the
+  `test_gpu_abi`, `test_gpu_recipe_walk`, `test_gpu_executors` and `test_node_timing` as the
   `cpp-install-25.02` artifact. Separate from dataset-matrix so the GPU job can start without
   waiting for the CPU tests.
 - **gpu-tests** (needs cpp-build-2502) — ssh to **shad-gpu** into a per-run `REMOTE_DIR`:
@@ -515,25 +516,36 @@ One record per case, at
 `<label>` being the `<mode>-<tp>-<tier>` component the `.cpu.txt` goldens carry,
 because 17 of the cases are measured at both `full_table-tp1-standard` and
 `partitioned-tp8-standard`: same query, different plan, different time. The tree is
-the plan with `time_us` per node (and `p<k>:` sub-lines where N>1), then a trailer:
+the plan with `setup_us`/`submit_us`/`device_us` per node (and `p<k>:` sub-lines where
+N>1), then a trailer:
+
+Three terms rather than one because the cost model is fitted across two datasets,
+and peacockdb pays a per-node host prologue — flatbuffer decode, handle lookups,
+AST build — that bare cuDF has no analogue for. Folding it into the work makes
+every coefficient wrong by a plan-shape-dependent amount, so it is measured separately
+and fitted as its own constant. `test_node_timing` is what checks the split is real:
+that the CUDA events bracket device work rather than that prologue.
 
 | Field | Reading |
 |---|---|
 | `build_profile` | which release profile the harness was compiled under. `total_us − nodes_total_us` is that Rust. Always a release build — the run asserts it |
 | `allocator` | the rmm pool the node times were taken under, with the sizes it was built with. Always a pool — the run asserts it, because with rmm's default every cuDF intermediate is a `cudaMalloc`/`cudaFree` round trip billed to whichever node allocated it, which inflates the largest-output nodes hardest and so moves the **profile**, not just the scale. The sizes vary with free memory at install time |
 | `shared_work_charged_to` | which `p<k>` sub-line carries work a node does once for all its partitions — the hash scatter concatenates and scatters in one operation and bills p0, so a p0 far above its siblings is the accounting, not skew. Written whether or not the plan has a repartition, so absence means only "written before the field" |
-| `nodes_total_us` | Σ of the node times |
+| `setup_us` | host time before the node's first device touch — the peacockdb-only prologue, fitted as its own constant |
+| `submit_us` / `device_us` | host time from the first device touch to the end of the region, and the device work CUDA events bracketed inside it. `submit_us` is **not** launch cost — cuDF and rmm synchronize internally, so the host waits for most of what it submits (tpch q3: Σ`submit_us` within 0.01% of Σ`device_us`) |
+| `nodes_total_us` | Σ `setup_us` + Σ `submit_us` — the **host** side of the walk. `nodes_device_us` is deliberately not added: the host ran while the device did, so the two are concurrent spans of one clock |
+| `nodes_device_us` | Σ `device_us`. Regions are on cuDF's single default stream in program order, so they are disjoint and this is ≤ `total_us`; the gap is stream idle — the device waiting through host prologue |
 | `total_us` | the whole query end to end — parse, plan, serialize, node walk, materialize |
 
 Reported run is the **2nd-smallest by `total_us`** of ten measured runs, after one
 discarded warm-up: the fastest run is the one most likely to have caught a
 favourable scheduling accident, and the whole run is reported rather than a per-node
 minimum, which would produce a tree belonging to no single execution. Not `--delete`d
-by any push (see `benchmark_result()` in `tests/common/mod.rs` for why the tree is not
+by any push (see `benchmark_result()` in `tests/common/benchmark.rs` for why the tree is not
 called `benchmark-goldens`); `--pull-benchmarks` is additive.
 
 The run counts are compile-time constants in
-[`tests/common/mod.rs`](../peacockdb-core/tests/common/mod.rs#L1290) — warm-up 1,
+[`tests/common/benchmark.rs`](../peacockdb-core/tests/common/benchmark.rs#L263) — warm-up 1,
 measured 10. No environment variable moves them, unlike
 `PCK_TEST_FILTER` or the C++ suites' `PEACOCK_BENCHMARK_RUNS`: changing one is an edit
 and a rebuild, so every record in the tree was taken at the same counts.
@@ -541,6 +553,24 @@ and a rebuild, so every record in the tree was taken at the same counts.
 `PEACOCK_GPU_DEBUG` is deliberately **not** forwarded to this run — it adds a
 `cudaStreamSynchronize` after every operator, which changes exactly the thing being
 measured.
+
+Setting `PEACOCK_RECORD_PATH` makes the same run also append calibration rows to that
+file — **every** measured run, not the one the tree above reports: the tree answers "what
+did this query cost", the record is a fit's samples and a spread of ten is what tells a
+coefficient from an accident. Unset by default: the record is for a fit, not for the
+committed tree, and the two must not start depending on each other. Its column meanings
+are in the `#` preamble the first append writes, and in
+[`tests/common/record.rs`](../peacockdb-core/tests/common/record.rs). Two properties of
+the format that a reader will otherwise assume wrong:
+
+- A row is one **cuDF call** — one (plan node, recipe step, call index) — not one node
+  and not one output partition. One plan node publishes several recipe steps and a
+  batched run drives each of them once per batch per lane; a call answering with several
+  output partitions is still one row, its cost summed over its regions.
+- There is a second, unrelated writer. `cpp/tests/gpu/calibration_record.hpp` records the
+  bare-cuDF TPC-H suite in an OLDER format — per-cuDF-call rows with `source`, `label`,
+  `cuda_bytes`, `wall_us` — for the two-source model this record no longer uses. It reads
+  its own `PEACOCK_CUDF_RECORD_PATH`, so the two cannot append to one file.
 
 ### Wall-time C++ suites (currently unscripted)
 

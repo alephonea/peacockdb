@@ -23,6 +23,7 @@ TableResult execute_project(const fb::CudfProject* proj, NodeInputs* in) {
     // count, so emit a single non-null placeholder column of the input length;
     // count(*) reads column 0 as size − null_count and gets the right answer.
     auto n_rows = input.table->num_rows();
+    mark_device_start();
     cudf::numeric_scalar<int8_t> zero(0, true);
     std::vector<std::unique_ptr<cudf::column>> columns;
     columns.push_back(cudf::make_column_from_scalar(zero, n_rows));
@@ -41,11 +42,14 @@ TableResult execute_project(const fb::CudfProject* proj, NodeInputs* in) {
     if (expr->node_type() == fb::ExprNode_ColumnRef) {
       auto* col = expr->node_as_ColumnRef();
       auto idx = static_cast<cudf::size_type>(col->index());
+      // A column copy is a device allocation and a memcpy, not a view.
+      mark_device_start();
       columns.push_back(std::make_unique<cudf::column>(tv.column(idx)));
     } else if (is_ast_able(expr, tv)) {
       // Pure AST expression: fuse via cudf::compute_column.
       ExprContext ctx;
       auto& ast = build_expr(expr, ctx);
+      mark_device_start();  // build_expr is host-side AST assembly
       columns.push_back(cudf::compute_column(tv, ast));
     } else {
       // Contains LIKE / CASE / ScalarFunction — column-producing path.

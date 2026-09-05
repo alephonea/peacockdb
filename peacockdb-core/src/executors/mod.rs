@@ -45,7 +45,8 @@ pub use partitioned_cpu_executor::PartitionedCpuExecutor;
 pub use all_at_once_gpu_executor::{AllAtOnceGpuExecutor, GpuExecutor};
 #[cfg(not(feature = "rust-only"))]
 pub use backend::gpu_node_executor::{
-    install_rmm_pool, set_node_timing, RmmPool,
+    install_rmm_pool, node_timing_on, nvtx_range, set_node_timing, set_nvtx_ranges,
+    NodeTiming, RmmPool,
 };
 #[cfg(not(feature = "rust-only"))]
 pub use full_table_gpu_executor::FullTableGpuExecutor;

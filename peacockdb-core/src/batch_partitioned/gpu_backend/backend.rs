@@ -27,7 +27,7 @@ use super::accumulate::{GpuAccumulator, GpuPartitionAccumulator};
 use super::emit::GpuEmitter;
 use super::join::{GpuJoin, GpuProbingJoin};
 use super::source::GpuSource;
-use super::{GpuExec, GpuExport};
+use super::{Device, GpuExec, GpuExport};
 
 /// The threshold a batch aggregate compacts at, until the driver derives one from the
 /// budget the way the loader's batch size is derived (#142).
@@ -76,7 +76,9 @@ impl Backend for GpuBackend {
                 node.name()
             ))
         })?;
-        let executor = ctx.executor;
+        // The lane belongs to the executor rather than to the call: C++ answers a call
+        // with the output slot inside it, which is 0 for every lane at four lanes.
+        let dev = Device { executor: ctx.executor, node: post_order, lane };
         let out = |node: &dyn GpuNode| -> ArrowSchema {
             node.kind()
                 .schema()
@@ -88,20 +90,20 @@ impl Backend for GpuBackend {
         let input = |ordinal: usize| out(node.children()[ordinal]);
         Ok(match as_node_ref(node) {
             NodeRef::LoadParquet(load) => {
-                NodeExecutors::Source(GpuSource::new(executor, recipe, load, lane, &out(node))?)
+                NodeExecutors::Source(GpuSource::new(dev, recipe, load, &out(node))?)
             }
             NodeRef::Filter(_) | NodeRef::Project(_) | NodeRef::Sort(_) | NodeRef::Aggregate(_) => {
-                NodeExecutors::Exec(GpuExec::new(executor, recipe, &out(node))?)
+                NodeExecutors::Exec(GpuExec::new(dev, recipe, &out(node))?)
             }
             NodeRef::CoalesceAllBatches(_) => NodeExecutors::BatchAccumulator(
-                GpuAccumulator::coalesce(executor, recipe, &out(node))?,
+                GpuAccumulator::coalesce(dev, recipe, &out(node))?,
             ),
             NodeRef::AccumulateBatchesAndSort(_) => NodeExecutors::BatchAccumulator(
-                GpuAccumulator::sorted(executor, recipe, &out(node))?,
+                GpuAccumulator::sorted(dev, recipe, &out(node))?,
             ),
             NodeRef::AggregateBatches(merge) => {
                 NodeExecutors::BatchAccumulator(GpuAccumulator::aggregate(
-                    executor,
+                    dev,
                     recipe,
                     &merge.intermediate().fields.as_ref().clone(),
                     &out(node),
@@ -109,7 +111,7 @@ impl Backend for GpuBackend {
                 )?)
             }
             NodeRef::Limit(limit) => NodeExecutors::BatchAccumulator(GpuAccumulator::limit(
-                executor,
+                dev,
                 recipe,
                 limit.interval,
                 &out(node),
@@ -121,14 +123,14 @@ impl Backend for GpuBackend {
                     .expect("a merge's input is not a sink")
                     .n;
                 NodeExecutors::PartitionAccumulator(GpuPartitionAccumulator::merge_sorted(
-                    executor,
+                    dev,
                     recipe,
                     lanes,
                     &out(node),
                 )?)
             }
             NodeRef::EmitPartitions(_) => {
-                NodeExecutors::PartitionEmitter(GpuEmitter::new(executor, recipe, &out(node))?)
+                NodeExecutors::PartitionEmitter(GpuEmitter::new(dev, recipe, &out(node))?)
             }
             NodeRef::Join(join) => {
                 // A join that answers in one call has no finish pass, so what its per-call
@@ -142,7 +144,7 @@ impl Backend for GpuBackend {
                 let keys = (!one_call && per_call_join_type(join.join_type).is_none())
                     .then(|| key_schema(&input(1), &join.keys));
                 NodeExecutors::Join(GpuJoin::new(
-                    executor,
+                    dev,
                     recipe,
                     Some(join.join_type),
                     keys.as_ref(),
@@ -152,9 +154,9 @@ impl Backend for GpuBackend {
             NodeRef::CrossJoin(_) | NodeRef::NestedLoopJoin(_) => {
                 // Neither has a join type of its own on the wire, and neither publishes a
                 // finish, so there is no answer for one over no keys to be wrong about.
-                NodeExecutors::Join(GpuJoin::new(executor, recipe, None, None, &out(node))?)
+                NodeExecutors::Join(GpuJoin::new(dev, recipe, None, None, &out(node))?)
             }
-            NodeRef::Unload(_) => NodeExecutors::Unload(GpuExport::new(executor, &input(0))),
+            NodeRef::Unload(_) => NodeExecutors::Unload(GpuExport::new(dev, &input(0))),
             NodeRef::MergePartitions(_) | NodeRef::Union(_) | NodeRef::Interleave(_) => {
                 unreachable!("routing nodes are answered above")
             }

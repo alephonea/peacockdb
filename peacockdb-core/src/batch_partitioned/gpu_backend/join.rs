@@ -13,15 +13,15 @@ use std::sync::Arc;
 use datafusion::arrow::datatypes::{Schema as ArrowSchema, SchemaRef};
 use datafusion::common::JoinType;
 
-use peacockdb_ffi::raw::PeacockExecutor;
-
 use super::super::batch::Batch;
+use crate::executors::node_timing_on;
+
 use super::super::error::PlanError;
-use super::super::executor::{BackendError, CallResult, CallStats};
+use super::super::executor::{AbiCalls, BackendError, CallResult, CallStats};
 use super::super::gpu_batch::GpuBatch;
 use super::super::nodes::join::empty_build_answers_nothing;
 use super::super::recipe::{CallPattern, FbKind, Input, ProjectRole, Recipe, Seq};
-use super::{execute_node, produced};
+use super::{Consumed, Device, execute_node, no_abi_calls, produced};
 
 /// One call of a join's recipe: the seq, and the inputs it names in order. Each named
 /// input is one child slot — the C++ reads its output count off the first slot, so two
@@ -35,7 +35,7 @@ struct JoinCall {
 
 /// A join before its build side arrives.
 pub struct GpuJoin {
-    executor: *mut PeacockExecutor,
+    dev: Device,
     /// The node's own type, and `None` for the two joins that have none — cross and
     /// nested-loop. What a finish over no keys owes is decided by this rather than read
     /// back off the call list: two different nodes publish a LeftAnti at done, and one of
@@ -51,7 +51,7 @@ impl GpuJoin {
     /// `keys` is the schema of the probe keys a finishing join accumulates — the key
     /// project's output, which is the node's key columns and nothing else.
     pub fn new(
-        executor: *mut PeacockExecutor,
+        dev: Device,
         recipe: &Recipe,
         join_type: Option<JoinType>,
         keys: Option<&ArrowSchema>,
@@ -89,7 +89,7 @@ impl GpuJoin {
             ));
         }
         Ok(Self {
-            executor,
+            dev,
             join_type,
             per_probe,
             at_done,
@@ -123,7 +123,7 @@ impl GpuJoin {
                 accumulated: Vec::new(),
                 probes: 0,
             },
-            CallStats::default(),
+            no_abi_calls(),
         ))
     }
 }
@@ -166,9 +166,10 @@ impl GpuProbingJoin {
         let mut out = Vec::new();
         let mut batch = Some(batch);
         let mut prior: Option<GpuBatch> = None;
+        let mut calls = AbiCalls::armed(node_timing_on());
         for call in self.join.per_probe.clone() {
             let kind = call.kind;
-            let produced = self.make(call, &mut batch, &mut prior)?;
+            let produced = self.make(call, &mut batch, &mut prior, &mut calls)?;
             match kind {
                 // The key project's output is the lane's growing key table, not an answer.
                 FbKind::Project(ProjectRole::ProbeKeys) => self.accumulated.push(produced),
@@ -176,7 +177,13 @@ impl GpuProbingJoin {
             }
         }
         out.extend(prior);
-        Ok((out, CallStats::default()))
+        Ok((
+            out,
+            CallStats {
+                scratch_bytes: None,
+                calls,
+            },
+        ))
     }
 
     /// The question a streamed probe could not answer, in the calls the recipe names: the
@@ -184,17 +191,24 @@ impl GpuProbingJoin {
     /// node's output is the joined schema.
     pub fn finish_and_fetch(mut self) -> CallResult<Vec<GpuBatch>> {
         if self.join.at_done.is_empty() {
-            return Ok((Vec::new(), CallStats::default()));
+            return Ok((Vec::new(), no_abi_calls()));
         }
         if self.accumulated.is_empty() {
             return self.finish_without_keys();
         }
         let mut prior: Option<GpuBatch> = None;
         let mut none = None;
+        let mut calls = AbiCalls::armed(node_timing_on());
         for call in self.join.at_done.clone() {
-            prior = Some(self.make(call, &mut none, &mut prior)?);
+            prior = Some(self.make(call, &mut none, &mut prior, &mut calls)?);
         }
-        Ok((prior.into_iter().collect(), CallStats::default()))
+        Ok((
+            prior.into_iter().collect(),
+            CallStats {
+                scratch_bytes: None,
+                calls,
+            },
+        ))
     }
 
     /// A lane whose probe was empty accumulated no keys, and the concat of none is a
@@ -211,7 +225,7 @@ impl GpuProbingJoin {
             Some(JoinType::LeftAnti) => {
                 return Ok((
                     self.build.take().into_iter().collect(),
-                    CallStats::default(),
+                    no_abi_calls(),
                 ));
             }
             Some(JoinType::LeftSemi) => "no rows, which is a table of no rows",
@@ -243,32 +257,55 @@ impl GpuProbingJoin {
         call: JoinCall,
         batch: &mut Option<GpuBatch>,
         prior: &mut Option<GpuBatch>,
+        calls: &mut AbiCalls,
     ) -> Result<GpuBatch, BackendError> {
         let mut slots: Vec<Vec<u64>> = Vec::with_capacity(call.inputs.len());
+        // A join's call reads several named slots, so its input is their sum. Every slot
+        // is a batch this side is holding — the prior output included, since a join builds
+        // one from each call rather than passing the raw handle on.
+        let mut taken = Consumed::default();
+        let measure = calls.is_armed();
         for input in &call.inputs {
-            slots.push(match input {
-                Input::Batch => vec![self.take(batch.take(), "the probe batch")?],
-                Input::BatchCopy => vec![self.copy_of(batch)?],
+            let (handles, slot) = match input {
+                Input::Batch => {
+                    let (handle, slot) = self.take(batch.take(), "the probe batch", measure)?;
+                    (vec![handle], slot)
+                }
+                Input::BatchCopy => {
+                    let (handle, slot) = self.copy_of(batch)?;
+                    (vec![handle], slot)
+                }
                 Input::BuildSide => {
                     let build = self.build.take();
-                    vec![self.take(build, "the build side")?]
+                    let (handle, slot) = self.take(build, "the build side", measure)?;
+                    (vec![handle], slot)
                 }
                 Input::BuildSideCopy => {
                     let build = self.build.take();
-                    vec![self.build_copy(build)?]
+                    let (handle, slot) = self.build_copy(build, measure)?;
+                    (vec![handle], slot)
                 }
-                Input::AccumulatedKeys => hand_over(std::mem::take(&mut self.accumulated)),
-                Input::PriorOutput => vec![self.take(prior.take(), "the call before it")?],
+                Input::AccumulatedKeys => {
+                    hand_over(std::mem::take(&mut self.accumulated), calls.is_armed())
+                }
+                Input::PriorOutput => {
+                    let (handle, slot) = self.take(prior.take(), "the call before it", measure)?;
+                    (vec![handle], slot)
+                }
                 other => {
                     return Err(BackendError::new(format!(
                         "a join's call reads {other:?}, which no join recipe names"
                     )));
                 }
-            });
+            };
+            taken.rows += slot.rows;
+            taken.bytes += slot.bytes;
+            slots.push(handles);
         }
-        let (handle, stats) = execute_node(self.join.executor, call.seq, call.kind, &slots)?;
+        let (handle, stats) = execute_node(self.join.dev, call.seq, call.kind, &slots)?;
+        calls.record(call.seq, call.kind, taken.rows, Some(taken.bytes));
         let schema = self.schema_of(call.kind);
-        Ok(produced(self.join.executor, handle, stats, schema))
+        Ok(produced(self.join.dev.executor, handle, stats, schema))
     }
 
     /// What the call produced is priced by: the key project's output is the keys, and
@@ -280,9 +317,21 @@ impl GpuProbingJoin {
         }
     }
 
-    fn take(&self, batch: Option<GpuBatch>, what: &str) -> Result<u64, BackendError> {
+    fn take(
+        &self,
+        batch: Option<GpuBatch>,
+        what: &str,
+        measure: bool,
+    ) -> Result<(u64, Consumed), BackendError> {
         batch
-            .map(|batch| batch.consume().1)
+            .map(|batch| {
+                let taken = if measure {
+                    Consumed::of(&batch)
+                } else {
+                    Consumed::default()
+                };
+                (batch.consume().1, taken)
+            })
             .ok_or_else(|| BackendError::new(format!("{what} was already consumed")))
     }
 
@@ -290,7 +339,7 @@ impl GpuProbingJoin {
     /// only where a later call in the same probe still needs that batch — the key project
     /// of a Left or Full join, with the per-call join reading the batch after it — so
     /// there is no arrangement of these two calls that leaves both a batch to read.
-    fn copy_of(&self, _batch: &mut Option<GpuBatch>) -> Result<u64, BackendError> {
+    fn copy_of(&self, _batch: &mut Option<GpuBatch>) -> Result<(u64, Consumed), BackendError> {
         Err(BackendError::new(
             "this join's recipe copies its probe batch — the key project keeps the keys \
              and the join below it reads the same batch — and the ABI has no copy, so \
@@ -301,9 +350,20 @@ impl GpuProbingJoin {
     /// The build side, where the recipe asked for a copy of it. The first probe batch can
     /// have the original; a second has nothing to be given, because the call that read it
     /// erased it.
-    fn build_copy(&self, build: Option<GpuBatch>) -> Result<u64, BackendError> {
+    fn build_copy(
+        &self,
+        build: Option<GpuBatch>,
+        measure: bool,
+    ) -> Result<(u64, Consumed), BackendError> {
         match build {
-            Some(build) => Ok(build.consume().1),
+            Some(build) => {
+                let taken = if measure {
+                    Consumed::of(&build)
+                } else {
+                    Consumed::default()
+                };
+                Ok((build.consume().1, taken))
+            }
             None => Err(BackendError::new(format!(
                 "this join's recipe copies its build side per probe batch and the ABI has \
                  no copy: probe batch {} has no build side left, since the call for batch \
@@ -314,6 +374,14 @@ impl GpuProbingJoin {
     }
 }
 
-fn hand_over(batches: Vec<GpuBatch>) -> Vec<u64> {
-    batches.into_iter().map(|batch| batch.consume().1).collect()
+/// `measure` for the reason argued on the accumulator's copy: `consume` is the last place
+/// a batch's sizes exist, and an unmeasured run should not walk them.
+fn hand_over(batches: Vec<GpuBatch>, measure: bool) -> (Vec<u64>, Consumed) {
+    let taken = if measure {
+        Consumed::sum(&batches)
+    } else {
+        Consumed::default()
+    };
+    let handles = batches.into_iter().map(|batch| batch.consume().1).collect();
+    (handles, taken)
 }

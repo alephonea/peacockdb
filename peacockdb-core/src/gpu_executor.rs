@@ -10,5 +10,5 @@ pub use crate::executors::all_at_once_gpu_executor::{AllAtOnceGpuExecutor, GpuEx
 /// [`crate::executors::backend::gpu_node_executor::set_node_timing`] and
 /// [`crate::executors::backend::gpu_node_executor::install_rmm_pool`].
 pub use crate::executors::backend::gpu_node_executor::{
-    install_rmm_pool, set_node_timing, RmmPool,
+    install_rmm_pool, nvtx_range, set_node_timing, set_nvtx_ranges, NodeTiming, RmmPool,
 };

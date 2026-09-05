@@ -315,6 +315,7 @@ peacockdb-core:test_gpu_executors
 peacockdb-core:test_inc2_conformance
 peacockdb-core:test_gpu_executor_misc
 peacockdb-core:test_gpu_bp_corpus
+peacockdb-core:test_node_timing
 GPUSET
 }
 
