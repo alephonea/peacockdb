@@ -85,13 +85,27 @@ stage_cargo_test_binary() {
     | python3 -c '
 import json, sys
 name = sys.argv[1]
+found = None
+# Read to the END rather than breaking at the artifact line: breaking closes stdin while
+# cargo is still writing, and cargo then dies with `error: Broken pipe (os error 32)`,
+# which `set -o pipefail` reports as a build failure of a target that built fine.
 for line in sys.stdin:
     try: m = json.loads(line)
-    except ValueError: continue
+    except ValueError:
+        sys.stderr.write(line); sys.stderr.flush(); continue
+    # Under --message-format=json cargo puts DIAGNOSTICS on stdout too, so a filter that
+    # keeps only the artifact line eats every error and warning.
+    if m.get("reason") == "compiler-message":
+        text = (m.get("message") or {}).get("rendered")
+        if text:
+            sys.stderr.write(text); sys.stderr.flush()
+        continue
     if m.get("executable") and (m.get("target") or {}).get("name") == name:
-        print(m["executable"]); break
+        found = m["executable"]
+if found:
+    print(found)
 ' "$target"); then
-    echo "ERROR: building $target failed (cargo output above)" >&2
+    echo "ERROR: building $target failed (see the compiler messages above)" >&2
     return 1
   fi
   if [ -z "$exec_path" ] || [ ! -f "$exec_path" ]; then
