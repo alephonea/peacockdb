@@ -511,11 +511,9 @@ Run state lives in `$REMOTE_REPO/.run-state/<phase>.{sh,log,rc,id}`, deliberatel
 `cpp/install/` — that tree is mirrored with `--delete`, so a marker kept there is erased by
 the next push.
 
-One record per case, at
-`testdata/benchmark-results/<dataset>.sf<sf>/<query>.<label>.benchmark.txt` —
-`<label>` being the `<mode>-<tp>-<tier>` component the `.cpu.txt` goldens carry,
-because 17 of the cases are measured at both `full_table-tp1-standard` and
-`partitioned-tp8-standard`: same query, different plan, different time. The tree is
+One file per (dataset, mode), at
+`testdata/benchmark-results/<dataset>.sf<sf>/<mode>.benchmark.txt`, holding a section
+per query timed at that mode. The tree is
 the plan with `setup_us`/`submit_us`/`device_us` per node (and `p<k>:` sub-lines where
 N>1), then a trailer:
 
@@ -541,11 +539,12 @@ Reported run is the **2nd-smallest by `total_us`** of ten measured runs, after o
 discarded warm-up: the fastest run is the one most likely to have caught a
 favourable scheduling accident, and the whole run is reported rather than a per-node
 minimum, which would produce a tree belonging to no single execution. Not `--delete`d
-by any push (see `benchmark_result()` in `tests/common/benchmark.rs` for why the tree is not
+by any push (see `results_file()` in `tests/common/corpus_benchmark.rs` for why the tree is
+not
 called `benchmark-goldens`); `--pull-benchmarks` is additive.
 
 The run counts are compile-time constants in
-[`tests/common/benchmark.rs`](../peacockdb-core/tests/common/benchmark.rs#L263) — warm-up 1,
+[`tests/common/corpus_benchmark.rs`](../peacockdb-core/tests/common/corpus_benchmark.rs#L190) — warm-up 1,
 measured 10. No environment variable moves them, unlike
 `PCK_TEST_FILTER` or the C++ suites' `PEACOCK_BENCHMARK_RUNS`: changing one is an edit
 and a rebuild, so every record in the tree was taken at the same counts.

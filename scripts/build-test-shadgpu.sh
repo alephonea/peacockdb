@@ -921,8 +921,8 @@ EOF
   stale=$(find testdata/benchmark-results -name '*.*.benchmark.txt' | wc -l)
   if [ "$stale" -gt 0 ]; then
     echo "==> $stale file(s) here match no mode this build writes — a naming scheme that"
-    echo "    is gone. They live on the host and come home on every pull; deleting them"
-    echo "    locally does not stick until the host's copies go too:"
+    echo "    is gone. If the host still holds copies, a pull brings them back, so check"
+    echo "    there before concluding a local delete stuck:"
     find testdata/benchmark-results -name '*.*.benchmark.txt' | head -3 | sed 's/^/      /'
     echo "      ssh $REMOTE \"find $REMOTE_REPO/testdata/benchmark-results -name '*.*.benchmark.txt' -delete\""
   fi

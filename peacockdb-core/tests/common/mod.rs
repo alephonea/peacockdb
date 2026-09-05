@@ -7,7 +7,6 @@
 //! suite uses a subset, so dead code is fine.
 #![allow(dead_code)]
 
-pub mod benchmark;
 pub mod bp_mode;
 pub mod corpus;
 #[cfg(not(feature = "rust-only"))]
