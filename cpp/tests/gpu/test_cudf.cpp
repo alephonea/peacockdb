@@ -34,25 +34,6 @@ rmm::cuda_stream_view const get_default_stream() { return cudf::get_default_stre
 #include "plan_executor.h"
 #include "peacock/rmm_pool.hpp"
 
-// measure_timing_floor_us turns the global timing switch on for its own samples, so
-// it has to hand back what it found. It is called mid-benchmark, between a warm-up
-// and the measured runs, and a leak in either direction changes what every later node
-// in that process measures — without failing anything.
-TEST(NodeTiming, FloorRestoresTheSwitch) {
-  for (bool start : {false, true}) {
-    peacock::set_node_timing(start);
-    (void)peacock::measure_timing_floor_us(4);
-    EXPECT_EQ(peacock::node_timing_enabled(), start);
-  }
-  peacock::set_node_timing(false);
-}
-
-// The header promises a clamp rather than undefined behaviour: a second-smallest
-// needs two samples, and the caller passes a constant that someone will one day tune.
-TEST(NodeTiming, FloorClampsSampleCount) {
-  EXPECT_NO_THROW({ (void)peacock::measure_timing_floor_us(0); });
-  EXPECT_NO_THROW({ (void)peacock::measure_timing_floor_us(1); });
-}
 
 TEST(CudfGpu, SequenceSum) {
   // Generate [1, 2, 3, ..., 100] on the GPU.

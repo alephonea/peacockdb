@@ -169,9 +169,9 @@ and the tail lengthens.
 deleted — the function says so: *"Only the per-partition slice copies below are separable."* After
 this, partitions 1..N-1 do a `shared_ptr` copy and a `cudf::slice`, and their timed regions collapse
 toward zero. The structure holds (N partitions still cost N regions, which is what that comment's
-warning protects), but `nodes_at_or_below_floor` in `common/benchmark.rs:180` will report more nodes
-below the measurement floor. That is true signal — the work genuinely went — but it lands in T22's
-output as a jump with no visible cause, so it belongs in #145's text.
+warning protects), but the per-partition times in the benchmark tree drop toward zero. That is
+true signal — the work genuinely went — but it lands in T22's output as a jump with no visible
+cause, so it belongs in #145's text.
 
 ## 6. Tests
 
@@ -228,7 +228,7 @@ The file is at 852 lines against the 1000-line cap; `recipe/tests.rs` is at 887.
 | `bp-recipe-payloads.txt` | no | no flatbuffer change; the wire is untouched |
 | `<mode>-<tier>.cpu.txt`, `.cost.txt` | no | the corpus cpu tier runs `CpuBackend`, which holds no handles |
 | `bp-<tier>.result.txt` | no | no value changes |
-| benchmark output | **yes** | `nodes_at_or_below_floor`, per the scatter section |
+| benchmark output | **yes** | per-partition times collapse, per the scatter section |
 
 **The registry is the slow part, not the code.** 75 queries carry #152. Each needs a device run and
 then either an enable or a ticket edit, in batches of about five on `shad-gpu` with

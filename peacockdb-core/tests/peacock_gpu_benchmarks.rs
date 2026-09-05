@@ -14,9 +14,8 @@
 //! as the plan tree with `time_us` per node, then `build_profile` (which release profile
 //! the harness was compiled under — see [`common::benchmark::BUILD_PROFILE`]),
 //! `allocator` (the rmm pool the times were taken under — see
-//! `executors::backend::gpu_node_executor::install_rmm_pool`), `sync_floor_us` (what the
-//! measurement costs when there is nothing to measure — every node time includes
-//! one), `nodes_at_or_below_floor`, `nodes_total_us` and `total_us`.
+//! `executors::backend::gpu_node_executor::install_rmm_pool`), `nodes_total_us` and
+//! `total_us`.
 //!
 //! The first two are conditions of the run rather than variables of it: the records only
 //! compare with each other, and with the C++ gtest binaries' numbers, because every one of

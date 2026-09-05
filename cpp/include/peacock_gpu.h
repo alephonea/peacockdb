@@ -134,17 +134,6 @@ int peacock_install_rmm_pool(PeacockRmmPoolInfo* out_info);
 /// for a benchmark, wrong for production. Intended for peacock_gpu_benchmarks.
 void peacock_set_node_timing(int enable);
 
-/// Cost of the measurement itself, in microseconds: the timed region every node
-/// pays, wrapped around no work (clock reads + a sync of an already-idle stream).
-///
-/// A node's time_us is real work PLUS one of these, so a node at or below this
-/// number is not "cheap" — it is below what the method can resolve. Report it next
-/// to the node times; do NOT subtract it from them.
-///
-/// Returns the second-smallest of `samples` (clamped to >= 2). Requires a live CUDA
-/// context and no concurrent work on the default stream. Returns 0 on CUDA error.
-uint64_t peacock_measure_timing_floor_us(unsigned samples);
-
 /// Load a plan for node-by-node execution. Parses + verifies once and indexes
 /// nodes in post-order. Replaces any previously loaded plan on this executor.
 /// @param out_node_count  Set to the number of plan nodes (post-order 0..n-1).

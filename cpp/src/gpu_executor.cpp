@@ -138,22 +138,6 @@ int peacock_install_rmm_pool(PeacockRmmPoolInfo* out_info) {
 
 void peacock_set_node_timing(int enable) { peacock::set_node_timing(enable != 0); }
 
-uint64_t peacock_measure_timing_floor_us(unsigned samples) {
-  // No executor handle here, so no `last_error` to park a message in — print and
-  // return 0. A 0 floor is self-announcing in the output file (a floor of zero
-  // claims the instrumentation is free, which nothing believes), so it degrades
-  // to "unknown" rather than to a plausible lie.
-  try {
-    return peacock::measure_timing_floor_us(samples);
-  } catch (const std::exception& e) {
-    std::fprintf(stderr, "[peacock_measure_timing_floor_us] error: %s\n", e.what());
-    return 0;
-  } catch (...) {
-    std::fprintf(stderr, "[peacock_measure_timing_floor_us] unknown exception\n");
-    return 0;
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Executor lifecycle
 // ---------------------------------------------------------------------------

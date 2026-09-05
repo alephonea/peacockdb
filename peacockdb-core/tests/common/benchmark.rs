@@ -63,11 +63,6 @@ pub fn benchmark_result(dataset: &str, sf: &str, query: &str, label: &str) -> Pa
 /// serialization, `begin_plan`, and the final `materialize` back across the FFI.
 /// Both are written because the gap between them IS the per-query overhead.
 ///
-/// `sync_floor_us` is what the measurement costs when there is nothing to measure
-/// (see `measure_timing_floor_us`). It is written because every node time above
-/// silently includes one, so without it a reader cannot separate "this node is cheap"
-/// from "this node is under the method's resolution".
-///
 /// `build_profile` and `allocator` are read here rather than passed in, because they
 /// are conditions of the run and not choices of the caller: every record is written
 /// from a release build measuring over a pooled rmm resource, and `run_gpu_benchmark`
@@ -78,7 +73,6 @@ pub fn bench_stats_str(
     plan: &Arc<dyn ExecutionPlan>,
     stats: &[NodeMemoryStats],
     total_us: u64,
-    sync_floor_us: u64,
 ) -> String {
     struct Node<'a> {
         stat: &'a NodeMemoryStats,
@@ -120,29 +114,7 @@ pub fn bench_stats_str(
     let mut lines = Vec::new();
     walk(&root, 0, &mut lines);
     let nodes_total_us: u64 = stats.iter().map(|s| s.time_us).sum();
-    // How many node lines sit at or under the floor — i.e. how much of the tree above
-    // this file cannot actually resolve. One integer, because "sync_floor_us=6" alone
-    // still leaves the reader counting by hand, and the answer changes the reading of
-    // the whole record: 2/40 unresolved is a profile, 35/40 is a measurement that
-    // mostly measured its own instrument.
-    //
-    // The floor scales with the partition count. sync_floor_us is ONE empty timed region,
-    // but NodeMemoryStats::time_us is Σ over the node's output partitions, so a tp8 node
-    // carries eight floors, not one. Comparing the sum against a single floor makes every
-    // partitioned node look resolved when it is not — the very failure this line exists to
-    // report, silently worst on exactly the widest plans.
-    let at_floor = stats
-        .iter()
-        .filter(|s| s.time_us <= sync_floor_us * s.part_stats.len().max(1) as u64)
-        .count();
     lines.push(String::new());
-    lines.push(
-        "# sync_floor_us = cost of the measurement itself (empty timed region: clock + \
-         cudaStreamSynchronize on an idle stream). Each node time INCLUDES one PER OUTPUT \
-         PARTITION, since a node line is the Σ over its partitions; a node at or below its \
-         own floor (sync_floor_us x partitions) is unresolved, not cheap. Do not subtract it."
-            .to_string(),
-    );
     lines.push(
         "# nodes_total_us = Σ of the per-node times above; total_us = the whole query, \
          end to end (parse + plan + serialize + node walk + materialize)"
@@ -176,8 +148,6 @@ pub fn bench_stats_str(
     lines.push(format!("build_profile={BUILD_PROFILE}"));
     lines.push(format!("allocator={}", install_rmm_pool()));
     lines.push("shared_work_charged_to=p0".to_string());
-    lines.push(format!("sync_floor_us={sync_floor_us}"));
-    lines.push(format!("nodes_at_or_below_floor={at_floor}/{}", stats.len()));
     lines.push(format!("nodes_total_us={nodes_total_us}"));
     lines.push(format!("total_us={total_us}"));
     lines.join("\n")
@@ -214,13 +184,6 @@ pub const BENCH_WARMUP_RUNS: usize = 1;
 #[cfg(not(feature = "rust-only"))]
 pub const BENCH_MEASURED_RUNS: usize = 10;
 
-/// Empty timed regions sampled to establish the resolution floor. Each costs one
-/// `cudaStreamSynchronize` of an idle stream — microseconds — so a large sample is
-/// cheap next to a single query, and a stable floor is worth more than the ~1ms it
-/// costs: it is the number that decides whether a small node time means anything.
-#[cfg(not(feature = "rust-only"))]
-pub const BENCH_FLOOR_SAMPLES: u32 = 200;
-
 /// Time one case from `common/gpu_cases.inc` and write `testdata/benchmark-results/…`.
 ///
 /// Deliberately asserts NOTHING about the result or the cost tree. `test_gpu_full_table`
@@ -248,7 +211,7 @@ pub async fn run_gpu_benchmark(
     gpu_label: &str,
     mode: ExecMode,
 ) {
-    use peacockdb_core::gpu_executor::{measure_timing_floor_us, set_node_timing, GpuExecutor};
+    use peacockdb_core::gpu_executor::{set_node_timing, GpuExecutor};
 
     const _: () = assert!(BENCH_MEASURED_RUNS >= 2, "a second minimum needs >= 2 runs");
 
@@ -298,9 +261,7 @@ pub async fn run_gpu_benchmark(
     // The switch is process-global, so turning it on is a loan. A guard rather than a
     // trailing call: everything below unwraps, and an unwind past a trailing call
     // would leave every later user in the process paying a stream sync per node.
-    // Restored to off, the default, because the FFI exposes no way to read it back —
-    // `measure_timing_floor_us` saves and restores because it runs with the switch
-    // already in a known state on the C++ side.
+    // Restored to off, the default, because the FFI exposes no way to read it back.
     struct NodeTimingLoan;
     impl Drop for NodeTimingLoan {
         fn drop(&mut self) {
@@ -317,13 +278,6 @@ pub async fn run_gpu_benchmark(
     for _ in 0..BENCH_WARMUP_RUNS {
         gpu.execute_instrumented(&sql).await.unwrap();
     }
-
-    // AFTER the warm-up and BEFORE the measured runs, on purpose. The floor has to be
-    // sampled under the same conditions the node times are: CUDA context up, modules
-    // loaded, the device allocator settled. Sampling it before the warm-up would measure a
-    // colder machine and understate the floor — the one direction that matters, since an
-    // understated floor makes unresolvable nodes look resolved.
-    let sync_floor_us = measure_timing_floor_us(BENCH_FLOOR_SAMPLES);
 
     let mut runs: Vec<(u64, Arc<dyn ExecutionPlan>, Vec<NodeMemoryStats>)> =
         Vec::with_capacity(BENCH_MEASURED_RUNS);
@@ -343,12 +297,12 @@ pub async fn run_gpu_benchmark(
     std::fs::create_dir_all(out.parent().unwrap()).unwrap();
     std::fs::write(
         &out,
-        format!("{}\n", bench_stats_str(plan, stats, *total_us, sync_floor_us)),
+        format!("{}\n", bench_stats_str(plan, stats, *total_us)),
     )
     .unwrap();
     eprintln!(
         "bench {dataset}/{query} [{label}]: total_us={total_us} \
-         (min={} max={}) floor={sync_floor_us}us alloc=[{allocator}] -> {}",
+         (min={} max={}) alloc=[{allocator}] -> {}",
         runs[0].0,
         runs[runs.len() - 1].0,
         out.display(),

@@ -26,7 +26,7 @@ use datafusion::error::DataFusionError;
 use peacockdb_ffi::raw::{
     peacock_executor_begin_plan, peacock_executor_end_plan, peacock_executor_execute_node,
     peacock_handle_release, peacock_install_rmm_pool, peacock_last_error, peacock_result_free,
-    peacock_result_from_handle, peacock_measure_timing_floor_us, peacock_set_node_timing,
+    peacock_result_from_handle, peacock_set_node_timing,
     PeacockExecutor, PeacockNodeStats, PeacockRmmPoolInfo, PEACOCK_RMM_POOL_INSTALLED,
 };
 
@@ -117,26 +117,6 @@ pub fn install_rmm_pool() -> RmmPool {
 /// one process-wide pool), so there is no cross-test interleaving to guard against.
 pub fn set_node_timing(enabled: bool) {
     unsafe { peacock_set_node_timing(if enabled { 1 } else { 0 }) };
-}
-
-/// Microseconds the MEASUREMENT costs: [`set_node_timing`]'s timed region wrapped
-/// around no work at all.
-///
-/// This is the resolution floor of every `time_us` in this module. A node's number
-/// is its real work PLUS one of these, so a node reporting at or below the floor is
-/// not cheap — it is unresolvable, and the two look identical unless the floor is
-/// printed next to them. That is the whole reason this exists; `bench_stats_str`
-/// writes it into each record as `sync_floor_us`.
-///
-/// Do NOT subtract it from node times. Individual node measurements vary by more
-/// than the floor itself, so subtracting manufactures zeros and negative-clamped
-/// noise — it would hide precisely what reporting the floor is meant to expose.
-///
-/// Requires a live CUDA context (construct a `GpuExecutor` first) and an idle
-/// default stream; returns 0 if CUDA errored, which is a self-announcing value
-/// since the instrumentation is never actually free.
-pub fn measure_timing_floor_us(samples: u32) -> u64 {
-    unsafe { peacock_measure_timing_floor_us(samples) }
 }
 
 /// GPU backend: intermediates stay GPU-resident behind handles in the C++

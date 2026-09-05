@@ -73,38 +73,6 @@ void set_node_timing(bool enabled) { g_node_timing.store(enabled, std::memory_or
 
 bool node_timing_enabled() { return g_node_timing.load(std::memory_order_relaxed); }
 
-uint64_t measure_timing_floor_us(unsigned samples) {
-  // Second-smallest needs two; the header promises the clamp rather than UB.
-  if (samples < 2) samples = 2;
-
-  // Measure the REAL ScopedNodeTimer rather than an open-coded imitation of it —
-  // an imitation would drift from the thing it claims to characterize the moment
-  // the timer changes. That means the switch has to be on, whatever the caller
-  // left it at, so save and restore it (RAII: `stop_us` can throw).
-  struct SwitchGuard {
-    bool prev;
-    explicit SwitchGuard(bool p) : prev(p) { g_node_timing.store(true, std::memory_order_relaxed); }
-    ~SwitchGuard() { g_node_timing.store(prev, std::memory_order_relaxed); }
-  } guard(g_node_timing.load(std::memory_order_relaxed));
-
-  // ScopedNodeTimer's precondition is an idle stream. Inside `execute_node` that
-  // holds by induction from the previous node's sync; here nothing guarantees it,
-  // so establish it once — otherwise the first sample would bill this function for
-  // whatever the caller left in flight.
-  if (auto err = cudaStreamSynchronize(cudf::get_default_stream().value()); err != cudaSuccess)
-    throw std::runtime_error(std::string("CUDA error while measuring the timing floor: ") +
-                             cudaGetErrorString(err));
-
-  std::vector<uint64_t> samples_us;
-  samples_us.reserve(samples);
-  for (unsigned i = 0; i < samples; ++i) {
-    ScopedNodeTimer timer;  // no work in between: this IS the floor
-    samples_us.push_back(timer.stop_us());
-  }
-  std::sort(samples_us.begin(), samples_us.end());
-  return samples_us[1];
-}
-
 // Children of a plan node in canonical order — MUST match the Rust walk's child
 // order so the caller's input handles line up with each node's inputs.
 static std::vector<const fb::PlanNode*> node_children(const fb::PlanNode* node) {
@@ -359,11 +327,8 @@ void NodeSession::execute_node(uint64_t seq, const uint64_t* input_handles,
     // total. Only the per-partition slice copies below are separable.
     //
     // Partition 0's region stays open across both rather than being closed here and
-    // reopened in the loop: N output partitions must cost N timed regions, because
-    // that is what `nodes_at_or_below_floor` assumes when it compares a node against
-    // `sync_floor_us × partitions`. An extra region would put the node one floor
-    // above the threshold it is judged by, in the direction that reports unresolved
-    // work as resolved. Every other arm is already N-for-N.
+    // reopened in the loop, because N output partitions must cost exactly N timed
+    // regions. Every other arm is already N-for-N.
     ScopedNodeTimer shared_timer;
     std::unique_ptr<cudf::table> combined =
         (owned.size() == 1) ? std::move(owned[0].table) : cudf::concatenate(views);

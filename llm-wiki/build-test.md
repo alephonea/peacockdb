@@ -522,8 +522,6 @@ the plan with `time_us` per node (and `p<k>:` sub-lines where N>1), then a trail
 | `build_profile` | which release profile the harness was compiled under. `total_us − nodes_total_us` is that Rust. Always a release build — the run asserts it |
 | `allocator` | the rmm pool the node times were taken under, with the sizes it was built with. Always a pool — the run asserts it, because with rmm's default every cuDF intermediate is a `cudaMalloc`/`cudaFree` round trip billed to whichever node allocated it, which inflates the largest-output nodes hardest and so moves the **profile**, not just the scale. The sizes vary with free memory at install time |
 | `shared_work_charged_to` | which `p<k>` sub-line carries work a node does once for all its partitions — the hash scatter concatenates and scatters in one operation and bills p0, so a p0 far above its siblings is the accounting, not skew. Written whether or not the plan has a repartition, so absence means only "written before the field" |
-| `sync_floor_us` | what the timed region costs around no work. **Every node time includes one; do not subtract it** — a node at or below it is unresolved, not cheap |
-| `nodes_at_or_below_floor` | how much of the tree this file cannot resolve. 2/40 is a profile; 35/40 measured mostly its own instrument |
 | `nodes_total_us` | Σ of the node times |
 | `total_us` | the whole query end to end — parse, plan, serialize, node walk, materialize |
 
@@ -536,7 +534,7 @@ called `benchmark-goldens`); `--pull-benchmarks` is additive.
 
 The run counts are compile-time constants in
 [`tests/common/mod.rs`](../peacockdb-core/tests/common/mod.rs#L1290) — warm-up 1,
-measured 10, floor samples 200. No environment variable moves them, unlike
+measured 10. No environment variable moves them, unlike
 `PCK_TEST_FILTER` or the C++ suites' `PEACOCK_BENCHMARK_RUNS`: changing one is an edit
 and a rebuild, so every record in the tree was taken at the same counts.
 

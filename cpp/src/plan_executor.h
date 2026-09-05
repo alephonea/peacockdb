@@ -50,25 +50,6 @@ void set_node_timing(bool enabled);
 /// Current state of the timing switch (see `set_node_timing`).
 bool node_timing_enabled();
 
-/// Cost of the MEASUREMENT ITSELF, in microseconds: the same timed region every
-/// node pays, wrapped around no work at all (two `steady_clock` reads plus
-/// `cudaStreamSynchronize` on an already-idle stream).
-///
-/// Why a caller wants this. A node's reported `time_us` is real work PLUS one of
-/// these, and the sync's return latency is not small next to a cheap node. Without
-/// the floor printed alongside them, a reader cannot tell "this node is cheap" from
-/// "this node is below what the method can resolve" — the two look identical.
-///
-/// Returns the SECOND-smallest of `samples` (min 2, forced), matching how the
-/// benchmark picks a run: the outright minimum is the one most likely to be a
-/// scheduling accident. Deliberately NOT subtracted from node times anywhere —
-/// subtracting a floor from numbers that are individually noisier than it would
-/// manufacture zeros and hide exactly what it claims to expose.
-///
-/// PRECONDITION: no concurrent execution on the default stream (it synchronizes,
-/// and it flips the global timing switch for the duration).
-uint64_t measure_timing_floor_us(unsigned samples);
-
 /// Execute a FlatBuffer-encoded GPU plan and return the result table.
 /// Thin recursive wrapper over the single-node executor — the production fast path.
 ///
